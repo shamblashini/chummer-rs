@@ -7,9 +7,11 @@ Wine, no .NET, no Internet Explorer.
 It reads and writes the same `.chum5` files and uses Chummer5a's own game
 data, so characters move between the two programs.
 
-> **Status: foundation.** chummer-rs opens, shows and edits existing
-> characters, and computes their numbers the way Chummer5a does. It
-> cannot yet build a new character or add items. See [Status](#status).
+> **Status: early.** chummer-rs opens, edits and saves existing
+> characters, links your sourcebook PDFs, and creates new characters
+> with the Priority and Sum-to-Ten methods, including qualities,
+> traditions, knowledge skills, specializations and contacts. It cannot
+> yet add gear, ware, spells or powers. See [Status](#status).
 
 ## Install
 
@@ -21,7 +23,7 @@ You need a Rust toolchain (1.85 or newer).
 
 This builds release binaries and installs to `~/.local`:
 
-- `chummer-rs`: the desktop application.
+- `chummer-rs`: the desktop application. It is named so that it never replaces a `chummer` launcher you may have for Chummer5a under Wine.
 - `chummer-cli`: the command-line tool.
 - The game data in `~/.local/share/chummer-rs`.
 - A desktop entry. `.chum5` files then open with chummer-rs.
@@ -33,6 +35,16 @@ cargo run --release -p chummer-gui -- path/to/character.chum5
 ```
 
 ## Use
+
+### Creating a character
+
+1. **File → New character** (Ctrl+N).
+2. Pick the rules preset (Standard, Sum-to-Ten, and so on), assign the five priorities, then choose the metatype and the magic or resonance talent, with its free skills.
+3. Spend points on the Attributes and Skills tabs. Add qualities and contacts on the Qualities & Contacts tab. Pick a tradition on the Magic tab.
+4. The **Creation** panel on the right shows what is left of each budget and anything that blocks finishing.
+5. **Finish creation** switches the character to career mode. At most 7 karma and 5,000¥ carry over.
+
+`chummer-cli new` does steps 1 and 2 from the command line.
 
 ### Desktop application
 
@@ -88,6 +100,15 @@ Settings are stored in `~/.config/chummer-rs/`.
 
 ### What works
 
+- **Character creation** (Priority and Sum-to-Ten):
+  - The wizard follows `priorities.xml`.
+  - The new file follows Chummer5a's save layout.
+  - Point budgets and finishing creation follow `CharacterCreate.cs`.
+  - In creation mode you can add qualities with their requirements (`<required>`/`<forbidden>`) checked, and remove them. The other creation screens cover traditions, knowledge skills, specializations and contacts.
+- **Bonus processor:** turns a data `<bonus>` into improvements.
+  - The test suite replays every bonus saved in the 34 test characters and compares the result with what Chummer5a created: **627 of 642 match**.
+  - 177 simple handlers are generated from Chummer5a's C# source by `tools/gen_bonus_table.py`. About 50 structured handlers are written by hand.
+
 - **Loading and saving `.chum5`:**
   - Saving is lossless. All 34 test characters round-trip with every element kept, including the many elements this port does not model yet.
   - `<appversion>` is left as loaded, because Chummer5a uses it to decide how to read a file.
@@ -121,10 +142,10 @@ Performance (release build on the author's machine): `chummer-cli info` loads th
 
 Roughly in order of priority:
 
-1. **Bonus processor.** In Chummer5a, adding a quality, piece of ware or power turns its `<bonus>` XML into improvements. The data uses 246 bonus types, and the 60 most common cover 92% of uses. Until this exists, chummer-rs cannot add items. Items already in a saved file work, because the file stores their improvements.
-2. **Adding items** through selection dialogs: gear, ware, weapons, armor, spells, powers, qualities and contacts. New skills too. The writer can only update skills that already exist in the file.
-3. **Character creation:** priority, sum-to-ten, karma and life module builds, metatype selection, and point budgets.
-4. **Karma and nuyen accounting.** Edits should deduct or refund karma and nuyen, and career mode needs its ledger with undo, plus initiation and submersion.
+1. **Adding other items** through the selection dialog: gear, ware, weapons, armor, vehicles, spells, adept powers and complex forms. Each has its own save format. The dialog and the bonus processor already exist.
+2. **A few bonus types** need objects the port does not model yet: `addgear`, `addcontact`, `selectquality`, `selectpowers`, `specificpower`, critter powers.
+3. **Karma and Life Module builds.** Mentor spirit choices.
+4. **Career-mode accounting.** Adding a quality in career mode deducts karma, but other edits do not. Career mode also needs its ledger with undo, plus initiation and submersion.
 5. **Essence loss.** chummer-rs reads essence-loss improvements from the file instead of regenerating them on load, as Chummer5a does. Removing cyberware therefore does not restore MAG or RES until the file is opened and saved in Chummer5a.
 6. **Custom data:** the `amend_*.xml` merge from enabled custom data directories. The directories ship but are not applied.
 7. **Character sheets and printing.** The XSLT sheets are bundled but not rendered.

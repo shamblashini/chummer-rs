@@ -5,6 +5,7 @@ mod dice_ui;
 mod pdf_ui;
 mod select;
 mod view;
+mod wizard;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,6 +39,7 @@ struct App {
     show_dice: bool,
     show_about: bool,
     show_sources: bool,
+    wizard: Option<wizard::Wizard>,
     pdfs: SourcebookLibrary,
     sources_window: pdf_ui::SourcesWindow,
     browser: browser::DataBrowser,
@@ -61,6 +63,7 @@ impl App {
         let sources_window = pdf_ui::SourcesWindow::new(&engine.store);
         let mut app = App {
             show_sources: false,
+            wizard: None,
             pdfs: SourcebookLibrary::load(),
             sources_window,
             engine: Arc::new(engine),
@@ -159,6 +162,10 @@ impl App {
     fn menu(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
+                if ui.add(egui::Button::new("New character…").shortcut_text("Ctrl+N")).clicked() {
+                    ui.close();
+                    self.wizard = Some(wizard::Wizard::new());
+                }
                 if ui.add(egui::Button::new("Open…").shortcut_text("Ctrl+O")).clicked() {
                     ui.close();
                     self.open_dialog();
@@ -227,6 +234,9 @@ impl App {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
+            self.wizard = Some(wizard::Wizard::new());
+        }
         let (open, save, close, quit) = ctx.input_mut(|i| {
             (
                 i.consume_key(egui::Modifiers::COMMAND, egui::Key::O),
@@ -260,6 +270,9 @@ impl App {
                 ui.label(RichText::new("chummer-rs").size(40.0).color(ACCENT).strong());
                 ui.label("Shadowrun 5th Edition character manager");
                 ui.add_space(20.0);
+                if ui.button(RichText::new("✨  Create a new character…").size(18.0)).clicked() {
+                    self.wizard = Some(wizard::Wizard::new());
+                }
                 if ui.button(RichText::new("📂  Open a character…").size(18.0)).clicked() {
                     self.open_dialog();
                 }
@@ -417,6 +430,20 @@ impl eframe::App for App {
             ui.hyperlink("https://github.com/chummer5a/chummer5a");
         });
         self.show_about = open;
+        if let Some(w) = self.wizard.as_mut() {
+            match w.show(ctx, &self.engine) {
+                wizard::WizardResult::Open => {}
+                wizard::WizardResult::Cancel => self.wizard = None,
+                wizard::WizardResult::Created(ch) => {
+                    let mut v = CharacterView::new(*ch, &self.engine);
+                    v.set_tab(view::Tab::Attributes);
+                    self.views.push(v);
+                    self.active = self.views.len() - 1;
+                    self.wizard = None;
+                    self.status = Some(("New character created. Spend your points, then Finish creation.".into(), false));
+                }
+            }
+        }
         self.dialogs(ctx);
     }
 
@@ -447,6 +474,7 @@ fn main() -> anyhow::Result<()> {
         match a.as_str() {
             "--tab" => tab = args.next().and_then(|t| view::Tab::parse(&t)),
             "--window" => window = args.next(),
+            "--new" => window = Some("new".into()),
             "-h" | "--help" => {
                 println!("usage: chummer-rs [--tab <info|attributes|skills|qualities|magic|equipment|improvements|karma|notes>] [--window <sources|browser|dice>] [file.chum5 ...]");
                 return Ok(());
@@ -476,6 +504,7 @@ fn main() -> anyhow::Result<()> {
             Some("sources") => app.show_sources = true,
             Some("browser") => app.show_browser = true,
             Some("dice") => app.show_dice = true,
+            Some("new") => app.wizard = Some(wizard::Wizard::new()),
             _ => {}
         }
         Ok(Box::new(app))

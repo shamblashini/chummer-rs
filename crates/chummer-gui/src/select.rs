@@ -66,6 +66,7 @@ impl SelectDialog {
     }
 
     /// `choices_for(index)` computes the bonus selections for a record.
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -214,7 +215,7 @@ impl SelectDialog {
         }
     }
 
-    pub fn record<'a>(&self, store: &'a DataStore, index: usize) -> Option<Element> {
+    pub fn record(&self, store: &DataStore, index: usize) -> Option<Element> {
         let doc = store.doc(self.kind.file).ok()?;
         data::records(&doc, self.kind.container, self.kind.item).get(index).map(|r| r.el().clone())
     }

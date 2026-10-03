@@ -733,3 +733,106 @@ fn now_iso() -> String {
 pub fn priority_presets(engine: &Engine) -> Vec<&CharacterSettings> {
     engine.settings.presets.iter().filter(|p| crate::character::uses_priority_tables(&p.build_method())).collect()
 }
+
+// ---------------------------------------------------------------------------
+// Smaller additions the creation screens need
+// ---------------------------------------------------------------------------
+
+/// Set the character's magical tradition from `traditions.xml`, replacing
+/// any previous one and its bonus.
+pub fn set_tradition(ch: &mut Character, store: &DataStore, name: &str) -> Result<(), String> {
+    let doc = store.doc("traditions.xml").map_err(|e| e.to_string())?;
+    let rec = data::find(&doc, "traditions", "tradition", name).ok_or("unknown tradition")?;
+    if let Some(old) = ch.doc.child("tradition").map(|t| t.get("guid")) {
+        ch.improvements.remove_from_source(&old);
+    }
+    let guid = new_guid();
+    let mut t = Element::new("tradition");
+    t.push(Element::with_text("guid", guid.clone()));
+    t.push(Element::with_text("traditiontype", "MAG"));
+    t.push(Element::with_text("id", rec.id()));
+    t.push(Element::with_text("name", rec.name()));
+    t.push(Element::new("extra"));
+    t.push(Element::with_text("spiritform", rec.el().child_text("spiritform").unwrap_or_else(|| "Materialization".into())));
+    // The save stores the drain without braces ("WIL + LOG").
+    t.push(Element::with_text("drain", rec.get("drain").replace(['{', '}'], "")));
+    t.push(Element::with_text("source", rec.source()));
+    t.push(Element::with_text("page", rec.page()));
+    for k in ["spiritcombat", "spiritdetection", "spirithealth", "spiritillusion", "spiritmanipulation"] {
+        t.push(Element::with_text(k, rec.el().child("spirits").map(|s| s.get(k)).unwrap_or_default()));
+    }
+    t.push(Element::new("spirits"));
+    let bonus_el = rec.el().child("bonus").cloned().unwrap_or_else(|| Element::new("bonus"));
+    t.push(bonus_el.clone());
+    ch.doc.remove_children("tradition");
+    ch.doc.push(t);
+    if bonus_el.elements().next().is_some() {
+        let src = BonusSource { kind: "Tradition".into(), guid, name: rec.name(), rating: 1 };
+        let out = bonus::apply(ch, store, &bonus_el, &src, None);
+        finish_outcome(ch, out);
+    }
+    ch.dirty = true;
+    Ok(())
+}
+
+/// Add a knowledge or language skill.
+pub fn add_knowledge_skill(ch: &mut Character, name: &str, kind: &str, native: bool) {
+    let guid = new_guid();
+    let mut e = Element::new("skill");
+    e.push(Element::with_text("guid", guid.clone()));
+    e.push(Element::with_text("suid", "00000000-0000-0000-0000-000000000000"));
+    e.push(Element::with_text("isknowledge", "True"));
+    e.push(Element::with_text("skillcategory", kind));
+    e.push(Element::with_text("karma", "0"));
+    e.push(Element::with_text("base", "0"));
+    e.push(Element::new("notes"));
+    e.push(Element::with_text("name", name));
+    e.push(Element::with_text("type", kind));
+    e.push(Element::with_text("isnativelanguage", bool_str(native)));
+    ch.doc.child_or_insert("newskills").child_or_insert("knoskills").push(e.clone());
+    ch.knowledge_skills.push(crate::skills::KnowledgeSkill::from_xml(&e));
+    ch.dirty = true;
+}
+
+pub fn remove_knowledge_skill(ch: &mut Character, guid: &str) {
+    ch.knowledge_skills.retain(|k| !k.guid.eq_ignore_ascii_case(guid));
+    if let Some(k) = ch.doc.child_mut("newskills").and_then(|n| n.child_mut("knoskills")) {
+        k.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.get("guid").eq_ignore_ascii_case(guid)));
+    }
+    ch.dirty = true;
+}
+
+/// Add a contact with a connection and loyalty rating.
+pub fn add_contact(ch: &mut Character, name: &str, role: &str, connection: i32, loyalty: i32) {
+    let mut c = Element::new("contact");
+    let mut put = |k: &str, v: &str| c.push(Element::with_text(k, v));
+    put("name", name);
+    put("role", role);
+    put("location", "");
+    put("connection", &connection.to_string());
+    put("loyalty", &loyalty.to_string());
+    for k in ["metatype", "gender", "age", "contacttype", "preferredpayment", "hobbiesvice", "personallife"] {
+        put(k, "");
+    }
+    put("type", "Contact");
+    for k in ["file", "relative", "notes", "groupname"] {
+        put(k, "");
+    }
+    put("colour", "-986896");
+    for k in ["group", "family", "blackmail", "free"] {
+        put(k, "False");
+    }
+    put("groupenabled", "True");
+    put("guid", &new_guid());
+    put("mainmugshotindex", "-1");
+    c.push(Element::new("mugshots"));
+    ch.items_mut("contacts").push(c);
+}
+
+/// Add a specialization to an active skill.
+pub fn add_specialization(ch: &mut Character, skill_guid: &str, spec: &str) {
+    if let Some(s) = ch.skills.iter_mut().find(|s| s.guid.eq_ignore_ascii_case(skill_guid)) {
+        s.specs.push(crate::skills::Specialization { guid: new_guid(), name: spec.to_owned(), free: false, expertise: false });
+        ch.dirty = true;
+    }
+}

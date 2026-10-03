@@ -12,7 +12,12 @@ use chummer_core::lang::Language;
 use chummer_core::sections::{self, Section};
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
 
+use chummer_core::chargen;
+use chummer_core::data;
+use chummer_core::settings::CharacterSettings;
+
 use crate::pdf_ui::{self, Status};
+use crate::select::{self, SelectDialog};
 use chummer_core::xml::Element;
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
@@ -53,6 +58,14 @@ pub struct CharacterView {
     magic: usize,
     /// (container, guid, name) of an item waiting for removal confirmation.
     confirm_remove: Option<(String, String, String)>,
+    /// Creation-mode budget, recomputed with the sheet.
+    budget: Option<chargen::Budget>,
+    problems: Vec<String>,
+    settings: Option<CharacterSettings>,
+    select: Option<SelectDialog>,
+    confirm_finish: bool,
+    new_kno: (String, String, bool),
+    new_contact: (String, String, i32, i32),
 }
 
 pub const ACCENT: Color32 = Color32::from_rgb(0, 200, 170);
@@ -73,7 +86,41 @@ impl CharacterView {
     pub fn new(ch: Character, engine: &Engine) -> Self {
         let rules = engine.rules_for(&ch);
         let sheet = calc::compute(&ch, &rules, Some(&engine.store), Some(&engine.catalog));
-        CharacterView { ch, sheet, rules, tab: Tab::Info, skill_filter: String::new(), only_rated: false, equipment: 0, magic: 0, confirm_remove: None }
+        let settings = engine.settings.resolve(&ch.field("settings")).cloned();
+        let mut v = CharacterView {
+            ch,
+            sheet,
+            rules,
+            tab: Tab::Info,
+            skill_filter: String::new(),
+            only_rated: false,
+            equipment: 0,
+            magic: 0,
+            confirm_remove: None,
+            budget: None,
+            problems: Vec::new(),
+            settings,
+            select: None,
+            confirm_finish: false,
+            new_kno: (String::new(), "Academic".into(), false),
+            new_contact: (String::new(), String::new(), 1, 1),
+        };
+        v.refresh_budget();
+        v
+    }
+
+    fn refresh_budget(&mut self) {
+        match (&self.settings, self.ch.created) {
+            (Some(st), false) => {
+                let b = chargen::budget(&self.ch, &self.sheet, &self.rules, st);
+                self.problems = chargen::validity_problems(&self.ch, &b, st);
+                self.budget = Some(b);
+            }
+            _ => {
+                self.budget = None;
+                self.problems.clear();
+            }
+        }
     }
 
     pub fn title(&self) -> String {
@@ -91,6 +138,7 @@ impl CharacterView {
 
     fn recompute(&mut self, engine: &Engine) {
         self.sheet = calc::compute(&self.ch, &self.rules, Some(&engine.store), Some(&engine.catalog));
+        self.refresh_budget();
     }
 
     pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<u32> {
@@ -114,17 +162,22 @@ impl CharacterView {
             changed |= match self.tab {
                 Tab::Info => self.info_tab(ui),
                 Tab::Attributes => self.attributes_tab(ui),
-                Tab::Skills => self.skills_tab(ui, pdfs, status, &mut roll),
+                Tab::Skills => self.skills_tab(ui, engine, pdfs, status, &mut roll),
                 Tab::Qualities => {
                     let mut c = false;
                     egui::ScrollArea::both().show(ui, |ui| {
+                        if ui.button("➕ Add quality…").clicked() {
+                            let books = self.settings.as_ref().map(|s| s.books()).unwrap_or_default();
+                            self.select = SelectDialog::new(select::QUALITY, &engine.store, books);
+                        }
                         c |= self.section(ui, &sections::QUALITIES, lang, pdfs, status);
                         ui.add_space(12.0);
+                        c |= self.contact_form(ui);
                         c |= self.section(ui, &sections::CONTACTS, lang, pdfs, status);
                     });
                     c
                 }
-                Tab::Magic => self.magic_tab(ui, lang, pdfs, status),
+                Tab::Magic => self.magic_tab(ui, engine, lang, pdfs, status),
                 Tab::Equipment => self.equipment_tab(ui, lang, pdfs, status),
                 Tab::Improvements => self.improvements_tab(ui),
                 Tab::Log => self.log_tab(ui),
@@ -132,6 +185,8 @@ impl CharacterView {
             };
         });
         changed |= self.confirm_dialog(ctx);
+        changed |= self.select_dialog(ctx, engine, lang, pdfs, status);
+        changed |= self.finish_dialog(ctx);
         if changed {
             self.ch.dirty = true;
             self.recompute(engine);
@@ -210,6 +265,7 @@ impl CharacterView {
         changed |= cm_track(ui, "scm", scm, thr, &mut self.ch.stun_cm_filled, Color32::from_rgb(70, 130, 220));
         ui.weak(format!("Overflow {} · −1 die per {thr} boxes", s.cm_overflow));
         ui.separator();
+        changed |= self.budget_panel(ui);
         if ui.button("🎲 Open dice roller").clicked() {
             *roll = Some(6);
         }
@@ -347,7 +403,7 @@ impl CharacterView {
         changed
     }
 
-    fn skills_tab(&mut self, ui: &mut egui::Ui, pdfs: &SourcebookLibrary, status: &mut Status, roll: &mut Option<u32>) -> bool {
+    fn skills_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, pdfs: &SourcebookLibrary, status: &mut Status, roll: &mut Option<u32>) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut self.skill_filter).hint_text("Filter skills").desired_width(200.0));
@@ -395,15 +451,50 @@ impl CharacterView {
                     if ui.add(egui::Button::new(RichText::new(pool).strong()).frame(false)).on_hover_text("Roll this pool").clicked() {
                         *roll = Some(s.pool.max(1) as u32);
                     }
-                    let spec = if s.specs.is_empty() { String::new() } else { format!("{} (+{})", s.specs.join(", "), s.spec_bonus) };
-                    ui.label(spec);
+                    ui.horizontal(|ui| {
+                        if !s.specs.is_empty() {
+                            ui.label(format!("{} (+{})", s.specs.join(", "), s.spec_bonus));
+                        }
+                        let guid = s.guid.clone();
+                        let suid = self.ch.skills[*i].suid.clone();
+                        ui.menu_button("＋", |ui| {
+                            let opts = engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default();
+                            for o in opts.iter().filter(|o| !s.specs.contains(o)) {
+                                if ui.button(o).clicked() {
+                                    chargen::add_specialization(&mut self.ch, &guid, o);
+                                    changed = true;
+                                    ui.close();
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text("Add a specialization");
+                    });
                     ui.end_row();
                 }
             });
             ui.add_space(12.0);
             ui.heading("Knowledge & language skills");
-            egui::Grid::new("kskills").striped(true).num_columns(6).spacing([14.0, 4.0]).show(ui, |ui| {
-                for h in ["Skill", "Type", "Base", "Karma", "Rating", "Pool"] {
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.new_kno.0).hint_text("New knowledge skill").desired_width(200.0));
+                egui::ComboBox::from_id_salt("kno_type").selected_text(self.new_kno.1.clone()).show_ui(ui, |ui| {
+                    for t in ["Academic", "Interest", "Language", "Professional", "Street"] {
+                        ui.selectable_value(&mut self.new_kno.1, t.to_owned(), t);
+                    }
+                });
+                if self.new_kno.1 == "Language" {
+                    ui.checkbox(&mut self.new_kno.2, "Native");
+                }
+                if ui.add_enabled(!self.new_kno.0.trim().is_empty(), egui::Button::new("Add")).clicked() {
+                    let native = self.new_kno.1 == "Language" && self.new_kno.2;
+                    chargen::add_knowledge_skill(&mut self.ch, self.new_kno.0.trim(), &self.new_kno.1.clone(), native);
+                    self.new_kno.0.clear();
+                    changed = true;
+                }
+            });
+            let mut remove_kno: Option<String> = None;
+            egui::Grid::new("kskills").striped(true).num_columns(7).spacing([14.0, 4.0]).show(ui, |ui| {
+                for h in ["Skill", "Type", "Base", "Karma", "Rating", "Pool", ""] {
                     ui.strong(h);
                 }
                 ui.end_row();
@@ -422,9 +513,16 @@ impl CharacterView {
                         ui.label(s.rating.to_string());
                         ui.strong(s.pool.to_string());
                     }
+                    if ui.small_button("🗑").on_hover_text("Remove").clicked() {
+                        remove_kno = Some(s.guid.clone());
+                    }
                     ui.end_row();
                 }
             });
+            if let Some(g) = remove_kno {
+                chargen::remove_knowledge_skill(&mut self.ch, &g);
+                changed = true;
+            }
             if !self.ch.skill_groups.is_empty() {
                 ui.add_space(12.0);
                 ui.heading("Skill groups");
@@ -446,8 +544,30 @@ impl CharacterView {
         changed
     }
 
-    fn magic_tab(&mut self, ui: &mut egui::Ui, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+    fn magic_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let mut changed = false;
+        if self.ch.mag_enabled() && self.ch.is_magician() {
+            let current = self.ch.doc.child("tradition").map(|t| t.get("name")).unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.label("Tradition");
+                let mut pick: Option<String> = None;
+                egui::ComboBox::from_id_salt("tradition").selected_text(if current.is_empty() { "Choose…".to_owned() } else { current.clone() }).width(240.0).show_ui(ui, |ui| {
+                    if let Ok(doc) = engine.store.doc("traditions.xml") {
+                        for r in data::records(&doc, "traditions", "tradition") {
+                            if ui.selectable_label(current == r.name(), r.name()).clicked() {
+                                pick = Some(r.name());
+                            }
+                        }
+                    }
+                });
+                if let Some(p) = pick {
+                    if let Err(e) = chargen::set_tradition(&mut self.ch, &engine.store, &p) {
+                        *status = Some((e, true));
+                    }
+                    changed = true;
+                }
+            });
+        }
         let present: Vec<&Section> = sections::MAGIC.iter().chain([&sections::COMPLEX_FORMS, &sections::MARTIAL_ARTS]).collect();
         ui.horizontal(|ui| {
             for (i, s) in present.iter().enumerate() {
@@ -540,10 +660,161 @@ impl CharacterView {
         match choice {
             Some(yes) => {
                 self.confirm_remove = None;
-                yes && self.ch.remove_item(&container, &guid)
+                if yes && container == "qualities" {
+                    chargen::remove_quality(&mut self.ch, &guid);
+                    true
+                } else {
+                    yes && self.ch.remove_item(&container, &guid)
+                }
             }
             None => false,
         }
+    }
+
+    /// Creation-mode budgets in the sidebar, with Finish creation.
+    fn budget_panel(&mut self, ui: &mut egui::Ui) -> bool {
+        let Some(b) = self.budget.clone() else { return false };
+        let mut changed = false;
+        ui.label(RichText::new("Creation").strong());
+        let row = |ui: &mut egui::Ui, label: &str, total: i32, used: i32| {
+            let left = total - used;
+            ui.label(label);
+            let t = RichText::new(format!("{left} / {total}"));
+            ui.label(if left < 0 { t.color(ui.visuals().error_fg_color) } else if left == 0 { t.weak() } else { t.color(ACCENT) });
+            ui.end_row();
+        };
+        egui::Grid::new("budget").num_columns(2).striped(true).show(ui, |ui| {
+            row(ui, "Karma", b.karma.0, b.karma.1);
+            row(ui, "Attribute points", b.attribute_points.0, b.attribute_points.1);
+            row(ui, "Special points", b.special_points.0, b.special_points.1);
+            row(ui, "Skill points", b.skill_points.0, b.skill_points.1);
+            row(ui, "Skill group points", b.skill_group_points.0, b.skill_group_points.1);
+            row(ui, "Knowledge points", b.knowledge_points.0, b.knowledge_points.1);
+            row(ui, "Contact points", b.contact_points.0, b.contact_points.1);
+            if b.free_spells.0 > 0 {
+                row(ui, "Free spells", b.free_spells.0, b.free_spells.1);
+            }
+            ui.label("Positive qualities");
+            ui.label(format!("{} / {}", b.positive_quality_karma, b.quality_limit));
+            ui.end_row();
+            ui.label("Negative qualities");
+            ui.label(format!("{} / {}", b.negative_quality_karma, b.quality_limit));
+            ui.end_row();
+            ui.label("Nuyen left");
+            let left = b.nuyen_left();
+            let t = RichText::new(chummer_core::format::nuyen(left));
+            ui.label(if left < 0.0 { t.color(ui.visuals().error_fg_color) } else { t });
+            ui.end_row();
+            ui.label("Karma for nuyen");
+            let mut bp = self.ch.doc.get_i32("nuyenbp").unwrap_or(0);
+            let max = self.settings.as_ref().map_or(10, |s| s.int("nuyenmaxbp", 10));
+            if ui.add(egui::DragValue::new(&mut bp).range(0..=max).suffix(" karma")).on_hover_text("2,000¥ per karma").changed() {
+                self.ch.set_field("nuyenbp", bp.to_string());
+                changed = true;
+            }
+            ui.end_row();
+        });
+        for p in &self.problems {
+            ui.colored_label(WARN, format!("• {p}"));
+        }
+        let ok = self.problems.is_empty();
+        let r = ui.add_enabled(ok, egui::Button::new(RichText::new("Finish creation").color(ACCENT)));
+        if r.on_disabled_hover_text("Fix the problems above first").clicked() {
+            self.confirm_finish = true;
+        }
+        ui.separator();
+        changed
+    }
+
+    fn finish_dialog(&mut self, ctx: &egui::Context) -> bool {
+        if !self.confirm_finish {
+            return false;
+        }
+        let mut choice = None;
+        let b = self.budget.clone().unwrap_or_default();
+        egui::Modal::new(egui::Id::new("finish_creation")).show(ctx, |ui| {
+            ui.heading("Finish creation?");
+            ui.label("The character switches to career mode. Creation budgets go away; karma and nuyen become plain resources.");
+            let carry_k = self.settings.as_ref().map_or(7, |s| s.karma("karmacarryover", 7));
+            if b.karma_left() > carry_k {
+                ui.colored_label(WARN, format!("{} karma is left, only {carry_k} carries over.", b.karma_left()));
+            }
+            if b.nuyen_left() > 5000.0 {
+                ui.colored_label(WARN, format!("{} is left, only 5,000¥ carries over.", chummer_core::format::nuyen(b.nuyen_left())));
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Finish").clicked() {
+                    choice = Some(true);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(false);
+                }
+            });
+        });
+        match choice {
+            Some(true) => {
+                if let Some(st) = self.settings.clone() {
+                    chargen::finalize(&mut self.ch, &b, &st);
+                }
+                self.confirm_finish = false;
+                true
+            }
+            Some(false) => {
+                self.confirm_finish = false;
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn select_dialog(&mut self, ctx: &egui::Context, engine: &Engine, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+        let Some(dlg) = self.select.as_mut() else { return false };
+        let ch = &self.ch;
+        let store = &engine.store;
+        let choices_for = |rec: &chummer_core::xml::Element| chummer_core::items::quality_choices(ch, store, data::Record(rec));
+        match dlg.show(ctx, ch, &self.sheet, lang, pdfs, status, &choices_for) {
+            select::Outcome::None => false,
+            select::Outcome::Cancel => {
+                self.select = None;
+                false
+            }
+            select::Outcome::Done { index, answer } => {
+                let Some(rec) = dlg.record(store, index) else { return false };
+                let rec = data::Record(&rec);
+                let karma = rec.el().get_i32("karma").unwrap_or(0);
+                chargen::add_quality(&mut self.ch, store, rec, answer.as_deref());
+                if self.ch.created && karma > 0 {
+                    // Career mode: positive qualities cost double karma.
+                    let cost = if rec.el().get_bool("doublecareer").unwrap_or(true) { karma * 2 } else { karma };
+                    self.ch.karma -= cost;
+                    *status = Some((format!("Added {} for {cost} karma", rec.name()), false));
+                } else {
+                    *status = Some((format!("Added {}", rec.name()), false));
+                }
+                self.select = None;
+                true
+            }
+        }
+    }
+
+    fn contact_form(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut self.new_contact.0).hint_text("Contact name").desired_width(160.0));
+            ui.add(egui::TextEdit::singleline(&mut self.new_contact.1).hint_text("Role").desired_width(120.0));
+            ui.label("Connection");
+            ui.add(egui::DragValue::new(&mut self.new_contact.2).range(1..=12));
+            ui.label("Loyalty");
+            ui.add(egui::DragValue::new(&mut self.new_contact.3).range(1..=6));
+            if ui.add_enabled(!self.new_contact.0.trim().is_empty(), egui::Button::new("➕ Add contact")).clicked() {
+                let (n, r, c, l) = self.new_contact.clone();
+                chargen::add_contact(&mut self.ch, n.trim(), r.trim(), c, l);
+                self.new_contact.0.clear();
+                self.new_contact.1.clear();
+                changed = true;
+            }
+        });
+        changed
     }
 
     fn improvements_tab(&mut self, ui: &mut egui::Ui) -> bool {
