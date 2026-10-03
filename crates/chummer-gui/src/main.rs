@@ -3,6 +3,7 @@
 mod browser;
 mod dice_ui;
 mod pdf_ui;
+mod select;
 mod view;
 
 use std::path::{Path, PathBuf};

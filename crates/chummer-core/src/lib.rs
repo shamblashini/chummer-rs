@@ -18,3 +18,6 @@ pub mod calc;
 pub mod engine;
 pub mod format;
 pub mod sources;
+pub mod bonus;
+pub mod requirements;
+pub mod items;
