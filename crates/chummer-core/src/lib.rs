@@ -7,3 +7,5 @@ pub mod xml;
 pub mod data;
 pub mod lang;
 pub mod expr;
+pub mod settings;
+pub mod dice;
