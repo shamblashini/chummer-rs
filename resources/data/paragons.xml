@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--This file is part of Chummer5a.
+
+    Chummer5a is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Chummer5a is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Chummer5a.  If not, see <http://www.gnu.org/licenses/>.
+
+    You can obtain the full source code for Chummer5a at
+    https://github.com/chummer5a/chummer5a
+-->
+<chummer xmlns="" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://www.w3.org/2001/XMLSchema mentors.xsd">
+
+  <categories>
+    <category>Resonance</category>
+  </categories>
+  <mentors>
+    <mentor>
+      <id>acadd628-ebb5-4c79-a3c2-953ce7fa1885</id>
+      <name>01 (The World Tree)</name>
+      <category>Resonance</category>
+      <advantage>If a follower of 01 has at least one mark on a target, they may act as if they have an extra mark on it.</advantage>
+      <disadvantage>–1 limit and –1 dice pool penalty when acting only in AR.</disadvantage>
+      <source>KC</source>
+      <page>103</page>
+    </mentor>
+    <mentor>
+      <id>46f88748-8c6c-4230-ad59-2eccb463cc35</id>
+      <name>Architect</name>
+      <category>Resonance</category>
+      <advantage>+1 limit and +1 dice pool bonus for Edit actions.</advantage>
+      <disadvantage>–1 limit and –1 dice for Snoop actions.</disadvantage>
+      <bonus>
+        <specificskill>
+          <name>Computer</name>
+          <bonus>1</bonus>
+          <condition>Edit File</condition>
+        </specificskill>
+      </bonus>
+      <source>KC</source>
+      <page>103</page>
+    </mentor>
+    <mentor>
+      <id>690ccad8-3f42-4d62-a358-e099747fc4e4</id>
+      <name>Archivist (The Record Keeper)</name>
+      <category>Resonance</category>
+      <advantage>+1 limit and +1 dice pool bonus for Browse actions and digital legwork.</advantage>
+      <disadvantage>–1 limit for Edit actions designed to destroy data.</disadvantage>
+      <bonus>
+        <specificskill>
+          <name>Computer</name>
+          <bonus>1</bonus>
+          <condition>Matrix Search</condition>
+        </specificskill>
+      </bonus>
+      <source>KC</source>
+      <page>177</page>
+    </mentor>
+    <mentor>
+      <id>117e7c69-abea-4637-b5e7-3a927ae0ad60</id>
+      <name>Black Hat (The Cracker)</name>
+      <category>Resonance</category>
+      <advantage>+2 limit for gaining marks on a target.</advantage>
+      <disadvantage>-1 limit and –1 die when setting a Data Bomb.</disadvantage>
+      <source>KC</source>
+      <page>103</page>
+    </mentor>
+    <mentor>
+      <id>b74d032e-5d39-4e4a-b043-0707ffa00b5e</id>
+      <name>Daedalus (The Inventor)</name>
+      <category>Resonance</category>
+      <advantage>+1 dice pool bonus for Hardware tests, +1 limit on Pilot skill tests when jumped in.</advantage>
+      <disadvantage>–1 dice and limit for all actions in the Deep Resonance.</disadvantage>
+      <bonus>
+        <specificskill>
+          <name>Hardware</name>
+          <bonus>1</bonus>
+        </specificskill>
+      </bonus>
+      <source>KC</source>
+      <page>103</page>
+    </mentor>
+    <mentor>
+      <id>c45c123c-06c7-42b3-a2ee-01e37f2f7bf8</id>
+      <name>Delphi (The Oracle)</name>
+      <category>Resonance</category>
+      <advantage>+1 bonus to dice pool and limit when threading complex forms.</advantage>
+      <disadvantage>–2 modifier to the technomancer's Initiative Score.</disadvantage>
+      <bonus>
+        <actiondicepool>
+          <name>Threading</name>
+          <val>1</val>
+        </actiondicepool>
+        <initiative>-2</initiative>
+        <matrixinitiative>-2</matrixinitiative>
+      </bonus>
+      <source>KC</source>
+      <page>104</page>
+    </mentor>
+    <mentor>
+      <id>df42911f-0542-4fae-80d1-39573547ff68</id>
+      <name>Intrusion Countermeasure (The Guardian)</name>
+      <category>Resonance</category>
+      <advantage>+1 bonus to dice pool and limit in cybercombat, +1 to firewall.</advantage>
+      <disadvantage> –1 dice pool penalty when attacking IC in cybercombat.</disadvantage>
+      <bonus>
+        <livingpersona>
+          <firewall>1</firewall>
+        </livingpersona>
+        <specificskill>
+          <name>Cybercombat</name>
+          <bonus>1</bonus>
+          <condition>Not against IC</condition>
+        </specificskill>
+      </bonus>
+      <source>KC</source>
+      <page>104</page>
+    </mentor>
+    <mentor>
+      <id>da2f3bad-d934-461a-aa92-60fc6e5c3ef7</id>
+      <name>Probe (The Scout)</name>
+      <category>Resonance</category>
+      <advantage>+2 dice pool bonus and +1 limit on all actions when directly connected to an isolated system.</advantage>
+      <disadvantage>–1 limit penalty when logged into more than one grid.</disadvantage>
+      <source>KC</source>
+      <page>104</page>
+    </mentor>
+    <mentor>
+      <id>de755412-5cae-4859-880f-75a7bd68d5a4</id>
+      <name>Shooter (The Soldier)</name>
+      <category>Resonance</category>
+      <advantage>+1 bonus to dice pool and limit in cybercombat, +1 limit to all attack actions (physical and Matrix)</advantage>
+      <disadvantage>–2 dice pool penalty and –1 limit when compiling sprites.</disadvantage>
+      <bonus>
+        <specificskill>
+          <name>Cybercombat</name>
+          <bonus>1</bonus>
+        </specificskill>
+        <specificskill>
+          <name>Compiling</name>
+          <bonus>-2</bonus>
+        </specificskill>
+        <weaponskillaccuracy>
+          <name>Archery</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Automatics</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Blades</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Clubs</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Exotic Melee Weapon</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Exotic Ranged Weapon</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Gunnery</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Heavy Weapons</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Longarms</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Pistols</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Throwing Weapons</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+        <weaponskillaccuracy>
+          <name>Unarmed Combat</name>
+          <value>1</value>
+        </weaponskillaccuracy>
+      </bonus>
+      <source>KC</source>
+      <page>104</page>
+    </mentor>
+  </mentors>
+</chummer>

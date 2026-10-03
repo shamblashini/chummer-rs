@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--This file is part of Chummer5a.
+
+    Chummer5a is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Chummer5a is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Chummer5a.  If not, see <http://www.gnu.org/licenses/>.
+
+    You can obtain the full source code for Chummer5a at
+    https://github.com/chummer5a/chummer5a
+-->
+<!--This file is part a series of data files created for r/NeonAnarchy.
+
+	You can learn more at
+	https://www.reddit.com/r/NeonAnarchy
+-->
+<chummer>
+	<weapons>
+		<weapon>
+			<name>Ares Archon Heavy MP Laser</name>
+			<ammo>External Source</ammo>
+			<singleshot>4</singleshot>
+			<shortburst>8</shortburst>
+		</weapon>
+		<weapon>
+			<name>Ares Lancer MP Laser</name>
+			<ammo>External Source</ammo>
+			<singleshot>2</singleshot>
+			<shortburst>6</shortburst>
+		</weapon>
+		<weapon>
+			<name>Ares Redline</name>
+			<ammo>External Source</ammo>
+		</weapon>
+		<weapon>
+			<name>Ares Screech Sonic Rifle</name>
+			<ammo>External Source</ammo>
+			<ammoname>Ammo: Peak-Discharge Energy Units</ammoname>
+		</weapon>
+		<weapon>
+			<name>Fichetti Pain Inducer</name>
+			<ammo>10</ammo>
+			<ammoname>Ammo: Peak-Discharge Energy Units</ammoname>
+		</weapon>
+		<weapon>
+			<name>Narcoject PEP</name>
+			<ammo>External Source</ammo>
+			<ammoname>Ammo: Peak-Discharge Energy Units</ammoname>
+			<singleshot>2</singleshot>
+		</weapon>
+		<weapon>
+			<name>Repeating Laser</name>
+			<ammo>External Source</ammo>
+		</weapon>
+		<weapon>
+			<name>Underbarrel Laser</name>
+			<ammo>5(c) or External Source</ammo>
+		</weapon>
+	</weapons>
+</chummer>

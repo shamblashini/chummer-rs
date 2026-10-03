@@ -1,0 +1,10 @@
+[package]
+name = "chummer-core"
+description = "Shadowrun 5e character engine: data loading, .chum5 files, rules math"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quick-xml.workspace = true
+thiserror.workspace = true

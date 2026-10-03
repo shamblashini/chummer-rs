@@ -1,0 +1,925 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--This file is part of Chummer5a.
+
+    Chummer5a is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Chummer5a is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Chummer5a.  If not, see <http://www.gnu.org/licenses/>.
+
+    You can obtain the full source code for Chummer5a at
+    https://github.com/chummer5a/chummer5a
+-->
+<chummer>
+
+  <improvements>
+    <!--  <improvement>
+      <name>Action Dice-Pool Modifier</name>
+      <id>actiondicepool</id>
+      <internal>actiondicepool</internal>
+      <fields>
+        <field>SelectActionDicePool</field>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><<val>{val}</val>]]></xml>
+      <page>Adjusts the dicepool modifier for a given Action. Note: This is current unused</page>
+    </improvement> -->
+    <improvement>
+      <name>Enable Special Attribute</name>
+      <id>enableattribute</id>
+      <internal>enableattribute</internal>
+      <fields>
+        <field>SelectSpecialAttribute</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name>]]></xml>
+      <page>Unlocks the controls for an attribute, allowing the values to be increased. Expected values are MAG, RES or DEP for Magic, Resonance and Depth respectively.</page>
+    </improvement>
+    <improvement>
+      <name>Attribute</name>
+      <id>specificattribute</id>
+      <internal>specificattribute</internal>
+      <fields>
+        <field>SelectAttribute</field>
+        <field>val</field>
+        <field>min</field>
+        <field>max</field>
+        <field>aug</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><val>{val}</val><min>{min}</min><max>{max}</max><aug>{aug}</aug>]]></xml>
+      <page>Adjusts the values for one of the character's Attributes. Positive numbers increase an Attribute. Negative numbers decrease an Attribute. Select an Attribute to affect by clicking the Select Value button. Value adjusts the Attribute's current value. Minimum adjusts the Metatype's minimum value for the Attribute. Maximum adjusts the Metatype's maximum value for the Attribute. Augmented Maximum Maximum adjusts the Metatype's augmented maximum value for the Attribute. Fields may be left at 0 if you do not want to affect that particular aspect of the Attribute.</page>
+    </improvement>
+    <improvement>
+      <name>Replace Attribute</name>
+      <id>replaceattribute</id>
+      <internal>replaceattributes</internal>
+      <fields>
+        <field>SelectAttribute</field>
+        <field>min</field>
+        <field>max</field>
+        <field>aug</field>
+      </fields>
+      <xml><![CDATA[<replaceattribute><name>{select}</name><min>{min}</min><max>{max}</max><aug>{aug}</aug></replaceattribute>]]></xml>
+      <page>Overrides the Metatype limitations for an attribute. Minimum adjusts the Metatype's minimum value for the Attribute. Maximum adjusts the Metatype's maximum value for the Attribute. Augmented Maximum Maximum adjusts the Metatype's augmented maximum value for the Attribute. Fields may be left at 0 if you do not want to affect that particular aspect of the Attribute.</page>
+    </improvement>
+    <improvement>
+      <name>Enable Spells and Spirits Tab</name>
+      <id>enablemagiciantab</id>
+      <internal>enabletab</internal>
+      <xml><![CDATA[<name>magician</name>]]></xml>
+      <page>Enables the character's Spells and Spirits tab, allowing them to buy spells and bind spirits. The character is flagged as a Magician for the purposes of quality requirements, but does not receive access to the Initiation tab, unlock their Magic attribute or receive any of the Magical skills. Incompatible with improvements that enable the Complex Forms and Sprites tab.</page>
+    </improvement>
+    <improvement>
+      <name>Enable Technomancer Tab</name>
+      <id>enabletechnomancertab</id>
+      <internal>enabletab</internal>
+      <xml><![CDATA[<name>technomancer</name>]]></xml>
+      <page>Enables the character's 'Complex Forms and Sprites' tab, allowing them to purchase Complex Forms and compile Sprites. The character is flagged as a Technomancer for the purposes of quality requirements, but does not receive access to the Submersion tab, unlock their Resonance attribute or receive any of the Resonance skills. Incompatible with improvements that enable the Spells and Spirits tab.</page>
+    </improvement>
+    <improvement>
+      <name>Force Disable Initiation/Submersion Tab</name>
+      <id>disableinitiationtab</id>
+      <internal>disabletab</internal>
+      <xml><![CDATA[<name>initiation</name>]]></xml>
+      <page>Forcibly disables the character's Initiation or Submersion tab, forbidding them from getting metamagics or echoes.</page>
+    </improvement>
+    <improvement>
+      <name>Enable Critter Tab</name>
+      <id>enablecrittertab</id>
+      <internal>enabletab</internal>
+      <xml><![CDATA[<name>critter</name>]]></xml>
+      <page>Enables the character's Critter Powers tab, allowing them to buy critter powers. The character is flagged as a Critter.</page>
+    </improvement>
+    <improvement>
+      <name>Cyber-Singularity Seeker/Redliner (Attribute)</name>
+      <id>cyberseeker</id>
+      <internal>cyberseeker</internal>
+      <fields>
+        <field>SelectAttribute</field>
+      </fields>
+      <xml><![CDATA[{select}]]></xml>
+      <page>Grants bonuses to the specified attribute based on the number of cyberlimbs a character has. Special attributes are invalid</page>
+    </improvement>
+    <improvement>
+      <name>Cyber-Singularity Seeker/Redliner (Condition Monitor)</name>
+      <id>cyberseeker</id>
+      <internal>cyberseeker</internal>
+      <xml><![CDATA[BOX]]></xml>
+      <page>Grants bonuses to the character's physical Condition Monitor based on the number of cyberlimbs a character has. See Redliner in Chrome Flesh for more details.</page>
+    </improvement>
+    <improvement>
+      <name>Condition Monitor, Physical</name>
+      <id>conditionmonitorphysical</id>
+      <internal>conditionmonitor</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<physical>{val}</physical>]]></xml>
+      <page>Adjusts the number of boxes the character has in their Physical Condition Monitor. Positive numbers increase the number of boxes in the Condition Monitor. Negative numbers reduce the number of boxes in the Condition Monitor.</page>
+    </improvement>
+    <improvement>
+      <name>Condition Monitor, Stun</name>
+      <id>conditionmonitorstun</id>
+      <internal>conditionmonitor</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<stun>{val}</stun>]]></xml>
+      <page>Adjusts the number of boxes the character has in their Stun Condition Monitor. Positive numbers increase the number of boxes in the Condition Monitor. Negative numbers reduce the number of boxes in the Condition Monitor.</page>
+    </improvement>
+    <improvement>
+      <name>Condition Monitor, Threshold</name>
+      <id>conditionmonitorthreshold</id>
+      <internal>conditionmonitor</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<threshold>{val}</threshold>]]></xml>
+      <page>Adjusts the number of boxes between each Condition Monitor Threshold. Positive numbers increase the number of boxes between each Threshold. Negative numbers reduce the number of boxes between each Threshold.</page>
+    </improvement>
+    <improvement>
+      <name>Condition Monitor, Threshold Offset</name>
+      <id>conditionmonitoroffset</id>
+      <internal>conditionmonitor</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<thresholdoffset>{val}</thresholdoffset>]]></xml>
+      <page>Adjusts the number of boxes between the start of each Condition Monitor and the first Threshold. Positive numbers increase the starting position of the first Threshold. Negative numbers reduce the starting position of each Threshold.</page>
+    </improvement>
+    <improvement>
+      <name>Block Skillgroup Defaulting</name>
+      <id>blockskillgroupdefaulting</id>
+      <internal>blockskillgroupdefaulting</internal>
+      <fields>
+        <field>SelectSkillGroup</field>
+      </fields>
+      <xml><![CDATA[]]></xml>
+      <page>Prevents the character from seeing dicepool values for skills in the selected skillgroup.</page>
+    </improvement>
+    <improvement>
+      <name>Attribute Level</name>
+      <id>attributelevel</id>
+      <internal>attributelevel</internal>
+      <fields>
+        <field>SelectAttribute</field>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><val>{val}</val>]]></xml>
+      <page>Adds to the selected attribute's base Value, increasing Karma costs for subsequent purchases.</page>
+    </improvement>
+    <improvement>
+      <name>Skill Level</name>
+      <id>skilllevel</id>
+      <internal>skilllevel</internal>
+      <fields>
+        <field>SelectSkill</field>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><val>{val}</val>]]></xml>
+      <page>Adds to the selected attribute's base Value, increasing Karma costs for subsequent purchases.</page>
+    </improvement>
+    <improvement>
+      <name>KnowSoft</name>
+      <id>knowsoft</id>
+      <internal>knowsoft</internal>
+      <fields>
+        <field>SelectKnowSkill</field>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><val>{val}</val><require>skilljack</require>]]></xml>
+      <page>Creates a Knowledge Skill that requires the skillsoftaccess improvement to be activated.</page>
+    </improvement>
+    <improvement>
+      <name>Adept Power</name>
+      <id>specificpower</id>
+      <internal>specificpower</internal>
+      <fields>
+        <field>SelectAdeptPower</field>
+        <field>val</field>
+        <field>free</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><val>{val}</val><free>{free}</free>]]></xml>
+      <page>Creates a free Adept Power. If the selected power already exists, the power will either be marked as free, or have free levels added to it.</page>
+    </improvement>
+    <improvement>
+      <name>Living Persona, Device Rating</name>
+      <id>livingpersonadevicerating</id>
+      <internal>livingpersona</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<devicerating>{val}</devicerating>]]></xml>
+      <page>Adjusts the Living Persona's Device Rating by the value entered. Positive numbers improve the Device Rating. Negative numbers reduce the Device Rating. You may enter XPath operations as well. This has no effect on characters that do not have a Living Persona.</page>
+    </improvement>
+    <improvement>
+      <name>Living Persona, Program Limit</name>
+      <id>livingpersonaprogramlimit</id>
+      <internal>livingpersona</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<programlimit>{val}</programlimit>]]></xml>
+      <page>Adjusts the Living Persona's Program Limit by the value entered. Positive numbers improve the Program Limit. Negative numbers reduce the Program Limit. You may enter XPath operations as well. This has no effect on characters that do not have a Living Persona.</page>
+    </improvement>
+    <improvement>
+      <name>Living Persona, Attack</name>
+      <id>livingpersonaattack</id>
+      <internal>livingpersona</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<attack>{val}</attack>]]></xml>
+      <page>Adjusts the Living Persona's Attack by the value entered. Positive numbers improve Attack. Negative numbers reduce Attack. You may enter XPath operations as well. This has no effect on characters that do not have a Living Persona.</page>
+    </improvement>
+    <improvement>
+      <name>Living Persona, Sleaze</name>
+      <id>livingpersonasleaze</id>
+      <internal>livingpersona</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<sleaze>{val}</sleaze>]]></xml>
+      <page>Adjusts the Living Persona's Sleaze by the value entered. Positive numbers improve Sleaze. Negative numbers reduce Sleaze. You may enter XPath operations as well. This has no effect on characters that do not have a Living Persona.</page>
+    </improvement>
+    <improvement>
+      <name>Living Persona, Data Processing</name>
+      <id>livingpersonadataprocessing</id>
+      <internal>livingpersona</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<dataprocessing>{val}</dataprocessing>]]></xml>
+      <page>Adjusts the Living Persona's Data Processing by the value entered. Positive numbers improve Data Processing. Negative numbers reduce Data Processing. You may enter XPath operations as well. This has no effect on characters that do not have a Living Persona.</page>
+    </improvement>
+    <improvement>
+      <name>Living Persona, Firewall</name>
+      <id>livingpersonafirewall</id>
+      <internal>livingpersona</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<firewall>{val}</firewall>]]></xml>
+      <page>Adjusts the Living Persona's Firewall by the value entered. Positive numbers improve Firewall. Negative numbers reduce Firewall. You may enter XPath operations as well. This has no effect on characters that do not have a Living Persona.</page>
+    </improvement>
+    <improvement>
+      <name>Skill</name>
+      <id>specificskill</id>
+      <internal>specificskill</internal>
+      <fields>
+        <field>SelectSkill</field>
+        <field>val</field>
+        <field>applytorating</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><bonus>{val}</bonus>{applytorating}]]></xml>
+      <page>Adjusts the value for one of the character's Skills by the value entered. Positive numbers increase the Skill. Negative numbers decrease the Skill. Select a Skill to affect by clicking the Select Value button. The modifier can be applied to the Skill's Rating by selecting Apply to Rating, otherwise the modifier is applied as a dice pool modifier.</page>
+    </improvement>
+    <improvement>
+      <name>Skills in Category</name>
+      <id>skillcategory</id>
+      <internal>skillcategory</internal>
+      <fields>
+        <field>SelectSkillCategory</field>
+        <field>val</field>
+        <field>applytorating</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><bonus>{val}</bonus>{applytorating}]]></xml>
+      <page>Adjusts the value for all of the Skills in one category by the value entered. Positive numbers increase the Skills. Negative numbers decrease the Skills. Select a Skill category to affect by clicking the Select Value button. The modifier can be applied to the Skills' Ratings by selecting Apply to Rating, otherwise the modifier is applied as a dice pool modifier.</page>
+    </improvement>
+    <improvement>
+      <name>Skills in Group</name>
+      <id>skillgroup</id>
+      <internal>skillgroup</internal>
+      <fields>
+        <field>SelectSkillGroup</field>
+        <field>val</field>
+        <field>applytorating</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><bonus>{val}</bonus>{applytorating}]]></xml>
+      <page>Adjusts the value for all of the Skills in a Skill Group by the value entered. Positive numbers increase the Skills. Negative numbers decrease the Skills. Select a Skill Group to affect by clicking the Select Value button. The modifier can be applied to the Skills' Ratings by selecting Apply to Rating, otherwise the modifier is applied as a dice pool modifier.</page>
+    </improvement>
+    <improvement>
+      <name>Skills linked to Attribute</name>
+      <id>skillattribute</id>
+      <internal>skillattribute</internal>
+      <fields>
+        <field>SelectAttribute</field>
+        <field>val</field>
+        <field>applytorating</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><bonus>{val}</bonus>{applytorating}]]></xml>
+      <page>Adjusts the value for all of the Skills linked to an Attribute by the value entered. Positive numbers increase the Skills. Negative numbers decrease the Skills. Select a linked Attribute to affect by clicking the Select Value button. The modifier can be applied to the Skills' Ratings by selecting Apply to Rating, otherwise the modifier is applied as a dice pool modifier.</page>
+    </improvement>
+    <improvement>
+      <name>Armor</name>
+      <id>armor</id>
+      <internal>armor</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Armor Rating by the value entered. Positive numbers improve Armor. Negative numbers reduce Armor.</page>
+    </improvement>
+    <improvement>
+      <name>Reach</name>
+      <id>reach</id>
+      <internal>reach</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Reach by the value entered. Positive numbers increase Reach. Negative numbers reduce Reach.</page>
+    </improvement>
+    <improvement>
+      <name>Unarmed DV</name>
+      <id>unarmeddv</id>
+      <internal>unarmeddv</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the Damage Value for a character's Unarmed Attacks by the value entered. Positive numbers increase the Damage Value. Negative numbers decrease the Damage Value.</page>
+    </improvement>
+    <improvement>
+      <name>Unarmed DV Physical</name>
+      <id>unarmeddvphysical</id>
+      <internal>unarmeddvphysical</internal>
+      <xml />
+      <page>All of the character's Unarmed Attacks will do Physical damage instead of Stun damage.</page>
+    </improvement>
+    <improvement>
+      <name>Unarmed AP</name>
+      <id>unarmedap</id>
+      <internal>unarmedap</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the Armor Penetration value for a character's Unarmed Attacks by the value entered. Positive numbers reduce Armor Penetration. Negative numbers increase Armor Penetration.</page>
+    </improvement>
+    <improvement>
+      <name>Initiative</name>
+      <id>initiative</id>
+      <internal>initiative</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Initiative by the value entered. Positive numbers increase Initiative. Negative numbers reduce Initiative.</page>
+    </improvement>
+    <improvement>
+      <name>Initiative Dice</name>
+      <id>initiativediceadd</id>
+      <internal>initiativediceadd</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the number of Initiative Dice the character receives by the value entered. Positive numbers increase the number of Initiative Dice. Negative numbers reduce the number of Initiative Dice.</page>
+    </improvement>
+    <improvement>
+      <name>Matrix Initiative</name>
+      <id>matrixinitiative</id>
+      <internal>matrixinitiative</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Matrix Initiative by the value entered. Positive numbers increase Matrix Initiative. Negative numbers reduce Matrix Initiative.</page>
+    </improvement>
+    <improvement>
+      <name>Matrix Initiative Passes</name>
+      <id>matrixinitiativediceadd</id>
+      <internal>matrixinitiativediceadd</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the number of Matrix Initiative Passes the character receives by the value entered. Positive numbers increase the number of Matrix Initiative Passes. Negative numbers reduce the number of Matrix Initiative Passes.</page>
+    </improvement>
+    <improvement>
+      <name>Lifestyle Cost</name>
+      <id>lifestylecost</id>
+      <internal>lifestylecost</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the Nuyen cost of all Lifestyles by the percent value entered. All Lifestyles will now cost an additional X% per month. Positive number increase the Lifestyle's monthly Nuyen cost. Negative numbers reduce the Lifestyle's monthly Nuyen cost.</page>
+    </improvement>
+    <improvement>
+      <name>Genetech Cost</name>
+      <id>genetechcostmultiplier</id>
+      <internal>genetechcostmultiplier</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the Nuyen cost of Bioware in the Genetech categories by the percent value entered. All Genetech Nuyen costs will now be X% of their original value. Numbers lower than 100 reduce the Nuyen cost. Numbers higher than 100 increase the Nuyen cost.</page>
+    </improvement>
+    <improvement>
+      <name>Basic Bioware Essence Cost</name>
+      <id>basicbiowareessmultiplier</id>
+      <internal>basicbiowareessmultiplier</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the Essence cost of Bioware in the Basic category by the percent value entered. All Basic Bioware Essence costs will now be X% of their original value. Numbers lower than 100 reduce the Essence cost. Numbers higher than 100 increase the Essence cost.</page>
+    </improvement>
+    <improvement>
+      <name>Bioware Essence Cost</name>
+      <id>biowareessmultiplier</id>
+      <internal>biowareessmultiplier</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the Essence cost of Bioware by the percent value entered. All Bioware Essence costs will now be X% of their original value. Numbers lower than 100 reduce the Essence cost. Numbers higher than 100 increase the Essence cost.</page>
+    </improvement>
+    <improvement>
+      <name>Genetech Essence Cost</name>
+      <id>genetechessmultiplier</id>
+      <internal>genetechessmultiplier</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the Essence cost of Genetech by the percent value entered. All Genetech Essence costs will now be X% of their original value. Numbers lower than 100 reduce the Essence cost. Numbers higher than 100 increase the Essence cost.</page>
+    </improvement>
+    <improvement>
+      <name>Cyberware Essence Cost</name>
+      <id>cyberwareessmultiplier</id>
+      <internal>cyberwareessmultiplier</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the Essence cost of Cyberware by the percent value entered. All Cyberware Essence costs will now be X% of their original value. Numbers lower than 100 reduce the Essence cost. Numbers higher than 100 increase the Essence cost.</page>
+    </improvement>
+    <improvement>
+      <name>Weapon Category DV</name>
+      <id>weaponcategorydv</id>
+      <internal>weaponcategorydv</internal>
+      <fields>
+        <field>SelectWeaponCategory</field>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><bonus>{val}</bonus>]]></xml>
+      <page>Adjusts the Damage Value of all Weapons in the selected category by the value entered. Positive numbers increase Weapon Damage Value. Negative numbers decrease Weapon Damage Value.</page>
+    </improvement>
+    <improvement>
+      <name>Power Points, Free Spirit</name>
+      <id>freespiritpowerpoints</id>
+      <internal>freespiritpowerpoints</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the number of Power Points a Free Spirit receives to spend on Critter Powers by the value entered. Positive numbers increase the number of Power Points. Negative numbers decrease the number of Power Points. This has no effect on non-Free Spirit characters.</page>
+    </improvement>
+    <improvement>
+      <name>Power Points, Adept</name>
+      <id>adeptpowerpoints</id>
+      <internal>adeptpowerpoints</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the number of Power Points an Adept receives to spend on Adept Powers by the value entered. Positive numbers increase the number of Power Points. Negative numbers decrease the number of Power Points. This has no effect on non-Adept characters.</page>
+    </improvement>
+    <improvement>
+      <name>Armor Encumbrance Penalty</name>
+      <id>armorencumbrancepenalty</id>
+      <internal>armorencumbrancepenalty</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Armor Encumbrance penalty by the value entered. Positive numbers increase the Armor Encumbrance penalty (bad). Negative numbers decrease the Armor Encumbrance penalty (good).</page>
+    </improvement>
+    <improvement>
+      <name>Damage Resistance</name>
+      <id>damageresistance</id>
+      <internal>damageresistance</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the size of the character's Damage Resistance Test dice pool by the value entered. Positive numbers increase the size of the pool. Negative numbers decrease the size of the pool.</page>
+    </improvement>
+    <improvement>
+      <name>Judge Intentions</name>
+      <id>judgeintentions</id>
+      <internal>judgeintentions</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Judge Intentions Special Attribute by the value entered. Positive numbers improve Judge Intentions. Negative numbers reduce Judge Intentions.</page>
+    </improvement>
+    <improvement>
+      <name>Composure</name>
+      <id>composure</id>
+      <internal>composure</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Composure Special Attribute by the value entered. Positive numbers improve Composure. Negative numbers reduce Composure.</page>
+    </improvement>
+    <improvement>
+      <name>Lift and Carry</name>
+      <id>liftandcarry</id>
+      <internal>liftandcarry</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Lift and Carry Special Attribute by the value entered. Positive numbers improve Lift and Carry. Negative numbers reduce Lift and Carry.</page>
+    </improvement>
+    <improvement>
+      <name>Memory</name>
+      <id>memory</id>
+      <internal>memory</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Memory Special Attribute by the value entered. Positive numbers improve Memory. Negative numbers reduce Memory.</page>
+    </improvement>
+    <improvement>
+      <name>Concealability</name>
+      <id>concealability</id>
+      <internal>concealability</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's ability to conceal Weapons by the value entered. This bonus applies to the Concealability of all Weapons. Positive values improve Concealability. Negative values reduce Concealability.</page>
+    </improvement>
+    <improvement>
+      <name>Drain Resistance</name>
+      <id>drainresist</id>
+      <internal>drainresist</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the size of the character's Drain Resistance pool by the value entered. Positive values increase the size of the pool. Negative values decrease the size of the pool.</page>
+    </improvement>
+    <improvement>
+      <name>Fading Resistance</name>
+      <id>fadingresist</id>
+      <internal>fadingresist</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the size of the character's Fading Resistance pool by the value entered. Positive values increase the size of the pool. Negative values decrease the size of the pool.</page>
+    </improvement>
+    <improvement>
+      <name>Spells in Category</name>
+      <id>spellcategory</id>
+      <internal>spellcategory</internal>
+      <fields>
+        <field>SelectSpellCategory</field>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><val>{val}</val>]]></xml>
+      <page>Adjusts the size of the character's Spellcasting pool when casting Spell in the selected category. Positive values improve Spellcasting. Negative values reduce Spellcasting.</page>
+    </improvement>
+    <improvement>
+      <name>Specific Spell Dicepool</name>
+      <id>spelldicepool</id>
+      <internal>spelldicepool</internal>
+      <fields>
+        <field>SelectSpell</field>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><val>{val}</val>]]></xml>
+      <page>Adjusts the size of the character's Spellcasting pool when casting the Spell with the selected name. Positive values improve Spellcasting. Negative values reduce Spellcasting.</page>
+    </improvement>
+    <improvement>
+      <name>Skillsoft Access</name>
+      <id>skillsoftaccess</id>
+      <internal>skillsoftaccess</internal>
+      <xml />
+      <page>The character can use Knowsoft and Linguasoft Skillsofts as though they had a direct neural link.</page>
+    </improvement>
+    <improvement>
+      <name>Essence Maximum</name>
+      <id>essencemax</id>
+      <internal>essencemax</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Maximum Essence by the value entered. Positive values increase Maximum Essence. Negative values decrease Maximum Essence.</page>
+    </improvement>
+    <improvement>
+      <name>Throwing Weapon Range</name>
+      <id>throwrange</id>
+      <internal>throwrange</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts a character's STR for the purpose of determining the range of Throwing Weapons. Positive numbers increase the character's effective STR. Negative numbers reduce the character's effective STR.</page>
+    </improvement>
+    <improvement>
+      <name>Skillwire Rating</name>
+      <id>skillwire</id>
+      <internal>skillwire</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Grants the character access to Skillwires at the specified Rating which limits the effective Rating of all Skillsofts the character takes.</page>
+    </improvement>
+    <improvement>
+      <name>Swap Skill Attribute (Physical for Mental)</name>
+      <id>swapskillattribute</id>
+      <internal>swapskillattribute</internal>
+      <fields>
+        <field>SelectPhysicalAttribute</field>
+      </fields>
+      <xml><![CDATA[<attribute>{select}</attribute>]]></xml>
+      <page>Swaps the Physical Attribute used by Active Skills with the corresponding Mental Attribute as described in the Astral Attributes table on SR4 192. (AGI/LOG; BOD/WIL; REA/INT; STR/CHA)</page>
+    </improvement>
+    <improvement>
+      <name>Quickening</name>
+      <id>quickeningmetamagic</id>
+      <internal>quickeningmetamagic</internal>
+      <xml />
+      <page>Grants the character access to Quickening in the same manner as the Quickening Metamagic.</page>
+    </improvement>
+    <improvement>
+      <name>Basic Lifestyle Cost</name>
+      <id>basiclifestylecost</id>
+      <internal>basiclifestylecost</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the Nuyen cost of all basic Lifestyles by the percent value entered. All basic Lifestyles will now cost an additional X% per month. Basic Lifestyles are only those found in the SR4 book and do not include Advanced Lifestyles, Safehouses, or Bolt Holes. Positive number increase the basic Lifestyle's monthly Nuyen cost. Negative numbers reduce the basic Lifestyle's monthly Nuyen cost.</page>
+    </improvement>
+    <improvement>
+      <name>Throwing Weapon STR</name>
+      <id>throwstr</id>
+      <internal>throwstr</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts a character's STR for the purpose of determining the DV of Throwing Weapons. Positive numbers increase the character's effective STR. Negative numbers reduce the character's effective STR.</page>
+    </improvement>
+    <improvement>
+      <name>Knowledge Skill</name>
+      <id>specificknowskill</id>
+      <internal>specificskill</internal>
+      <fields>
+        <field>SelectKnowSkill</field>
+        <field>val</field>
+        <field>applytorating</field>
+      </fields>
+      <xml><![CDATA[<name>{select}</name><bonus>{val}</bonus>{applytorating}]]></xml>
+      <page>Adjusts the value for one of the character's Knowledge Skills by the value entered. Positive numbers increase the Knowledge Skill. Negative numbers decrease the Knowledge Skill. Select a Knowledge Skill to affect by clicking the Select Value button. The modifier can be applied to the Knowledge Skill's Rating by selecting Apply to Rating, otherwise the modifier is applied as a dice pool modifier.</page>
+    </improvement>
+    <improvement>
+      <name>Enable Skill Movement</name>
+      <id>skillenablemovement</id>
+      <internal>skillenablemovement</internal>
+      <fields>
+        <field>SelectSkill</field>
+      </fields>
+      <xml><![CDATA[{select}]]></xml>
+      <page>Enables a skill that requires fly or swim movement even if the character doesn't have that movement type. This allows skills like Flight to be used even without a flight speed, or Swimming to be used without a swim speed.</page>
+    </improvement>
+    <improvement>
+      <name>Ignore Condition Monitor Penalty, Stun</name>
+      <id>ignorecmpenaltystun</id>
+      <internal>ignorecmpenaltystun</internal>
+      <xml />
+      <page>Reduces the characters Stun Condition Monitor Penalty to 0 while the Improvement is active.</page>
+    </improvement>
+    <improvement>
+      <name>Ignore Condition Monitor Penalty, Physical</name>
+      <id>ignorecmpenaltyphysical</id>
+      <internal>ignorecmpenaltyphysical</internal>
+      <xml />
+      <page>Reduces the characters Physical Condition Monitor Penalty to 0 while the Improvement is active.</page>
+    </improvement>
+    <improvement>
+      <name>Street Cred Multiplier</name>
+      <id>streetcredmultiplier</id>
+      <internal>streetcredmultiplier</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Increases or reduces the multiplier used to calculate Street Cred.</page>
+    </improvement>
+    <improvement>
+      <name>Bonus Street Cred</name>
+      <id>streetcred</id>
+      <internal>streetcred</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Increases the character's Street Cred by the listed value.</page>
+    </improvement>
+    <improvement>
+      <name>Dodge</name>
+      <id>dodge</id>
+      <internal>dodge</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Increases the character's Dodge pool by the listed value.</page>
+    </improvement>
+    <improvement>
+      <name>Enable Cyberzombie Conversion</name>
+      <id>enablecyberzombie</id>
+      <internal>enablecyberzombie</internal>
+      <xml />
+      <page>Allows the character to be converted into a Cyberzombie.</page>
+    </improvement>
+    <improvement>
+      <name>Free Spells</name>
+      <id>freespells</id>
+      <internal>freespells</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Allows the character to mark some spells as Free, avoiding Karma costs.</page>
+    </improvement>
+    <improvement>
+      <name>Mental Limit</name>
+      <id>mentallimit</id>
+      <internal>mentallimit</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Mental Limit by the listed value.</page>
+    </improvement>
+    <improvement>
+      <name>Physical Limit</name>
+      <id>physicallimit</id>
+      <internal>physicallimit</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Physical Limit by the listed value.</page>
+    </improvement>
+    <improvement>
+      <name>Social Limit</name>
+      <id>sociallimit</id>
+      <internal>sociallimit</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Social Limit by the listed value.</page>
+    </improvement>
+    <improvement>
+      <name>Walk Multiplier</name>
+      <id>walkmultiplier</id>
+      <internal>walkmultiplier</internal>
+      <fields>
+        <field xml="improvements.xml" xpath="/chummer/movementcategories/category">SelectXPath</field>
+        <field>val</field>
+        <field>percent</field>
+      </fields>
+      <xml><![CDATA[<category>{select}</category><val>{val}</val><percent>{percent}</percent>]]></xml>
+      <page>Increases the walking speed of a character for a particular category of movement. Positive numbers increase the factor by which attributes are multiplied to get walking speeds. Negative numbers decrease the factor by which attributes are multiplied to get walking speeds. Category can be Ground, Swim, or Fly for walking speed on land, in water, and in the air respectively. Value increases the walking factor by a fixed amount. Percent increases the walking factor by a percentage amount. Fields may be left at 0 if you do not want to affect walking speed in that particular way.</page>
+    </improvement>
+    <improvement>
+      <name>Run Multiplier</name>
+      <id>runmultiplier</id>
+      <internal>runmultiplier</internal>
+      <fields>
+        <field xml="improvements.xml" xpath="/chummer/movementcategories/category">SelectXPath</field>
+        <field>val</field>
+        <field>percent</field>
+      </fields>
+      <xml><![CDATA[<category>{select}</category><val>{val}</val><percent>{percent}</percent>]]></xml>
+      <page>Increases the running speed of a character for a particular category of movement. Positive numbers increase the factor by which attributes are multiplied to get running speeds. Negative numbers decrease the factor by which attributes are multiplied to get running speeds. Category can be Ground, Swim, or Fly for running speed on land, in water, and in the air respectively. Value increases the running factor by a fixed amount. Percent increases the running factor by a percentage amount. Fields may be left at 0 if you do not want to affect running speed in that particular way.</page>
+    </improvement>
+    <improvement>
+      <name>Sprint Bonus</name>
+      <id>sprintbonus</id>
+      <internal>sprintbonus</internal>
+      <fields>
+        <field xml="improvements.xml" xpath="/chummer/movementcategories/category">SelectXPath</field>
+        <field>val</field>
+        <field>percent</field>
+      </fields>
+      <xml><![CDATA[<category>{select}</category><val>{val}</val><percent>{percent}</percent>]]></xml>
+      <page>Increases the sprinting speed of a character for a particular category of movement. Positive numbers increase the number of meters sprinted per hit. Negative numbers decrease the number of meters sprinted per hit. Category can be Ground, Swim, or Fly for sprinting speed on land, in water, and in the air respectively. Value increases sprinted meters per hit by a fixed amount. Percent increases the sprinted meters per hit by a percentage amount. Fields may be left at 0 if you do not want to affect sprinting speed in that particular way.</page>
+    </improvement>
+    <improvement>
+      <name>Add Metamagic</name>
+      <id>addmetamagic</id>
+      <internal>addmetamagic</internal>
+      <fields>
+        <field>SelectMetamagic</field>
+      </fields>
+      <xml forced="True"><![CDATA[{select}]]></xml>
+      <page>Adds a free metamagic to the character. Any metamagic can be added, even ones for which the character would not be normally eligible.</page>
+    </improvement>
+    <improvement>
+      <name>Add Echo</name>
+      <id>addecho</id>
+      <internal>addecho</internal>
+      <fields>
+        <field>SelectEcho</field>
+      </fields>
+      <xml forced="True"><![CDATA[{select}]]></xml>
+      <page>Adds a free echo to the character. Any echo can be added, even ones for which the character would not be normally eligible.</page>
+    </improvement>
+    <improvement>
+      <name>Add Spell</name>
+      <id>addspell</id>
+      <internal>addspell</internal>
+      <fields>
+        <field>SelectSpell</field>
+      </fields>
+      <xml forced="True"><![CDATA[{select}]]></xml>
+      <page>Adds a free spell to the character. Any spell can be added, even ones for which the character would not be normally eligible.</page>
+    </improvement>
+    <improvement>
+      <name>Add Complex Form</name>
+      <id>addcomplexform</id>
+      <internal>addcomplexform</internal>
+      <fields>
+        <field>SelectComplexForm</field>
+      </fields>
+      <xml forced="True"><![CDATA[{select}]]></xml>
+      <page>Adds a free Complex Form to the character. Any Complex Form can be added, even ones for which the character would not be normally eligible.</page>
+    </improvement>
+    <improvement>
+      <name>Add Spirit</name>
+      <id>addspirit</id>
+      <internal>addspirit</internal>
+      <fields>
+        <field xml="traditions.xml" xpath="/chummer/spirits/spirit">SelectXPath</field>
+      </fields>
+      <xml forced="True"><![CDATA[<spirit>{select}</spirit>]]></xml>
+      <page>Adds a spirit type to the available spirits a character can summon. The selection is filtered from the spirits defined in traditions.xml using an xpath filter.</page>
+    </improvement>
+    <improvement>
+      <name>Add Sprite</name>
+      <id>addsprite</id>
+      <internal>addsprite</internal>
+      <fields>
+        <field xml="streams.xml" xpath="/chummer/spirits/spirit">SelectXPath</field>
+      </fields>
+      <xml forced="True"><![CDATA[<spirit>{select}</spirit>]]></xml>
+      <page>Adds a sprite type to the available sprites a character can compile. The selection is filtered from the sprites defined in streams.xml using an xpath filter.</page>
+    </improvement>
+    <improvement>
+      <name>Surprise</name>
+      <id>surprise</id>
+      <internal>surprise</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the character's Surprise dicepool by the value entered. Positive numbers improve the dicepool. Negative numbers reduce the dicepool.</page>
+    </improvement>
+    <improvement>
+      <name>Availability</name>
+      <id>availability</id>
+      <internal>availability</internal>
+      <fields>
+        <field>val</field>
+      </fields>
+      <xml><![CDATA[{val}]]></xml>
+      <page>Adjusts the availability of all of the character's items by the value entered. Positive numbers increase availability. Negative numbers reduce availability.</page>
+    </improvement>
+  </improvements>
+  <movementcategories>
+    <category>
+      <name>Ground</name>
+    </category>
+    <category>
+      <name>Swim</name>
+    </category>
+    <category>
+      <name>Fly</name>
+    </category>
+  </movementcategories>
+</chummer>

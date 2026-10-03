@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--This file is part of Chummer5a.
+
+    Chummer5a is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Chummer5a is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Chummer5a.  If not, see <http://www.gnu.org/licenses/>.
+
+    You can obtain the full source code for Chummer5a at
+    https://github.com/chummer5a/chummer5a
+-->
+<chummer>
+  <qualities>
+    <quality>
+      <bonus xpathfilter="skillgroupdisable = 'Enchanting' and not(skilldisable = 'Alchemy')">
+        <skilldisable amendoperation="addnode">Alchemy</skilldisable>
+      </bonus>
+      <bonus xpathfilter="skilldisable = 'Ritual Spellcasting' and skilldisable = 'Counterspelling'">
+        <skilldisable amendoperation="addnode">Ceremony</skilldisable>
+      </bonus>
+      <bonus xpathfilter="specificskill/name = 'Escape Artist' and not(specificskill/name = 'Gymnastics')">
+        <specificskill xpathfilter="name = 'Escape Artist'">
+          <name>Acrobatics</name>
+          <condition>Contortion</condition>
+        </specificskill>
+      </bonus>
+      <bonus xpathfilter="specificskill/name = 'Free-Fall' and not(specificskill/name = 'Gymnastics')">
+        <specificskill xpathfilter="name = 'Free-Fall'">
+          <name>Acrobatics</name>
+          <condition>Falling/Free-Falling</condition>
+        </specificskill>
+      </bonus>
+      <bonus xpathfilter="specificskill/name = 'Diving' and not(specificskill/name = 'Swimming')">
+        <specificskill xpathfilter="name = 'Diving'">
+          <name>Aquatics</name>
+          <condition>Diving</condition>
+        </specificskill>
+      </bonus>
+      <bonus xpathfilter="specificskill/name = 'Tracking' and not(specificskill/name = 'Navigation')">
+        <specificskill xpathfilter="name = 'Tracking'">
+          <name>Query</name>
+          <condition>Tailing/Tracking</condition>
+        </specificskill>
+      </bonus>
+      <bonus xpathfilter="specificskill/name = 'Artificing' and not(specificskill/name = 'Arcana')">
+        <specificskill xpathfilter="name = 'Artificing'">
+          <name>Arcana</name>
+          <condition>Artificing</condition>
+        </specificskill>
+      </bonus>
+      <bonus xpathfilter="specificskill/name = 'Disenchanting' and not(specificskill/name = 'Arcana')">
+        <specificskill xpathfilter="name = 'Disenchanting'">
+          <name>Arcana</name>
+          <condition>Disenchanting</condition>
+        </specificskill>
+      </bonus>
+      <bonus xpathfilter="selectskill[@limittoskill = 'Artisan,Performance']/val = '1'">
+        <specificskill amendoperation="addnode">
+          <name>Performance</name>
+          <bonus>1</bonus>
+        </specificskill>
+      </bonus>
+      <bonus>
+        <specificskill xpathfilter="name = 'Escape Artist' or name = 'Free-Fall' or name = 'Perception' or name = 'Diving' or name = 'Tracking' or name = 'Artificing' or name = 'Disenchanting' or name = 'Exotic Melee Weapon'" amendoperation="remove" />
+        <selectskill xpathfilter="@limittoskill = 'Artisan,Performance' and val = '1'" amendoperation="remove" />
+        <specificskill xpathfilter="name = 'Assensing'">
+          <name>Astral</name>
+          <condition>Assensing</condition>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Astral Combat'">
+          <name>Astral</name>
+          <condition>Astral Combat</condition>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Running'">
+          <name>Athletics</name>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Gymnastics'">
+          <name>Acrobatics</name>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Swimming'">
+          <name>Aquatics</name>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Navigation'">
+          <name>Query</name>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Etiquette'">
+          <name>Socialize</name>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Intimidation'">
+          <name>Command</name>
+          <condition>Intimidate/Interrogate</condition>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Leadership'">
+          <name>Command</name>
+          <condition>Leadership</condition>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Negotiation' or name = 'Con'">
+          <name>Persuade</name>
+        </specificskill>
+        <specificskill xpathfilter="name = 'Ritual Spellcasting'">
+          <name>Ceremony</name>
+        </specificskill>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Artisan)'" amendoperation="remove" />
+        <unlockskills xpathfilter="@name = 'Assensing' or @name = 'Astral Combat'" amendoperation="replace" name="Astral">Name</unlockskills>
+        <skillgroup xpathfilter="name = 'Electronics'">
+          <name>Computers</name>
+        </skillgroup>
+        <skillcategory xpathfilter="exclude">
+          <exclude xpathfilter=". = 'Intimidation'" amendoperation="remove" />
+        </skillcategory>
+        <weaponcategorydv>
+          <selectskill xpathfilter="@limittoskill='Astral Combat,Blades,Clubs,Exotic Melee Weapon,Unarmed Combat'" amendoperation="replace" limittoskill="Astral,Edged Weapons,Blunt Weapons,Unarmed Combat" />
+        </weaponcategorydv>
+        <skilldisable xpathfilter=". = 'Ritual Spellcasting' or . = 'Artificing' or . = 'Disenchanting'" amendoperation="remove" />
+        <skillgroupdisable xpathfilter=". = 'Enchanting'" amendoperation="remove" />
+        <selectskill xpathfilter="@limittoskill='Compiling, Computer, Cybercombat, Decompiling, Electronic Warfare, Hacking, Registering, Software'" amendoperation="replace" limittoskill="Compiling, Decompiling, Registering, Threading, Counterthreading, Nesting, Matrix, Cyberwarfare, Software" />
+      </bonus>
+      <bonus xpathfilter="unlockskills = 'Adept' or unlockskills = 'Aware' or unlockskills = 'Explorer'">
+        <unlockskills amendoperation="addnode" name="Arcana">Name</unlockskills>
+        <unlockskills amendoperation="addnode" name="Astral">Name</unlockskills>
+        <unlockskills amendoperation="addnode" name="Ceremony">Name</unlockskills>
+        <!-- Need to remove nodes last to make sure filter keeps firing -->
+        <unlockskills xpathfilter=". = 'Adept' or . = 'Aware' or . = 'Explorer'" amendoperation="remove" />
+      </bonus>
+      <bonus xpathfilter="unlockskills = 'Sorcery,Conjuring,Enchanting'">
+        <unlockskills amendoperation="addnode" name="Arcana">Name</unlockskills>
+        <unlockskills amendoperation="addnode" name="Astral">Name</unlockskills>
+        <unlockskills amendoperation="addnode" name="Ceremony">Name</unlockskills>
+        <unlockskills amendoperation="addnode" >Sorcery,Conjuring</unlockskills>
+        <!-- Need to remove nodes last to make sure filter keeps firing -->
+        <unlockskills xpathfilter=". = 'Sorcery,Conjuring,Enchanting'" amendoperation="remove" />
+      </bonus>
+      <bonus xpathfilter="not(unlockskills = 'Magician') and unlockskills = 'Sorcery' and unlockskills = 'Conjuring'">
+        <unlockskills amendoperation="addnode" >Magician</unlockskills>
+        <!-- Need to remove nodes last to make sure filter keeps firing -->
+        <unlockskills xpathfilter=". = 'Sorcery' or . = 'Conjuring'" amendoperation="remove" />
+      </bonus>
+      <required>
+        <allof>
+          <skill xpathfilter="name = 'Assensing'">
+            <name>Astral</name>
+            <spec xpathfilter=". = 'Aura Reading'" addifnotfound="False" >Assensing</spec>
+          </skill>
+          <skill xpathfilter="name = 'Industrial Mechanic' or name = 'Artisan'" amendoperation="remove" />
+          <skill xpathfilter="name = 'Leadership'">
+            <name>Command</name>
+          </skill>
+          <skill xpathfilter="name = 'Ritual Spellcasting'">
+            <name>Ceremony</name>
+          </skill>
+        </allof>
+        <oneof>
+          <skill xpathfilter="name = 'Hacking'">
+            <name>Cyberwarfare</name>
+          </skill>
+          <skill xpathfilter="name = 'Palming'">
+            <name>Sleight of Hand</name>
+          </skill>
+          <skill xpathfilter="name = 'Artificing' or name = 'Disenchanting'">
+            <name>Arcana</name>
+          </skill>
+          <skill xpathfilter="name = 'Assensing'">
+            <name>Astral</name>
+            <spec xpathfilter=". = 'Aura Reading'" addifnotfound="False" >Assensing</spec>
+          </skill>
+          <skill xpathfilter="name = 'Astral Combat'">
+            <name>Astral</name>
+            <spec xpathfilter=". = 'Astral Barriers' or . = 'Spirits'" addifnotfound="False" >Astral Combat</spec>
+          </skill>
+          <skill xpathfilter="name = 'Ritual Spellcasting'">
+            <name>Ceremony</name>
+          </skill>
+          <skill xpathfilter="(name = 'Alchemy' or name = 'Spellcasting') and spec" amendoperation="remove" />
+          <group  xpathfilter="skill[(name = 'Alchemy' or name = 'Spellcasting') and spec]" amendoperation="remove" />
+          <group>
+            <skill xpathfilter="name = 'Arcana' and spec = 'Spell Design'">
+              <spec>Arcane Lore</spec>
+            </skill>
+            <skill xpathfilter="name = 'Assensing'">
+              <name>Astral</name>
+              <spec xpathfilter=". = 'Aura Reading'" addifnotfound="False" >Assensing</spec>
+            </skill>
+            <skill xpathfilter="name = 'Ritual Spellcasting'">
+              <name>Ceremony</name>
+            </skill>
+          </group>
+        </oneof>
+      </required>
+    </quality>
+    <quality>
+      <name>The Artisan's Way</name>
+      <bonus>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and (extracontains = 'Improved Ability (skill) (Automotive Mechanic)' or extracontains = 'Improved Ability (skill) (Animal Handling)' or extracontains = 'Improved Ability (skill) (Biotechnology)' or extracontains = 'Improved Ability (skill) (Cybertechnology)' or extracontains = 'Improved Ability (skill) (Forgery)' or extracontains = 'Improved Ability (skill) (Hacking)' or extracontains = 'Improved Ability (skill) (Industrial Mechanic)' or extracontains = 'Improved Ability (skill) (Locksmith)' or extracontains = 'Improved Ability (skill) (Nautical Mechanic)' or extracontains = 'Improved Ability (skill) (Navigation)' or extracontains = 'Improved Ability (skill) (Pilot Exotic Vehicle' or extracontains = 'Improved Ability (skill) (Pilot Aerospace)' or extracontains = 'Improved Ability (skill) (Pilot Aircraft)' or extracontains = 'Improved Ability (skill) (Pilot Ground Craft)' or extracontains = 'Improved Ability (skill) (Pilot Walker)' or extracontains = 'Improved Ability (skill) (Pilot Watercraft)')" amendoperation="remove" />
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Aeronautics Mechanic)'">
+          <extracontains>Improved Ability (skill) (Mechanics)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Computer)'">
+          <extracontains>Improved Ability (skill) (Matrix)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Cybercombat)'">
+          <extracontains>Improved Ability (skill) (Cyberwarfare)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Electronic Warfare)'">
+          <extracontains>Improved Ability (skill) (Combat Tactics)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Hardware)'">
+          <extracontains>Improved Ability (skill) (Electronics)</extracontains>
+        </focusbindingkarmacost>
+      </bonus>
+    </quality>
+    <quality>
+      <name>The Athlete's Way</name>
+      <bonus>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Flight)'" amendoperation="remove" />
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Gymnastics)'">
+          <extracontains>Improved Ability (skill) (Acrobatics)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Running)'">
+          <extracontains>Improved Ability (skill) (Athletics)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Swimming)'">
+          <extracontains>Improved Ability (skill) (Aquatics)</extracontains>
+        </focusbindingkarmacost>
+      </bonus>
+    </quality>
+    <quality>
+      <name>The Invisible Way</name>
+      <bonus>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and (extracontains = 'Improved Ability (skill) (Diving)' or extracontains = 'Improved Ability (skill) (Escape Artist)' or extracontains = 'Improved Ability (skill) (Flight)' or extracontains = 'Improved Ability (skill) (Free-Fall)')" amendoperation="remove" />
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Disguise)'">
+          <extracontains>Improved Ability (skill) (Locksmith)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Gymnastics)'">
+          <extracontains>Improved Ability (skill) (Acrobatics)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Palming)'">
+          <extracontains>Improved Ability (skill) (Sleight of Hand)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Perception)'">
+          <extracontains>Improved Ability (skill) (Animal Handling)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Running)'">
+          <extracontains>Improved Ability (skill) (Athletics)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Swimming)'">
+          <extracontains>Improved Ability (skill) (Aquatics)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Tracking)'">
+          <extracontains>Improved Ability (skill) (Query)</extracontains>
+        </focusbindingkarmacost>
+      </bonus>
+    </quality>
+    <quality>
+      <name>The Speaker's Way</name>
+      <bonus>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and (extracontains = 'Improved Ability (skill) (Intimidation)' or extracontains = 'Improved Ability (skill) (Leadership)')" amendoperation="remove" />
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Etiquette)'">
+          <extracontains>Improved Ability (skill) (Socialize)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Con)'">
+          <extracontains>Improved Ability (skill) (Persuade)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Instruction)'">
+          <extracontains>Improved Ability (skill) (Command)</extracontains>
+        </focusbindingkarmacost>
+        <focusbindingkarmacost xpathfilter="name = 'Qi Focus' and extracontains = 'Improved Ability (skill) (Negotiation)'">
+          <extracontains>Improved Ability (skill) (Persuade)</extracontains>
+        </focusbindingkarmacost>
+      </bonus>
+    </quality>
+    <quality>
+      <name>Hawk Eye</name>
+      <bonus>
+        <physicalillusionresist>1</physicalillusionresist>
+      </bonus>
+    </quality>
+    <quality>
+      <name>Perceptive</name>
+      <bonus>
+        <physicalillusionresist>1</physicalillusionresist>
+      </bonus>
+    </quality>
+    <quality>
+      <name>Acrobatic Defender</name>
+      <hide />
+    </quality>
+    <quality>
+      <id>b5f6d958-2563-431b-a7a4-a9028a9f0277</id>
+      <!-- Used to be Perceptive Defender -->
+      <name>Deductive Defender</name>
+      <karma>3</karma>
+    </quality>
+    <quality>
+      <name>Vehicle Empathy</name>
+      <bonus>
+        <skillcategory xpathfilter="name = 'Vehicle Active'" amendoperation="remove" />
+        <skillgrouplevel amendoperation="addnode">
+          <name>Driving</name>
+          <val>1</val>
+        </skillgrouplevel>
+      </bonus>
+    </quality>
+    <quality xpathfilter="name = 'Oblivious I' or name = 'Oblivious II' or name = 'Deformity (Picasso)'">
+      <bonus>
+        <physicalillusionresist>-2</physicalillusionresist>
+      </bonus>
+    </quality>
+    <quality xpathfilter="bonus/swapskillattribute or bonus/swapskillspecattribute">
+      <hide />
+    </quality>
+    <quality>
+      <name>Enchanter</name>
+      <hide />
+    </quality>
+    <quality>
+      <!-- Adept gets a 50% discount to Sorcery and Spellcasting (only active with Adept Spell, of course) -->
+      <name>Adept</name>
+      <bonus>
+        <skillgrouppointcostmultiplier amendoperation="addnode">
+          <name>Sorcery</name>
+          <val>50</val>
+        </skillgrouppointcostmultiplier>
+        <skillgroupkarmacostmultiplier amendoperation="addnode">
+          <name>Sorcery</name>
+          <val>50</val>
+        </skillgroupkarmacostmultiplier>
+        <activeskillpointcostmultiplier amendoperation="addnode">
+          <name>Spellcasting</name>
+          <val>50</val>
+        </activeskillpointcostmultiplier>
+        <activeskillkarmacostmultiplier amendoperation="addnode">
+          <name>Spellcasting</name>
+          <val>50</val>
+        </activeskillkarmacostmultiplier>
+      </bonus>
+    </quality>
+    <quality>
+      <!-- Apprentice gets a 50% discount to Spellcasting, Alchemy, Summoning, and Binding and a 40% discount to Sorcery and Conjuring (to compensate for their more limited selection options) -->
+      <name>Apprentice</name>
+      <bonus>
+        <skillgrouppointcostmultiplier amendoperation="addnode">
+          <name>Sorcery</name>
+          <val>60</val>
+        </skillgrouppointcostmultiplier>
+        <skillgroupkarmacostmultiplier amendoperation="addnode">
+          <name>Sorcery</name>
+          <val>60</val>
+        </skillgroupkarmacostmultiplier>
+        <skillgrouppointcostmultiplier amendoperation="addnode">
+          <name>Conjuring</name>
+          <val>60</val>
+        </skillgrouppointcostmultiplier>
+        <skillgroupkarmacostmultiplier amendoperation="addnode">
+          <name>Conjuring</name>
+          <val>60</val>
+        </skillgroupkarmacostmultiplier>
+        <activeskillpointcostmultiplier amendoperation="addnode">
+          <name>Spellcasting</name>
+          <val>50</val>
+        </activeskillpointcostmultiplier>
+        <activeskillpointcostmultiplier amendoperation="addnode">
+          <name>Alchemy</name>
+          <val>50</val>
+        </activeskillpointcostmultiplier>
+        <activeskillpointcostmultiplier amendoperation="addnode">
+          <name>Summoning</name>
+          <val>50</val>
+        </activeskillpointcostmultiplier>
+        <activeskillpointcostmultiplier amendoperation="addnode">
+          <name>Binding</name>
+          <val>50</val>
+        </activeskillpointcostmultiplier>
+        <activeskillkarmacostmultiplier amendoperation="addnode">
+          <name>Spellcasting</name>
+          <val>50</val>
+        </activeskillkarmacostmultiplier>
+        <activeskillkarmacostmultiplier amendoperation="addnode">
+          <name>Alchemy</name>
+          <val>50</val>
+        </activeskillkarmacostmultiplier>
+        <activeskillkarmacostmultiplier amendoperation="addnode">
+          <name>Summoning</name>
+          <val>50</val>
+        </activeskillkarmacostmultiplier>
+        <activeskillkarmacostmultiplier amendoperation="addnode">
+          <name>Binding</name>
+          <val>50</val>
+        </activeskillkarmacostmultiplier>
+      </bonus>
+    </quality>
+    <quality>
+      <!-- Sharper Knife from Delnar's One Karma Qualities (Not needed because everything is now defaultable) -->
+      <id>60dcf3b1-8b34-4c4f-a2f5-0131bd5dc13b</id>
+      <hide />
+    </quality>
+  </qualities>
+</chummer>
