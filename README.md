@@ -152,6 +152,10 @@ Roughly in order of priority:
 8. Smaller items:
    - Vehicle and drone stats, matrix attributes and weapon ranges are shown as stored, not recomputed.
    - Movement, encumbrance, and some A.I. and critter special cases.
+   - Creation details:
+     - The wizard does not check a talent's metatype-category requirement, so Technomancer is offered to every metatype.
+     - Finishing creation does not add the default Street lifestyle or roll starting nuyen.
+     - New files list every active skill. Magic and resonance skills stay locked until the character has the attribute; Chummer5a instead adds them only when unlocked.
 9. Out of scope for now: ChummerHub, plugins, Hero Lab import, the auto-updater.
 
 ## Layout

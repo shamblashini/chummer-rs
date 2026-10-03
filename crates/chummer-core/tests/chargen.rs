@@ -107,3 +107,35 @@ fn sum_to_ten_validation() {
     let std = engine.settings.resolve(STANDARD).unwrap();
     assert!(Priorities(['A', 'A', 'C', 'E', 'E']).validate(std).is_err());
 }
+
+#[test]
+fn creation_rules_for_specs_gender_and_magic_skills() {
+    let engine = Engine::load().unwrap();
+    let spec = NewCharacter {
+        settings_id: STANDARD.into(),
+        metatype: "Human".into(),
+        metavariant: None,
+        priorities: Priorities(['D', 'E', 'A', 'B', 'C']),
+        talent: "Mundane".into(),
+        talent_skills: vec![],
+        name: "Rules".into(),
+    };
+    let mut ch = chargen::create(&engine, &spec).unwrap();
+    // New files use <gender>; old ones keep <sex>.
+    ch.set_field("sex", "Female");
+    assert_eq!(ch.doc.get("gender"), "Female");
+    assert!(ch.doc.child("sex").is_none());
+
+    // Spellcasting is present but disabled for a mundane.
+    let (s, _) = sheet(&engine, &ch);
+    assert!(s.skills.iter().find(|k| k.name == "Spellcasting").unwrap().disabled);
+    assert!(!s.skills.iter().find(|k| k.name == "Pistols").unwrap().disabled);
+
+    // Two specializations on one skill block finishing creation.
+    let guid = ch.skills.iter().find(|k| engine.catalog.get(&k.suid).is_some_and(|d| d.name == "Pistols")).unwrap().guid.clone();
+    chargen::add_specialization(&mut ch, &guid, "Revolvers");
+    chargen::add_specialization(&mut ch, &guid, "Semi-Automatics");
+    let (_, b) = sheet(&engine, &ch);
+    let problems = chargen::validity_problems(&ch, &b, engine.settings.resolve(STANDARD).unwrap());
+    assert!(problems.iter().any(|p| p.contains("Pistols has more than one specialization")), "{problems:?}");
+}

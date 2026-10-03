@@ -426,6 +426,8 @@ impl CharacterView {
         let kno: Vec<(usize, calc::SkillValues)> =
             self.sheet.knowledge_skills.iter().cloned().enumerate().filter(|(_, s)| filter(&s.name, s.rating)).collect();
         let career = self.ch.created;
+        // Skills cap at 6 during creation (setting-dependent), 12 in career.
+        let cap = if career { self.rules.max_skill_rating_career } else { self.rules.max_skill_rating_create };
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.heading("Active skills");
             egui::Grid::new("skills").striped(true).num_columns(8).spacing([14.0, 4.0]).show(ui, |ui| {
@@ -435,7 +437,8 @@ impl CharacterView {
                 ui.end_row();
                 for (i, s) in &rows {
                     let r = SourceRef::new(&s.source, &s.page);
-                    let name = ui.add(egui::Label::new(&s.name).sense(egui::Sense::click()));
+                    let label = if s.disabled { RichText::new(&s.name).weak() } else { RichText::new(&s.name) };
+                    let name = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
                     if let Some(r) = r {
                         if name.on_hover_text(format!("{r} — click to open the rulebook")).clicked() {
                             pdf_ui::open(pdfs, &r, status);
@@ -444,8 +447,9 @@ impl CharacterView {
                     ui.label(&s.attribute);
                     ui.weak(&s.group);
                     let sk = &mut self.ch.skills[*i];
-                    changed |= ui.add_enabled(!career, egui::DragValue::new(&mut sk.base).range(0..=12)).changed();
-                    changed |= ui.add(egui::DragValue::new(&mut sk.karma).range(0..=12)).changed();
+                    let on = !s.disabled;
+                    changed |= ui.add_enabled(!career && on, egui::DragValue::new(&mut sk.base).range(0..=cap)).changed();
+                    changed |= ui.add_enabled(on, egui::DragValue::new(&mut sk.karma).range(0..=cap)).changed();
                     ui.label(s.rating.to_string());
                     let pool = if s.rating == 0 && !s.default { "—".to_owned() } else { s.pool.to_string() };
                     if ui.add(egui::Button::new(RichText::new(pool).strong()).frame(false)).on_hover_text("Roll this pool").clicked() {
@@ -508,8 +512,8 @@ impl CharacterView {
                         ui.label("N");
                     } else {
                         let k = &mut self.ch.knowledge_skills[*i];
-                        changed |= ui.add_enabled(!career, egui::DragValue::new(&mut k.base).range(0..=12)).changed();
-                        changed |= ui.add(egui::DragValue::new(&mut k.karma).range(0..=12)).changed();
+                        changed |= ui.add_enabled(!career, egui::DragValue::new(&mut k.base).range(0..=cap)).changed();
+                        changed |= ui.add(egui::DragValue::new(&mut k.karma).range(0..=cap)).changed();
                         ui.label(s.rating.to_string());
                         ui.strong(s.pool.to_string());
                     }
@@ -533,8 +537,8 @@ impl CharacterView {
                     ui.end_row();
                     for g in &mut self.ch.skill_groups {
                         ui.label(&g.name);
-                        changed |= ui.add_enabled(!career, egui::DragValue::new(&mut g.base).range(0..=12)).changed();
-                        changed |= ui.add(egui::DragValue::new(&mut g.karma).range(0..=12)).changed();
+                        changed |= ui.add_enabled(!career, egui::DragValue::new(&mut g.base).range(0..=cap)).changed();
+                        changed |= ui.add(egui::DragValue::new(&mut g.karma).range(0..=cap)).changed();
                         ui.label(g.rating().to_string());
                         ui.end_row();
                     }

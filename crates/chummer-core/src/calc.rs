@@ -472,6 +472,9 @@ pub struct SkillValues {
     pub default: bool,
     pub knowledge: bool,
     pub native: bool,
+    /// The skill's attribute is not enabled (e.g. Spellcasting for a
+    /// mundane), or an improvement disables it.
+    pub disabled: bool,
     pub karma_cost: i32,
     pub source: String,
     pub page: String,
@@ -907,6 +910,7 @@ fn skill_values(ch: &Character, sheet: &Sheet, sk: &Skill, cat: &SkillCatalog, r
         default,
         knowledge: false,
         native: false,
+        disabled,
         karma_cost,
         source: def.source.clone(),
         page: def.page.clone(),
@@ -956,6 +960,7 @@ fn knowledge_values(ch: &Character, sheet: &Sheet, k: &KnowledgeSkill, rules: &R
         default: false,
         knowledge: true,
         native: k.native_language,
+        disabled: false,
         karma_cost: karma_cost.max(0),
         source: String::new(),
         page: String::new(),

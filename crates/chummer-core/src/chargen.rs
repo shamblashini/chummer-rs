@@ -671,6 +671,15 @@ pub fn validity_problems(ch: &Character, b: &Budget, settings: &CharacterSetting
     if at_max > allowed {
         p.push(format!("{at_max} attributes at their maximum, only {allowed} allowed"));
     }
+    if !ch.created {
+        let skill_name = |suid: &str| ch.doc.child("newskills").and_then(|n| n.child("skills")).and_then(|s| s.elements().find(|e| e.get("suid").eq_ignore_ascii_case(suid))).map(|e| e.get("name")).unwrap_or_default();
+        for s in ch.skills.iter().filter(|s| s.specs.iter().filter(|x| !x.free).count() > 1) {
+            p.push(format!("{} has more than one specialization", skill_name(&s.suid)));
+        }
+        for k in ch.knowledge_skills.iter().filter(|k| k.specs.len() > 1) {
+            p.push(format!("{} has more than one specialization", k.name));
+        }
+    }
     if (ch.is_magician() || ch.is_adept()) && ch.mag_enabled() && ch.doc.child("tradition").is_none_or(|t| t.get("name").is_empty()) && ch.is_magician() {
         p.push("Magicians need a tradition (choose one on the Magic tab)".into());
     }

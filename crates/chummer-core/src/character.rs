@@ -29,7 +29,7 @@ pub const INFO_FIELDS: &[(&str, &str)] = &[
     ("playername", "Player"),
     ("metatype", "Metatype"),
     ("metavariant", "Metavariant"),
-    ("sex", "Sex"),
+    ("gender", "Gender"),
     ("age", "Age"),
     ("height", "Height"),
     ("weight", "Weight"),
@@ -206,12 +206,30 @@ impl Character {
     // ----- simple accessors over the document -----
 
     pub fn field(&self, key: &str) -> String {
-        self.doc.get(key)
+        self.doc.get(self.alias_key(key))
     }
 
     pub fn set_field(&mut self, key: &str, value: impl Into<String>) {
-        self.doc.set_child_text(key, value);
+        let key = self.alias_key(key).to_owned();
+        self.doc.set_child_text(&key, value);
         self.dirty = true;
+    }
+
+    /// Current saves use `<gender>`; files from Chummer 5.2xx and older
+    /// use `<sex>`. Read and write whichever the file has.
+    fn alias_key<'a>(&self, key: &'a str) -> &'a str {
+        match key {
+            "gender" | "sex" => {
+                if self.doc.child("gender").is_some() {
+                    "gender"
+                } else if self.doc.child("sex").is_some() {
+                    "sex"
+                } else {
+                    "gender"
+                }
+            }
+            k => k,
+        }
     }
 
     pub fn name(&self) -> String {
