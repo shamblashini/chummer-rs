@@ -21,6 +21,16 @@ USAGE:
     chummer-cli search <text> [kind]       Search game data (kind e.g. Gear)
     chummer-cli kinds                      List searchable data kinds
 
+    chummer-cli new <out.chum5> [options]  Create a character (Priority / Sum-to-Ten)
+        --settings <name|id>   preset (default Standard)
+        --metatype <name>      e.g. Human, Elf (default Human)
+        --metavariant <name>
+        --priorities <HTASR>   letters for Heritage, Talent, Attributes,
+                               Skills, Resources (default DEABC)
+        --talent <value>       e.g. Mundane, Magician, Adept (default Mundane)
+        --skills <a,b>         free talent skills
+        --name <text>
+
     chummer-cli sources list               Show linked sourcebook PDFs
     chummer-cli sources import-wine [pfx]  Import PDF links from Chummer5a under Wine
     chummer-cli sources scan <dir>         Link PDFs in a folder by title
@@ -58,6 +68,7 @@ fn run(args: &[String]) -> Result<()> {
         "check" => check(&Engine::load()?, rest),
         "search" => search(&Engine::load()?, rest),
         "sources" => sources_cmd(&Engine::load()?, rest),
+        "new" => new_cmd(&Engine::load()?, rest),
         "kinds" => {
             for (label, file, ..) in data::BROWSABLE {
                 println!("{label:<20} {file}");
@@ -344,5 +355,32 @@ fn sources_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
         },
         Some(other) => bail!("unknown sources command {other:?}"),
     }
+    Ok(())
+}
+
+fn new_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
+    use chummer_core::chargen::{self, NewCharacter, Priorities};
+    let Some(out) = rest.first() else { bail!("expected an output file") };
+    let opt = |k: &str, default: &str| -> String {
+        rest.iter().position(|a| a == k).and_then(|i| rest.get(i + 1)).cloned().unwrap_or_else(|| default.to_owned())
+    };
+    let settings = opt("--settings", "Standard");
+    let preset = engine.settings.presets.iter().find(|p| p.name() == settings || p.id() == settings).context("unknown settings preset")?;
+    let letters: Vec<char> = opt("--priorities", "DEABC").to_uppercase().chars().collect();
+    if letters.len() != 5 {
+        bail!("--priorities needs five letters");
+    }
+    let spec = NewCharacter {
+        settings_id: preset.id(),
+        metatype: opt("--metatype", "Human"),
+        metavariant: Some(opt("--metavariant", "")).filter(|v| !v.is_empty()),
+        priorities: Priorities([letters[0], letters[1], letters[2], letters[3], letters[4]]),
+        talent: opt("--talent", "Mundane"),
+        talent_skills: opt("--skills", "").split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect(),
+        name: opt("--name", "New Runner"),
+    };
+    let mut ch = chargen::create(engine, &spec).map_err(anyhow::Error::msg)?;
+    engine.save(&mut ch, Path::new(out))?;
+    println!("wrote {out}");
     Ok(())
 }

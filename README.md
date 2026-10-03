@@ -21,7 +21,7 @@ You need a Rust toolchain (1.85 or newer).
 
 This builds release binaries and installs to `~/.local`:
 
-- `chummer`: the desktop application.
+- `chummer-rs`: the desktop application.
 - `chummer-cli`: the command-line tool.
 - The game data in `~/.local/share/chummer-rs`.
 - A desktop entry. `.chum5` files then open with chummer-rs.
@@ -36,7 +36,7 @@ cargo run --release -p chummer-gui -- path/to/character.chum5
 
 ### Desktop application
 
-`chummer [--tab <name>] [files...]` opens one tab per character.
+`chummer-rs [--tab <name>] [files...]` opens one tab per character.
 
 Character tabs:
 - **Info**

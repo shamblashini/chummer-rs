@@ -21,3 +21,4 @@ pub mod sources;
 pub mod bonus;
 pub mod requirements;
 pub mod items;
+pub mod chargen;

@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "chummer"
+name = "chummer-rs"
 path = "src/main.rs"
 
 [dependencies]

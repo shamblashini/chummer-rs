@@ -30,13 +30,6 @@ pub fn new_guid() -> String {
     format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }
 
-/// The result of adding an item.
-#[derive(Debug, Clone)]
-pub struct Added {
-    pub guid: String,
-    pub outcome: Outcome,
-}
-
 /// Choices needed before adding a quality.
 pub fn quality_choices(ch: &Character, store: &DataStore, rec: Record<'_>) -> Vec<Choice> {
     let src = BonusSource { kind: "Quality".into(), guid: String::new(), name: rec.name(), rating: 1 };
@@ -77,21 +70,6 @@ pub fn quality_element(rec: Record<'_>, guid: &str, source: &str, extra: &str) -
     }
     q.push(Element::with_text("notes", e.get("notes")));
     q
-}
-
-/// Add a quality, applying its bonus. `answer` resolves any selection.
-pub fn add_quality(ch: &mut Character, store: &DataStore, rec: Record<'_>, answer: Option<&str>) -> Added {
-    let guid = new_guid();
-    let src = BonusSource { kind: "Quality".into(), guid: guid.clone(), name: rec.name(), rating: 1 };
-    let outcome = match rec.el().child("bonus") {
-        Some(b) => bonus::apply(ch, store, b, &src, answer),
-        None => Outcome::default(),
-    };
-    let extra = outcome.selected.clone().unwrap_or_default();
-    let el = quality_element(rec, &guid, "Selected", &extra);
-    ch.items_mut("qualities").push(el);
-    apply_outcome(ch, &outcome);
-    Added { guid, outcome }
 }
 
 /// Store improvements and flag changes from a bonus.

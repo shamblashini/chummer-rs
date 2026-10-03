@@ -448,7 +448,7 @@ fn main() -> anyhow::Result<()> {
             "--tab" => tab = args.next().and_then(|t| view::Tab::parse(&t)),
             "--window" => window = args.next(),
             "-h" | "--help" => {
-                println!("usage: chummer [--tab <info|attributes|skills|qualities|magic|equipment|improvements|karma|notes>] [--window <sources|browser|dice>] [file.chum5 ...]");
+                println!("usage: chummer-rs [--tab <info|attributes|skills|qualities|magic|equipment|improvements|karma|notes>] [--window <sources|browser|dice>] [file.chum5 ...]");
                 return Ok(());
             }
             _ => files.push(PathBuf::from(a)),
