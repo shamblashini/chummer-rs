@@ -4,3 +4,5 @@
 //! reads and writes `.chum5` characters, and computes the rules math.
 
 pub mod xml;
+pub mod data;
+pub mod lang;
