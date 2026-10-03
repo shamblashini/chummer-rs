@@ -83,9 +83,10 @@ chummer-cli search "ares" gear        # search the game data
   - `<appversion>` is left as loaded, because Chummer5a uses it to decide how to read a file.
   - Writes go to a temp file first and are then renamed, so a crash cannot corrupt a character.
 - **Game data:** all 42 data files, the custom data packs, the settings presets and the six translations load.
-- **Rules math, checked against Chummer5a.** Chummer5a writes each attribute's total and the character's essence into the save file. The test suite recomputes these values and compares them: **475 of 475 match across 34 characters**. Three of those characters were saved with house rules (limb count 5, or essence rounded to 3 decimals), and the test applies the same rules to them. Computed values:
-  - Attribute minimums, maximums, natural and augmented values. This includes improvement stacking with unique names and precedence, essence loss, and cyberlimb averaging.
+- **Rules math checked against Chummer5a.** Chummer5a writes each attribute's total and the character's essence into the save file. The test suite recomputes these values and compares them: **475 of 475 match across 34 characters**. Three of those characters were saved with house rules (limb count 5, or essence rounded to 3 decimals), and the test applies the same rules to them. The check covers:
+  - Attribute minimums, maximums, natural and augmented values. This includes improvement stacking with unique names and precedence, and cyberlimb averaging.
   - Essence, including grade multipliers and essence-cost improvements.
+- **Rules math ported from the C# formulas** but not yet compared with Chummer5a output (the save file holds no totals for these):
   - Initiative: physical, astral and Matrix.
   - Condition monitors and wound modifiers.
   - Physical, mental, social and astral limits.
@@ -93,14 +94,16 @@ chummer-cli search "ares" gear        # search the game data
   - Armor, including stacking accessories capped at STR.
   - Skill ratings and dice pools, including groups, defaulting and specializations.
   - Karma costs for attributes and skills.
-  - The expression language in data files: the XPath subset, `FixedValues`, availability strings. Rounding follows Chummer5a's away-from-zero rounding.
+- **Expression language in data files:** the XPath subset, `FixedValues`, availability strings. Rounding follows Chummer5a's away-from-zero rounding. Every context-free cost and essence string in the data evaluates.
 - **Editing:**
   - Text fields.
   - Attribute base and karma levels.
   - Skill, skill group and knowledge skill levels.
   - Karma, nuyen, street cred, notoriety and public awareness.
   - Condition monitor damage.
-  - Removing items. This also removes the improvements the item granted.
+  - Removing items, after a confirmation. This also removes the improvements the item granted. There is no undo.
+
+  Edits do not spend or refund karma or nuyen. Those are plain numbers that you adjust yourself.
 
 Performance (release build on the author's machine): `chummer-cli info` loads the data and computes a full sheet in about 30 ms. `chummer-cli check` verifies all 34 test characters in about 0.15 s.
 
@@ -111,13 +114,14 @@ Roughly in order of priority:
 1. **Bonus processor.** In Chummer5a, adding a quality, piece of ware or power turns its `<bonus>` XML into improvements. The data uses 246 bonus types, and the 60 most common cover 92% of uses. Until this exists, chummer-rs cannot add items. Items already in a saved file work, because the file stores their improvements.
 2. **Adding items** through selection dialogs: gear, ware, weapons, armor, spells, powers, qualities and contacts. New skills too. The writer can only update skills that already exist in the file.
 3. **Character creation:** priority, sum-to-ten, karma and life module builds, metatype selection, and point budgets.
-4. **Career mode:** the karma and nuyen ledger with undo, initiation and submersion, and the incremental burn of essence loss in career mode.
-5. **Custom data:** the `amend_*.xml` merge from enabled custom data directories. The directories ship but are not applied.
-6. **Character sheets and printing.** The XSLT sheets are bundled but not rendered.
-7. Smaller items:
+4. **Karma and nuyen accounting.** Edits should deduct or refund karma and nuyen, and career mode needs its ledger with undo, plus initiation and submersion.
+5. **Essence loss.** chummer-rs reads essence-loss improvements from the file instead of regenerating them on load, as Chummer5a does. Removing cyberware therefore does not restore MAG or RES until the file is opened and saved in Chummer5a.
+6. **Custom data:** the `amend_*.xml` merge from enabled custom data directories. The directories ship but are not applied.
+7. **Character sheets and printing.** The XSLT sheets are bundled but not rendered.
+8. Smaller items:
    - Vehicle and drone stats, matrix attributes and weapon ranges are shown as stored, not recomputed.
    - Movement, encumbrance, and some A.I. and critter special cases.
-8. Out of scope for now: ChummerHub, plugins, Hero Lab import, the auto-updater.
+9. Out of scope for now: ChummerHub, plugins, Hero Lab import, the auto-updater.
 
 ## Layout
 

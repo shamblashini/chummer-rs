@@ -18,6 +18,8 @@ cp -r resources/data resources/lang resources/sheets resources/customdata "$shar
 install -Dm644 resources/xml_license.txt "$share/xml_license.txt"
 
 install -Dm644 packaging/chummer-rs.desktop "$PREFIX/share/applications/chummer-rs.desktop"
+# Launchers may not have $PREFIX/bin on PATH.
+sed -i "s|^Exec=chummer |Exec=$PREFIX/bin/chummer |" "$PREFIX/share/applications/chummer-rs.desktop"
 install -Dm644 packaging/chummer-rs-mime.xml "$PREFIX/share/mime/packages/chummer-rs.xml"
 install -Dm644 packaging/chummer-rs.svg "$PREFIX/share/icons/hicolor/scalable/apps/chummer-rs.svg"
 command -v update-mime-database >/dev/null && update-mime-database "$PREFIX/share/mime" || true

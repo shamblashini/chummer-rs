@@ -48,6 +48,8 @@ pub struct CharacterView {
     only_rated: bool,
     equipment: usize,
     magic: usize,
+    /// (container, guid, name) of an item waiting for removal confirmation.
+    confirm_remove: Option<(String, String, String)>,
 }
 
 pub const ACCENT: Color32 = Color32::from_rgb(0, 200, 170);
@@ -68,7 +70,7 @@ impl CharacterView {
     pub fn new(ch: Character, engine: &Engine) -> Self {
         let rules = engine.rules_for(&ch);
         let sheet = calc::compute(&ch, &rules, Some(&engine.store), Some(&engine.catalog));
-        CharacterView { ch, sheet, rules, tab: Tab::Info, skill_filter: String::new(), only_rated: false, equipment: 0, magic: 0 }
+        CharacterView { ch, sheet, rules, tab: Tab::Info, skill_filter: String::new(), only_rated: false, equipment: 0, magic: 0, confirm_remove: None }
     }
 
     pub fn title(&self) -> String {
@@ -126,6 +128,7 @@ impl CharacterView {
                 Tab::Notes => self.notes_tab(ui),
             };
         });
+        changed |= self.confirm_dialog(ctx);
         if changed {
             self.ch.dirty = true;
             self.recompute(engine);
@@ -276,7 +279,7 @@ impl CharacterView {
         ui.label(if career {
             "Career mode: raising an attribute here spends no karma automatically — adjust Karma in the sidebar."
         } else {
-            "Creation mode: base uses attribute points (priority builds); karma levels cost karma."
+            "Creation mode: base uses attribute points (priority builds). Changing levels does not deduct karma automatically; the Karma cost column shows what they are worth."
         });
         ui.add_space(6.0);
         TableBuilder::new(ui)
@@ -481,7 +484,6 @@ impl CharacterView {
             ui.weak("None.");
             return false;
         }
-        let mut remove: Option<String> = None;
         egui::Grid::new(sec.container).striped(true).num_columns(sec.columns.len() + 1).spacing([14.0, 4.0]).show(ui, |ui| {
             for c in sec.columns {
                 ui.strong(c.header);
@@ -492,7 +494,7 @@ impl CharacterView {
                 item_rows(ui, sec, it, lang, 0);
                 if removable {
                     if ui.small_button("🗑").on_hover_text("Remove (also removes its improvements)").clicked() {
-                        remove = Some(it.get("guid"));
+                        self.confirm_remove = Some((sec.container.to_owned(), it.get("guid"), display_name(sec, it, lang)));
                     }
                 } else {
                     ui.label("");
@@ -507,10 +509,33 @@ impl CharacterView {
                 }
             }
         });
-        if let Some(g) = remove {
-            return self.ch.remove_item(sec.container, &g);
-        }
         false
+    }
+
+    /// Confirmation dialog for item removal. Returns true if an item went.
+    fn confirm_dialog(&mut self, ctx: &egui::Context) -> bool {
+        let Some((container, guid, name)) = self.confirm_remove.clone() else { return false };
+        let mut choice = None;
+        egui::Modal::new(egui::Id::new("confirm_remove")).show(ctx, |ui| {
+            ui.heading("Remove item");
+            ui.label(format!("Remove {name}? Its improvements are removed too. This cannot be undone."));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Remove").clicked() {
+                    choice = Some(true);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(false);
+                }
+            });
+        });
+        match choice {
+            Some(yes) => {
+                self.confirm_remove = None;
+                yes && self.ch.remove_item(&container, &guid)
+            }
+            None => false,
+        }
     }
 
     fn improvements_tab(&mut self, ui: &mut egui::Ui) -> bool {
