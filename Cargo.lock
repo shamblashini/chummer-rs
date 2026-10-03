@@ -359,6 +359,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chummer-core",
+ "libc",
 ]
 
 [[package]]

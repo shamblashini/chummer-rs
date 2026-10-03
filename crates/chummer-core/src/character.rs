@@ -141,7 +141,9 @@ impl Character {
     /// Write typed fields back into a copy of the document.
     pub fn to_document(&self) -> Element {
         let mut doc = self.doc.clone();
-        doc.set_child_text("appversion", concat!("chummer-rs ", env!("CARGO_PKG_VERSION")));
+        // Chummer parses <appversion> to pick load shims, so leave it as
+        // loaded and record our own version separately.
+        doc.set_child_text("chummerrsversion", env!("CARGO_PKG_VERSION"));
         doc.set_child_text("karma", self.karma.to_string());
         doc.set_child_text("nuyen", crate::improvement::fmt_num(self.nuyen));
         doc.set_child_text("created", bool_str(self.created));

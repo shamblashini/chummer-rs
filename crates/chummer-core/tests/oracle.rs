@@ -24,7 +24,8 @@ fn attributes_and_essence_match_chummer() {
         let ch = Character::load(&path).unwrap();
         let fname = path.file_name().unwrap().to_string_lossy().to_string();
         // These were saved with house-rule settings files we do not have:
-        // a 5-limb count (head excluded) and 3-decimal essence.
+        // limb count 5 ("2 arms, 2 legs, skull" in options.xml) and
+        // 3-decimal essence.
         let mut rules = Rules::default();
         match fname.as_str() {
             "Bastion.chum5" | "Blindfire.chum5" => rules.limb_count = 5,

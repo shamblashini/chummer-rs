@@ -988,7 +988,7 @@ mod tests {
 /// Refresh the export-only totals Chummer writes (`<totalvalue>` per
 /// attribute and `<totaless>`) so other tools reading the file see
 /// current numbers.
-pub fn stamp_totals(ch: &mut Character, sheet: &Sheet) {
+pub fn stamp_totals(ch: &mut Character, sheet: &Sheet, rules: &Rules) {
     if let Some(attrs) = ch.doc.child_mut("attributes") {
         for e in attrs.elements_mut() {
             let name = e.get("name");
@@ -997,5 +997,5 @@ pub fn stamp_totals(ch: &mut Character, sheet: &Sheet) {
             }
         }
     }
-    ch.doc.set_child_text("totaless", format!("{:.2}", sheet.essence));
+    ch.doc.set_child_text("totaless", format!("{:.*}", rules.essence_decimals as usize, sheet.essence));
 }

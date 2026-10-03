@@ -7,7 +7,7 @@ use chummer_core::xml::{self, Element};
 
 /// Strip fields our writer is expected to change.
 fn normalize(mut e: Element) -> Element {
-    e.remove_children("appversion");
+    e.remove_children("chummerrsversion");
     if let Some(attrs) = e.child_mut("attributes") {
         for a in attrs.elements_mut() {
             // legacy fields are converted to base/karma on load
@@ -40,11 +40,13 @@ fn every_fixture_saves_losslessly() {
         assert_eq!(ch.knowledge_skills, again.knowledge_skills, "{}", path.display());
         assert_eq!(ch.improvements.list, again.improvements.list, "{}", path.display());
         assert_eq!(ch.karma, again.karma);
+        assert_eq!(ch.doc.get("appversion"), again.doc.get("appversion"), "appversion must survive for Chummer5a");
         // and everything else in the document is untouched
         let original = xml::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let a = normalize(original);
         let b = normalize(xml::parse(&saved).unwrap());
         let (ca, cb) = (a.elements().count(), b.elements().count());
+        // (`chummerrsversion` was removed by normalize)
         assert_eq!(ca, cb, "{}: top-level element count", path.display());
         for (x, y) in a.elements().zip(b.elements()) {
             if x.name == "improvements" || x.name == "newskills" || x.name == "nuyen" {
