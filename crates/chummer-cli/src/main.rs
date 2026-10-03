@@ -20,6 +20,13 @@ USAGE:
     chummer-cli check <file|dir>...        Load and recompute; report problems
     chummer-cli search <text> [kind]       Search game data (kind e.g. Gear)
     chummer-cli kinds                      List searchable data kinds
+
+    chummer-cli sources list               Show linked sourcebook PDFs
+    chummer-cli sources import-wine [pfx]  Import PDF links from Chummer5a under Wine
+    chummer-cli sources scan <dir>         Link PDFs in a folder by title
+    chummer-cli sources detect             Find page offsets with pdftotext
+    chummer-cli sources open <BOOK> <page> Open a book at a page, e.g. SR5 143
+    chummer-cli sources viewer [template]  Show or set the PDF viewer command
 ";
 
 fn main() -> ExitCode {
@@ -50,6 +57,7 @@ fn run(args: &[String]) -> Result<()> {
         "items" => items(one_file(rest)?),
         "check" => check(&Engine::load()?, rest),
         "search" => search(&Engine::load()?, rest),
+        "sources" => sources_cmd(&Engine::load()?, rest),
         "kinds" => {
             for (label, file, ..) in data::BROWSABLE {
                 println!("{label:<20} {file}");
@@ -242,6 +250,99 @@ fn search(engine: &Engine, rest: &[String]) -> Result<()> {
                 println!("{:<18} {:<45} {:<28} {} p.{}", label, r.name(), r.category(), r.source(), r.page());
             }
         }
+    }
+    Ok(())
+}
+
+fn sources_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
+    use chummer_core::sources::{self, SourceRef, SourcebookLibrary};
+    let mut lib = SourcebookLibrary::load();
+    let books = sources::book_list(&engine.store);
+    let name_of = |code: &str| books.iter().find(|b| b.code == code).map(|b| b.name.clone()).unwrap_or_default();
+    match rest.first().map(String::as_str) {
+        None | Some("list") => {
+            println!("viewer: {}", if lib.viewer.is_empty() { "(none)" } else { &lib.viewer });
+            for b in &books {
+                let link = lib.books.get(&b.code).cloned().unwrap_or_default();
+                match &link.path {
+                    Some(p) => {
+                        let warn = if p.is_file() { "" } else { "  [missing]" };
+                        println!("{:<8} {:<45} {:+} {}{warn}", b.code, b.name, link.offset, p.display());
+                    }
+                    None => println!("{:<8} {:<45}    -", b.code, b.name),
+                }
+            }
+            println!("{} of {} books linked", lib.linked_count(), books.len());
+        }
+        Some("import-wine") => {
+            let prefixes: Vec<PathBuf> = match rest.get(1) {
+                Some(p) => vec![PathBuf::from(p)],
+                None => sources::find_wine_prefixes(),
+            };
+            if prefixes.is_empty() {
+                bail!("no Wine prefix with Chummer5a sourcebook settings found; pass one explicitly");
+            }
+            for pfx in prefixes {
+                let found = sources::import_from_wine(&pfx)?;
+                println!("{}: {} linked books", pfx.display(), found.len());
+                for (code, path, offset) in found {
+                    let ok = if path.is_file() { "" } else { "  [file missing]" };
+                    println!("  {code:<8} {offset:+} {}{ok}", path.display());
+                    lib.books.insert(code, sources::Sourcebook { path: Some(path), offset });
+                }
+            }
+            lib.save()?;
+        }
+        Some("scan") => {
+            let Some(dir) = rest.get(1) else { bail!("expected a folder") };
+            let found = sources::scan_folder(Path::new(dir), &books);
+            for (code, path) in &found {
+                println!("  {code:<8} {:<40} {}", name_of(code), path.display());
+                let e = lib.books.entry(code.clone()).or_default();
+                e.path = Some(path.clone());
+            }
+            println!("{} books matched", found.len());
+            lib.save()?;
+        }
+        Some("detect") => {
+            if sources::which("pdftotext").is_none() {
+                bail!("pdftotext not found; install poppler");
+            }
+            for b in &books {
+                let Some(link) = lib.books.get(&b.code).cloned() else { continue };
+                let Some(path) = link.path.filter(|p| p.is_file()) else { continue };
+                match sources::detect_offset(&path, b) {
+                    Some(off) => {
+                        let note = if off != link.offset { format!("  (was {:+})", link.offset) } else { String::new() };
+                        println!("  {:<8} {off:+}{note}", b.code);
+                        lib.books.get_mut(&b.code).unwrap().offset = off;
+                    }
+                    None => println!("  {:<8} not found, keeping {:+}", b.code, link.offset),
+                }
+            }
+            lib.save()?;
+        }
+        Some("open") => {
+            let (Some(book), Some(page)) = (rest.get(1), rest.get(2)) else { bail!("expected BOOK PAGE") };
+            let r = SourceRef::new(book, page).context("invalid page")?;
+            println!("{}", lib.command_for(&r)?.join(" "));
+            lib.open(&r)?;
+        }
+        Some("viewer") => match rest.get(1) {
+            Some(t) => {
+                lib.viewer = rest[1..].join(" ");
+                lib.save()?;
+                println!("viewer set to: {}", lib.viewer);
+                let _ = t;
+            }
+            None => {
+                println!("current: {}", lib.viewer);
+                for v in sources::installed_viewers() {
+                    println!("installed: {:<32} {}", v.name, v.template);
+                }
+            }
+        },
+        Some(other) => bail!("unknown sources command {other:?}"),
     }
     Ok(())
 }

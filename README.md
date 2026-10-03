@@ -58,6 +58,10 @@ The right-hand panel shows:
 Edits recompute every value at once.
 
 Other features:
+- **Sourcebook PDFs.** Every item, quality, spell and data entry has a 📖 link, and skill names are links too. Each opens your PDF at the rule's page in a native viewer such as evince, zathura or okular. Set it up in **Tools → Sourcebooks**:
+  - **Import from Chummer5a** reads the links you made in Chummer5a under Wine or Proton.
+  - **Scan a folder** matches PDF file names to book titles.
+  - **Detect page offsets** finds each book's offset from its text, using `pdftotext` from poppler.
 - Click a skill's dice pool to roll it.
 - **Tools → Data browser** searches every item, quality, spell and so on in the game data.
 - The **Language** menu switches between the six Chummer5a translations.
@@ -72,7 +76,13 @@ chummer-cli skills character.chum5    # skills with dice pools
 chummer-cli items character.chum5     # everything the character owns
 chummer-cli check ~/characters/       # load and verify many files
 chummer-cli search "ares" gear        # search the game data
+chummer-cli sources import-wine       # link PDFs from Chummer5a under Wine
+chummer-cli sources scan ~/Books      # link PDFs by title
+chummer-cli sources detect            # find page offsets (needs pdftotext)
+chummer-cli sources open SR5 143      # open a rulebook page
 ```
+
+Settings are stored in `~/.config/chummer-rs/`.
 
 ## Status
 

@@ -2,6 +2,7 @@
 
 mod browser;
 mod dice_ui;
+mod pdf_ui;
 mod view;
 
 use std::path::{Path, PathBuf};
@@ -11,6 +12,7 @@ use chummer_core::character::Character;
 use chummer_core::data;
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
+use chummer_core::sources::SourcebookLibrary;
 use eframe::egui::{self, RichText};
 
 use view::{CharacterView, ACCENT};
@@ -34,6 +36,9 @@ struct App {
     show_browser: bool,
     show_dice: bool,
     show_about: bool,
+    show_sources: bool,
+    pdfs: SourcebookLibrary,
+    sources_window: pdf_ui::SourcesWindow,
     browser: browser::DataBrowser,
     dice: dice_ui::DiceRoller,
     recent: Vec<PathBuf>,
@@ -52,7 +57,11 @@ impl App {
             .and_then(|s| s.get_string(RECENT_KEY))
             .map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect())
             .unwrap_or_default();
+        let sources_window = pdf_ui::SourcesWindow::new(&engine.store);
         let mut app = App {
+            show_sources: false,
+            pdfs: SourcebookLibrary::load(),
+            sources_window,
             engine: Arc::new(engine),
             lang: Language::load(&lang_dir, &code),
             languages: Language::available(&lang_dir),
@@ -186,6 +195,10 @@ impl App {
                 }
             });
             ui.menu_button("Tools", |ui| {
+                if ui.button("Sourcebooks (PDFs)…").clicked() {
+                    ui.close();
+                    self.show_sources = true;
+                }
                 if ui.button("Data browser").clicked() {
                     ui.close();
                     self.show_browser = true;
@@ -261,6 +274,9 @@ impl App {
                     }
                 }
                 ui.add_space(16.0);
+                if self.pdfs.linked_count() == 0 && ui.button("📖 Link your sourcebook PDFs…").clicked() {
+                    self.show_sources = true;
+                }
                 if ui.button("Data browser").clicked() {
                     self.show_browser = true;
                 }
@@ -369,7 +385,7 @@ impl eframe::App for App {
         } else {
             let engine = self.engine.clone();
             let idx = self.active.min(self.views.len() - 1);
-            if let Some(pool) = self.views[idx].ui(ctx, &engine, &self.lang) {
+            if let Some(pool) = self.views[idx].ui(ctx, &engine, &self.lang, &self.pdfs, &mut self.status) {
                 self.dice.set_pool(pool);
                 self.show_dice = true;
             }
@@ -377,12 +393,21 @@ impl eframe::App for App {
 
         let mut open = self.show_browser;
         egui::Window::new("Data browser").open(&mut open).default_size([900.0, 600.0]).show(ctx, |ui| {
-            self.browser.ui(ui, &self.engine.store, &self.lang);
+            self.browser.ui(ui, &self.engine.store, &self.lang, &self.pdfs, &mut self.status);
         });
         self.show_browser = open;
         let mut open = self.show_dice;
         egui::Window::new("Dice roller").open(&mut open).default_width(360.0).show(ctx, |ui| self.dice.ui(ui));
         self.show_dice = open;
+        let mut open = self.show_sources;
+        egui::Window::new("Sourcebooks").open(&mut open).default_size([820.0, 620.0]).show(ctx, |ui| {
+            if self.sources_window.ui(ui, &mut self.pdfs) {
+                if let Err(e) = self.pdfs.save() {
+                    self.status = Some((format!("Could not save sourcebook settings: {e}"), true));
+                }
+            }
+        });
+        self.show_sources = open;
         let mut open = self.show_about;
         egui::Window::new("About chummer-rs").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             ui.label(format!("chummer-rs {}", env!("CARGO_PKG_VERSION")));
@@ -415,12 +440,14 @@ fn setup_style(ctx: &egui::Context) {
 fn main() -> anyhow::Result<()> {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut tab = None;
+    let mut window: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--tab" => tab = args.next().and_then(|t| view::Tab::parse(&t)),
+            "--window" => window = args.next(),
             "-h" | "--help" => {
-                println!("usage: chummer [--tab <info|attributes|skills|qualities|magic|equipment|improvements|karma|notes>] [file.chum5 ...]");
+                println!("usage: chummer [--tab <info|attributes|skills|qualities|magic|equipment|improvements|karma|notes>] [--window <sources|browser|dice>] [file.chum5 ...]");
                 return Ok(());
             }
             _ => files.push(PathBuf::from(a)),
@@ -442,6 +469,15 @@ fn main() -> anyhow::Result<()> {
             .with_drag_and_drop(true),
         ..Default::default()
     };
-    eframe::run_native("chummer-rs", options, Box::new(move |cc| Ok(Box::new(App::new(cc, engine, files, tab)))))
+    eframe::run_native("chummer-rs", options, Box::new(move |cc| {
+        let mut app = App::new(cc, engine, files, tab);
+        match window.as_deref() {
+            Some("sources") => app.show_sources = true,
+            Some("browser") => app.show_browser = true,
+            Some("dice") => app.show_dice = true,
+            _ => {}
+        }
+        Ok(Box::new(app))
+    }))
         .map_err(|e| anyhow::anyhow!("{e}"))
 }

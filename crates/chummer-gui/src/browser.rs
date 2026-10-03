@@ -5,7 +5,10 @@ use std::sync::Arc;
 use chummer_core::data::{self, DataStore};
 use chummer_core::lang::Language;
 use chummer_core::xml::Element;
+use chummer_core::sources::{SourceRef, SourcebookLibrary};
 use eframe::egui;
+
+use crate::pdf_ui::{self, Status};
 
 pub struct DataBrowser {
     kind: usize,
@@ -23,7 +26,7 @@ impl Default for DataBrowser {
 }
 
 impl DataBrowser {
-    pub fn ui(&mut self, ui: &mut egui::Ui, store: &DataStore, lang: &Language) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, store: &DataStore, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) {
         let (label, file, container, item) = data::BROWSABLE[self.kind];
         if self.loaded_kind != Some(self.kind) {
             match store.doc(file) {
@@ -89,9 +92,7 @@ impl DataBrowser {
                 match self.selected.and_then(|i| recs.get(i)) {
                     Some(r) => {
                         ui.heading(lang.data_name(file, &r.id(), &r.name()));
-                        if !r.source().is_empty() {
-                            ui.weak(format!("{} p. {}", r.source(), r.page()));
-                        }
+                        pdf_ui::source_link(ui, pdfs, SourceRef::of(r.el()), status);
                         ui.separator();
                         record_fields(ui, r.el(), 0);
                     }

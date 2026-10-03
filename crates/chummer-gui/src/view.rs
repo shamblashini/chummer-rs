@@ -10,6 +10,9 @@ use chummer_core::engine::Engine;
 use chummer_core::format;
 use chummer_core::lang::Language;
 use chummer_core::sections::{self, Section};
+use chummer_core::sources::{SourceRef, SourcebookLibrary};
+
+use crate::pdf_ui::{self, Status};
 use chummer_core::xml::Element;
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
@@ -90,7 +93,7 @@ impl CharacterView {
         self.sheet = calc::compute(&self.ch, &self.rules, Some(&engine.store), Some(&engine.catalog));
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language) -> Option<u32> {
+    pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<u32> {
         let mut changed = false;
         let mut roll: Option<u32> = None;
         egui::SidePanel::right("sheet_panel").resizable(true).default_width(270.0).show(ctx, |ui| {
@@ -111,18 +114,18 @@ impl CharacterView {
             changed |= match self.tab {
                 Tab::Info => self.info_tab(ui),
                 Tab::Attributes => self.attributes_tab(ui),
-                Tab::Skills => self.skills_tab(ui, lang, &mut roll),
+                Tab::Skills => self.skills_tab(ui, pdfs, status, &mut roll),
                 Tab::Qualities => {
                     let mut c = false;
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        c |= self.section(ui, &sections::QUALITIES, lang, true);
+                    egui::ScrollArea::both().show(ui, |ui| {
+                        c |= self.section(ui, &sections::QUALITIES, lang, pdfs, status);
                         ui.add_space(12.0);
-                        c |= self.section(ui, &sections::CONTACTS, lang, true);
+                        c |= self.section(ui, &sections::CONTACTS, lang, pdfs, status);
                     });
                     c
                 }
-                Tab::Magic => self.magic_tab(ui, lang),
-                Tab::Equipment => self.equipment_tab(ui, lang),
+                Tab::Magic => self.magic_tab(ui, lang, pdfs, status),
+                Tab::Equipment => self.equipment_tab(ui, lang, pdfs, status),
                 Tab::Improvements => self.improvements_tab(ui),
                 Tab::Log => self.log_tab(ui),
                 Tab::Notes => self.notes_tab(ui),
@@ -344,7 +347,7 @@ impl CharacterView {
         changed
     }
 
-    fn skills_tab(&mut self, ui: &mut egui::Ui, _lang: &Language, roll: &mut Option<u32>) -> bool {
+    fn skills_tab(&mut self, ui: &mut egui::Ui, pdfs: &SourcebookLibrary, status: &mut Status, roll: &mut Option<u32>) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut self.skill_filter).hint_text("Filter skills").desired_width(200.0));
@@ -375,7 +378,13 @@ impl CharacterView {
                 }
                 ui.end_row();
                 for (i, s) in &rows {
-                    ui.label(&s.name);
+                    let r = SourceRef::new(&s.source, &s.page);
+                    let name = ui.add(egui::Label::new(&s.name).sense(egui::Sense::click()));
+                    if let Some(r) = r {
+                        if name.on_hover_text(format!("{r} — click to open the rulebook")).clicked() {
+                            pdf_ui::open(pdfs, &r, status);
+                        }
+                    }
                     ui.label(&s.attribute);
                     ui.weak(&s.group);
                     let sk = &mut self.ch.skills[*i];
@@ -437,7 +446,7 @@ impl CharacterView {
         changed
     }
 
-    fn magic_tab(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
+    fn magic_tab(&mut self, ui: &mut egui::Ui, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let mut changed = false;
         let present: Vec<&Section> = sections::MAGIC.iter().chain([&sections::COMPLEX_FORMS, &sections::MARTIAL_ARTS]).collect();
         ui.horizontal(|ui| {
@@ -457,12 +466,12 @@ impl CharacterView {
         ui.separator();
         if let Some(sec) = present.get(self.magic) {
             let sec = **sec;
-            egui::ScrollArea::vertical().show(ui, |ui| changed |= self.section(ui, &sec, lang, true));
+            egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));
         }
         changed
     }
 
-    fn equipment_tab(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
+    fn equipment_tab(&mut self, ui: &mut egui::Ui, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
             for (i, s) in sections::EQUIPMENT.iter().enumerate() {
@@ -472,12 +481,12 @@ impl CharacterView {
         });
         ui.separator();
         let sec = sections::EQUIPMENT[self.equipment];
-        egui::ScrollArea::vertical().show(ui, |ui| changed |= self.section(ui, &sec, lang, true));
+        egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));
         changed
     }
 
     /// A table of items. Returns true if the character changed.
-    fn section(&mut self, ui: &mut egui::Ui, sec: &Section, lang: &Language, removable: bool) -> bool {
+    fn section(&mut self, ui: &mut egui::Ui, sec: &Section, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let items: Vec<Element> = self.ch.items(sec.container, sec.item).into_iter().cloned().collect();
         ui.heading(format!("{} ({})", sec.label, items.len()));
         if items.is_empty() {
@@ -492,18 +501,17 @@ impl CharacterView {
             ui.end_row();
             for it in &items {
                 item_rows(ui, sec, it, lang, 0);
-                if removable {
+                ui.horizontal(|ui| {
+                    pdf_ui::source_icon(ui, pdfs, SourceRef::of(it), status);
                     if ui.small_button("🗑").on_hover_text("Remove (also removes its improvements)").clicked() {
                         self.confirm_remove = Some((sec.container.to_owned(), it.get("guid"), display_name(sec, it, lang)));
                     }
-                } else {
-                    ui.label("");
-                }
+                });
                 ui.end_row();
                 for (container, item) in sec.child_containers {
                     if let Some(c) = it.child(container) {
                         for child in c.children_named(item) {
-                            child_rows(ui, sec, child, lang, 1);
+                            child_rows(ui, sec, child, lang, 1, pdfs, status);
                         }
                     }
                 }
@@ -687,17 +695,17 @@ fn item_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, de
     }
 }
 
-fn child_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, depth: usize) {
+fn child_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, depth: usize, pdfs: &SourcebookLibrary, status: &mut Status) {
     if depth > 6 {
         return;
     }
     item_rows(ui, sec, it, lang, depth);
-    ui.label("");
+    pdf_ui::source_icon(ui, pdfs, SourceRef::of(it), status);
     ui.end_row();
     for (container, item) in sec.child_containers {
         if let Some(c) = it.child(container) {
             for child in c.children_named(item) {
-                child_rows(ui, sec, child, lang, depth + 1);
+                child_rows(ui, sec, child, lang, depth + 1, pdfs, status);
             }
         }
     }

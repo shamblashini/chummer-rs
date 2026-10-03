@@ -17,3 +17,4 @@ pub mod skills;
 pub mod calc;
 pub mod engine;
 pub mod format;
+pub mod sources;

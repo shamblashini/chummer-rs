@@ -473,6 +473,8 @@ pub struct SkillValues {
     pub knowledge: bool,
     pub native: bool,
     pub karma_cost: i32,
+    pub source: String,
+    pub page: String,
 }
 
 /// Everything shown on the character's summary panel.
@@ -906,6 +908,8 @@ fn skill_values(ch: &Character, sheet: &Sheet, sk: &Skill, cat: &SkillCatalog, r
         knowledge: false,
         native: false,
         karma_cost,
+        source: def.source.clone(),
+        page: def.page.clone(),
     }
 }
 
@@ -953,6 +957,8 @@ fn knowledge_values(ch: &Character, sheet: &Sheet, k: &KnowledgeSkill, rules: &R
         knowledge: true,
         native: k.native_language,
         karma_cost: karma_cost.max(0),
+        source: String::new(),
+        page: String::new(),
     }
 }
 
