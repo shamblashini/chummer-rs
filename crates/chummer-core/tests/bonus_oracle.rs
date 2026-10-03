@@ -15,7 +15,7 @@ use chummer_core::improvement::Improvement;
 use chummer_core::xml::Element;
 
 /// Exact matches must not fall below this. Raise it as handlers land.
-const BASELINE: usize = 0;
+const BASELINE: usize = 627;
 
 fn is_guid(s: &str) -> bool {
     s.len() == 36 && s.chars().filter(|c| *c == '-').count() == 4
@@ -74,6 +74,25 @@ fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
     }
 }
 
+/// `<bonus unique>` of the item's data record, looked up by name.
+fn data_unique(store: &DataStore, it: &Element) -> String {
+    let (file, container) = match it.name.as_str() {
+        "gear" => ("gear.xml", "gears"),
+        "armor" => ("armor.xml", "armors"),
+        "armormod" => ("armor.xml", "mods"),
+        "cyberware" if it.get("improvementsource") == "Bioware" => ("bioware.xml", "biowares"),
+        "cyberware" => ("cyberware.xml", "cyberwares"),
+        "quality" => ("qualities.xml", "qualities"),
+        _ => return String::new(),
+    };
+    let Ok(doc) = store.doc(file) else { return String::new() };
+    doc.child(container)
+        .and_then(|c| c.elements().find(|e| e.get("name") == it.get("name")))
+        .and_then(|e| e.child("bonus"))
+        .and_then(|b| b.attr("unique").map(str::to_owned))
+        .unwrap_or_default()
+}
+
 #[test]
 fn bonus_processor_reproduces_saved_improvements() {
     let store = DataStore::discover().unwrap();
@@ -99,6 +118,14 @@ fn bonus_processor_reproduces_saved_improvements() {
             if saved.is_empty() {
                 continue;
             }
+            if saved.iter().any(|i| i.kind == "LimitModifier" && !is_guid(&i.improved_name)) {
+                continue;
+            }
+            // Mentor spirits also apply the bonuses of the chosen
+            // <choice1>/<choice2>, which are not in <bonus>.
+            if it.name == "mentorspirit" {
+                continue;
+            }
             // Wireless, pair and first-level bonuses share the item guid;
             // only compare items whose improvements all come from <bonus>.
             if ["wirelessbonus", "pairbonus", "firstlevelbonus"].iter().any(|b| it.child(b).is_some_and(|x| x.elements().next().is_some())) {
@@ -112,10 +139,34 @@ fn bonus_processor_reproduces_saved_improvements() {
                 rating: it.get_i32("rating").filter(|r| *r > 0).unwrap_or(1),
             };
             let extra = it.get("extra");
-            let forced = (!extra.is_empty()).then_some(extra.as_str());
+            let forced = Some(extra.as_str());
             let out = bonus::apply(&ch, &store, bonus_el, &src, forced);
-            let mut want: Vec<String> = saved.iter().map(|i| key(i)).collect();
-            let mut got: Vec<String> = out.improvements.iter().map(key).collect();
+            // Version differences between the fixtures (5.18x-5.202) and
+            // current Chummer5a, which this port follows:
+            // - LimitModifier improvements used the item name as unique
+            //   name; current code uses the bonus's unique name. Even older
+            //   files used the limit name as improved name; those items
+            //   are skipped.
+            // - Saved bonuses drop the <bonus unique> attribute, so unique
+            //   names that come from it cannot be reproduced; compared
+            //   without it. (The GUI applies bonuses from the data, which
+            //   keeps the attribute.)
+            let item_name = it.get("name");
+            let mut want: Vec<String> = saved
+                .iter()
+                .map(|i| {
+                    let mut i = (*i).clone();
+                    if i.kind == "LimitModifier" && i.unique_name == item_name {
+                        i.unique_name.clear();
+                    }
+                    if bonus_el.attr("unique").is_none() && !i.unique_name.is_empty() && i.unique_name == data_unique(&store, it) {
+                        i.unique_name.clear();
+                    }
+                    key(&i)
+                })
+                .collect();
+            // Nested items (e.g. from addqualities) carry their own source.
+            let mut got: Vec<String> = out.improvements.iter().filter(|i| i.source_name == src.guid).map(key).collect();
             want.sort();
             got.sort();
             let ok = want == got && out.unsupported.is_empty();

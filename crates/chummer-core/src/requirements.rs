@@ -135,7 +135,7 @@ fn holds(n: &Element, c: &Check<'_>) -> Option<bool> {
             let val = n.get_i32("val").unwrap_or(0);
             let spec = n.get("spec");
             let pool = c.sheet.skills.iter().chain(c.sheet.knowledge_skills.iter());
-            pool.into_iter().any(|s| s.name == name && s.rating >= val && (spec.is_empty() || s.specs.iter().any(|x| *x == spec)))
+            pool.into_iter().any(|s| s.name == name && s.rating >= val && (spec.is_empty() || s.specs.contains(&spec)))
         }
         "attribute" | "attributetotal" => {
             let total = n.get_i32("total").unwrap_or(0);
