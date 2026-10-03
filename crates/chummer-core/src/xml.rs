@@ -331,7 +331,7 @@ fn start_to_element(e: &BytesStart<'_>) -> Element {
     let mut el = Element::new(name);
     for a in e.attributes().flatten() {
         let k = lossless(a.key.as_ref()).into_owned();
-        let v = unescape_text(&lossless(&*a.value));
+        let v = unescape_text(&lossless(&a.value));
         el.attrs.push((k, v));
     }
     el
@@ -393,12 +393,12 @@ pub fn parse(src: &str) -> Result<Element, XmlError> {
             }
             Event::Text(t) => {
                 if !stack.is_empty() {
-                    pending_text.push_str(&unescape_text(&lossless(&*t)));
+                    pending_text.push_str(&unescape_text(&lossless(&t)));
                 }
             }
             Event::GeneralRef(r) => {
                 if !stack.is_empty() {
-                    let name = lossless(&*r);
+                    let name = lossless(&r);
                     match resolve_entity(&name) {
                         Some(s) => pending_text.push_str(&s),
                         None => {
@@ -412,13 +412,13 @@ pub fn parse(src: &str) -> Result<Element, XmlError> {
             Event::CData(t) => {
                 flush_text(&mut stack, &mut pending_text);
                 if let Some(top) = stack.last_mut() {
-                    top.children.push(Node::CData(lossless(&*t).into_owned()));
+                    top.children.push(Node::CData(lossless(&t).into_owned()));
                 }
             }
             Event::Comment(t) => {
                 flush_text(&mut stack, &mut pending_text);
                 if let Some(top) = stack.last_mut() {
-                    top.children.push(Node::Comment(lossless(&*t).into_owned()));
+                    top.children.push(Node::Comment(lossless(&t).into_owned()));
                 }
             }
             Event::Eof => break,

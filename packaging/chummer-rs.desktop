@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Chummer (Rust)
+GenericName=Shadowrun Character Manager
+Comment=Create and manage Shadowrun 5th Edition characters
+Exec=chummer %F
+Icon=chummer-rs
+Terminal=false
+Categories=Game;RolePlaying;
+MimeType=application/x-chummer5;
+StartupWMClass=chummer-rs

@@ -956,6 +956,21 @@ fn knowledge_values(ch: &Character, sheet: &Sheet, k: &KnowledgeSkill, rules: &R
     }
 }
 
+/// Refresh the export-only totals Chummer writes (`<totalvalue>` per
+/// attribute and `<totaless>`) so other tools reading the file see
+/// current numbers.
+pub fn stamp_totals(ch: &mut Character, sheet: &Sheet, rules: &Rules) {
+    if let Some(attrs) = ch.doc.child_mut("attributes") {
+        for e in attrs.elements_mut() {
+            let name = e.get("name");
+            if let Some(v) = sheet.attr_values(&name) {
+                e.set_child_text("totalvalue", v.total.to_string());
+            }
+        }
+    }
+    ch.doc.set_child_text("totaless", format!("{:.*}", rules.essence_decimals as usize, sheet.essence));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -983,19 +998,4 @@ mod tests {
         // 4*5 + 5*5 = 45
         assert_eq!(attribute_karma_cost(&v, &rules), 45);
     }
-}
-
-/// Refresh the export-only totals Chummer writes (`<totalvalue>` per
-/// attribute and `<totaless>`) so other tools reading the file see
-/// current numbers.
-pub fn stamp_totals(ch: &mut Character, sheet: &Sheet, rules: &Rules) {
-    if let Some(attrs) = ch.doc.child_mut("attributes") {
-        for e in attrs.elements_mut() {
-            let name = e.get("name");
-            if let Some(v) = sheet.attr_values(&name) {
-                e.set_child_text("totalvalue", v.total.to_string());
-            }
-        }
-    }
-    ch.doc.set_child_text("totaless", format!("{:.*}", rules.essence_decimals as usize, sheet.essence));
 }
