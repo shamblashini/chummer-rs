@@ -1,0 +1,17 @@
+[package]
+name = "chummer-gui"
+description = "Desktop UI for chummer-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "chummer"
+path = "src/main.rs"
+
+[dependencies]
+chummer-core.workspace = true
+anyhow.workspace = true
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
+egui_extras = "0.33"
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
