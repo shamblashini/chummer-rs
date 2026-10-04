@@ -404,19 +404,27 @@ fn apply_modes(node: &Element, replace_tag: &str, modes: &mut Vec<String>, new_m
 }
 
 /// The gear loaded in the weapon's active clip (`Weapon.AmmoLoaded`).
-fn loaded_ammo<'a>(ctx: &'a Ctx, w: &Element) -> Option<&'a Element> {
+pub(crate) fn loaded_ammo<'a>(doc: &'a Element, w: &Element) -> Option<&'a Element> {
     let slot = w.get_i32("activeammoslot").unwrap_or(1).max(1) as usize;
     let clip = w.child("clips")?.children_named("clip").nth(slot - 1)?;
     let id = clip.get("id");
     if id.is_empty() || id.starts_with("00000000") {
         return None;
     }
-    find_tagged(&ctx.ch.doc, "gear", &id)
+    find_tagged(doc, "gear", &id)
 }
 
 /// `Weapon.CalculatedMode`: base modes plus wireless, accessory and
 /// ammunition changes, in SS/SA/BF/FA/Special order.
 fn calculated_mode(ctx: &Ctx, w: &Element, include_ammo: bool, english: bool) -> String {
+    let l = ctx.strings(english);
+    let keys = [("SS", "String_ModeSingleShot"), ("SA", "String_ModeSemiAutomatic"), ("BF", "String_ModeBurstFire"), ("FA", "String_ModeFullAutomatic"), ("Special", "String_ModeSpecial")];
+    mode_codes(&ctx.ch.doc, w, include_ammo).into_iter().filter_map(|m| keys.iter().find(|(c, _)| *c == m)).map(|(_, k)| l.s(k)).collect::<Vec<_>>().join("/")
+}
+
+/// The firing modes of [`calculated_mode`] as codes (`SS`, `SA`, `BF`,
+/// `FA`, `Special`), in that order.
+pub(crate) fn mode_codes(doc: &Element, w: &Element, include_ammo: bool) -> Vec<&'static str> {
     let mut modes: Vec<String> = split_modes(&w.get("mode")).map(str::to_owned).collect();
     let mut new_modes = Vec::new();
     let wireless = w.get_bool("wirelesson").unwrap_or(true);
@@ -434,7 +442,7 @@ fn calculated_mode(ctx: &Ctx, w: &Element, include_ammo: bool, english: bool) ->
         }
     }
     if include_ammo {
-        if let Some(g) = loaded_ammo(ctx, w) {
+        if let Some(g) = loaded_ammo(doc, w) {
             let flechette = w.get("damage").contains("(f)") && w.get("ammocategory") != "Gear";
             let pick = |g: &Element| -> Option<Element> {
                 let fb = g.child("flechetteweaponbonus").filter(|b| b.elements().next().is_some());
@@ -454,13 +462,7 @@ fn calculated_mode(ctx: &Ctx, w: &Element, include_ammo: bool, english: bool) ->
         }
     }
     modes.extend(new_modes);
-    let l = ctx.strings(english);
-    [("SS", "String_ModeSingleShot"), ("SA", "String_ModeSemiAutomatic"), ("BF", "String_ModeBurstFire"), ("FA", "String_ModeFullAutomatic"), ("Special", "String_ModeSpecial")]
-        .into_iter()
-        .filter(|(m, _)| modes.iter().any(|x| x == m))
-        .map(|(_, k)| l.s(k))
-        .collect::<Vec<_>>()
-        .join("/")
+    ["SS", "SA", "BF", "FA", "Special"].into_iter().filter(|m| modes.iter().any(|x| x == m)).collect()
 }
 
 /// Byte length of the char at `p` (for `x` / `×`).
@@ -470,7 +472,7 @@ fn char_len(s: &str, p: usize) -> usize {
 
 /// `Weapon.AmmoCapacity`: strip a numeric `Nx` prefix, an `xN` suffix
 /// and the clip type.
-fn ammo_capacity(ammo: &str) -> String {
+pub(crate) fn ammo_capacity(ammo: &str) -> String {
     let mut s = ammo.to_owned();
     if let Some(p) = s.find(['x', '×']) {
         if s[..p].chars().all(|c| c.is_ascii_digit()) {
@@ -495,6 +497,33 @@ fn split_ammo(s: &str) -> Vec<String> {
 /// `Weapon.CalculatedAmmo`: each ammo entry with accessory and weapon
 /// mount bonuses applied, then translated.
 fn calculated_ammo(ctx: &Ctx, w: &Element, mount: Option<&Element>, english: bool) -> String {
+    let space = ctx.space(english);
+    let s = ammo_entries(w, mount).join(space);
+    if english || ctx.is_english() {
+        return s;
+    }
+    let l = ctx.lang;
+    let mut s = replace_ci(&s, " or ", &format!("{space}{}{space}", l.s("String_Or")));
+    for (from, key) in [(" Belt", "String_AmmoBelt"), (" Energy", "String_AmmoEnergy"), (" External Source", "String_AmmoExternalSource"), (" Special", "String_AmmoSpecial")] {
+        s = replace_ci(&s, from, &l.s(key));
+    }
+    for (from, key) in [
+        ("(b)", "String_AmmoBreakAction"),
+        ("(belt)", "String_AmmoBelt"),
+        ("(box)", "String_AmmoBox"),
+        ("(c)", "String_AmmoClip"),
+        ("(cy)", "String_AmmoCylinder"),
+        ("(d)", "String_AmmoDrum"),
+        ("(m)", "String_AmmoMagazine"),
+        ("(ml)", "String_AmmoMuzzleLoad"),
+    ] {
+        s = s.replace(from, &format!("({})", l.s(key)));
+    }
+    s
+}
+
+/// The English entries of [`calculated_ammo`], before joining.
+pub(crate) fn ammo_entries(w: &Element, mount: Option<&Element>) -> Vec<String> {
     let base = w.get("ammo");
     let mut ammos = split_ammo(&base);
     let accessories: Vec<&Element> = children(w, "accessories", "accessory").into_iter().filter(|a| equipped(a)).collect();
@@ -572,29 +601,7 @@ fn calculated_ammo(ctx: &Ctx, w: &Element, mount: Option<&Element>, english: boo
         }
         parts.push(text);
     }
-    let space = ctx.space(english);
-    let s = parts.join(space);
-    if english || ctx.is_english() {
-        return s;
-    }
-    let l = ctx.lang;
-    let mut s = replace_ci(&s, " or ", &format!("{space}{}{space}", l.s("String_Or")));
-    for (from, key) in [(" Belt", "String_AmmoBelt"), (" Energy", "String_AmmoEnergy"), (" External Source", "String_AmmoExternalSource"), (" Special", "String_AmmoSpecial")] {
-        s = replace_ci(&s, from, &l.s(key));
-    }
-    for (from, key) in [
-        ("(b)", "String_AmmoBreakAction"),
-        ("(belt)", "String_AmmoBelt"),
-        ("(box)", "String_AmmoBox"),
-        ("(c)", "String_AmmoClip"),
-        ("(cy)", "String_AmmoCylinder"),
-        ("(d)", "String_AmmoDrum"),
-        ("(m)", "String_AmmoMagazine"),
-        ("(ml)", "String_AmmoMuzzleLoad"),
-    ] {
-        s = s.replace(from, &format!("({})", l.s(key)));
-    }
-    s
+    parts
 }
 
 /// Case-insensitive replace (`StringComparison.OrdinalIgnoreCase`), for
@@ -637,7 +644,8 @@ fn gear_field(ctx: &Ctx, g: &Element, field: &str) -> String {
 /// `Weapon.GetAmmoReloadable` over `gears` (recursing into equipped
 /// children): equipped, unloaded ammunition that fits the weapon.
 fn reloadable<'a>(ctx: &Ctx, w: &Element, gears: &[&'a Element], skill: &str, loaded: &[String], out: &mut Vec<&'a Element>) {
-    let cat = w.get("ammocategory");
+    // `Weapon.AmmoCategory` falls back to the category.
+    let cat = Some(w.get("ammocategory")).filter(|a| !a.is_empty()).unwrap_or_else(|| w.get("category"));
     let wtype = weapon_type(ctx, w);
     let flechette = w.get("damage").contains("(f)");
     for g in gears.iter().filter(|g| equipped(g)) {
@@ -884,7 +892,7 @@ pub fn weapon(ctx: &Ctx, item: &Element, place: WeaponPlace) -> Element {
         }
         out.push(list);
     }
-    let ammo = loaded_ammo(ctx, item);
+    let ammo = loaded_ammo(&ctx.ch.doc, item);
     let (r, rn) = (&stats.ranges, &stats_noammo.ranges);
     let ammo_changes = r != rn;
     let range_key = [item.get("range"), item.get("category")].into_iter().find(|s| !s.trim().is_empty()).unwrap_or_default();

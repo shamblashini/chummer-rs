@@ -29,3 +29,4 @@ pub mod print;
 pub mod export;
 pub mod roster;
 pub mod calendar;
+pub mod play;

@@ -686,12 +686,8 @@ pub fn compute(ch: &Character, rules: &Rules, store: Option<&DataStore>, catalog
     let initiative_dice = (init_dice_base + imps.val_int("InitiativeDice", None) + imps.val_int("InitiativeDiceAdd", None)).min(rules.max_initiative_dice);
     let matrix_dice = imps.val_int("MatrixInitiativeDice", None);
     let matrix_init = imps.val_int("MatrixInitiative", None);
-    let commlink_dp = ch
-        .items("gears", "gear")
-        .into_iter()
-        .find(|g| g.get_bool("active").unwrap_or(false) && g.get("category") == "Commlinks")
-        .and_then(|g| g.get_i32("devicerating"))
-        .unwrap_or(0);
+    // `ActiveCommlink.GetTotalMatrixAttribute("Data Processing")`.
+    let commlink_dp = crate::play::matrix::active_commlink_dp(ch);
 
     // Limits
     let ess_round = standard_round(essence);

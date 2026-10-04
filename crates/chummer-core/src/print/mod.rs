@@ -24,7 +24,7 @@
 //! German labels and names but `1,000.5¥` rather than `1.000,5¥`.
 
 mod character;
-mod items;
+pub(crate) mod items;
 mod magic;
 mod render;
 mod skills;
