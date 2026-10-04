@@ -2,6 +2,7 @@
 
 mod browser;
 mod dice_ui;
+mod initiative;
 mod pdf_ui;
 mod select;
 mod settings_ui;
@@ -41,6 +42,8 @@ struct App {
     show_about: bool,
     show_sources: bool,
     show_settings: bool,
+    show_initiative: bool,
+    initiative: initiative::Tracker,
     settings_editor: settings_ui::SettingsEditor,
     wizard: Option<wizard::Wizard>,
     pdfs: SourcebookLibrary,
@@ -67,6 +70,8 @@ impl App {
         let mut app = App {
             show_sources: false,
             show_settings: false,
+            show_initiative: false,
+            initiative: Default::default(),
             settings_editor: settings_ui::SettingsEditor::new(),
             wizard: None,
             pdfs: SourcebookLibrary::load(),
@@ -223,6 +228,10 @@ impl App {
                 if ui.button("Dice roller").clicked() {
                     ui.close();
                     self.show_dice = true;
+                }
+                if ui.button("Initiative tracker").clicked() {
+                    ui.close();
+                    self.show_initiative = true;
                 }
             });
             ui.menu_button("Language", |ui| {
@@ -431,6 +440,10 @@ impl eframe::App for App {
             }
         });
         self.show_sources = open;
+        let mut open = self.show_initiative;
+        let chars: Vec<(String, i32, u32)> = self.views.iter().map(|v| (v.ch.display_name(), v.sheet.initiative, v.sheet.initiative_dice.max(1) as u32)).collect();
+        egui::Window::new("Initiative tracker").open(&mut open).default_width(480.0).show(ctx, |ui| self.initiative.ui(ui, &chars));
+        self.show_initiative = open;
         let mut open = self.show_settings;
         let mut reload = false;
         egui::Window::new("Character settings").open(&mut open).default_size([820.0, 680.0]).show(ctx, |ui| {
