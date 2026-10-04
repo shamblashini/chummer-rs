@@ -708,7 +708,10 @@ pub fn nuyen_spent(ch: &Character, store: Option<&DataStore>) -> f64 {
     ware + sum("gears", "gear", &gear::cost)
         + sum("armors", "armor", &armor::cost)
         + sum("weapons", "weapon", &weapon::cost)
-        + sum("vehicles", "vehicle", &vehicle::cost)
+        + match store {
+            Some(st) => sum("vehicles", "vehicle", &|e| vehicle::cost_with(ch, st, e)),
+            None => sum("vehicles", "vehicle", &vehicle::cost),
+        }
         + sum("drugs", "drug", &drug::cost)
         + sum("lifestyles", "lifestyle", &|e| lifestyle::total_cost(ch, e))
 }

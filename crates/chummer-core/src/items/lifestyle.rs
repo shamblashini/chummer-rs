@@ -98,13 +98,27 @@ impl Options {
             security: int("security"),
             bonus_lp: int("bonuslp"),
             trust_fund: flag("trustfund"),
-            split_cost_with_roommates: flag("splitcostwithroommates"),
+            split_cost_with_roommates: split_cost_with_roommates(e),
             style: e.child_text("type").filter(|t| !t.is_empty()).unwrap_or_else(|| "Standard".into()),
             city: e.get("city"),
             district: e.get("district"),
             borough: e.get("borough"),
         }
     }
+}
+
+/// `Lifestyle.Load`: `splitcostwithroommates`, else the opposite of the
+/// legacy `primarytenant`, else whether there are roommates.
+fn split_cost_with_roommates(e: &Element) -> bool {
+    e.get_bool("splitcostwithroommates")
+        .or_else(|| e.get_bool("primarytenant").map(|p| !p))
+        .unwrap_or_else(|| e.get_i32("roommates").unwrap_or(0) > 0)
+}
+
+/// `LifestyleQuality.Load`: `uselpcost`, else the legacy
+/// `contributetolimit`, else true.
+fn use_lp_cost(q: &Element) -> bool {
+    q.get_bool("uselpcost").or_else(|| q.get_bool("contributetolimit")).unwrap_or(true)
 }
 
 /// `LifestyleIncrement` from its data/save name.
@@ -390,7 +404,7 @@ impl Lq {
     fn of(q: &Element, base: &str, attrs: &dyn expr::AttributeSource) -> Lq {
         let builtin = q.get("lifestylequalitysource") == "BuiltIn";
         // `CostFree`: free, built in, or paid with LP where the base allows.
-        let free = q.get_bool("free").unwrap_or(false) || builtin || (q.get_bool("uselpcost").unwrap_or(true) && free_by_lifestyle(q, base));
+        let free = q.get_bool("free").unwrap_or(false) || builtin || (use_lp_cost(q) && free_by_lifestyle(q, base));
         let num = |k: &str| q.get_f64(k).unwrap_or(0.0);
         let cost = q.get("cost");
         let cost = if expr::needs_evaluation(&cost) {
@@ -469,7 +483,7 @@ pub fn monthly_cost(ch: &Character, e: &Element) -> f64 {
     let mut total = 0.0;
     if !e.get_bool("trustfund").unwrap_or(false) {
         total += cost_pre_split(e, &qs);
-        if e.get_bool("splitcostwithroommates").unwrap_or(false) {
+        if split_cost_with_roommates(e) {
             total /= e.get_f64("roommates").unwrap_or(0.0) + 1.0;
         }
     }

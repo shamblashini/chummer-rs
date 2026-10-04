@@ -20,7 +20,7 @@ use crate::expr::{self, AttributeSource};
 use crate::improvement::{bool_str, fmt_num, Query};
 use crate::xml::Element;
 
-use super::armor::{field, find_saved, gear_cost, matrix_fields, raw_node, resolved_cost, saved_cost, NOTES_COLOR};
+use super::armor::{field, find_saved, gears_cost, matrix_fields, raw_node, resolved_cost, saved_cost, NOTES_COLOR};
 use super::{new_guid, Purchase};
 
 /// Fields the oracle does not compare for weapons and accessories.
@@ -697,16 +697,11 @@ pub fn own_cost(w: &Element, parent: Option<&Element>) -> f64 {
 }
 
 /// `Weapon.AccessoryMultiplier`: sum of non-1 `accessorycostmultiplier`s
-/// of equipped accessories, or 1.
+/// of equipped accessories, or 1. `WeaponAccessory.Load` reads the
+/// multiplier from the saved element (default 1) and `Save` never writes
+/// it, so a loaded Vintage accessory no longer doubles the others.
 fn accessory_multiplier(w: &Element) -> f64 {
-    let doc = shared_store().and_then(|s| s.doc(FILE).ok());
-    let mut m = 0;
-    for a in accessories(w).filter(|a| equipped(a)) {
-        let mult = doc.as_ref().and_then(|d| find_saved(d, "accessories", "accessory", a)).and_then(|r| r.el().get_i32("accessorycostmultiplier")).unwrap_or(1);
-        if mult != 1 {
-            m += mult;
-        }
-    }
+    let m: i32 = accessories(w).filter(|a| equipped(a)).map(|a| a.get_i32("accessorycostmultiplier").unwrap_or(1)).filter(|m| *m != 1).sum();
     if m == 0 { 1.0 } else { f64::from(m) }
 }
 
@@ -755,7 +750,7 @@ pub fn cost(w: &Element) -> f64 {
 
 fn total_cost(w: &Element, parent: Option<&Element>) -> f64 {
     let acc: f64 = accessories(w)
-        .map(|a| accessory_cost(a, w) + a.child("gears").map(|g| g.children_named("gear").map(gear_cost).sum::<f64>()).unwrap_or(0.0))
+        .map(|a| accessory_cost(a, w) + gears_cost(a))
         .sum();
     let ub: f64 = underbarrels(w).map(|u| total_cost(u, Some(w))).sum();
     own_cost(w, parent) + acc + ub
@@ -1587,4 +1582,19 @@ pub fn stats_with(ch: &Character, sheet: &Sheet, store: Option<&DataStore>, weap
         store.and_then(|s| s.doc("ranges.xml").ok()).map(|d| ranges(&c, &d)).unwrap_or_default()
     };
     WeaponStats { damage: damage(&c), ap: ap(&c), accuracy: accuracy(&c), rc: rc(&c), dice_pool: dice_pool(&c), reach: reach(&c), skill: c.skill(), ranges }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accessory_multiplier_comes_from_the_saved_accessory() {
+        let w = |vintage: &str| {
+            crate::xml::parse(&format!("<weapon><cost>600</cost><accessories><accessory><name>Custom Look</name><cost>300</cost></accessory><accessory><name>Vintage</name><cost>0</cost>{vintage}</accessory></accessories></weapon>")).unwrap()
+        };
+        // As loaded from a save: Save never writes the multiplier.
+        assert_eq!(cost(&w("")), 900.0);
+        assert_eq!(cost(&w("<accessorycostmultiplier>2</accessorycostmultiplier>")), 1200.0);
+    }
 }
