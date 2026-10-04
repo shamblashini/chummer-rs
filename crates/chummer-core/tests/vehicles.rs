@@ -199,15 +199,18 @@ fn mod_needs_vehicle_parent() {
     assert!(items::add("mod", &mut ch, &store, armor, &p).is_err());
 }
 
-/// In career mode the vehicle is paid for.
+/// Adding never deducts nuyen itself; career purchases go through the
+/// ledger (career::pay_for_item) at the vehicle's cost.
 #[test]
 fn career_purchase_costs_nuyen() {
     let store = DataStore::discover().unwrap();
     let doc = store.doc("vehicles.xml").unwrap();
     let mut ch = Character::from_str("<character><created>True</created><nuyen>50000</nuyen></character>").unwrap();
     let rec = data::find(&doc, "vehicles", "vehicle", "Ford Americar (Sedan)").unwrap();
-    items::add("vehicle", &mut ch, &store, rec, &Purchase::default()).unwrap();
-    assert_eq!(ch.nuyen, 50000.0 - 16000.0);
-    items::add("vehicle", &mut ch, &store, rec, &Purchase { free: true, ..Default::default() }).unwrap();
+    let g = items::add("vehicle", &mut ch, &store, rec, &Purchase::default()).unwrap();
+    assert_eq!(ch.nuyen, 50000.0);
+    let cost = items::edit::total_cost(&ch, &store, &g);
+    assert_eq!(cost, 16000.0);
+    chummer_core::career::pay_for_item(&mut ch, "vehicle", None, &g, cost).unwrap();
     assert_eq!(ch.nuyen, 50000.0 - 16000.0);
 }

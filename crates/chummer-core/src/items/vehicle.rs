@@ -457,15 +457,9 @@ fn add_vehicle(ch: &mut Character, store: &DataStore, rec: Record<'_>, p: &Purch
     Ok(guid)
 }
 
-/// Deduct a purchase in career mode. In creation the budget is computed
-/// from the items.
-fn pay(ch: &mut Character, p: &Purchase, cost: f64) {
-    if ch.created && !p.free {
-        let m = if p.cost_multiplier > 0.0 { p.cost_multiplier } else { 1.0 };
-        ch.nuyen -= cost * m;
-        ch.dirty = true;
-    }
-}
+/// Purchases are paid through the career ledger by the caller
+/// (`career::pay_for_item`), as for every other item kind; nothing to do.
+fn pay(_ch: &mut Character, _p: &Purchase, _cost: f64) {}
 
 /// `Vehicle.Create` gear: `<gears><gear><name/><rating/></gear>` or
 /// `<gear rating="" select="">Name</gear>`, added through the gear kind.

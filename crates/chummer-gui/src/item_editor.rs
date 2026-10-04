@@ -183,7 +183,7 @@ impl ItemEditor {
 
         self.children_ui(ui, ch, store, guid, &tag, &mut res);
         ui.separator();
-        self.remove_ui(ui, ch, guid, &tag, included, &mut res);
+        self.remove_ui(ui, ch, store, guid, &tag, included, &mut res);
         res
     }
 
@@ -233,16 +233,16 @@ impl ItemEditor {
     }
 
     /// Career mode sells (`ICanSell.Sell`), creation mode deletes.
-    fn remove_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, guid: &str, tag: &str, included: bool, res: &mut EditorResult) {
+    fn remove_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, guid: &str, tag: &str, included: bool, res: &mut EditorResult) {
         if included {
             return;
         }
         if ch.created && tag != "lifestyle" {
             ui.horizontal(|ui| {
                 ui.add(egui::DragValue::new(&mut self.sell_percent).range(0.0..=100.0).suffix(" %"));
-                let value = edit::sale_value(ch, guid, self.sell_percent / 100.0);
+                let value = edit::sale_value(ch, store, guid, self.sell_percent / 100.0);
                 if ui.button(format!("Sell for {}", format::nuyen(value))).on_hover_text("Removes the item and adds the proceeds to the log").clicked() {
-                    match edit::sell(ch, guid, self.sell_percent / 100.0) {
+                    match edit::sell(ch, store, guid, self.sell_percent / 100.0) {
                         Ok(v) => {
                             res.status = Some((format!("Sold for {}", format::nuyen(v)), false));
                             res.changed = true;

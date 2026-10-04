@@ -141,9 +141,9 @@ fn selling_pays_the_sale_value() {
     let rec = data::find(&doc, "gears", "gear", "Chemsuit").unwrap();
     let guid = items::add("gear", &mut ch, &store, rec, &Purchase { rating: 4, ..Default::default() }).unwrap();
     let before = ch.nuyen;
-    let expect = edit::sale_value(&ch, &guid, 0.5);
+    let expect = edit::sale_value(&ch, &store, &guid, 0.5);
     assert_eq!(expect, 300.0);
-    assert_eq!(edit::sell(&mut ch, &guid, 0.5).unwrap(), expect);
+    assert_eq!(edit::sell(&mut ch, &store, &guid, 0.5).unwrap(), expect);
     assert_eq!(ch.nuyen, before + expect);
     assert!(edit::find(&ch, &guid).is_none());
     assert!(from_source(&ch, &guid).is_empty());

@@ -71,9 +71,15 @@ pub fn pay_for_item(ch: &mut Character, tag: &str, parent_tag: Option<&str>, gui
 /// removed and the proceeds logged as `Sold <Kind> <name>` without undo.
 /// Returns the nuyen received.
 pub fn sell_item(ch: &mut Character, guid: &str, fraction: f64) -> Result<f64, CareerError> {
+    let value = find_item_deep(&ch.doc, guid).map_or(0.0, crate::chargen::item_cost);
+    sell_item_valued(ch, guid, value * fraction)
+}
+
+/// As [`sell_item`], for a sale price the caller computed with the item
+/// kind's own cost rules (e.g. the cyberware grade multiplier).
+pub fn sell_item_valued(ch: &mut Character, guid: &str, amount: f64) -> Result<f64, CareerError> {
     require_career(ch)?;
     let (item, parent) = take_item(ch, guid).ok_or_else(|| CareerError::NotFound(format!("item {guid}")))?;
-    let amount = crate::chargen::item_cost(&item) * fraction;
     let tag = if item.name == "cyberware" && item.get("improvementsource") == "Bioware" { "bioware" } else { item.name.as_str() };
     let (_, label) = item_expense_kind(tag, parent.as_deref());
     book_nuyen(ch, amount, format!("Sold {label} {}", item.get("name")), None);

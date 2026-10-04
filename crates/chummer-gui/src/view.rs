@@ -1111,7 +1111,7 @@ impl CharacterView {
                         );
                         if self.ch.created && nuyen_kind {
                             // Career mode: pay for it and log the purchase.
-                            let cost = chummer_core::items::find_by_guid_mut(&mut self.ch.doc, &guid).map(|e| chargen::item_cost(e)).unwrap_or(0.0);
+                            let cost = chummer_core::items::edit::total_cost(&self.ch, store, &guid);
                             let parent_tag = purchase.parent.as_ref().and_then(|p| chummer_core::items::find_by_guid_mut(&mut self.ch.doc, p).map(|e| e.name.clone()));
                             if cost > 0.0 {
                                 match career::pay_for_item(&mut self.ch, tag, parent_tag.as_deref(), &guid, cost) {

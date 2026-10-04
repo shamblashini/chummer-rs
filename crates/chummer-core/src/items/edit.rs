@@ -506,9 +506,9 @@ pub fn total_cost(ch: &Character, store: &DataStore, guid: &str) -> f64 {
     }
 }
 
-/// What [`career::sell_item`] pays for the item at `fraction`.
-pub fn sale_value(ch: &Character, guid: &str, fraction: f64) -> f64 {
-    find(ch, guid).map_or(0.0, |e| crate::chargen::item_cost(e) * fraction)
+/// What selling the item pays at `fraction` of its total cost.
+pub fn sale_value(ch: &Character, store: &DataStore, guid: &str, fraction: f64) -> f64 {
+    total_cost(ch, store, guid) * fraction
 }
 
 /// Availability as shown (`TotalAvail`, own part): ware with its grade
@@ -781,7 +781,8 @@ pub fn remove(ch: &mut Character, guid: &str) -> bool {
 /// at `fraction` of its cost), then clean up what `sell_item` leaves: the
 /// `Pair`/`Wireless` improvements, objects the item's bonuses created and
 /// weapons it added. Returns the nuyen received.
-pub fn sell(ch: &mut Character, guid: &str, fraction: f64) -> Result<f64, CareerError> {
+pub fn sell(ch: &mut Character, store: &DataStore, guid: &str, fraction: f64) -> Result<f64, CareerError> {
+    let value = sale_value(ch, store, guid, fraction);
     let e = find(ch, guid).cloned().ok_or_else(|| CareerError::NotFound(format!("item {guid}")))?;
     let mut guids = Vec::new();
     subtree_guids(&e, &mut guids);
@@ -789,7 +790,7 @@ pub fn sell(ch: &mut Character, guid: &str, fraction: f64) -> Result<f64, Career
     // `sell_item` drops the improvements of these guids, but not the
     // objects they created: note those first.
     let owned: Vec<(&'static str, String)> = guids.iter().flat_map(|g| granted_by(ch, g)).collect();
-    let amount = career::sell_item(ch, guid, fraction)?;
+    let amount = career::sell_item_valued(ch, guid, value)?;
     remove_granted(ch, owned);
     for g in &guids {
         for s in sources(g) {
