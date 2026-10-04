@@ -251,7 +251,7 @@ fn indent(out: &mut String, depth: usize) {
     }
 }
 
-fn escape(s: &str, attr: bool) -> String {
+pub(crate) fn escape(s: &str, attr: bool) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
