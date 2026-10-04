@@ -165,6 +165,7 @@ Item requirements (`<required>`/`<forbidden>`) are checked.
 - **Sourcebook PDFs.**
   - 📖 links on items, skills and data entries open your PDF at the rule's page, in evince, zathura, okular or another viewer.
   - Tools → Sourcebooks can import your Chummer5a links from a Wine or Proton prefix, scan a folder, and detect page offsets with `pdftotext`.
+  - A folder scan matches PDFs by title (`&` and "and" are the same), then, with `pdftotext`, by each book's known text. That finds errata, books printed inside another book's PDF (Data Trails' Dissonant Echoes) and files with odd names. Files it can't link are listed with the reason: another edition, errata with no book of its own, a duplicate, or a book Chummer has no data for.
 - **Character sheets** (File → Print, Ctrl+P): Chummer's own XSLT sheets, in all six languages, opened in your browser to view or print.
 - **Export** to XML, JSON (Chummer's format) and Squad Manager.
 - **Custom data:**

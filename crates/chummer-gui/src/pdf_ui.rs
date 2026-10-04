@@ -49,6 +49,10 @@ pub struct SourcesWindow {
     prefixes: Vec<PathBuf>,
     detect: Option<mpsc::Receiver<(String, Option<i32>)>>,
     detect_pending: usize,
+    /// Folder scan running in the background.
+    scan: Option<(PathBuf, mpsc::Receiver<sources::ScanResult>)>,
+    /// Files the last scan left unlinked, with the reason.
+    unmatched: Vec<(PathBuf, sources::Unmatched)>,
     message: Option<String>,
 }
 
@@ -61,6 +65,8 @@ impl SourcesWindow {
             prefixes: sources::find_wine_prefixes(),
             detect: None,
             detect_pending: 0,
+            scan: None,
+            unmatched: Vec::new(),
             message: None,
         }
     }
@@ -68,6 +74,10 @@ impl SourcesWindow {
     /// Returns true when the library changed (so the caller saves it).
     pub fn ui(&mut self, ui: &mut egui::Ui, lib: &mut SourcebookLibrary, lang: &Language) -> bool {
         let mut changed = self.poll_detect(lib);
+        changed |= self.poll_scan(lib);
+        if self.scan.is_some() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+        }
 
         ui.horizontal(|ui| {
             ui.label(lang.tr("PDF viewer"));
@@ -100,19 +110,11 @@ impl SourcesWindow {
                     }
                 }
             }
-            if ui.button(lang.tr("Scan a Folder for PDF Files…")).clicked() {
+            let scanning = self.scan.is_some();
+            let label = if scanning { lang.tr("Scanning…") } else { lang.tr("Scan a Folder for PDF Files…") };
+            if ui.add_enabled(!scanning, egui::Button::new(label)).clicked() {
                 if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                    let found = sources::scan_folder(&dir, &self.books);
-                    let mut added = 0;
-                    for (code, path) in found {
-                        let e = lib.books.entry(code).or_default();
-                        if e.path.is_none() {
-                            e.path = Some(path);
-                            added += 1;
-                        }
-                    }
-                    self.message = Some(format!("Linked {added} more books from {}", dir.display()));
-                    changed |= added > 0;
+                    self.start_scan(dir);
                 }
             }
             let can_detect = sources::which("pdftotext").is_some();
@@ -125,6 +127,18 @@ impl SourcesWindow {
         });
         if let Some(m) = &self.message {
             ui.label(m);
+        }
+        if !self.unmatched.is_empty() {
+            egui::CollapsingHeader::new(lang.tr_fmt("{0} PDF files not linked", &[&self.unmatched.len()])).id_salt("scan_unmatched").show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("scan_unmatched_list").max_height(160.0).show(ui, |ui| {
+                    for (path, why) in &self.unmatched {
+                        ui.horizontal(|ui| {
+                            ui.label(path.file_name().unwrap_or_default().to_string_lossy());
+                            ui.weak(unmatched_reason(why, lang));
+                        });
+                    }
+                });
+            });
         }
         if self.detect.is_some() {
             ui.horizontal(|ui| {
@@ -191,6 +205,42 @@ impl SourcesWindow {
         changed
     }
 
+    fn start_scan(&mut self, dir: PathBuf) {
+        let books = self.books.clone();
+        let (tx, rx) = mpsc::channel();
+        let folder = dir.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(sources::scan(&folder, &books, sources::pdf_pages));
+        });
+        self.scan = Some((dir, rx));
+        self.unmatched.clear();
+        self.message = None;
+    }
+
+    fn poll_scan(&mut self, lib: &mut SourcebookLibrary) -> bool {
+        let Some((dir, rx)) = &self.scan else { return false };
+        let res = match rx.try_recv() {
+            Ok(res) => res,
+            Err(mpsc::TryRecvError::Empty) => return false,
+            Err(mpsc::TryRecvError::Disconnected) => sources::ScanResult::default(),
+        };
+        let mut added = 0;
+        for f in res.found {
+            let e = lib.books.entry(f.code).or_default();
+            if e.path.is_none() {
+                e.path = Some(f.path);
+                if let Some(off) = f.offset {
+                    e.offset = off;
+                }
+                added += 1;
+            }
+        }
+        self.message = Some(format!("Linked {added} more books from {}", dir.display()));
+        self.unmatched = res.unmatched;
+        self.scan = None;
+        added > 0
+    }
+
     fn start_detect(&mut self, lib: &SourcebookLibrary) {
         let jobs: Vec<(BookInfo, PathBuf)> = self
             .books
@@ -253,4 +303,13 @@ fn prefix_label(p: &std::path::Path) -> String {
         }
     }
     p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| p.display().to_string())
+}
+
+fn unmatched_reason(why: &sources::Unmatched, lang: &Language) -> String {
+    match why {
+        sources::Unmatched::OtherEdition => lang.tr("another edition"),
+        sources::Unmatched::Errata => lang.tr("errata or FAQ with no book of its own"),
+        sources::Unmatched::Duplicate(code) => lang.tr_fmt("another file is already linked to {0}", &[code]),
+        sources::Unmatched::NoBook => lang.tr("no book in Chummer's data"),
+    }
 }
