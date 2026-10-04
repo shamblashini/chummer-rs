@@ -94,7 +94,8 @@ fn active_range_cost(ch: &Character, s: &ActiveSkill<'_>, lower: i32, upper: i32
         ("SkillCategoryKarmaCost", "SkillCategoryKarmaCostMultiplier", s.category),
     ];
     let (extra, mult) = modifiers(ch, &kinds, lower, lower, upper);
-    apply(cost, extra, mult)
+    // Floored at the (here always zero) skill group compensation.
+    apply(cost, extra, mult).max(0)
 }
 
 /// Specialization karma with SkillCategorySpecializationKarmaCost(Multiplier).
