@@ -16,7 +16,7 @@ use chummer_core::items::magic;
 use chummer_core::xml::Element;
 
 /// Exact matches must not fall below this. Raise it as handlers land.
-const BASELINE: usize = 642;
+const BASELINE: usize = 647;
 
 fn is_guid(s: &str) -> bool {
     s.len() == 36 && s.chars().filter(|c| *c == '-').count() == 4
