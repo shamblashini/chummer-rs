@@ -700,9 +700,10 @@ pub fn budget(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &Character
 
     let starting = ch.doc.get_f64("startingnuyen").unwrap_or(0.0) + f64::from(nuyen_bp) * f64::from(settings.int("nuyenperbpwftm", 2000));
     let mut cost = 0.0;
-    for (c, i) in [("gears", "gear"), ("cyberwares", "cyberware"), ("armors", "armor"), ("weapons", "weapon"), ("vehicles", "vehicle")] {
+    for (c, i) in [("gears", "gear"), ("cyberwares", "cyberware"), ("armors", "armor"), ("weapons", "weapon")] {
         cost += ch.items(c, i).into_iter().map(item_cost).sum::<f64>();
     }
+    cost += ch.items("vehicles", "vehicle").into_iter().map(crate::items::vehicle::cost).sum::<f64>();
     for l in ch.items("lifestyles", "lifestyle") {
         cost += l.get_f64("cost").unwrap_or(0.0) * l.get_f64("months").unwrap_or(1.0).max(1.0);
     }

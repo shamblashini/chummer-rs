@@ -139,7 +139,7 @@ pub fn choices(tag: &str, ch: &Character, store: &DataStore, rec: Record<'_>, p:
         "drug" => drug::choices(ch, store, rec, p),
         "armor" | "armormod" => armor::choices(tag, ch, store, rec, p),
         "weapon" | "accessory" => weapon::choices(tag, ch, store, rec, p),
-        "vehicle" | "mod" => vehicle::choices(tag, ch, store, rec, p),
+        "vehicle" | "mod" | "weaponmount" => vehicle::choices(tag, ch, store, rec, p),
         _ => magic::choices(tag, ch, store, rec, p),
     }
 }
@@ -154,7 +154,7 @@ pub fn add(tag: &str, ch: &mut Character, store: &DataStore, rec: Record<'_>, p:
         "drug" => drug::add(ch, store, rec, p),
         "armor" | "armormod" => armor::add(tag, ch, store, rec, p),
         "weapon" | "accessory" => weapon::add(tag, ch, store, rec, p),
-        "vehicle" | "mod" => vehicle::add(tag, ch, store, rec, p),
+        "vehicle" | "mod" | "weaponmount" => vehicle::add(tag, ch, store, rec, p),
         _ => magic::add(tag, ch, store, rec, p),
     }
 }
