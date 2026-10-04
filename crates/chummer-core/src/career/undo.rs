@@ -145,14 +145,14 @@ fn undo_add_skill(ch: &mut Character, engine: &Engine, id: &str) -> Result<(), C
 }
 
 /// `InitiationGrade.Remove`: drop the grade and the arts, metamagics and
-/// enhancements learned at it.
+/// enhancements learned at it, and spells (rituals, enchantments) tied to it.
 fn remove_grade(ch: &mut Character, grade_guid: &str) {
     let Some(g) = ch.items("initiationgrades", "initiationgrade").into_iter().find(|g| g.get("guid").eq_ignore_ascii_case(grade_guid)).cloned() else {
         return;
     };
     let grade = g.get("grade");
     ch.remove_item("initiationgrades", grade_guid);
-    for (container, tag) in [("arts", "art"), ("metamagics", "metamagic"), ("enhancements", "enhancement")] {
+    for (container, tag) in [("arts", "art"), ("metamagics", "metamagic"), ("enhancements", "enhancement"), ("spells", "spell")] {
         let gone: Vec<String> = ch.items(container, tag).into_iter().filter(|e| e.get("grade") == grade).map(|e| e.get("guid")).collect();
         for guid in gone {
             ch.remove_item(container, &guid);
