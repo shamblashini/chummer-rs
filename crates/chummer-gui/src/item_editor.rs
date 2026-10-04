@@ -37,11 +37,13 @@ pub struct ItemEditor {
     mount_size: String,
     /// Delete was clicked once; the second click confirms.
     confirm_remove: bool,
+    /// Ammunition, matrix and damage tracking (`play_ui`).
+    play: crate::play_ui::PlayPanel,
 }
 
 impl Default for ItemEditor {
     fn default() -> Self {
-        ItemEditor { sell_percent: 50.0, mount_size: String::new(), confirm_remove: false }
+        ItemEditor { sell_percent: 50.0, mount_size: String::new(), confirm_remove: false, play: Default::default() }
     }
 }
 
@@ -174,6 +176,8 @@ impl ItemEditor {
                 }
             }
         });
+
+        res.changed |= self.play.ui(ui, ch, store, lang, guid, &mut res.status);
 
         ui.add_space(6.0);
         ui.label(RichText::new(lang.tr("Notes")).strong());

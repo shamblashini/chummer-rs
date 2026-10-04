@@ -318,6 +318,7 @@ impl CharacterView {
         ui.label(RichText::new(lang.tr("Stun damage")).strong());
         changed |= cm_track(ui, "scm", scm, thr, &mut self.ch.stun_cm_filled, Color32::from_rgb(70, 130, 220));
         ui.weak(lang.tr_fmt("Overflow {0} · −1 die per {1} boxes", &[&s.cm_overflow, &thr]));
+        changed |= crate::play_ui::edge_track(ui, &mut self.ch, &self.sheet, lang);
         ui.separator();
         changed |= self.budget_panel(ui, lang);
         if ui.button(format!("🎲 {}", lang.tr("Open Dice Roller"))).clicked() {
@@ -1504,7 +1505,7 @@ fn child_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, d
 
 /// Clickable condition-monitor boxes. Clicking box N sets damage to N, or
 /// clears it if N was the last filled box.
-fn cm_track(ui: &mut egui::Ui, id: &str, boxes: i32, threshold: i32, filled: &mut i32, color: Color32) -> bool {
+pub(crate) fn cm_track(ui: &mut egui::Ui, id: &str, boxes: i32, threshold: i32, filled: &mut i32, color: Color32) -> bool {
     let mut changed = false;
     let size = 18.0;
     ui.push_id(id, |ui| {

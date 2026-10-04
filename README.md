@@ -98,6 +98,18 @@ Every purchase is written to the karma/nuyen ledger. The Karma & Nuyen tab:
 
 The calendar tracks in-game weeks.
 
+**At the table** (career mode), as in Chummer5a's career form:
+- Edge boxes in the sidebar: click to spend, regain or refresh (`<edgeused>`).
+- Weapon ammunition: clips per slot (accessories add slots), reload from
+  the ammunition the character or vehicle carries (split off the stack,
+  spare clips and speed loaders, external sources), unload back onto the
+  stack, and fire single shots, bursts, full bursts and suppressive fire.
+  Weapons with charges reload to their capacity.
+- Devices (commlinks, decks, cyberware, vehicles) show their matrix
+  attributes and a matrix condition monitor, and one can be the active
+  commlink, which sets matrix initiative.
+- Vehicles and drones have a damage track.
+
 **Rules.** The following are computed:
 - Attributes, with improvement stacking and cyberlimbs.
 - Essence and essence loss.
@@ -208,6 +220,7 @@ cargo test --workspace
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
 - Some career-mode details:
   - Burning Edge.
+  - Home nodes for A.I.s and the Living Persona's matrix bonuses.
   - The mystic adept's second-MAG limit on grades.
   - Undo for focus binding and technique purchases.
   - Karma for spirit fettering.
