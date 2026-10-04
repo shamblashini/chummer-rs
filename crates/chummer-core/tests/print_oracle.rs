@@ -260,3 +260,29 @@ fn spells_translate_codes() {
         }
     }
 }
+
+/// `Spell.CalculatedDv` sends a non-numeric DV such as `Special` through
+/// the XPath evaluator, which rejects the letters, so Chummer appends the
+/// failed expression: `Special(Special)`.
+#[test]
+fn special_dv_follows_chummer() {
+    let engine = Engine::load().unwrap();
+    let lang = Language::load(&data::resource_dir("lang").unwrap(), "en-us");
+    let mut seen = 0;
+    for f in fixtures() {
+        let ch = Character::load(&f).unwrap();
+        let saved = ch.items("spells", "spell");
+        if !saved.iter().any(|s| s.get("dv") == "Special") {
+            continue;
+        }
+        let root = print::print_xml(&ch, &engine, &lang);
+        for p in all(&root, "spell") {
+            let s = saved.iter().find(|s| s.get("guid") == p.get("guid")).unwrap();
+            if s.get("dv") == "Special" && !s.get_bool("limited").unwrap_or(false) {
+                seen += 1;
+                assert_eq!(p.get("dv"), "Special(Special)");
+            }
+        }
+    }
+    assert!(seen > 0);
+}
