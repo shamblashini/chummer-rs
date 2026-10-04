@@ -290,3 +290,25 @@ pub fn unbind_focus(ch: &mut Character, gear_guid: &str) -> bool {
     ch.dirty |= changed;
     changed
 }
+
+/// Mark a focus gear item bonded or not (`Gear.Bonded`). Foci only grant
+/// their bonus while bonded, so binding creates the gear's bonus
+/// improvements (at its rating, with its saved selection) and unbinding
+/// removes them. Weapon foci keep their bonus either way.
+pub fn set_focus_bonded(ch: &mut Character, store: &crate::data::DataStore, gear_guid: &str, bonded: bool) -> bool {
+    let Some(g) = crate::items::find_by_guid_mut(ch.items_mut("gears"), gear_guid) else { return false };
+    g.set_child_text("bonded", crate::improvement::bool_str(bonded));
+    let gear = g.clone();
+    let bonus = gear.child("bonus").filter(|b| b.elements().next().is_some() && b.child("selectweapon").is_none());
+    if let Some(b) = bonus {
+        ch.improvements.remove_from_source(gear_guid);
+        if bonded {
+            let src = crate::bonus::BonusSource { kind: "Gear".into(), guid: gear.get("guid"), name: gear.get("name"), rating: gear.get_i32("rating").unwrap_or(1) };
+            let extra = gear.get("extra");
+            let out = crate::bonus::apply(ch, store, b, &src, Some(extra.as_str()).filter(|s| !s.is_empty()));
+            crate::items::apply_outcome(ch, &out);
+        }
+    }
+    ch.dirty = true;
+    true
+}

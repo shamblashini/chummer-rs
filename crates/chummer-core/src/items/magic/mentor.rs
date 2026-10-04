@@ -173,3 +173,63 @@ pub fn set_mentor_choices(ch: &mut Character, store: &DataStore, guid: &str, cho
     }
     Ok(())
 }
+
+/// Qualities whose bonus lets the character pick a mentor spirit or
+/// paragon (`selectmentorspirit` / `selectparagon`) but that have no
+/// mentor linked to them yet: (quality guid, quality name, mentor type).
+pub fn pending_mentor_qualities(ch: &Character, store: &DataStore) -> Vec<(String, String, String)> {
+    let Ok(doc) = store.doc("qualities.xml") else { return Vec::new() };
+    let mut out = Vec::new();
+    for q in ch.items("qualities", "quality") {
+        let guid = q.get("guid");
+        let Some(rec) = super::find_saved(&doc, "qualities", "quality", q) else { continue };
+        let Some(b) = rec.el().child("bonus") else { continue };
+        let mut hits = Vec::new();
+        b.descendants("selectmentorspirit", &mut hits);
+        let mtype = if !hits.is_empty() {
+            "MentorSpirit"
+        } else {
+            b.descendants("selectparagon", &mut hits);
+            if hits.is_empty() {
+                continue;
+            }
+            "Paragon"
+        };
+        let linked = ch.improvements.list.iter().any(|i| (i.kind == "MentorSpirit" || i.kind == "Paragon") && i.source_name.eq_ignore_ascii_case(&guid));
+        if !linked {
+            out.push((guid, q.get("name"), mtype.to_owned()));
+        }
+    }
+    out
+}
+
+/// Add a mentor spirit for a quality that grants one (see
+/// [`pending_mentor_qualities`]) and link it to the quality with the
+/// `MentorSpirit`/`Paragon` improvement `selectmentorspirit` creates, so
+/// removing the quality removes the mentor.
+pub fn add_mentor_for_quality(
+    ch: &mut Character,
+    store: &DataStore,
+    quality_guid: &str,
+    mentor_type: &str,
+    name: &str,
+    choice1: Option<&str>,
+    choice2: Option<&str>,
+) -> Result<String, String> {
+    let id = {
+        let doc = store.doc(data_file(mentor_type)).map_err(|e| e.to_string())?;
+        crate::data::find(&doc, "mentors", "mentor", name).ok_or("unknown mentor")?.id()
+    };
+    let guid = add_mentor(ch, store, mentor_type, name, choice1, choice2, None)?;
+    ch.improvements.list.push(crate::improvement::Improvement {
+        kind: if mentor_type == "Paragon" { "Paragon" } else { "MentorSpirit" }.into(),
+        improved_name: guid.clone(),
+        source_name: quality_guid.to_owned(),
+        source: "Quality".into(),
+        unique_name: id,
+        rating: 1,
+        enabled: true,
+        ..Default::default()
+    });
+    Ok(guid)
+}

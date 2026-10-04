@@ -175,3 +175,21 @@ pub fn total_rating(ch: &Character, p: &Element, mag: i32) -> i32 {
     let max = total_maximum_levels(p, mag, ch.flag("ignorerules"));
     (p.get_i32("rating").unwrap_or(0).min(max) + free_levels(ch, p, mag)).min(max)
 }
+
+/// Change the bought levels of a power (`Power.Rating` setter): stores the
+/// rating and re-creates the power's bonus improvements at the new rating
+/// with its saved selection. Powers without levels stay at 1.
+pub fn set_rating(ch: &mut Character, store: &DataStore, guid: &str, rating: i32) -> Result<(), String> {
+    let saved = ch.items("powers", "power").into_iter().find(|p| p.get("guid").eq_ignore_ascii_case(guid)).cloned().ok_or("unknown power")?;
+    let rating = if saved.get_bool("levels").unwrap_or(false) { rating.max(1) } else { 1 };
+    let extra = saved.get("extra");
+    let forced = Some(extra.as_str()).filter(|s| !s.is_empty());
+    let src = source("Power", guid, &saved.get("name"), rating);
+    ch.improvements.remove_from_source(guid);
+    let out = apply_bonus(ch, store, saved.child("bonus"), &src, forced);
+    if let Some(p) = super::super::find_by_guid_mut(ch.items_mut("powers"), guid) {
+        p.set_child_text("rating", rating.to_string());
+    }
+    super::super::apply_outcome(ch, &out);
+    Ok(())
+}

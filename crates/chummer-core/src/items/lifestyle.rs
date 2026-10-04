@@ -516,3 +516,70 @@ pub fn monthly_cost(ch: &Character, e: &Element) -> f64 {
 pub fn total_cost(ch: &Character, e: &Element) -> f64 {
     monthly_cost(ch, e) * f64::from(e.get_i32("months").unwrap_or(1))
 }
+
+// ---------------------------------------------------------------------------
+// Editing a saved lifestyle
+// ---------------------------------------------------------------------------
+
+/// Bought (non-built-in) qualities of a saved lifestyle.
+fn bought_qualities(e: &Element) -> impl Iterator<Item = &Element> {
+    e.child("lifestylequalities").into_iter().flat_map(|l| l.children_named("lifestylequality")).filter(|q| q.get("lifestylequalitysource") != "BuiltIn")
+}
+
+/// How many area, comforts and security points can be bought on top of
+/// the base (`Lifestyle.AreaDelta`, `ComfortsDelta`, `SecurityDelta`): the
+/// total maximum (base lifestyle limit plus quality maximums) less the
+/// base and what qualities already give.
+pub fn point_limits(e: &Element) -> (i32, i32, i32) {
+    let int = |x: &Element, k: &str| x.get_i32(k).unwrap_or(0);
+    let delta = |field: &str, max: &str, qmax: &str, base: &str| {
+        let total_max = int(e, max) + bought_qualities(e).map(|q| int(q, qmax)).sum::<i32>();
+        let given = int(e, base) + bought_qualities(e).map(|q| int(q, field)).sum::<i32>();
+        (total_max - given).max(0)
+    };
+    (
+        delta("area", "maxarea", "areamaximum", "basearea"),
+        delta("comforts", "maxcomforts", "comfortsmaximum", "basecomforts"),
+        delta("security", "maxsecurity", "securitymaximum", "basesecurity"),
+    )
+}
+
+/// Write the player's choices back into a saved lifestyle (what the
+/// lifestyle dialog changes when editing): name, months, roommates,
+/// percentage, bought points (advanced lifestyles only, within
+/// [`point_limits`]), trust fund and split cost. Returns false when no
+/// lifestyle has that guid.
+pub fn update(ch: &mut Character, guid: &str, o: &Options) -> bool {
+    let Some(l) = super::find_by_guid_mut(ch.items_mut("lifestyles"), guid) else { return false };
+    let advanced = o.style != "Standard";
+    let (max_area, max_comforts, max_security) = point_limits(l);
+    let pick = |v: i32, max: i32| if advanced { v.clamp(0, max) } else { 0 };
+    let base = l.get("baselifestyle");
+    l.set_child_text("name", if o.name.trim().is_empty() { base } else { o.name.clone() });
+    l.set_child_text("months", o.months.max(1).to_string());
+    l.set_child_text("roommates", if o.trust_fund { 0 } else { o.roommates.max(0) }.to_string());
+    l.set_child_text("percentage", fmt_num(o.percentage.max(0.0)));
+    l.set_child_text("area", pick(o.area, max_area).to_string());
+    l.set_child_text("comforts", pick(o.comforts, max_comforts).to_string());
+    l.set_child_text("security", pick(o.security, max_security).to_string());
+    l.set_child_text("bonuslp", if advanced { o.bonus_lp.max(0) } else { 0 }.to_string());
+    l.set_child_text("trustfund", bool_str(o.trust_fund));
+    l.set_child_text("splitcostwithroommates", bool_str(o.split_cost_with_roommates));
+    l.set_child_text("type", o.style.clone());
+    ch.dirty = true;
+    true
+}
+
+/// Remove a lifestyle quality and the improvements it created.
+pub fn remove_quality(ch: &mut Character, lifestyle: &str, quality: &str) -> bool {
+    let Some(l) = super::find_by_guid_mut(ch.items_mut("lifestyles"), lifestyle) else { return false };
+    let Some(list) = l.child_mut("lifestylequalities") else { return false };
+    let before = list.children.len();
+    list.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.get("guid").eq_ignore_ascii_case(quality)));
+    if list.children.len() == before {
+        return false;
+    }
+    ch.improvements.remove_from_source(quality);
+    ch.dirty = true;
+    true
+}

@@ -20,11 +20,13 @@
 
 pub mod karma;
 pub mod ledger;
+pub mod magic;
 pub mod nuyen;
 pub mod undo;
 
 pub use karma::*;
 pub use ledger::*;
+pub use magic::*;
 pub use nuyen::*;
 pub use undo::*;
 
