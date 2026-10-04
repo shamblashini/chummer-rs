@@ -43,6 +43,9 @@ struct App {
     show_sources: bool,
     show_settings: bool,
     show_initiative: bool,
+    show_print: bool,
+    print_sheet: String,
+    print_notes: bool,
     initiative: initiative::Tracker,
     settings_editor: settings_ui::SettingsEditor,
     wizard: Option<wizard::Wizard>,
@@ -71,6 +74,9 @@ impl App {
             show_sources: false,
             show_settings: false,
             show_initiative: false,
+            show_print: false,
+            print_sheet: chummer_core::print::DEFAULT_SHEET.to_owned(),
+            print_notes: false,
             initiative: Default::default(),
             settings_editor: settings_ui::SettingsEditor::new(),
             wizard: None,
@@ -194,6 +200,10 @@ impl App {
                 });
                 ui.separator();
                 let has = !self.views.is_empty();
+                if ui.add_enabled(has, egui::Button::new("Print / character sheet…").shortcut_text("Ctrl+P")).clicked() {
+                    ui.close();
+                    self.show_print = true;
+                }
                 if ui.add_enabled(has, egui::Button::new("Save").shortcut_text("Ctrl+S")).clicked() {
                     ui.close();
                     self.save(self.active, false);
@@ -252,6 +262,9 @@ impl App {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) && !self.views.is_empty() {
+            self.show_print = true;
+        }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
             self.wizard = Some(wizard::Wizard::new());
         }
@@ -317,6 +330,45 @@ impl App {
                 }
             });
         });
+    }
+
+    /// Render the active character with a Chummer sheet and open it.
+    fn print_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(v) = self.views.get(self.active) else {
+            ui.label("Open a character first.");
+            return;
+        };
+        let sheets = chummer_core::print::available_sheets(&self.lang.code);
+        ui.horizontal(|ui| {
+            ui.label("Sheet");
+            egui::ComboBox::from_id_salt("sheet").selected_text(self.print_sheet.clone()).width(320.0).show_ui(ui, |ui| {
+                for (name, _) in &sheets {
+                    ui.selectable_value(&mut self.print_sheet, name.clone(), name);
+                }
+            });
+        });
+        ui.checkbox(&mut self.print_notes, "Include notes");
+        ui.weak("The sheet opens in your browser; use its Print command for paper or PDF.");
+        if ui.button(RichText::new("Open sheet").strong()).clicked() {
+            let Some((_, path)) = sheets.iter().find(|(n, _)| *n == self.print_sheet).or(sheets.first()) else {
+                self.status = Some(("No character sheets found".into(), true));
+                return;
+            };
+            let opts = chummer_core::print::PrintOptions { notes: self.print_notes, ..Default::default() };
+            let xml = chummer_core::print::print_xml_with(&v.ch, &self.engine, &self.lang, opts);
+            let name: String = v.ch.display_name().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+            let out = std::env::temp_dir().join(format!("chummer-rs-{name}.html"));
+            match chummer_core::print::render(&xml, path, &out) {
+                Ok(()) => {
+                    let opened = std::process::Command::new("xdg-open").arg(&out).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+                    self.status = Some(match opened {
+                        Ok(_) => (format!("Opened {}", out.display()), false),
+                        Err(e) => (format!("Sheet written to {} (could not open it: {e})", out.display()), true),
+                    });
+                }
+                Err(e) => self.status = Some((e.to_string(), true)),
+            }
+        }
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
@@ -440,6 +492,9 @@ impl eframe::App for App {
             }
         });
         self.show_sources = open;
+        let mut open = self.show_print;
+        egui::Window::new("Character sheet").open(&mut open).default_width(460.0).show(ctx, |ui| self.print_ui(ui));
+        self.show_print = open;
         let mut open = self.show_initiative;
         let chars: Vec<(String, i32, u32)> = self.views.iter().map(|v| (v.ch.display_name(), v.sheet.initiative, v.sheet.initiative_dice.max(1) as u32)).collect();
         egui::Window::new("Initiative tracker").open(&mut open).default_width(480.0).show(ctx, |ui| self.initiative.ui(ui, &chars));
