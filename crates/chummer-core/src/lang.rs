@@ -79,7 +79,7 @@ impl Language {
 
     fn index_english(&mut self, key: &str, text: &str) {
         let norm = normalize(text);
-        if norm.is_empty() {
+        if norm.is_empty() || IGNORED_KEYS.contains(&key) {
             return;
         }
         match self.reverse.get(&norm) {
@@ -171,11 +171,28 @@ fn normalize(text: &str) -> String {
 }
 
 /// Split a label into its text and a trailing run of `:`, `...`, `…` and
-/// whitespace.
+/// whitespace. A single `.` (an abbreviation, a sentence) stays.
 fn split_suffix(text: &str) -> (&str, &str) {
-    let core = text.trim_end_matches(|c: char| c == ':' || c == '.' || c == '…' || c.is_whitespace());
+    let mut core = text;
+    loop {
+        let t = core.trim_end_matches(|c: char| c == ':' || c == '…' || c.is_whitespace());
+        let t = t.strip_suffix("...").unwrap_or(t);
+        if t.len() == core.len() {
+            break;
+        }
+        core = t;
+    }
     (core, &text[core.len()..])
 }
+
+/// Keys whose text is not a plain rendering of their English, so they must
+/// not translate a GUI label (de-de `String_None` is "-", `Label_DV` is the
+/// drain formula).
+const IGNORED_KEYS: &[&str] = &["String_None", "Label_DV"];
+
+/// Keys that win over [`key_rank`] for their English text, where the
+/// generic pick reads wrong (`String_ActionFree` is "free action").
+const PREFERRED_KEYS: &[&str] = &["Checkbox_Contact_Free", "Label_KnowledgeSkills", "Menu_Main_Exit"];
 
 /// WinForms accelerators: `&&` is a literal `&`, `&X` marks X as hotkey.
 fn strip_accelerators(text: &str) -> String {
@@ -202,7 +219,14 @@ fn strip_accelerators(text: &str) -> String {
 /// first, then the shortest (least specialised) key.
 fn key_rank(key: &str) -> (usize, usize, String) {
     const PREFIXES: [&str; 8] = ["Tab_", "String_", "Label_", "Button_", "Checkbox_", "Menu_", "Title_", "Node_"];
-    let p = PREFIXES.iter().position(|p| key.starts_with(p)).unwrap_or(PREFIXES.len());
+    let p = if PREFERRED_KEYS.contains(&key) {
+        0
+    } else if key.contains("PACKSKit") {
+        // Kit-builder wording ("Wissensfertigkeit" for Knowledge Skills).
+        PREFIXES.len() + 2
+    } else {
+        1 + PREFIXES.iter().position(|p| key.starts_with(p)).unwrap_or(PREFIXES.len())
+    };
     (p, key.len(), key.to_owned())
 }
 
@@ -241,6 +265,8 @@ mod tests {
         assert_eq!(strip_accelerators("Clothing && Armor"), "Clothing & Armor");
         assert_eq!(strip_accelerators("Rock & Roll"), "Rock & Roll");
         assert_eq!(normalize(" &Search: "), "search");
+        assert_eq!(split_suffix("Open..."), ("Open", "..."));
+        assert_eq!(split_suffix("Mutterspr."), ("Mutterspr.", ""));
     }
 
     #[test]
@@ -256,6 +282,9 @@ mod tests {
         assert_eq!(de.tr("Open…"), format!("{}…", de.tr("Open")));
         assert_eq!(de.tr("  Skills: "), "  Fertigkeiten: ");
         assert!(de.translates("Skills"));
+        assert_eq!(de.tr("Native"), "Mutterspr.");
+        assert_eq!(de.tr("Free"), de.s("Checkbox_Contact_Free"));
+        assert_ne!(de.tr("None"), "-");
         assert!(!de.translates("No such label here"));
     }
 

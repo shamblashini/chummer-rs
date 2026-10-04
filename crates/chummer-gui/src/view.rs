@@ -405,7 +405,9 @@ impl CharacterView {
                     let Some(v) = self.sheet.attr_values(name).cloned() else { continue };
                     body.row(24.0, |mut row| {
                         row.col(|ui| {
-                            ui.label(format!("{} ({name})", lang.tr(attributes::long_name(name))));
+                            let key = format!("String_Attribute{name}Long");
+                            let long = if lang.has(&key) { lang.s(&key) } else { lang.tr(attributes::long_name(name)) };
+                            ui.label(format!("{long} ({name})"));
                         });
                         row.col(|ui| {
                             ui.label(format!("{}/{} ({})", v.total_min, v.total_max, v.total_aug_max));
@@ -736,7 +738,7 @@ impl CharacterView {
         let rules = self.settings.as_ref().map(chummer_core::items::weapon::WeaponRules::from_settings).unwrap_or_default();
         egui::CollapsingHeader::new(RichText::new(lang.tr("Combat stats")).strong()).id_salt("combat_stats").default_open(true).show(ui, |ui| {
             egui::Grid::new("weapon_stats").striped(true).num_columns(8).spacing([14.0, 3.0]).show(ui, |ui| {
-                for h in lang.tr_all(["Weapon", "Pool", "DV", "AP", "Acc", "RC", "Reach", "Ranges"]) {
+                for h in lang.tr_all(["Weapon", "Pool", "Damage", "AP", "Acc", "RC", "Reach", "Ranges"]) {
                     ui.strong(h);
                 }
                 ui.end_row();

@@ -89,7 +89,14 @@ fn tr_coverage() {
 
     let unknown: Vec<_> = labels.iter().filter(|l| en.key_for(l).is_none()).collect();
     let untranslated: Vec<_> = labels.iter().filter(|l| !de.translates(l)).collect();
-    println!("{} GUI labels; {} match an en-us key; {} translated by de-de", labels.len(), labels.len() - unknown.len(), labels.len() - untranslated.len());
+    let in_source = |set: &[&String]| set.iter().filter(|l| literals.contains(**l)).count();
+    println!(
+        "GUI source literals: {}; {} match an en-us key; {} translated by de-de",
+        literals.len(),
+        literals.len() - in_source(&unknown),
+        literals.len() - in_source(&untranslated)
+    );
+    println!("{} GUI labels incl. core tables; {} match an en-us key; {} translated by de-de", labels.len(), labels.len() - unknown.len(), labels.len() - untranslated.len());
     println!("No en-us key (needs a Chummer string or stays English):");
     for l in &unknown {
         println!("  {l:?}");
@@ -97,6 +104,10 @@ fn tr_coverage() {
     println!("en-us key but no de-de text:");
     for l in untranslated.iter().filter(|l| en.key_for(l).is_some()) {
         println!("  {l:?}");
+    }
+    println!("de-de translations (check the key picked fits the meaning):");
+    for l in labels.iter().filter(|l| de.tr(l) != **l) {
+        println!("  {l:?} -> {:?} [{}]", de.tr(l), de.key_for(l).unwrap_or_default());
     }
     println!("Not in de-de:");
     for l in &untranslated {

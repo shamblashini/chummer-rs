@@ -55,7 +55,7 @@ impl DiceRoller {
         }
         if !self.history.is_empty() {
             ui.separator();
-            ui.weak(lang.tr("History"));
+            ui.weak(lang.tr("Roll history"));
             for h in &self.history {
                 ui.label(h);
             }
