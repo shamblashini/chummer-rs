@@ -181,7 +181,7 @@ mod tests {
         let names: Vec<String> = (0..20).map(|i| format!("Item {i}")).collect();
         let mut current = String::new();
         let mut button = egui::Rect::NOTHING;
-        let mut frame = |events: Vec<Event>, current: &mut String, button: &mut egui::Rect| -> Vec<String> {
+        let frame = |events: Vec<Event>, current: &mut String, button: &mut egui::Rect| -> Vec<String> {
             let mut shown = Vec::new();
             let input = RawInput { events, screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))), ..Default::default() };
             let _ = ctx.run(input, |ctx| {
