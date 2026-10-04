@@ -4,184 +4,219 @@ A Rust rewrite of [Chummer5a](https://github.com/chummer5a/chummer5a), the
 Shadowrun 5th Edition character manager. It runs natively on Linux: no
 Wine, no .NET, no Internet Explorer.
 
-It reads and writes the same `.chum5` files and uses Chummer5a's own game
-data, so characters move between the two programs.
-
-> **Status: early.** chummer-rs opens, edits and saves existing
-> characters, links your sourcebook PDFs, and creates new characters
-> with the Priority and Sum-to-Ten methods, including qualities,
-> traditions, knowledge skills, specializations and contacts. It cannot
-> yet add gear, ware, spells or powers. See [Status](#status).
+chummer-rs reads and writes the same `.chum5` files and uses Chummer5a's own
+game data, custom data and character sheets. Characters move between the
+two programs: files created by chummer-rs load in Chummer5a 5.226 without
+warnings (see [docs/interop.md](docs/interop.md)).
 
 ## Install
 
-You need a Rust toolchain (1.85 or newer).
+You need a Rust toolchain (1.85 or newer) and, for character sheets,
+`xsltproc` (package `libxslt`).
 
 ```bash
 ./install.sh
 ```
 
-This builds release binaries and installs to `~/.local`:
+This installs to `~/.local`:
 
-- `chummer-rs`: the desktop application. It is named so that it never replaces a `chummer` launcher you may have for Chummer5a under Wine.
+- `chummer-rs`: the desktop application.
 - `chummer-cli`: the command-line tool.
-- The game data in `~/.local/share/chummer-rs`.
-- A desktop entry. `.chum5` files then open with chummer-rs.
+- The game data, in `~/.local/share/chummer-rs`.
+- A desktop entry, so `.chum5` files open with chummer-rs.
 
-To run from the source tree without installing:
+The GUI is called `chummer-rs` so that it never replaces a `chummer`
+launcher you may have for Chummer5a under Wine.
+
+To run from the source tree:
 
 ```bash
 cargo run --release -p chummer-gui -- path/to/character.chum5
 ```
 
-## Use
+## Features
 
-### Creating a character
+### Characters
 
-1. **File → New character** (Ctrl+N).
-2. Pick the rules preset (Standard, Sum-to-Ten, and so on), assign the five priorities, then choose the metatype and the magic or resonance talent, with its free skills.
-3. Spend points on the Attributes and Skills tabs. Add qualities and contacts on the Qualities & Contacts tab. Pick a tradition on the Magic tab.
-4. The **Creation** panel on the right shows what is left of each budget and anything that blocks finishing.
-5. **Finish creation** switches the character to career mode. At most 7 karma and 5,000¥ carry over.
+**Creation.** File → New character (Ctrl+N) supports these build methods:
 
-`chummer-cli new` does steps 1 and 2 from the command line.
+| Build method | How it works |
+|---|---|
+| Priority | Five priorities, each letter used once. |
+| Sum-to-Ten | Priority values must add up to the preset's total. |
+| Point Buy | Everything is bought with karma. |
+| Life Modules | Karma build plus life modules added by stage. |
 
-### Desktop application
+The wizard covers:
+- Metatype and metavariant.
+- Magic or resonance talent, with its free skills.
 
-`chummer-rs [--tab <name>] [files...]` opens one tab per character.
+A Creation panel shows what is left of each budget:
+- Karma.
+- Attribute and special attribute points.
+- Skill and skill group points.
+- Knowledge and contact points.
+- Spells and power points.
+- Nuyen, including karma converted to nuyen.
+- Quality limits.
 
-Character tabs:
-- **Info**
-- **Attributes**
-- **Skills**
-- **Qualities & Contacts**
-- **Magic & Resonance**
-- **Equipment**: gear, ware, armor, weapons, vehicles and lifestyles. Nested items are shown.
-- **Improvements**
-- **Karma & Nuyen** log
-- **Notes**
+The panel also lists everything that blocks finishing creation. Finish
+creation moves the character into career mode, carrying over at most 7
+karma and 5,000¥.
 
-The right-hand panel shows:
-- Karma, nuyen and essence.
-- Initiative: physical, astral, cold-sim and hot-sim.
-- Limits, armor, and composure, judge intentions, memory and lift/carry.
-- Clickable condition monitors.
+**Career mode.**
+- Raise attributes, skills, skill groups and knowledge skills for karma at Chummer's costs.
+- Buy specializations, qualities and spells.
+- Buy off negative qualities.
+- Initiate or submerge (group, ordeal and schooling discounts).
+- Learn martial art techniques.
+- Bind foci.
 
-Edits recompute every value at once.
+Every purchase is written to the karma/nuyen ledger. The Karma & Nuyen tab:
+- Lists the ledger with Undo.
+- Takes manual income and expenses.
+- Shows career karma, street cred, notoriety and public awareness.
 
-Other features:
-- **Sourcebook PDFs.** Every item, quality, spell and data entry has a 📖 link, and skill names are links too. Each opens your PDF at the rule's page in a native viewer such as evince, zathura or okular. Set it up in **Tools → Sourcebooks**:
-  - **Import from Chummer5a** reads the links you made in Chummer5a under Wine or Proton.
-  - **Scan a folder** matches PDF file names to book titles.
-  - **Detect page offsets** finds each book's offset from its text, using `pdftotext` from poppler.
-- Click a skill's dice pool to roll it.
-- **Tools → Data browser** searches every item, quality, spell and so on in the game data.
-- The **Language** menu switches between the six Chummer5a translations.
-- Keyboard: Ctrl+O, Ctrl+S, Ctrl+W, Ctrl+Q.
-- Drag and drop `.chum5` files onto the window.
+The calendar tracks in-game weeks.
+
+**Rules.** The following are computed:
+- Attributes, with improvement stacking and cyberlimbs.
+- Essence and essence loss.
+- Initiative, condition monitors and limits.
+- Derived pools and armor.
+- Skill dice pools.
+- Weapon stats: DV with STR, AP, accuracy, recoil, ranges and dice pool.
+- Vehicle and drone stats after mods.
+- Drain and fading.
+- Adept power points.
+
+### Equipment and magic
+
+You can add items from the game data with:
+- Rating, quantity and grade choices.
+- Availability checked against the creation limit.
+- A cost preview.
+
+Supported kinds:
+- Gear, with nested gear.
+- Cyberware and bioware, with grades, cyberlimbs and subsystems.
+- Armor and armor mods.
+- Weapons, with accessories and underbarrels.
+- Vehicles and drones, with mods and weapon mounts.
+- Lifestyles, with lifestyle qualities.
+- Custom drugs.
+- Spells (limited, extended, alchemical), adept powers, complex forms, spirits and sprites.
+- Metamagics and echoes, mentor spirits with their choices, martial arts and techniques, and critter powers.
+
+Click an item to edit its rating, quantity, equipped and wireless state,
+custom name, location and notes, add things inside it, or sell it.
+
+The "bonus" of every quality, piece of ware, power and item applies, just
+as in Chummer5a. Every bonus type in the game data is handled.
+
+Item requirements (`<required>`/`<forbidden>`) are checked.
+
+### More
+
+- **Sourcebook PDFs.**
+  - 📖 links on items, skills and data entries open your PDF at the rule's page, in evince, zathura, okular or another viewer.
+  - Tools → Sourcebooks can import your Chummer5a links from a Wine or Proton prefix, scan a folder, and detect page offsets with `pdftotext`.
+- **Character sheets** (File → Print, Ctrl+P): Chummer's own XSLT sheets, in all six languages, opened in your browser to view or print.
+- **Export** to XML, JSON (Chummer's format) and Squad Manager.
+- **Custom data:**
+  - All of Chummer5a's optional rule packs can be applied through house-rule presets.
+  - Tools → Character settings duplicates and edits presets: build method, budgets, books, karma costs, options and custom data.
+- **Tools:**
+  - A data browser that searches every item, quality and spell.
+  - A dice roller (click any skill pool) and an initiative tracker.
+  - A character roster on the start screen.
+- **Languages:** English, German, French, Japanese, Portuguese and Chinese data names and sheets.
 
 ### Command line
 
 ```bash
-chummer-cli info character.chum5      # sheet summary
-chummer-cli skills character.chum5    # skills with dice pools
-chummer-cli items character.chum5     # everything the character owns
-chummer-cli check ~/characters/       # load and verify many files
-chummer-cli search "ares" gear        # search the game data
-chummer-cli sources import-wine       # link PDFs from Chummer5a under Wine
-chummer-cli sources scan ~/Books      # link PDFs by title
-chummer-cli sources detect            # find page offsets (needs pdftotext)
-chummer-cli sources open SR5 143      # open a rulebook page
+chummer-cli info character.chum5          # sheet summary
+chummer-cli skills character.chum5        # skills with dice pools
+chummer-cli items character.chum5         # everything the character owns
+chummer-cli check ~/characters/           # load and verify many files
+chummer-cli new out.chum5 --metatype Elf --priorities BACDE --talent Magician --skills Spellcasting,Summoning
+chummer-cli sheet character.chum5 -o sheet.html [--sheet NAME] [--lang de-de]
+chummer-cli export character.chum5 JSON -o character.json
+chummer-cli roster ~/characters/
+chummer-cli search "ares" gear
+chummer-cli sources import-wine | scan <dir> | detect | open SR5 143
 ```
 
 Settings are stored in `~/.config/chummer-rs/`.
 
-## Status
+## How it is checked
 
-### What works
+The 34 test characters from Chummer5a's own test suite are oracles. Chummer
+wrote values into them that the tests recompute and compare. Most of the
+remaining differences come from game data that changed after those files
+were saved (they date from Chummer 5.18x-5.202).
 
-- **Character creation** (Priority and Sum-to-Ten):
-  - The wizard follows `priorities.xml`.
-  - The new file follows Chummer5a's save layout.
-  - Point budgets and finishing creation follow `CharacterCreate.cs`.
-  - In creation mode you can add qualities with their requirements (`<required>`/`<forbidden>`) checked, and remove them. The other creation screens cover traditions, knowledge skills, specializations and contacts.
-- **Bonus processor:** turns a data `<bonus>` into improvements.
-  - The test suite replays every bonus saved in the 34 test characters and compares the result with what Chummer5a created: **627 of 642 match**.
-  - 177 simple handlers are generated from Chummer5a's C# source by `tools/gen_bonus_table.py`. About 50 structured handlers are written by hand.
-
-- **Loading and saving `.chum5`:**
-  - Saving is lossless. All 34 test characters round-trip with every element kept, including the many elements this port does not model yet.
-  - `<appversion>` is left as loaded, because Chummer5a uses it to decide how to read a file.
-  - Writes go to a temp file first and are then renamed, so a crash cannot corrupt a character.
-- **Game data:** all 42 data files, the custom data packs, the settings presets and the six translations load.
-- **Rules math checked against Chummer5a.** Chummer5a writes each attribute's total and the character's essence into the save file. The test suite recomputes these values and compares them: **475 of 475 match across 34 characters**. Three of those characters were saved with house rules (limb count 5, or essence rounded to 3 decimals), and the test applies the same rules to them. The check covers:
-  - Attribute minimums, maximums, natural and augmented values. This includes improvement stacking with unique names and precedence, and cyberlimb averaging.
-  - Essence, including grade multipliers and essence-cost improvements.
-- **Rules math ported from the C# formulas** but not yet compared with Chummer5a output (the save file holds no totals for these):
-  - Initiative: physical, astral and Matrix.
-  - Condition monitors and wound modifiers.
-  - Physical, mental, social and astral limits.
-  - Composure, judge intentions, memory and lift/carry.
-  - Armor, including stacking accessories capped at STR.
-  - Skill ratings and dice pools, including groups, defaulting and specializations.
-  - Karma costs for attributes and skills.
-- **Expression language in data files:** the XPath subset, `FixedValues`, availability strings. Rounding follows Chummer5a's away-from-zero rounding. Every context-free cost and essence string in the data evaluates.
-- **Editing:**
-  - Text fields.
-  - Attribute base and karma levels.
-  - Skill, skill group and knowledge skill levels.
-  - Karma, nuyen, street cred, notoriety and public awareness.
-  - Condition monitor damage.
-  - Removing items, after a confirmation. This also removes the improvements the item granted. There is no undo.
-
-  Edits do not spend or refund karma or nuyen. Those are plain numbers that you adjust yourself.
-
-Performance (release build on the author's machine): `chummer-cli info` loads the data and computes a full sheet in about 30 ms. `chummer-cli check` verifies all 34 test characters in about 0.15 s.
-
-### Not done yet
-
-Roughly in order of priority:
-
-1. **Adding other items** through the selection dialog: gear, ware, weapons, armor, vehicles, spells, adept powers and complex forms. Each has its own save format. The dialog and the bonus processor already exist.
-2. **A few bonus types** need objects the port does not model yet: `addgear`, `addcontact`, `selectquality`, `selectpowers`, `specificpower`, critter powers.
-3. **Karma and Life Module builds.** Mentor spirit choices.
-4. **Career-mode accounting.** Adding a quality in career mode deducts karma, but other edits do not. Career mode also needs its ledger with undo, plus initiation and submersion.
-5. **Essence loss.** chummer-rs reads essence-loss improvements from the file instead of regenerating them on load, as Chummer5a does. Removing cyberware therefore does not restore MAG or RES until the file is opened and saved in Chummer5a.
-6. **Custom data:** the `amend_*.xml` merge from enabled custom data directories. The directories ship but are not applied.
-7. **Character sheets and printing.** The XSLT sheets are bundled but not rendered.
-8. Smaller items:
-   - Vehicle and drone stats, matrix attributes and weapon ranges are shown as stored, not recomputed.
-   - Movement, encumbrance, and some A.I. and critter special cases.
-   - Creation details:
-     - The wizard does not check a talent's metatype-category requirement, so Technomancer is offered to every metatype.
-     - Finishing creation does not add the default Street lifestyle or roll starting nuyen.
-     - New files list every active skill. Magic and resonance skills stay locked until the character has the attribute; Chummer5a instead adds them only when unlocked.
-9. Out of scope for now: ChummerHub, plugins, Hero Lab import, the auto-updater.
-
-## Layout
-
-| Path | Contents |
+| Oracle | Result |
 |---|---|
-| `crates/chummer-core` | Engine. No UI dependencies. |
-| `xml.rs` | Owned XML tree that round-trips Chummer files. |
-| `data.rs`, `lang.rs`, `settings.rs` | Game data, translations, house-rule presets. |
-| `expr.rs` | Data-file expression evaluator (`EvaluateInvariantXPath`). |
-| `improvement.rs` | Improvements and `ValueOf` aggregation. |
-| `character.rs`, `attributes.rs`, `skills.rs` | The `.chum5` model. |
-| `calc.rs` | Rules math. Comments name the C# member each function ports. |
-| `engine.rs` | Data + catalog + settings, for front ends. |
-| `crates/chummer-gui` | egui desktop application. |
-| `crates/chummer-cli` | Command-line tool. |
-| `resources/` | Data, translations, custom data and sheets from Chummer5a. |
+| Attribute totals and essence | 475 / 475 |
+| Bonuses replayed into improvements | 653 / 656 |
+| Items rebuilt from game data | ~2,300 of ~3,100 saved items |
+| Nuyen left after creation | see `tests/nuyen_oracle.rs` |
+| Karma left after creation | see `tests/karma_oracle.rs` |
+| Character sheets rendered | every fixture × every sheet × 6 languages |
 
-## Tests
+The items row breaks down by kind:
+
+| Kind | Rebuilt / saved |
+|---|---|
+| Gear | 1236 / 1513 |
+| Cyberware | 139 / 296 |
+| Weapons | 67 / 163 |
+| Accessories | 140 / 147 |
+| Spells | 100 / 101 |
+| Qualities | 291 / 379 |
+
+Files written by chummer-rs were also opened in a real Chummer5a 5.226,
+built from source and run under Wine. They load without warnings and with
+the same budgets ([docs/interop.md](docs/interop.md)).
 
 ```bash
 cargo test --workspace
 ```
 
-The fixtures in `crates/chummer-core/tests/fixtures` are Chummer5a's own test characters.
+## Not done yet
+
+- Hero Lab import, ChummerHub, plugins and the auto-updater.
+- Some career-mode details:
+  - Burning Edge.
+  - The mystic adept's second-MAG limit on grades.
+  - Undo for focus binding and technique purchases.
+  - Karma for spirit fettering.
+- PDF export needs a browser's Print to PDF; no converter is bundled.
+- Some UI text stays English when a Chummer translation string does not exist for it.
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| `crates/chummer-core` | Engine, with no UI dependencies |
+| `xml.rs` | Owned XML tree; files round-trip losslessly |
+| `data.rs`, `custom_data/` | Game data and custom data merge (`XmlManager`) |
+| `lang.rs`, `settings.rs`, `sources.rs` | Translations, house rules, sourcebook PDFs |
+| `expr.rs` | Data-file expressions (`EvaluateInvariantXPath`) |
+| `improvement.rs`, `bonus/` | Improvements and the bonus processor (`ImprovementManager`) |
+| `character.rs`, `attributes.rs`, `skills.rs`, `calc.rs` | The character and its rules math |
+| `items/` | One module per item kind: build, add, cost, edit |
+| `chargen.rs`, `career/`, `essence_loss.rs` | Creation, career ledger, essence loss |
+| `print.rs`, `export.rs`, `roster.rs`, `calendar.rs` | Sheets, export, roster, calendar |
+| `crates/chummer-gui` | egui desktop application |
+| `crates/chummer-cli` | Command-line tool |
+| `tools/gen_bonus_table.py` | Generates simple bonus handlers from Chummer5a's C# |
+| `resources/` | Data, translations, custom data, sheets and export templates from Chummer5a |
 
 ## License
 
-GPL-3.0-or-later, the same as Chummer5a. The game data and translations in `resources/` come from Chummer5a. See `resources/xml_license.txt`. Shadowrun is a trademark of The Topps Company, Inc. This project is not affiliated with it or with Catalyst Game Labs.
+GPL-3.0-or-later, the same as Chummer5a. The game data and translations in
+`resources/` come from Chummer5a; see `resources/xml_license.txt`.
+Shadowrun is a trademark of The Topps Company, Inc. This project is not
+affiliated with it or with Catalyst Game Labs.

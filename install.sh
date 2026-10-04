@@ -16,7 +16,7 @@ install -Dm755 target/release/chummer-cli "$PREFIX/bin/chummer-cli"
 share="$PREFIX/share/chummer-rs"
 rm -rf "$share"
 mkdir -p "$share"
-cp -r resources/data resources/lang resources/sheets resources/customdata "$share/"
+cp -r resources/data resources/lang resources/sheets resources/customdata resources/export "$share/"
 install -Dm644 resources/xml_license.txt "$share/xml_license.txt"
 
 install -Dm644 packaging/chummer-rs.desktop "$PREFIX/share/applications/chummer-rs.desktop"
