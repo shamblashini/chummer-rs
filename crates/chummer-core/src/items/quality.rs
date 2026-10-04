@@ -65,13 +65,3 @@ pub const IGNORE: &[&str] = &[
     // legacy names in pre-5.214 saves (`id` was the record id, now `sourceid`)
     "metagenetic", "metagenic", "id",
 ];
-
-/// Bonus handler hook (see `bonus/handlers.rs`). Return false while unsupported.
-pub fn bonus_selectquality(_ctx: &mut crate::bonus::Ctx<'_>, _node: &Element) -> bool {
-    false
-}
-
-/// Bonus handler hook (see `bonus/handlers.rs`). Return false while unsupported.
-pub fn bonus_addcontact(_ctx: &mut crate::bonus::Ctx<'_>, _node: &Element) -> bool {
-    false
-}

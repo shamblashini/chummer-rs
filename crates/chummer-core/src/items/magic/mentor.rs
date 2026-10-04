@@ -144,7 +144,7 @@ pub fn add_mentor(ch: &mut Character, store: &DataStore, mentor_type: &str, name
 
 /// Element and outcome of a new mentor spirit, not yet stored.
 #[allow(clippy::too_many_arguments)]
-fn create(ch: &Character, store: &DataStore, rec: Record<'_>, guid: &str, mentor_type: &str, choice1: Option<&str>, choice2: Option<&str>, forced: Option<&str>) -> (Element, Outcome) {
+pub fn create(ch: &Character, store: &DataStore, rec: Record<'_>, guid: &str, mentor_type: &str, choice1: Option<&str>, choice2: Option<&str>, forced: Option<&str>) -> (Element, Outcome) {
     let src = source("MentorSpirit", guid, &rec.name(), 1);
     let mut out = super::apply_bonus(ch, store, rec.el().child("bonus"), &src, forced);
     let extra = out.selected.clone().filter(|s| !s.trim().is_empty()).or(forced.map(str::to_owned)).unwrap_or_default();
