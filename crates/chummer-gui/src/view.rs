@@ -75,6 +75,10 @@ pub struct CharacterView {
     /// Manual ledger entry: (karma?, amount, reason).
     manual: (bool, f64, String),
     initiation: career::InitiationOptions,
+    // Magic, lifestyle and drug editors (magic_ui, lifestyle_ui, drug_ui).
+    magic_editor: crate::magic_ui::MagicEditor,
+    lifestyle_editor: crate::lifestyle_ui::LifestyleEditor,
+    drug_builder: crate::drug_ui::DrugBuilder,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -133,6 +137,9 @@ impl CharacterView {
             action: None,
             manual: (true, 0.0, String::new()),
             initiation: career::InitiationOptions::default(),
+            magic_editor: Default::default(),
+            lifestyle_editor: Default::default(),
+            drug_builder: Default::default(),
         };
         v.refresh_budget();
         v
@@ -218,6 +225,7 @@ impl CharacterView {
         });
         changed |= self.confirm_dialog(ctx);
         changed |= self.select_dialog(ctx, engine, lang, pdfs, status);
+        changed |= self.drug_builder.window(ctx, &mut self.ch, &self.store, status);
         changed |= self.finish_dialog(ctx);
         if let Some(a) = self.action.take() {
             changed |= self.run_action(a, engine, status);
@@ -703,6 +711,8 @@ impl CharacterView {
         ui.separator();
         if let Some(sec) = present.get(self.magic) {
             let sec = **sec;
+            let cx = crate::magic_ui::Ctx { store: &self.store, engine, sheet: &self.sheet, settings: self.settings.as_ref(), lang, pdfs };
+            changed |= self.magic_editor.ui(ui, &mut self.ch, &cx, sec.container, status);
             self.add_buttons(ui, engine, sec.container);
             egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));
         }
@@ -783,11 +793,11 @@ impl CharacterView {
             "weapons" => &["weapon", "accessory"],
             "vehicles" => &["vehicle", "mod"],
             "lifestyles" => &["lifestyle"],
-            "spells" => &["spell"],
+            "spells" => &[], // magic_ui: spell options and career karma
             "powers" => &["power"],
             "complexforms" => &["complexform"],
             "spirits" => &["spirit"],
-            "metamagics" => &["metamagic"],
+            "metamagics" => &[], // magic_ui: one per grade, echoes for technomancers
             "martialarts" => &["martialart"],
             "critterpowers" => &["critterpower"],
             _ => &[],
@@ -816,6 +826,15 @@ impl CharacterView {
         match sec.container {
             "weapons" => self.weapon_summary(ui),
             "vehicles" => self.vehicle_summary(ui),
+            "gears" => {
+                if ui.button("🧪 Build custom drug…").clicked() {
+                    self.drug_builder.open = true;
+                }
+            }
+            "lifestyles" => {
+                let cx = crate::magic_ui::Ctx { store: &self.store, engine, sheet: &self.sheet, settings: self.settings.as_ref(), lang, pdfs };
+                changed |= self.lifestyle_editor.ui(ui, &mut self.ch, &cx, status);
+            }
             _ => {}
         }
         egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));

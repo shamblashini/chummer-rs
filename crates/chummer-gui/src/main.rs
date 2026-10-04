@@ -2,7 +2,10 @@
 
 mod browser;
 mod dice_ui;
+mod drug_ui;
 mod initiative;
+mod lifestyle_ui;
+mod magic_ui;
 mod pdf_ui;
 mod select;
 mod settings_ui;
