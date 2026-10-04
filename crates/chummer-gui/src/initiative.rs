@@ -1,6 +1,7 @@
 //! Initiative tracker: combatants, rolls, passes (-10 per pass), turn order.
 
 use chummer_core::dice::{self, Rng};
+use chummer_core::lang::Language;
 use eframe::egui::{self, RichText};
 
 use crate::view::ACCENT;
@@ -57,21 +58,21 @@ impl Tracker {
         self.sort();
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, open_characters: &[(String, i32, u32)]) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, lang: &Language, open_characters: &[(String, i32, u32)]) {
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.new_name).hint_text("Name").desired_width(140.0));
-            ui.label("Base");
+            ui.add(egui::TextEdit::singleline(&mut self.new_name).hint_text(lang.tr("Name")).desired_width(140.0));
+            ui.label(lang.tr("Base"));
             ui.add(egui::DragValue::new(&mut self.new_base).range(0..=40));
-            ui.label("Dice");
+            ui.label(lang.tr("Dice"));
             ui.add(egui::DragValue::new(&mut self.new_dice).range(1..=5));
-            if ui.add_enabled(!self.new_name.trim().is_empty(), egui::Button::new("Add")).clicked() {
+            if ui.add_enabled(!self.new_name.trim().is_empty(), egui::Button::new(lang.tr("Add"))).clicked() {
                 self.add(self.new_name.trim().to_owned(), self.new_base, self.new_dice);
                 self.new_name.clear();
             }
         });
         if !open_characters.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                ui.weak("Open characters:");
+                ui.weak(lang.tr("Open characters:"));
                 for (n, b, d) in open_characters {
                     if ui.small_button(format!("+ {n}")).clicked() {
                         self.add(n.clone(), *b, *d);
@@ -81,24 +82,24 @@ impl Tracker {
         }
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button("🎲 Roll initiative").clicked() {
+            if ui.button(format!("🎲 {}", lang.tr("Roll initiative"))).clicked() {
                 self.roll_all();
             }
             let any_left = self.list.iter().any(|c| c.score - 10 > 0);
-            if ui.add_enabled(self.pass > 0 && any_left, egui::Button::new("Next pass")).clicked() {
+            if ui.add_enabled(self.pass > 0 && any_left, egui::Button::new(lang.tr("Next pass"))).clicked() {
                 self.next_pass();
             }
-            if ui.button("Clear").clicked() {
+            if ui.button(lang.tr("Clear")).clicked() {
                 self.list.clear();
                 self.pass = 0;
             }
             if self.pass > 0 {
-                ui.label(RichText::new(format!("Pass {}", self.pass)).strong());
+                ui.label(RichText::new(lang.tr_fmt("Pass {0}", &[&self.pass])).strong());
             }
         });
         let mut remove = None;
         egui::Grid::new("init").striped(true).num_columns(5).show(ui, |ui| {
-            for h in ["Name", "Initiative", "Score", "Acted", ""] {
+            for h in lang.tr_all(["Name", "Initiative", "Score", "Acted", ""]) {
                 ui.strong(h);
             }
             ui.end_row();

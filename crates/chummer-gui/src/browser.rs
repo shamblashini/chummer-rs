@@ -44,13 +44,13 @@ impl DataBrowser {
         }
 
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("browser_kind").selected_text(label).width(180.0).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("browser_kind").selected_text(lang.tr(label)).width(180.0).show_ui(ui, |ui| {
                 for (i, (l, ..)) in data::BROWSABLE.iter().enumerate() {
-                    ui.selectable_value(&mut self.kind, i, *l);
+                    ui.selectable_value(&mut self.kind, i, lang.tr(l));
                 }
             });
-            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search name, category or source").desired_width(280.0));
-            if ui.button("Clear").clicked() {
+            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text(lang.tr("Search name, category or source")).desired_width(280.0));
+            if ui.button(lang.tr("Clear")).clicked() {
                 self.search.clear();
             }
         });
@@ -71,7 +71,7 @@ impl DataBrowser {
                 (needle.is_empty() || hay.contains(&needle)).then_some((i, name, cat))
             })
             .collect();
-        ui.label(format!("{} of {} records", shown.len(), recs.len()));
+        ui.label(lang.tr_fmt("{0} of {1} records", &[&shown.len(), &recs.len()]));
         ui.separator();
 
         ui.columns(2, |cols| {
@@ -81,7 +81,7 @@ impl DataBrowser {
                 shown.len(),
                 |ui, range| {
                     for (i, name, cat) in &shown[range] {
-                        let text = if cat.is_empty() { name.clone() } else { format!("{name}  ·  {cat}") };
+                        let text = if cat.is_empty() { name.clone() } else { format!("{name}  ·  {}", lang.data_name(file, "", cat)) };
                         if ui.selectable_label(self.selected == Some(*i), text).clicked() {
                             self.selected = Some(*i);
                         }
@@ -92,12 +92,12 @@ impl DataBrowser {
                 match self.selected.and_then(|i| recs.get(i)) {
                     Some(r) => {
                         ui.heading(lang.data_name(file, &r.id(), &r.name()));
-                        pdf_ui::source_link(ui, pdfs, SourceRef::of(r.el()), status);
+                        pdf_ui::source_link(ui, pdfs, lang, SourceRef::of(r.el()), status);
                         ui.separator();
                         record_fields(ui, r.el(), 0);
                     }
                     None => {
-                        ui.weak("Select a record to see its details.");
+                        ui.weak(lang.tr("Select a record to see its details."));
                     }
                 }
             });

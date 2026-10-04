@@ -96,10 +96,12 @@ impl Picker {
 
     /// `choices` gives the selections a record's bonus needs; `note` an
     /// extra line shown next to an entry (e.g. its cost).
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         store: &DataStore,
+        lang: &Language,
         check: Option<&Check<'_>>,
         choices: &dyn Fn(Record<'_>) -> Vec<Choice>,
         note: &dyn Fn(Record<'_>) -> String,
@@ -116,14 +118,14 @@ impl Picker {
                 c
             };
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search").desired_width(220.0));
+                ui.add(egui::TextEdit::singleline(&mut self.search).hint_text(lang.tr("Search")).desired_width(220.0));
                 if cats.len() > 1 {
                     egui::ComboBox::from_id_salt("picker_cat")
-                        .selected_text(if self.category.is_empty() { "All categories".to_owned() } else { self.category.clone() })
+                        .selected_text(if self.category.is_empty() { lang.tr("All categories") } else { lang.data_name(self.file, "", &self.category) })
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.category, String::new(), "All categories");
+                            ui.selectable_value(&mut self.category, String::new(), lang.tr("All categories"));
                             for c in &cats {
-                                ui.selectable_value(&mut self.category, c.clone(), c);
+                                ui.selectable_value(&mut self.category, c.clone(), lang.data_name(self.file, "", c));
                             }
                         });
                 }
@@ -188,7 +190,7 @@ impl Picker {
                         crate::browser::record_fields(ui, r.el(), 0);
                     }
                     None => {
-                        ui.weak("Select an entry.");
+                        ui.weak(lang.tr("Select an entry."));
                     }
                 });
             });
@@ -196,11 +198,11 @@ impl Picker {
             let ready = self.selected.as_ref().and_then(|n| rows.iter().find(|(r, _)| &r.name() == n)).map(|(r, why)| (why.is_empty(), !choices(*r).is_empty()));
             let can = matches!(ready, Some((true, needs)) if !needs || !self.answer.trim().is_empty());
             ui.horizontal(|ui| {
-                if ui.add_enabled(can, egui::Button::new("Add")).clicked() || (confirm && can) {
+                if ui.add_enabled(can, egui::Button::new(lang.tr("Add"))).clicked() || (confirm && can) {
                     let answer = Some(self.answer.trim().to_owned()).filter(|a| !a.is_empty());
                     result = Pick::Done(self.selected.clone().unwrap_or_default(), answer);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(lang.tr("Cancel")).clicked() {
                     result = Pick::Cancel;
                 }
             });
@@ -246,7 +248,7 @@ impl MagicEditor {
         changed |= match container {
             "spells" => self.spells_ui(ui, ch, cx, status),
             "powers" => powers_ui(ui, ch, cx, status),
-            "spirits" => spirits_ui(ui, ch),
+            "spirits" => spirits_ui(ui, ch, cx.lang),
             "metamagics" => self.metamagic_ui(ui, ch, cx, status),
             "martialarts" => self.martial_arts_ui(ui, ch, cx, status),
             _ => false,
@@ -258,17 +260,18 @@ impl MagicEditor {
 
     fn spells_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
         let mut changed = false;
+        let lang = cx.lang;
         ui.horizontal(|ui| {
-            if ui.button("➕ Add spell…").clicked() {
+            if ui.button(format!("➕ {}", lang.tr("Add Spell…"))).clicked() {
                 let max_avail = cx.settings.map_or(12, |s| s.max_availability());
                 self.spell_dialog = SelectDialog::new("spell", cx.store, cx.books(), max_avail, None);
                 self.pending_spell = None;
             }
             if !ch.created {
                 let c = account::spell_counts(ch, cx.sheet);
-                ui.label(format!("Free spells used {} / {}", c.spells + c.rituals + c.preparations, c.free));
+                ui.label(format!("{} {} / {}", lang.tr("Free spells used"), c.spells + c.rituals + c.preparations, c.free));
             } else {
-                ui.label(format!("New spell: {} karma", career::spell_karma_cost(cx.engine, ch, "Spells")));
+                ui.label(lang.tr_fmt("New spell: {0} karma", &[&career::spell_karma_cost(cx.engine, ch, "Spells")]));
             }
         });
         let ctx = ui.ctx().clone();
@@ -298,16 +301,17 @@ impl MagicEditor {
         let mut add = false;
         let mut cancel = false;
         let mut open = true;
-        egui::Window::new("Spell options").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+        let lang = cx.lang;
+        egui::Window::new(lang.tr("Spell Options")).id(egui::Id::new("spell_options")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             ui.heading(rec.name());
             ui.weak(format!("{} · {} · DV {}", rec.category(), rec.get("range"), rec.get("dv")));
             let descriptors = rec.get("descriptor");
             let extended_area = descriptors.split(',').any(|d| d.trim().eq_ignore_ascii_case("Extended Area"));
-            ui.checkbox(&mut p.opts.limited, "Limited").on_hover_text("−2 drain, needs a fetish or focus");
-            ui.add_enabled(rec.category() == "Detection" && !extended_area, egui::Checkbox::new(&mut p.opts.extended, "Extended"))
-                .on_hover_text("Detection spells only: extended area, +2 drain");
-            ui.checkbox(&mut p.opts.alchemical, "Alchemical preparation");
-            ui.checkbox(&mut p.opts.free_bonus, "Free").on_hover_text("Costs no karma and does not count against free spells");
+            ui.checkbox(&mut p.opts.limited, lang.tr("Limited")).on_hover_text(lang.tr("−2 drain, needs a fetish or focus"));
+            ui.add_enabled(rec.category() == "Detection" && !extended_area, egui::Checkbox::new(&mut p.opts.extended, lang.tr("Extended")))
+                .on_hover_text(lang.tr("Detection spells only: extended area, +2 drain"));
+            ui.checkbox(&mut p.opts.alchemical, lang.tr("Alchemical Preparation"));
+            ui.checkbox(&mut p.opts.free_bonus, lang.tr("Free")).on_hover_text(lang.tr("Costs no karma and does not count against free spells"));
             if ch.created && !p.opts.free_bonus {
                 let category = if p.opts.alchemical {
                     "Preparations"
@@ -317,12 +321,12 @@ impl MagicEditor {
                     "Spells"
                 };
                 let cost = career::spell_karma_cost(cx.engine, ch, category);
-                let t = RichText::new(format!("Cost: {cost} karma (you have {})", ch.karma));
+                let t = RichText::new(lang.tr_fmt("Cost: {0} karma (you have {1})", &[&cost, &ch.karma]));
                 ui.label(if cost > ch.karma { t.color(ui.visuals().error_fg_color) } else { t });
             }
             ui.horizontal(|ui| {
-                add = ui.button("Add").clicked();
-                cancel = ui.button("Cancel").clicked();
+                add = ui.button(lang.tr("Add")).clicked();
+                cancel = ui.button(lang.tr("Cancel")).clicked();
             });
         });
         if cancel || !open {
@@ -353,16 +357,17 @@ impl MagicEditor {
             return false;
         }
         let mut changed = false;
-        egui::CollapsingHeader::new(RichText::new("Mentor spirit").strong()).id_salt("mentor_ed").default_open(true).show(ui, |ui| {
+        let lang = cx.lang;
+        egui::CollapsingHeader::new(RichText::new(lang.tr("Mentor Spirit")).strong()).id_salt("mentor_ed").default_open(true).show(ui, |ui| {
             for m in &mentors {
                 let guid = m.get("guid");
                 let mtype = m.child_text("mentortype").unwrap_or_else(|| "MentorSpirit".into());
                 ui.horizontal(|ui| {
                     ui.strong(m.get("name"));
-                    ui.weak(if mtype == "Paragon" { "(paragon)" } else { "(mentor spirit)" });
+                    ui.weak(format!("({})", if mtype == "Paragon" { lang.tr("Paragon") } else { lang.tr("Mentor Spirit") }));
                 });
                 if !m.get("advantage").is_empty() {
-                    ui.label(format!("Advantage: {}", m.get("advantage")));
+                    ui.label(format!("{} {}", lang.tr("Advantage:"), m.get("advantage")));
                 }
                 let Ok(doc) = cx.store.doc(mentor::data_file(&mtype)) else { continue };
                 let Some(rec) = mentor_record(&doc, m) else { continue };
@@ -384,13 +389,13 @@ impl MagicEditor {
                     (cur("extrachoice1", &set1), cur("extrachoice2", &set2))
                 });
                 egui::Grid::new(("mentor_choices", &guid)).num_columns(2).show(ui, |ui| {
-                    for (label, set, value, n) in [("Choice 1", &set1, &mut entry.0, 1), ("Choice 2", &set2, &mut entry.1, 2)] {
+                    for (label, set, value, n) in [(lang.tr("Choice 1"), &set1, &mut entry.0, 1), (lang.tr("Choice 2"), &set2, &mut entry.1, 2)] {
                         if set.is_empty() {
                             continue;
                         }
                         ui.label(label);
                         egui::ComboBox::from_id_salt(("mentor_choice", &guid, n))
-                            .selected_text(if value.is_empty() { "Choose…".to_owned() } else { value.clone() })
+                            .selected_text(if value.is_empty() { lang.tr("Choose…") } else { value.clone() })
                             .width(360.0)
                             .show_ui(ui, |ui| {
                                 for c in set.iter() {
@@ -403,7 +408,7 @@ impl MagicEditor {
                 let (c1, c2) = entry.clone();
                 let saved_ok = m.get("extrachoice1") == c1 && m.get("extrachoice2") == c2;
                 let complete = (set1.is_empty() || !c1.is_empty()) && (set2.is_empty() || !c2.is_empty());
-                if ui.add_enabled(!saved_ok && complete, egui::Button::new("Apply choices")).clicked() {
+                if ui.add_enabled(!saved_ok && complete, egui::Button::new(lang.tr("Apply choices"))).clicked() {
                     let r = mentor::set_mentor_choices(ch, cx.store, &guid, Some(c1.as_str()).filter(|s| !s.is_empty()), Some(c2.as_str()).filter(|s| !s.is_empty()));
                     changed |= report(status, r, |_| format!("Mentor choices set for {}", m.get("name")));
                 }
@@ -411,9 +416,10 @@ impl MagicEditor {
             }
             for (qguid, qname, mtype) in &pending {
                 ui.horizontal(|ui| {
-                    ui.colored_label(crate::view::WARN, format!("{qname} grants a {} that is not chosen yet.", if mtype == "Paragon" { "paragon" } else { "mentor spirit" }));
-                    if ui.button("Choose…").clicked() {
-                        let picker = Picker::new(format!("Choose a {}", if mtype == "Paragon" { "paragon" } else { "mentor spirit" }), mentor::data_file(mtype), "mentors", "mentor", cx.books());
+                    let kind = if mtype == "Paragon" { lang.tr("Paragon") } else { lang.tr("Mentor Spirit") };
+                    ui.colored_label(crate::view::WARN, lang.tr_fmt("{0} grants a {1} that is not chosen yet.", &[qname, &kind]));
+                    if ui.button(lang.tr("Choose…")).clicked() {
+                        let picker = Picker::new(lang.tr_fmt("Choose a {0}", &[&kind]), mentor::data_file(mtype), "mentors", "mentor", cx.books());
                         self.mentor = Some((qguid.clone(), mtype.clone(), picker));
                     }
                 });
@@ -421,7 +427,7 @@ impl MagicEditor {
         });
         if let Some((qguid, mtype, picker)) = self.mentor.as_mut() {
             let check = Check { ch, sheet: cx.sheet, ignore_quality: None };
-            match picker.show(ui.ctx(), cx.store, Some(&check), &|_| Vec::new(), &|_| String::new()) {
+            match picker.show(ui.ctx(), cx.store, lang, Some(&check), &|_| Vec::new(), &|_| String::new()) {
                 Pick::None => {}
                 Pick::Cancel => self.mentor = None,
                 Pick::Done(name, _) => {
@@ -448,12 +454,18 @@ impl MagicEditor {
         let grade = metamagic::current_grade(ch);
         let taken = ch.items("metamagics", "metamagic").iter().filter(|m| m.get_i32("grade").unwrap_or(0) > 0).count() as i32;
         let free = (grade - taken).max(0);
+        let lang = cx.lang;
+        let what_label = if echo { lang.tr("echo") } else { lang.tr("metamagic") };
         ui.horizontal(|ui| {
-            let b = ui.add_enabled(free > 0, egui::Button::new(format!("➕ Add {what}…")));
-            if b.on_disabled_hover_text(if grade == 0 { "Initiate or submerge first" } else { "Every grade already has one" }).clicked() {
-                self.metamagic = Some(Picker::new(format!("Add {what}"), file, container, item, cx.books()));
+            let b = ui.add_enabled(free > 0, egui::Button::new(format!("➕ {}", lang.tr_fmt("Add {0}…", &[&what_label]))));
+            if b.on_disabled_hover_text(if grade == 0 { lang.tr("Initiate or submerge first") } else { lang.tr("Every grade already has one") }).clicked() {
+                self.metamagic = Some(Picker::new(lang.tr_fmt("Add {0}", &[&what_label]), file, container, item, cx.books()));
             }
-            ui.label(format!("Grade {grade}: {free} free {what} slot{}", if free == 1 { "" } else { "s" }));
+            ui.label(if free == 1 {
+                lang.tr_fmt("Grade {0}: {1} free {2} slot", &[&grade, &free, &what_label])
+            } else {
+                lang.tr_fmt("Grade {0}: {1} free {2} slots", &[&grade, &free, &what_label])
+            });
         });
         let mut changed = false;
         if let Some(picker) = self.metamagic.as_mut() {
@@ -461,7 +473,7 @@ impl MagicEditor {
             let chr: &Character = ch;
             let check = Check { ch: chr, sheet: cx.sheet, ignore_quality: None };
             let choices = |r: Record<'_>| magic::choices("metamagic", chr, store, r, &Purchase::default());
-            match picker.show(ui.ctx(), store, Some(&check), &choices, &|_| String::new()) {
+            match picker.show(ui.ctx(), store, lang, Some(&check), &choices, &|_| String::new()) {
                 Pick::None => {}
                 Pick::Cancel => self.metamagic = None,
                 Pick::Done(name, answer) => {
@@ -483,6 +495,7 @@ impl MagicEditor {
         let arts: Vec<Element> = ch.items("martialarts", "martialart").into_iter().cloned().collect();
         let Ok(doc) = cx.store.doc("martialarts.xml") else { return false };
         let mut changed = false;
+        let lang = cx.lang;
         for art in &arts {
             let guid = art.get("guid");
             let known: Vec<String> = art.child("martialarttechniques").map(|t| t.children_named("martialarttechnique").map(|x| x.get("name")).collect()).unwrap_or_default();
@@ -496,7 +509,7 @@ impl MagicEditor {
             let offered: Vec<String> = names.into_iter().filter(|t| !known.contains(t)).collect();
             ui.horizontal_wrapped(|ui| {
                 ui.strong(art.get("name"));
-                ui.weak(if known.is_empty() { "no techniques".to_owned() } else { known.join(", ") });
+                ui.weak(if known.is_empty() { lang.tr("no techniques") } else { known.join(", ") });
             });
             if offered.is_empty() {
                 continue;
@@ -507,7 +520,7 @@ impl MagicEditor {
                     pick.clear();
                 }
                 egui::ComboBox::from_id_salt(("technique", &guid))
-                    .selected_text(if pick.is_empty() { "Technique…".to_owned() } else { pick.clone() })
+                    .selected_text(if pick.is_empty() { lang.tr("Technique…") } else { pick.clone() })
                     .width(260.0)
                     .show_ui(ui, |ui| {
                         for t in &offered {
@@ -515,7 +528,7 @@ impl MagicEditor {
                         }
                     });
                 let cost = if ch.created { career::technique_karma_cost(cx.engine, ch, &guid) } else { 0 };
-                let label = if ch.created { format!("Learn ({cost} karma)") } else { "Learn".to_owned() };
+                let label = if ch.created { lang.tr_fmt("Learn ({0} karma)", &[&cost]) } else { lang.tr("Learn") };
                 let can = !pick.is_empty() && (!ch.created || ch.karma >= cost);
                 if ui.add_enabled(can, egui::Button::new(label)).clicked() {
                     let t = pick.clone();
@@ -573,15 +586,16 @@ fn powers_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut S
     };
     let ignore = ch.flag("ignorerules");
     let mut changed = false;
+    let lang = cx.lang;
     ui.horizontal(|ui| {
-        let t = RichText::new(format!("Power points used {} of {}", fmt_pp(used), fmt_pp(total))).strong();
+        let t = RichText::new(lang.tr_fmt("Power points used {0} of {1}", &[&fmt_pp(used), &fmt_pp(total)])).strong();
         ui.label(if used > total + 1e-9 { t.color(ui.visuals().error_fg_color) } else { t });
         if ch.is_adept() && ch.is_magician() && !second {
             let pp = ch.doc.get_i32("magsplitadept").unwrap_or(0);
-            ui.label(format!("(mystic adept: {pp} bought)"));
+            ui.label(lang.tr_fmt("(mystic adept: {0} bought)", &[&pp]));
             if ch.created {
                 let cost = career::power_point_karma_cost(cx.engine, ch);
-                if ui.add_enabled(ch.karma >= cost, egui::Button::new(format!("Buy power point ({cost} karma)"))).clicked() {
+                if ui.add_enabled(ch.karma >= cost, egui::Button::new(lang.tr_fmt("Buy power point ({0} karma)", &[&cost]))).clicked() {
                     changed |= report(status, career::buy_power_point(ch, cx.engine), |_| "Bought a power point".into());
                 }
             }
@@ -591,7 +605,7 @@ fn powers_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut S
         return changed;
     }
     egui::Grid::new("power_editor").striped(true).num_columns(5).spacing([14.0, 4.0]).show(ui, |ui| {
-        for h in ["Power", "Levels", "Free", "PP / level", "PP"] {
+        for h in lang.tr_all(["Power", "Levels", "Free", "PP / level", "PP"]) {
             ui.strong(h);
         }
         ui.end_row();
@@ -603,7 +617,7 @@ fn powers_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut S
             if p.get_bool("levels").unwrap_or(false) {
                 let max = power::total_maximum_levels(p, mag, ignore).max(1);
                 let mut r = p.get_i32("rating").unwrap_or(1);
-                let resp = ui.add(egui::DragValue::new(&mut r).range(1..=max)).on_hover_text(format!("Up to {max}"));
+                let resp = ui.add(egui::DragValue::new(&mut r).range(1..=max)).on_hover_text(lang.tr_fmt("Up to {0}", &[&max]));
                 if resp.changed() && r != p.get_i32("rating").unwrap_or(1) {
                     let mut probe = p.clone();
                     probe.set_child_text("rating", r.to_string());
@@ -637,14 +651,14 @@ fn fmt_pp(v: f64) -> String {
 
 // ----- spirits and sprites -----
 
-fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character) -> bool {
+fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character, lang: &Language) -> bool {
     let spirits: Vec<Element> = ch.items("spirits", "spirit").into_iter().cloned().collect();
     if spirits.is_empty() {
         return false;
     }
     let mut changed = false;
     egui::Grid::new("spirit_editor").striped(true).num_columns(5).spacing([14.0, 4.0]).show(ui, |ui| {
-        for h in ["Spirit / sprite", "Force", "Services", "Bound", "Fettered"] {
+        for h in lang.tr_all(["Spirit / sprite", "Force", "Services", "Bound", "Fettered"]) {
             ui.strong(h);
         }
         ui.end_row();
@@ -658,7 +672,7 @@ fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character) -> bool {
             ui.label(if name.is_empty() { s.get("name") } else { format!("{name} ({})", s.get("name")) });
             let mut c = ui.add(egui::DragValue::new(&mut force).range(1..=24)).changed();
             c |= ui.add(egui::DragValue::new(&mut services).range(0..=99)).changed();
-            c |= ui.checkbox(&mut bound, if sprite { "Registered" } else { "Bound" }).changed();
+            c |= ui.checkbox(&mut bound, if sprite { lang.tr("Registered") } else { lang.tr("Bound") }).changed();
             if sprite {
                 ui.label("");
             } else {
@@ -682,11 +696,12 @@ fn foci_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Sta
     }
     let bound: Vec<String> = ch.items("foci", "focus").iter().map(|f| f.get("gearid").to_ascii_lowercase()).collect();
     let mut changed = false;
-    egui::CollapsingHeader::new(RichText::new("Foci").strong()).id_salt("foci_ed").default_open(false).show(ui, |ui| {
+    let lang = cx.lang;
+    egui::CollapsingHeader::new(RichText::new(lang.tr("Foci")).strong()).id_salt("foci_ed").default_open(false).show(ui, |ui| {
         let total: i32 = foci.iter().filter(|g| bound.contains(&g.get("guid").to_ascii_lowercase())).map(|g| g.get_i32("rating").unwrap_or(0)).sum();
-        ui.weak(format!("Bound force {total} (limit MAG × 5 = {})", cx.sheet.attr("MAG") * 5));
+        ui.weak(lang.tr_fmt("Bound force {0} (limit MAG × 5 = {1})", &[&total, &(cx.sheet.attr("MAG") * 5)]));
         egui::Grid::new("foci_editor").striped(true).num_columns(4).spacing([14.0, 4.0]).show(ui, |ui| {
-            for h in ["Focus", "Force", "Binding karma", "Bound"] {
+            for h in lang.tr_all(["Focus", "Force", "Binding karma", "Bound"]) {
                 ui.strong(h);
             }
             ui.end_row();

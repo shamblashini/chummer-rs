@@ -4,18 +4,19 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use chummer_core::data::DataStore;
+use chummer_core::lang::Language;
 use chummer_core::sources::{self, BookInfo, SourceRef, Sourcebook, SourcebookLibrary};
 use eframe::egui::{self, RichText};
 
 pub type Status = Option<(String, bool)>;
 
 /// A small "📖 SR5 p. 143" link. Opens the PDF, or reports why it cannot.
-pub fn source_link(ui: &mut egui::Ui, lib: &SourcebookLibrary, r: Option<SourceRef>, status: &mut Status) {
+pub fn source_link(ui: &mut egui::Ui, lib: &SourcebookLibrary, lang: &Language, r: Option<SourceRef>, status: &mut Status) {
     let Some(r) = r else { return };
     let linked = lib.is_linked(&r.book);
     let text = RichText::new(format!("📖 {r}")).small();
     let text = if linked { text } else { text.weak() };
-    let hover = if linked { "Open the sourcebook at this page" } else { "No PDF linked for this book — Tools → Sourcebooks" };
+    let hover = if linked { lang.tr("Open the sourcebook at this page") } else { lang.tr("No PDF linked for this book — Tools → Sourcebooks") };
     if ui.add(egui::Button::new(text).frame(false)).on_hover_text(hover).clicked() {
         open(lib, &r, status);
     }
@@ -65,12 +66,12 @@ impl SourcesWindow {
     }
 
     /// Returns true when the library changed (so the caller saves it).
-    pub fn ui(&mut self, ui: &mut egui::Ui, lib: &mut SourcebookLibrary) -> bool {
+    pub fn ui(&mut self, ui: &mut egui::Ui, lib: &mut SourcebookLibrary, lang: &Language) -> bool {
         let mut changed = self.poll_detect(lib);
 
         ui.horizontal(|ui| {
-            ui.label("PDF viewer");
-            egui::ComboBox::from_id_salt("viewer_preset").selected_text("Choose…").show_ui(ui, |ui| {
+            ui.label(lang.tr("PDF viewer"));
+            egui::ComboBox::from_id_salt("viewer_preset").selected_text(lang.tr("Choose…")).show_ui(ui, |ui| {
                 for v in sources::installed_viewers() {
                     if ui.selectable_label(lib.viewer == v.template, v.name).clicked() {
                         lib.viewer = v.template.to_owned();
@@ -80,12 +81,12 @@ impl SourcesWindow {
             });
             changed |= ui.add(egui::TextEdit::singleline(&mut lib.viewer).desired_width(380.0)).changed();
         });
-        ui.weak("{page} and {path} are replaced. Chummer5a's {localpath} also works.");
+        ui.weak(lang.tr("{page} and {path} are replaced. Chummer5a's {localpath} also works."));
         ui.separator();
 
         ui.horizontal_wrapped(|ui| {
             for pfx in self.prefixes.clone() {
-                if ui.button(format!("Import from Chummer5a ({})", prefix_label(&pfx))).on_hover_text(pfx.display().to_string()).clicked() {
+                if ui.button(lang.tr_fmt("Import from Chummer5a ({0})", &[&prefix_label(&pfx)])).on_hover_text(pfx.display().to_string()).clicked() {
                     match sources::import_from_wine(&pfx) {
                         Ok(found) => {
                             let n = found.len();
@@ -99,7 +100,7 @@ impl SourcesWindow {
                     }
                 }
             }
-            if ui.button("Scan a folder for PDFs…").clicked() {
+            if ui.button(lang.tr("Scan a Folder for PDF Files…")).clicked() {
                 if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                     let found = sources::scan_folder(&dir, &self.books);
                     let mut added = 0;
@@ -116,8 +117,8 @@ impl SourcesWindow {
             }
             let can_detect = sources::which("pdftotext").is_some();
             let busy = self.detect.is_some();
-            let r = ui.add_enabled(can_detect && !busy, egui::Button::new(if busy { "Detecting offsets…" } else { "Detect page offsets" }));
-            let r = if can_detect { r.on_hover_text("Reads each PDF with pdftotext to find where printed page numbers start") } else { r.on_disabled_hover_text("Install poppler (pdftotext) to detect offsets") };
+            let r = ui.add_enabled(can_detect && !busy, egui::Button::new(if busy { lang.tr("Detecting offsets…") } else { lang.tr("Detect page offsets") }));
+            let r = if can_detect { r.on_hover_text(lang.tr("Reads each PDF with pdftotext to find where printed page numbers start")) } else { r.on_disabled_hover_text(lang.tr("Install poppler (pdftotext) to detect offsets")) };
             if r.clicked() {
                 self.start_detect(lib);
             }
@@ -128,21 +129,21 @@ impl SourcesWindow {
         if self.detect.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(format!("{} books left", self.detect_pending));
+                ui.label(lang.tr_fmt("{0} books left", &[&self.detect_pending]));
             });
             ui.ctx().request_repaint();
         }
         ui.separator();
 
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Filter books").desired_width(200.0));
-            ui.checkbox(&mut self.only_linked, "Only linked");
-            ui.weak(format!("{} of {} linked", lib.linked_count(), self.books.len()));
+            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(lang.tr("Filter books")).desired_width(200.0));
+            ui.checkbox(&mut self.only_linked, lang.tr("Only linked"));
+            ui.weak(lang.tr_fmt("{0} of {1} linked", &[&lib.linked_count(), &self.books.len()]));
         });
         let needle = self.filter.to_lowercase();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Grid::new("books").striped(true).num_columns(5).spacing([12.0, 4.0]).show(ui, |ui| {
-                for h in ["Code", "Book", "Offset", "PDF", ""] {
+                for h in lang.tr_all(["Code", "Book", "Offset", "PDF", ""]) {
                     ui.strong(h);
                 }
                 ui.end_row();
@@ -156,14 +157,14 @@ impl SourcesWindow {
                     ui.monospace(&b.code);
                     ui.label(&b.name);
                     let entry = lib.books.entry(b.code.clone()).or_default();
-                    changed |= ui.add(egui::DragValue::new(&mut entry.offset).range(-50..=50)).on_hover_text("PDF page = printed page + offset").changed();
+                    changed |= ui.add(egui::DragValue::new(&mut entry.offset).range(-50..=50)).on_hover_text(lang.tr("PDF page = printed page + offset")).changed();
                     match &entry.path {
                         Some(p) => {
                             let name = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
                             if p.is_file() {
                                 ui.label(name).on_hover_text(p.display().to_string());
                             } else {
-                                ui.colored_label(ui.visuals().error_fg_color, format!("missing: {name}")).on_hover_text(p.display().to_string());
+                                ui.colored_label(ui.visuals().error_fg_color, lang.tr_fmt("missing: {0}", &[&name])).on_hover_text(p.display().to_string());
                             }
                         }
                         None => {
@@ -171,14 +172,14 @@ impl SourcesWindow {
                         }
                     }
                     ui.horizontal(|ui| {
-                        if ui.small_button("Choose…").clicked() {
+                        if ui.small_button(lang.tr("Choose…")).clicked() {
                             if let Some(f) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
                                 entry.path = Some(f);
                                 changed = true;
                             }
                         }
                         if entry.path.is_some()
-                            && ui.small_button("Clear").clicked() {
+                            && ui.small_button(lang.tr("Clear")).clicked() {
                                 entry.path = None;
                                 changed = true;
                             }
