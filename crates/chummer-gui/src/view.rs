@@ -1054,7 +1054,25 @@ impl CharacterView {
                 match chummer_core::items::add(tag, &mut self.ch, store, rec, &purchase) {
                     Ok(guid) => {
                         let mut msg = format!("Added {name}");
-                        if self.ch.created && tag != "quality" {
+                        // Martial arts cost karma, not nuyen (MartialArt.Cost).
+                        if self.ch.created && tag == "martialart" {
+                            let karma = chummer_core::items::find_by_guid_mut(&mut self.ch.doc, &guid).and_then(|e| e.get_f64("cost")).unwrap_or(0.0);
+                            let rules = career::CareerRules::for_character(engine, &self.ch);
+                            let entry = career::ManualExpense { amount: karma, reason: format!("Learned martial art {name}"), ..Default::default() };
+                            if karma > 0.0 {
+                                if let Err(e) = career::karma_spent(&mut self.ch, &rules, &entry) {
+                                    self.ch.remove_item_anywhere(&guid);
+                                    *status = Some((e.to_string(), true));
+                                    return true;
+                                }
+                                msg = format!("Learned {name} for {karma} karma");
+                            }
+                        }
+                        let nuyen_kind = matches!(
+                            tag,
+                            "gear" | "cyberware" | "bioware" | "armor" | "armormod" | "weapon" | "accessory" | "vehicle" | "mod" | "weaponmount" | "lifestyle" | "drug"
+                        );
+                        if self.ch.created && nuyen_kind {
                             // Career mode: pay for it and log the purchase.
                             let cost = chummer_core::items::find_by_guid_mut(&mut self.ch.doc, &guid).map(|e| chargen::item_cost(e)).unwrap_or(0.0);
                             let parent_tag = purchase.parent.as_ref().and_then(|p| chummer_core::items::find_by_guid_mut(&mut self.ch.doc, p).map(|e| e.name.clone()));
