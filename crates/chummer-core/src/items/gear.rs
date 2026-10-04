@@ -269,7 +269,7 @@ fn initial_extra(d: &Element, s: &Spec<'_>) -> String {
         return answer.unwrap_or_default();
     }
     match d.child("bonus") {
-        Some(b) if bonus_applies(d, b) => answer.or_else(|| Some(s.forced.clone()).filter(|_| asks_selection(b))).unwrap_or_default(),
+        Some(b) if bonus_applies(d, b) => answer.or_else(|| asks_selection(b).then(|| s.forced.clone())).unwrap_or_default(),
         Some(_) => String::new(),
         None => s.forced.clone(),
     }

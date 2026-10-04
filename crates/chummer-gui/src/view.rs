@@ -1515,7 +1515,7 @@ fn cm_track(ui: &mut egui::Ui, id: &str, boxes: i32, threshold: i32, filled: &mu
                 let on = n <= *filled;
                 let painter = ui.painter();
                 painter.rect_filled(rect, 3.0, if on { color } else { ui.visuals().extreme_bg_color });
-                painter.rect_stroke(rect, 3.0, egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.fg_stroke.color), egui::StrokeKind::Inside);
+                painter.rect_stroke(rect, 3.0, egui::Stroke::new(1.0_f32, ui.visuals().widgets.noninteractive.fg_stroke.color), egui::StrokeKind::Inside);
                 if threshold > 0 && n % threshold == 0 {
                     painter.text(rect.center(), egui::Align2::CENTER_CENTER, format!("-{}", n / threshold), egui::FontId::proportional(9.0), ui.visuals().weak_text_color());
                 }

@@ -233,6 +233,8 @@ fn rep(
                 rep(n, min, max, greedy, count + 1, s, p, c, k)
             })
     };
+    // Same operands, different order: greedy tries one more iteration first.
+    #[allow(clippy::if_same_then_else)]
     if greedy {
         more(caps, k) || (count >= min && k(pos, caps))
     } else {
