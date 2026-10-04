@@ -22,3 +22,4 @@ pub mod bonus;
 pub mod requirements;
 pub mod items;
 pub mod chargen;
+pub mod print;
