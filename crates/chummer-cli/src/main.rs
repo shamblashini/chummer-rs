@@ -8,6 +8,8 @@ use chummer_core::attributes;
 use chummer_core::character::Character;
 use chummer_core::data;
 use chummer_core::engine::Engine;
+use chummer_core::lang::Language;
+use chummer_core::print;
 use chummer_core::sections;
 
 const USAGE: &str = "\
@@ -30,6 +32,18 @@ USAGE:
         --talent <value>       e.g. Mundane, Magician, Adept (default Mundane)
         --skills <a,b>         free talent skills
         --name <text>
+
+    chummer-cli sheet <file.chum5> [options]  Print a character sheet to HTML
+        -o <out.html>          output file (default: next to the character)
+        --sheet <name>         sheet name or file (default: Shadowrun 5
+                               (Skills grouped by Rating greater 0))
+        --lang <code>          print language, e.g. de-de (default en-us)
+        --notes                include item and skill notes
+        --expenses             include the karma and nuyen log
+        --xml <out.xml>        also write the print XML
+        --pdf                  convert to PDF (needs chromium, wkhtmltopdf
+                               or weasyprint; else print the HTML from a browser)
+    chummer-cli sheets [lang]              List available sheets
 
     chummer-cli sources list               Show linked sourcebook PDFs
     chummer-cli sources import-wine [pfx]  Import PDF links from Chummer5a under Wine
@@ -69,6 +83,13 @@ fn run(args: &[String]) -> Result<()> {
         "search" => search(&Engine::load()?, rest),
         "sources" => sources_cmd(&Engine::load()?, rest),
         "new" => new_cmd(&Engine::load()?, rest),
+        "sheet" => sheet_cmd(&Engine::load()?, rest),
+        "sheets" => {
+            for (name, path) in print::available_sheets(rest.first().map_or("en-us", String::as_str)) {
+                println!("{name}\t{}", path.display());
+            }
+            Ok(())
+        }
         "kinds" => {
             for (label, file, ..) in data::BROWSABLE {
                 println!("{label:<20} {file}");
@@ -382,5 +403,37 @@ fn new_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
     let mut ch = chargen::create(engine, &spec).map_err(anyhow::Error::msg)?;
     engine.save(&mut ch, Path::new(out))?;
     println!("wrote {out}");
+    Ok(())
+}
+
+/// `sheet`: render a character with an XSLT sheet (Chummer's
+/// CharacterSheetViewer, as a command).
+fn sheet_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
+    let Some(file) = rest.first() else { bail!("expected a .chum5 file") };
+    let opt = |k: &str| rest.iter().position(|a| a == k).and_then(|i| rest.get(i + 1)).cloned();
+    let flag = |k: &str| rest.iter().any(|a| a == k);
+    let lang_code = opt("--lang").unwrap_or_else(|| "en-us".into());
+    let sheet_name = opt("--sheet").unwrap_or_else(|| print::DEFAULT_SHEET.into());
+    let xsl = print::find_sheet(&lang_code, &sheet_name)
+        .with_context(|| format!("no sheet {sheet_name:?} for {lang_code}; see `chummer-cli sheets {lang_code}`"))?;
+    let ch = load(Path::new(file))?;
+    let lang_dir = data::resource_dir("lang").context("lang directory not found")?;
+    let lang = Language::load(&lang_dir, &lang_code);
+    let opts = print::PrintOptions { notes: flag("--notes"), expenses: flag("--expenses"), ..Default::default() };
+    let xml = print::print_xml_with(&ch, engine, &lang, opts);
+    if let Some(x) = opt("--xml") {
+        std::fs::write(&x, xml.to_xml_string()).with_context(|| format!("writing {x}"))?;
+    }
+    let out = opt("-o").map(PathBuf::from).unwrap_or_else(|| Path::new(file).with_extension("html"));
+    let report = print::render_report(&xml, &xsl, &out)?;
+    if !report.warnings.trim().is_empty() {
+        eprintln!("{}", report.warnings.trim_end());
+    }
+    println!("wrote {}", out.display());
+    if flag("--pdf") {
+        let pdf = out.with_extension("pdf");
+        print::html_to_pdf(&out, &pdf)?;
+        println!("wrote {}", pdf.display());
+    }
     Ok(())
 }
