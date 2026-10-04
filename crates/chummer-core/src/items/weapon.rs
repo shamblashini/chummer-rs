@@ -26,7 +26,7 @@ use super::{new_guid, Purchase};
 /// Fields the oracle does not compare for weapons and accessories.
 pub const IGNORE: &[&str] = &[
     // runtime ammunition state and user input
-    "clips", "activeammoslot", "weaponname", "stolen", "extra",
+    "clips", "activeammoslot", "weaponname", "stolen",
     // legacy fields older versions wrote and the current Save does not
     "ammoname", "addmode", "ammoloaded", "ammoremaining", "installed",
     // saves before 5.226 wrote accessory accuracy and ammo bonus as ints
@@ -369,7 +369,10 @@ pub fn add(tag: &str, ch: &mut Character, store: &DataStore, rec: Record<'_>, p:
     if tag == "accessory" {
         let parent = p.parent.clone().ok_or("an accessory needs a parent weapon")?;
         let w = find_by_guid(&ch.doc, &parent).ok_or_else(|| format!("no weapon with guid {parent}"))?;
-        let mount = p.answer.clone().or_else(|| mount_options(w, rec).into_iter().next()).unwrap_or_else(|| "None".into());
+        let mount = match p.answer.clone().or_else(|| mount_options(w, rec).into_iter().next()) {
+            Some(m) => m,
+            None => return Err(format!("no free mount for {} on this weapon", rec.name())),
+        };
         let extra = rec.el().child_text("extramount").map(|x| x.split('/').next().unwrap_or("None").to_owned()).unwrap_or_else(|| "None".into());
         return add_accessory(ch, store, rec, &parent, &mount, &extra, p.rating, p.free);
     }
@@ -972,7 +975,8 @@ impl<'a> W<'a> {
     }
 
     fn wireless_on(&self) -> bool {
-        self.w.get_bool("wirelesson").unwrap_or(false)
+        // Weapon.Load keeps the field default (on) when the save has none.
+        self.w.get_bool("wirelesson").unwrap_or(true)
     }
 
     /// Equipped accessories.

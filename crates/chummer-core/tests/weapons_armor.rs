@@ -145,6 +145,8 @@ fn add_weapon_and_accessory_with_mount() {
     assert_eq!(weapon::cost(w), 725.0 + 500.0);
     // The barrel is now taken.
     assert!(weapon::mount_options(w, silencer).is_empty());
+    let p = Purchase { parent: Some(guid.clone()), ..Default::default() };
+    assert!(items::add("accessory", &mut ch, &engine.store, silencer, &p).is_err(), "no second barrel accessory");
     // An accessory needs a weapon.
     assert!(items::add("accessory", &mut ch, &engine.store, silencer, &Purchase::default()).is_err());
 }
@@ -164,11 +166,33 @@ fn stats_of_a_fixture_rifle() {
     // 2 + gas vent 3 + foregrip 1 + STR 2 / 3 ⇒ 1, + 1; the folding stock is deployable.
     assert_eq!(s.rc, "8 (9)");
     let automatics = sheet.skills.iter().find(|k| k.name == "Automatics").unwrap();
-    assert!(s.dice_pool >= automatics.pool, "{} < {}", s.dice_pool, automatics.pool);
+    // Automatics + the Assault Rifles specialization; the smartgun is not
+    // wireless-on in this save, so no Smartlink dice.
+    assert_eq!(automatics.specs, ["Assault Rifles"]);
+    assert_eq!(s.dice_pool, automatics.pool + automatics.spec_bonus);
     assert_eq!(s.ranges.short, "0-25");
     assert_eq!(s.ranges.extreme, "351-550");
     // 2650 + grip 100 + stock 30 + gas vent 600 + sling 15 + foregrip 100 + custom look 300.
     assert_eq!(weapon::cost(w), 3795.0);
+}
+
+#[test]
+fn wireless_smartgun_adds_smartlink_dice() {
+    let engine = Engine::load().unwrap();
+    let mut ch = fixture("Fuzzy-chargen.chum5");
+    let sheet = engine.sheet(&ch);
+    let mut w = named(&ch, "weapons", "weapon", "Ares Alpha").clone();
+    let before = weapon::stats(&ch, &sheet, &w).dice_pool;
+    for a in w.child_mut("accessories").unwrap().elements_mut() {
+        if a.get("name").starts_with("Smartgun") {
+            a.set_child_text("wirelesson", "True");
+        }
+    }
+    ch.improvements.list.push(chummer_core::improvement::Improvement { kind: "Smartlink".into(), val: 2.0, enabled: true, rating: 1, ..Default::default() });
+    assert_eq!(weapon::stats(&ch, &sheet, &w).dice_pool, before + 2);
+    // A weapon switched off wirelessly gets none.
+    w.set_child_text("wirelesson", "False");
+    assert_eq!(weapon::stats(&ch, &sheet, &w).dice_pool, before);
 }
 
 #[test]
