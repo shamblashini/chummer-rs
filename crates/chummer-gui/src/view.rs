@@ -80,6 +80,9 @@ pub struct CharacterView {
     lifestyle_editor: crate::lifestyle_ui::LifestyleEditor,
     drug_builder: crate::drug_ui::DrugBuilder,
     custom_improvements: crate::improvement_ui::ImprovementsPanel,
+    // GM tools (gm_ui): PACKS kits and the custom spell designer.
+    packs: crate::gm_ui::PacksWindow,
+    spell_designer: crate::gm_ui::SpellDesigner,
     /// Item detail pane: (selected item guid, editor).
     item_editor: Option<(String, crate::item_editor::ItemEditor)>,
 }
@@ -113,6 +116,10 @@ impl CharacterView {
         self.tab = tab;
     }
 
+    pub fn open_packs(&mut self, mode: crate::gm_ui::PacksMode) {
+        self.packs.open(mode);
+    }
+
     pub fn new(ch: Character, engine: &Engine) -> Self {
         let rules = engine.rules_for(&ch);
         let store = engine.store_for_character(&ch);
@@ -144,6 +151,8 @@ impl CharacterView {
             lifestyle_editor: Default::default(),
             drug_builder: Default::default(),
             custom_improvements: Default::default(),
+            packs: Default::default(),
+            spell_designer: Default::default(),
             item_editor: None,
         };
         v.refresh_budget();
@@ -267,6 +276,8 @@ impl CharacterView {
         changed |= self.select_dialog(ctx, engine, lang, pdfs, status);
         changed |= self.drug_builder.window(ctx, &mut self.ch, &self.store, lang, status);
         changed |= self.custom_improvements.window(ctx, &mut self.ch, &self.store, self.settings.as_ref(), lang);
+        changed |= self.packs.window(ctx, &mut self.ch, &self.store, self.settings.as_ref(), &self.sheet, lang, status);
+        changed |= self.spell_designer.window(ctx, &mut self.ch, engine, &self.store, &self.sheet, lang, status);
         changed |= self.finish_dialog(ctx, lang);
         if let Some(a) = self.action.take() {
             changed |= self.run_action(a, engine, status);
@@ -761,6 +772,9 @@ impl CharacterView {
             let sec = **sec;
             let cx = crate::magic_ui::Ctx { store: &self.store, engine, sheet: &self.sheet, settings: self.settings.as_ref(), lang, pdfs };
             changed |= self.magic_editor.ui(ui, &mut self.ch, &cx, sec.container, status);
+            if sec.container == "spells" && ui.button(format!("✨ {}", lang.tr("Create Spell…"))).clicked() {
+                self.spell_designer.open = true;
+            }
             self.add_buttons(ui, engine, lang, sec.container);
             egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));
         }

@@ -176,6 +176,11 @@ Item requirements (`<required>`/`<forbidden>`) are checked.
   - A data browser that searches every item, quality and spell.
   - A dice roller (click any skill pool) and an initiative tracker.
   - A character roster on the start screen.
+- **GM tools:**
+  - File → New Critter… builds a critter or NPC from `critters.xml`, as Chummer does. Spirits, sprites and other Force creatures are built at a chosen Force: attributes, skills and powers follow from it. Spirits get their optional powers and Materialization (or Possession or Inhabitation). Critters open in career mode with rules ignored.
+  - Tools → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, martial arts, spells, complex forms, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen.
+  - Tools → Create PACKS Kit… saves the character's things as a Custom kit in `~/.local/share/chummer-rs/packs/custom_*_packs.xml`. Custom kits can also be deleted there.
+  - Magic tab → Create Spell… designs a custom spell (Street Grimoire). Chummer's rules compute its drain value and descriptors. In career mode it costs spell karma.
 - **Languages:** English, German, French, Japanese, Portuguese and Chinese data names and sheets.
 
 ### Command line
@@ -242,6 +247,11 @@ cargo test --workspace
 - Settings files:
   - "Change Settings File" in creation mode only offers presets with the same build method. Chummer re-runs metatype and priority selection to switch build methods.
   - Chummer also finds a missing settings file by its `<settingshashcode>`; chummer-rs does not compute that hash.
+- PACKS kits:
+  - Kit attributes and skills are listed but not applied. Chummer 5.226 does not apply them either.
+  - "Select Martial Art" entries and A.I. programs in kits are skipped.
+  - Chummer reads custom kits from its own `packs` folder. To use a kit in both programs, copy the file.
+- Critters: A.I. programs that come with a critter are not added.
 - About 290 UI labels have no Chummer translation string and stay English.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute
@@ -261,6 +271,7 @@ cargo test --workspace
 | `character.rs`, `attributes.rs`, `skills.rs`, `calc.rs` | The character and its rules math |
 | `items/` | One module per item kind: build, add, cost, edit |
 | `chargen.rs`, `career/`, `essence_loss.rs` | Creation, career ledger, essence loss |
+| `gm/` | Critters, PACKS kits, custom spells |
 | `print.rs`, `export.rs`, `roster.rs`, `calendar.rs` | Sheets, export, roster, calendar |
 | `crates/chummer-gui` | egui desktop application |
 | `crates/chummer-cli` | Command-line tool |

@@ -5,6 +5,7 @@ mod browser;
 mod career_ui;
 mod dice_ui;
 mod drug_ui;
+mod gm_ui;
 mod improvement_ui;
 mod initiative;
 mod lifestyle_ui;
@@ -65,6 +66,7 @@ struct App {
     initiative: initiative::Tracker,
     settings_editor: settings_ui::SettingsEditor,
     wizard: Option<wizard::Wizard>,
+    critter: Option<gm_ui::CritterWizard>,
     pdfs: SourcebookLibrary,
     sources_window: pdf_ui::SourcesWindow,
     browser: browser::DataBrowser,
@@ -100,6 +102,7 @@ impl App {
             initiative: Default::default(),
             settings_editor: settings_ui::SettingsEditor::new(),
             wizard: None,
+            critter: None,
             pdfs: SourcebookLibrary::load(),
             sources_window,
             engine: Arc::new(engine),
@@ -207,6 +210,10 @@ impl App {
                     ui.close();
                     self.wizard = Some(wizard::Wizard::new());
                 }
+                if ui.button(self.lang.tr("New Critter…")).clicked() {
+                    ui.close();
+                    self.critter = Some(gm_ui::CritterWizard::new());
+                }
                 if ui.add(egui::Button::new(self.lang.tr("Open…")).shortcut_text("Ctrl+O")).clicked() {
                     ui.close();
                     self.open_dialog();
@@ -271,6 +278,14 @@ impl App {
                 if ui.button(self.lang.tr("Initiative tracker")).clicked() {
                     ui.close();
                     self.show_initiative = true;
+                }
+                ui.separator();
+                let creating = self.views.get(self.active).is_some_and(|v| !v.ch.created);
+                for (label, mode) in [("Add PACKS Kit…", gm_ui::PacksMode::Add), ("Create PACKS Kit…", gm_ui::PacksMode::Create)] {
+                    if ui.add_enabled(creating, egui::Button::new(self.lang.tr(label))).clicked() {
+                        ui.close();
+                        self.views[self.active].open_packs(mode);
+                    }
                 }
             });
             ui.menu_button(self.lang.tr("Language"), |ui| {
@@ -633,6 +648,18 @@ impl eframe::App for App {
                     self.active = self.views.len() - 1;
                     self.wizard = None;
                     self.status = Some(("New character created. Spend your points, then Finish creation.".into(), false));
+                }
+            }
+        }
+        if let Some(w) = self.critter.as_mut() {
+            match w.show(ctx, &self.engine, &self.lang) {
+                gm_ui::CritterResult::Open => {}
+                gm_ui::CritterResult::Cancel => self.critter = None,
+                gm_ui::CritterResult::Created(ch) => {
+                    self.views.push(CharacterView::new(*ch, &self.engine));
+                    self.active = self.views.len() - 1;
+                    self.critter = None;
+                    self.status = Some(("New critter created.".into(), false));
                 }
             }
         }
