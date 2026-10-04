@@ -539,12 +539,22 @@ fn sheet_attributes(ch: &Character, store: &DataStore) -> Vec<AttributeValues> {
     ch.attributes.iter().map(|a| calc::attribute_values_with(ch, &a.name, &rules, Some(store))).collect()
 }
 
+/// Saves before 5.214 wrote `MinimumAGI`-style tokens; `Cyberware.Load`
+/// rewrites them to `{AGIMinimum}`.
+fn modern_tokens(s: &str) -> String {
+    let mut s = s.to_owned();
+    for a in ["STR", "AGI", "BOD", "REA"] {
+        s = s.replace(&format!("Minimum{a}"), &format!("{{{a}Minimum}}")).replace(&format!("Maximum{a}"), &format!("{{{a}Maximum}}"));
+    }
+    s
+}
+
 /// Evaluate a rating expression (`GetMinRating` / `GetMaxRating`).
 fn eval_rating(s: &str, attrs: &dyn AttributeSource) -> i32 {
     if s.trim().is_empty() {
         return 0;
     }
-    expr::standard_round(expr::evaluate_num(&expr::substitute_attributes(s, attrs)).unwrap_or(0.0))
+    expr::standard_round(expr::evaluate_num(&expr::substitute_attributes(&modern_tokens(s), attrs)).unwrap_or(0.0))
 }
 
 fn is_limb(e: &Element) -> bool {
@@ -840,6 +850,8 @@ fn cost_expression(e: &Element, s: &str, t: CostTokens, attrs: &dyn AttributeSou
         return expr::parse_plain(s).unwrap_or(0.0);
     }
     let min = eval_rating(&e.get("minrating"), attrs).to_string();
+    let s = modern_tokens(s);
+    let s = s.as_str();
     let r = rating.to_string();
     let mut s = s.to_owned();
     for (token, v) in [("Parent Cost", t.parent), ("Gear Cost", t.gear), ("Children Cost", t.children)] {
@@ -865,21 +877,24 @@ fn children(e: &Element) -> Vec<&Element> {
 struct CostCtx<'a> {
     ch: &'a Character,
     store: &'a DataStore,
-    attrs: &'a dyn AttributeSource,
+    sheet: SheetAttributes<'a>,
 }
 
 impl CostCtx<'_> {
     /// `CalculatedOwnCostPreMultipliers`.
-    fn own_pre(&self, e: &Element, grade: &str, parent_cost: f64) -> f64 {
+    /// `limb` is the cyberlimb the ware sits in: it supplies the
+    /// `{AGIMinimum}`-style tokens (`Cyberware.ProcessAttributesInXPath`).
+    fn own_pre(&self, e: &Element, grade: &str, parent_cost: f64, limb: Option<&Element>) -> f64 {
         let cost = e.get("cost");
-        let kids = if cost.contains("Children Cost") { children(e).iter().map(|k| self.total(k, grade, 0.0)).sum() } else { 0.0 };
-        cost_expression(e, &cost, CostTokens { children: kids, gear: gear_children_cost(e), parent: parent_cost }, self.attrs)
+        let kids = if cost.contains("Children Cost") { children(e).iter().map(|k| self.total(k, grade, 0.0, Some(e))).sum() } else { 0.0 };
+        let attrs = WareAttributes { sheet: SheetAttributes(self.sheet.0), limb: limb.filter(|l| is_limb(l)) };
+        cost_expression(e, &cost, CostTokens { children: kids, gear: gear_children_cost(e), parent: parent_cost }, &attrs)
     }
 
     /// `CalculatedTotalCostWithoutModifiers` at `grade` (children are priced
     /// at their parent's grade).
-    fn without_modifiers(&self, e: &Element, grade: &str, parent_cost: f64) -> f64 {
-        let base = self.own_pre(e, grade, parent_cost);
+    fn without_modifiers(&self, e: &Element, grade: &str, parent_cost: f64, limb: Option<&Element>) -> f64 {
+        let base = self.own_pre(e, grade, parent_cost, limb);
         let mut total = base * grade_cost(self.store, is_bioware(e), grade);
         if e.get_bool("discountedcost").unwrap_or(false) {
             total *= 0.9;
@@ -893,22 +908,22 @@ impl CostCtx<'_> {
             }
             match k.get("cost").strip_prefix('*') {
                 Some(factor) => {
-                    let f = cost_expression(k, factor, CostTokens { parent: base, ..CostTokens::default() }, self.attrs);
+                    let f = cost_expression(k, factor, CostTokens { parent: base, ..CostTokens::default() }, &self.sheet);
                     let mut plugin = base * (f - 1.0);
                     if k.get_bool("discountedcost").unwrap_or(false) {
                         plugin *= 0.9;
                     }
                     total += plugin;
                 }
-                None => total += self.without_modifiers(k, grade, base),
+                None => total += self.without_modifiers(k, grade, base, Some(e)),
             }
         }
         total + gear_children_cost(e)
     }
 
     /// `CalculatedTotalCost`: the suite discount on top.
-    fn total(&self, e: &Element, grade: &str, parent_cost: f64) -> f64 {
-        let t = self.without_modifiers(e, grade, parent_cost);
+    fn total(&self, e: &Element, grade: &str, parent_cost: f64, limb: Option<&Element>) -> f64 {
+        let t = self.without_modifiers(e, grade, parent_cost, limb);
         if e.get_bool("suite").unwrap_or(false) {
             t * 0.9
         } else {
@@ -923,9 +938,8 @@ impl CostCtx<'_> {
 /// suite discount.
 pub fn cost(ch: &Character, store: &DataStore, e: &Element) -> f64 {
     let attrs = sheet_attributes(ch, store);
-    let src = SheetAttributes(&attrs);
-    let ctx = CostCtx { ch, store, attrs: &src };
-    ctx.total(e, &e.get("grade"), 0.0)
+    let ctx = CostCtx { ch, store, sheet: SheetAttributes(&attrs) };
+    ctx.total(e, &e.get("grade"), 0.0, None)
 }
 
 /// Essence cost of saved ware (`Cyberware.CalculatedESS`), see
