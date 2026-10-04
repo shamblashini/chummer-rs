@@ -24,6 +24,7 @@ use view::{CharacterView, ACCENT};
 const RECENT_KEY: &str = "recent_files";
 const LANG_KEY: &str = "language";
 const MAX_RECENT: usize = 10;
+const ROSTER_KEY: &str = "roster_folders";
 
 enum Pending {
     CloseTab(usize),
@@ -44,6 +45,10 @@ struct App {
     show_settings: bool,
     show_initiative: bool,
     show_print: bool,
+    show_export: bool,
+    export_format: String,
+    roster_folders: Vec<PathBuf>,
+    roster: Vec<chummer_core::roster::Entry>,
     print_sheet: String,
     print_notes: bool,
     initiative: initiative::Tracker,
@@ -75,6 +80,10 @@ impl App {
             show_settings: false,
             show_initiative: false,
             show_print: false,
+            show_export: false,
+            export_format: "JSON".into(),
+            roster_folders: Vec::new(),
+            roster: Vec::new(),
             print_sheet: chummer_core::print::DEFAULT_SHEET.to_owned(),
             print_notes: false,
             initiative: Default::default(),
@@ -98,6 +107,11 @@ impl App {
             pending: None,
             allow_close: false,
         };
+        app.roster_folders = storage
+            .and_then(|s| s.get_string(ROSTER_KEY))
+            .map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect())
+            .unwrap_or_default();
+        app.roster = chummer_core::roster::scan(&app.roster_folders);
         for f in files {
             app.open(&f);
         }
@@ -203,6 +217,10 @@ impl App {
                 if ui.add_enabled(has, egui::Button::new("Print / character sheet…").shortcut_text("Ctrl+P")).clicked() {
                     ui.close();
                     self.show_print = true;
+                }
+                if ui.add_enabled(has, egui::Button::new("Export…")).clicked() {
+                    ui.close();
+                    self.show_export = true;
                 }
                 if ui.add_enabled(has, egui::Button::new("Save").shortcut_text("Ctrl+S")).clicked() {
                     ui.close();
@@ -319,6 +337,40 @@ impl App {
                     }
                 }
                 ui.add_space(16.0);
+                ui.label(RichText::new("Character roster").strong());
+                ui.horizontal(|ui| {
+                    if ui.button("Add folder…").clicked() {
+                        if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                            self.roster_folders.push(d);
+                            self.roster = chummer_core::roster::scan(&self.roster_folders);
+                        }
+                    }
+                    if !self.roster_folders.is_empty() && ui.button("Refresh").clicked() {
+                        self.roster = chummer_core::roster::scan(&self.roster_folders);
+                    }
+                    if !self.roster_folders.is_empty() && ui.button("Clear folders").clicked() {
+                        self.roster_folders.clear();
+                        self.roster.clear();
+                    }
+                });
+                let mut open_path = None;
+                egui::ScrollArea::vertical().id_salt("roster").max_height(260.0).show(ui, |ui| {
+                    egui::Grid::new("roster_grid").striped(true).num_columns(4).show(ui, |ui| {
+                        for e in &self.roster {
+                            if ui.link(e.display_name()).on_hover_text(e.path.display().to_string()).clicked() {
+                                open_path = Some(e.path.clone());
+                            }
+                            ui.label(&e.metatype);
+                            ui.weak(if e.career { "career" } else { "creation" });
+                            ui.weak(e.error.clone().unwrap_or_else(|| format!("karma {}", e.karma)));
+                            ui.end_row();
+                        }
+                    });
+                });
+                if let Some(p) = open_path {
+                    self.open(&p);
+                }
+                ui.add_space(16.0);
                 if self.pdfs.linked_count() == 0 && ui.button("📖 Link your sourcebook PDFs…").clicked() {
                     self.show_sources = true;
                 }
@@ -330,6 +382,33 @@ impl App {
                 }
             });
         });
+    }
+
+    fn export_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(v) = self.views.get(self.active) else {
+            ui.label("Open a character first.");
+            return;
+        };
+        let formats: Vec<String> = chummer_core::export::BUILT_IN.iter().map(|s| s.to_string()).chain(chummer_core::export::stylesheets().into_iter().map(|(n, _)| n)).collect();
+        egui::ComboBox::from_id_salt("export_fmt").selected_text(self.export_format.clone()).show_ui(ui, |ui| {
+            for f in &formats {
+                ui.selectable_value(&mut self.export_format, f.clone(), f);
+            }
+        });
+        ui.weak("XML and JSON contain the full print data; stylesheets produce their own format.");
+        if ui.button("Export…").clicked() {
+            let ext = match self.export_format.as_str() {
+                "JSON" => "json",
+                "XML" => "xml",
+                _ => "txt",
+            };
+            if let Some(out) = rfd::FileDialog::new().set_file_name(format!("{}.{ext}", v.ch.display_name())).save_file() {
+                self.status = Some(match chummer_core::export::export(&v.ch, &self.engine, &self.lang, &self.export_format, &out) {
+                    Ok(()) => (format!("Exported to {}", out.display()), false),
+                    Err(e) => (e.to_string(), true),
+                });
+            }
+        }
     }
 
     /// Render the active character with a Chummer sheet and open it.
@@ -492,6 +571,9 @@ impl eframe::App for App {
             }
         });
         self.show_sources = open;
+        let mut open = self.show_export;
+        egui::Window::new("Export character").open(&mut open).default_width(420.0).show(ctx, |ui| self.export_ui(ui));
+        self.show_export = open;
         let mut open = self.show_print;
         egui::Window::new("Character sheet").open(&mut open).default_width(460.0).show(ctx, |ui| self.print_ui(ui));
         self.show_print = open;
@@ -541,6 +623,8 @@ impl eframe::App for App {
         let recent: Vec<String> = self.recent.iter().map(|p| p.display().to_string()).collect();
         storage.set_string(RECENT_KEY, recent.join("\n"));
         storage.set_string(LANG_KEY, self.lang.code.clone());
+        let folders: Vec<String> = self.roster_folders.iter().map(|p| p.display().to_string()).collect();
+        storage.set_string(ROSTER_KEY, folders.join("\n"));
     }
 }
 

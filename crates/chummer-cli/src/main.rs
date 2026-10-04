@@ -23,6 +23,8 @@ USAGE:
     chummer-cli search <text> [kind]       Search game data (kind e.g. Gear)
     chummer-cli kinds                      List searchable data kinds
 
+    chummer-cli export <file.chum5> <XML|JSON|stylesheet> -o <out>   Export a character
+    chummer-cli roster <dir>...            List characters in folders
     chummer-cli new <out.chum5> [options]  Create a character (Priority / Sum-to-Ten)
         --settings <name|id>   preset (default Standard)
         --metatype <name>      e.g. Human, Elf (default Human)
@@ -83,6 +85,18 @@ fn run(args: &[String]) -> Result<()> {
         "search" => search(&Engine::load()?, rest),
         "sources" => sources_cmd(&Engine::load()?, rest),
         "new" => new_cmd(&Engine::load()?, rest),
+        "export" => export_cmd(&Engine::load()?, rest),
+        "roster" => {
+            let dirs: Vec<PathBuf> = rest.iter().map(PathBuf::from).collect();
+            for e in chummer_core::roster::scan(&dirs) {
+                let state = if e.career { "career" } else { "creation" };
+                match &e.error {
+                    Some(err) => println!("{:<28} ERROR {err}  {}", e.display_name(), e.path.display()),
+                    None => println!("{:<28} {:<14} {:<9} karma {:<5} {}", e.display_name(), e.metatype, state, e.karma, e.path.display()),
+                }
+            }
+            Ok(())
+        }
         "sheet" => sheet_cmd(&Engine::load()?, rest),
         "sheets" => {
             for (name, path) in print::available_sheets(rest.first().map_or("en-us", String::as_str)) {
@@ -435,5 +449,18 @@ fn sheet_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
         print::html_to_pdf(&out, &pdf)?;
         println!("wrote {}", pdf.display());
     }
+    Ok(())
+}
+
+fn export_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
+    let (Some(file), Some(format)) = (rest.first(), rest.get(1)) else {
+        let names: Vec<String> = chummer_core::export::BUILT_IN.iter().map(|s| s.to_string()).chain(chummer_core::export::stylesheets().into_iter().map(|(n, _)| n)).collect();
+        bail!("expected FILE FORMAT -o OUT; formats: {}", names.join(", "));
+    };
+    let out = rest.iter().position(|a| a == "-o").and_then(|i| rest.get(i + 1)).context("missing -o OUT")?;
+    let ch = load(Path::new(file))?;
+    let lang = chummer_core::lang::Language::load(&data::resource_dir("lang").context("lang dir")?, "en-us");
+    chummer_core::export::export(&ch, engine, &lang, format, Path::new(out))?;
+    println!("wrote {out}");
     Ok(())
 }
