@@ -105,13 +105,13 @@ impl PlayPanel {
                 ui.label(lang.tr("Ammo:"));
                 let text = |i: usize, c: &ammo::Clip| format!("{} · {} ({})", lang.tr_fmt("Slot {0}", &[&(i + 1)]), names[i], c.count);
                 let mut pick = slot;
-                egui::ComboBox::from_id_salt(("clip", &guid)).selected_text(text(slot - 1, &clips[slot - 1])).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt(("clip", &guid)).selected_text(text(slot - 1, &clips[slot - 1])).show_ui(ui, |ui| {
                     for (i, c) in clips.iter().enumerate() {
                         let mut t = text(i, c);
                         if let Some(o) = &c.owner {
                             t = format!("{t} – {o}");
                         }
-                        ui.selectable_value(&mut pick, i + 1, t);
+                        crate::combo::selectable_value(ui, &mut pick, i + 1, t);
                     }
                 });
                 if pick != slot {
@@ -201,18 +201,18 @@ impl PlayPanel {
                 ui.weak(lang.tr_fmt("You do not have any Ammunition for {0} remaining!", &[&w.get("name")]));
             } else {
                 let cur = self.ammo.clone().unwrap_or_default();
-                egui::ComboBox::from_id_salt(("reload_ammo", &guid)).selected_text(label(&cur)).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt(("reload_ammo", &guid)).selected_text(label(&cur)).show_ui(ui, |ui| {
                     for c in &choices {
-                        ui.selectable_value(&mut self.ammo, Some(c.0.clone()), label(&c.0));
+                        crate::combo::selectable_value(ui, &mut self.ammo, Some(c.0.clone()), label(&c.0));
                     }
                     if external {
-                        ui.selectable_value(&mut self.ammo, Some(String::new()), label(""));
+                        crate::combo::selectable_value(ui, &mut self.ammo, Some(String::new()), label(""));
                     }
                 });
                 if counts.len() > 1 {
-                    egui::ComboBox::from_id_salt(("reload_count", &guid)).selected_text(self.count.clone()).width(60.0).show_ui(ui, |ui| {
+                    crate::combo::Combo::from_id_salt(("reload_count", &guid)).selected_text(self.count.clone()).width(60.0).show_ui(ui, |ui| {
                         for c in &counts {
-                            ui.selectable_value(&mut self.count, c.clone(), c);
+                            crate::combo::selectable_value(ui, &mut self.count, c.clone(), c);
                         }
                     });
                 }

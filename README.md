@@ -174,6 +174,7 @@ Item requirements (`<required>`/`<forbidden>`) are checked.
   - A character whose settings file is not installed shows a warning with an Import button; its budgets use Standard, and its `<settings>` stays as it was until you pick another file with "Change Settings File" (Info tab).
 - **Tools:**
   - A data browser that searches every item, quality and spell.
+  - Searchable drop-downs: lists with more than 8 entries filter as you type (words in any order); Enter picks the first match.
   - A dice roller (click any skill pool) and an initiative tracker.
   - A character roster on the start screen.
 - **GM tools:**

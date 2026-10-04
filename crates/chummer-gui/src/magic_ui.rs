@@ -120,12 +120,12 @@ impl Picker {
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut self.search).hint_text(lang.tr("Search")).desired_width(220.0));
                 if cats.len() > 1 {
-                    egui::ComboBox::from_id_salt("picker_cat")
+                    crate::combo::Combo::from_id_salt("picker_cat")
                         .selected_text(if self.category.is_empty() { lang.tr("All categories") } else { lang.data_name(self.file, "", &self.category) })
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.category, String::new(), lang.tr("All categories"));
+                            crate::combo::selectable_value(ui, &mut self.category, String::new(), lang.tr("All categories"));
                             for c in &cats {
-                                ui.selectable_value(&mut self.category, c.clone(), lang.data_name(self.file, "", c));
+                                crate::combo::selectable_value(ui, &mut self.category, c.clone(), lang.data_name(self.file, "", c));
                             }
                         });
                 }
@@ -151,7 +151,7 @@ impl Picker {
                         if !why.is_empty() {
                             text = text.weak();
                         }
-                        let resp = ui.selectable_label(self.selected.as_deref() == Some(&name), text);
+                        let resp = crate::combo::selectable_label(ui, self.selected.as_deref() == Some(&name), text);
                         if resp.clicked() && self.selected.as_deref() != Some(&name) {
                             self.selected = Some(name.clone());
                             self.answer.clear();
@@ -179,9 +179,9 @@ impl Picker {
                                 if c.options.len() == 1 && self.answer.is_empty() {
                                     self.answer = c.options[0].clone();
                                 }
-                                egui::ComboBox::from_id_salt("picker_answer").selected_text(self.answer.clone()).width(260.0).show_ui(ui, |ui| {
+                                crate::combo::Combo::from_id_salt("picker_answer").selected_text(self.answer.clone()).width(260.0).show_ui(ui, |ui| {
                                     for o in &c.options {
-                                        ui.selectable_value(&mut self.answer, o.clone(), o);
+                                        crate::combo::selectable_value(ui, &mut self.answer, o.clone(), o);
                                     }
                                 });
                             }
@@ -397,12 +397,12 @@ impl MagicEditor {
                             continue;
                         }
                         ui.label(label);
-                        egui::ComboBox::from_id_salt(("mentor_choice", &guid, n))
+                        crate::combo::Combo::from_id_salt(("mentor_choice", &guid, n))
                             .selected_text(if value.is_empty() { lang.tr("Choose…") } else { value.clone() })
                             .width(360.0)
                             .show_ui(ui, |ui| {
                                 for c in set.iter() {
-                                    ui.selectable_value(value, c.clone(), c);
+                                    crate::combo::selectable_value(ui, value, c.clone(), c);
                                 }
                             });
                         ui.end_row();
@@ -535,12 +535,12 @@ impl MagicEditor {
                 if !offered.contains(pick) {
                     pick.clear();
                 }
-                egui::ComboBox::from_id_salt(("technique", &guid))
+                crate::combo::Combo::from_id_salt(("technique", &guid))
                     .selected_text(if pick.is_empty() { lang.tr("Technique…") } else { pick.clone() })
                     .width(260.0)
                     .show_ui(ui, |ui| {
                         for t in &offered {
-                            ui.selectable_value(pick, t.clone(), t);
+                            crate::combo::selectable_value(ui, pick, t.clone(), t);
                         }
                     });
                 let cost = if ch.created { career::technique_karma_cost(cx.engine, ch, &guid) } else { 0 };
@@ -672,9 +672,9 @@ fn quicken_ui(ui: &mut egui::Ui, ch: &mut Character, lang: &Language, status: &m
     let mut changed = false;
     ui.horizontal(|ui| {
         let shown = spells.iter().find(|(g, _)| *g == pick).map_or_else(|| lang.tr("Spell…"), |(_, n)| n.clone());
-        egui::ComboBox::from_id_salt("quicken_spell_combo").selected_text(shown).width(220.0).show_ui(ui, |ui| {
+        crate::combo::Combo::from_id_salt("quicken_spell_combo").selected_text(shown).width(220.0).show_ui(ui, |ui| {
             for (g, n) in &spells {
-                ui.selectable_value(&mut pick, g.clone(), n);
+                crate::combo::selectable_value(ui, &mut pick, g.clone(), n);
             }
         });
         ui.add(egui::DragValue::new(&mut karma).range(1..=999).suffix(" karma"));

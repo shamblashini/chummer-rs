@@ -53,9 +53,9 @@ impl DrugBuilder {
                 ui.add(egui::TextEdit::singleline(&mut self.name).hint_text(lang.tr("Custom drug")).desired_width(220.0));
                 ui.label(lang.tr("Grade"));
                 let grades = data::records(&doc, "grades", "grade");
-                egui::ComboBox::from_id_salt("drug_grade").selected_text(self.grade.clone()).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("drug_grade").selected_text(self.grade.clone()).show_ui(ui, |ui| {
                     for g in &grades {
-                        ui.selectable_value(&mut self.grade, g.name(), format!("{} ({} ×{})", g.name(), lang.tr("cost"), g.get("cost")));
+                        crate::combo::selectable_value(ui, &mut self.grade, g.name(), format!("{} ({} ×{})", g.name(), lang.tr("cost"), g.get("cost")));
                     }
                 });
             });
@@ -84,7 +84,7 @@ impl DrugBuilder {
                     for r in comps.iter().filter(|r| r.category() == *cat && !r.hidden()) {
                         let name = r.name();
                         let sel = self.pick.as_ref().is_some_and(|(n, _)| *n == name);
-                        if ui.selectable_label(sel, format!("{name}   {}¥", r.get("cost"))).clicked() && !sel {
+                        if crate::combo::selectable_label(ui, sel, format!("{name}   {}¥", r.get("cost"))).clicked() && !sel {
                             let first = drug::component_levels(*r).first().copied().unwrap_or(0);
                             self.pick = Some((name, first));
                             self.message = None;
@@ -104,9 +104,9 @@ impl DrugBuilder {
             ui.strong(rec.name());
             if levels.len() > 1 {
                 ui.label(lang.tr("Level"));
-                egui::ComboBox::from_id_salt("drug_level").selected_text((index_of(&levels, level) + 1).to_string()).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("drug_level").selected_text((index_of(&levels, level) + 1).to_string()).show_ui(ui, |ui| {
                     for (i, l) in levels.iter().enumerate() {
-                        ui.selectable_value(&mut level, *l, (i + 1).to_string());
+                        crate::combo::selectable_value(ui, &mut level, *l, (i + 1).to_string());
                     }
                 });
             }

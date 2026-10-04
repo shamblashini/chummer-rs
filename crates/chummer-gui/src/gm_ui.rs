@@ -77,19 +77,19 @@ impl CritterWizard {
                 ui.text_edit_singleline(&mut self.name);
                 ui.end_row();
                 ui.label(lang.tr("Rules"));
-                egui::ComboBox::from_id_salt("critter_preset").selected_text(settings.name()).width(260.0).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("critter_preset").selected_text(settings.name()).width(260.0).show_ui(ui, |ui| {
                     for (i, p) in presets.iter().enumerate() {
-                        ui.selectable_value(&mut self.preset, i, p.name());
+                        crate::combo::selectable_value(ui, &mut self.preset, i, p.name());
                     }
                 });
                 ui.end_row();
                 ui.label(lang.tr("Category"));
                 let shown = if self.category.is_empty() { lang.tr("Show All") } else { self.category.clone() };
-                egui::ComboBox::from_id_salt("critter_cat").selected_text(shown).width(260.0).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.category, String::new(), lang.tr("Show All"));
+                crate::combo::Combo::from_id_salt("critter_cat").selected_text(shown).width(260.0).show_ui(ui, |ui| {
+                    crate::combo::selectable_value(ui, &mut self.category, String::new(), lang.tr("Show All"));
                     for c in critter::categories(&store) {
                         if options.iter().any(|o| o.category == c) {
-                            ui.selectable_value(&mut self.category, c.clone(), c);
+                            crate::combo::selectable_value(ui, &mut self.category, c.clone(), c);
                         }
                     }
                 });
@@ -103,7 +103,7 @@ impl CritterWizard {
                 let needle = self.search.to_lowercase();
                 egui::ScrollArea::vertical().id_salt("critter_list").max_height(380.0).show(&mut cols[0], |ui| {
                     for o in options.iter().filter(|o| (self.category.is_empty() || o.category == self.category) && (needle.is_empty() || o.name.to_lowercase().contains(&needle))) {
-                        if ui.selectable_label(self.selected.as_deref() == Some(o.id.as_str()), &o.name).clicked() {
+                        if crate::combo::selectable_label(ui, self.selected.as_deref() == Some(o.id.as_str()), &o.name).clicked() {
                             self.selected = Some(o.id.clone());
                             self.metavariant.clear();
                             self.picks.clear();
@@ -120,10 +120,10 @@ impl CritterWizard {
                 ui.weak(format!("{} · {} {}", o.category, o.source, o.page));
                 if !o.metavariants.is_empty() {
                     let shown = o.metavariants.iter().find(|(id, _)| *id == self.metavariant).map_or_else(|| lang.tr("None"), |(_, n)| n.clone());
-                    egui::ComboBox::from_id_salt("critter_variant").selected_text(shown).show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.metavariant, String::new(), lang.tr("None"));
+                    crate::combo::Combo::from_id_salt("critter_variant").selected_text(shown).show_ui(ui, |ui| {
+                        crate::combo::selectable_value(ui, &mut self.metavariant, String::new(), lang.tr("None"));
                         for (id, n) in &o.metavariants {
-                            ui.selectable_value(&mut self.metavariant, id.clone(), n);
+                            crate::combo::selectable_value(ui, &mut self.metavariant, id.clone(), n);
                         }
                     });
                 }
@@ -146,9 +146,9 @@ impl CritterWizard {
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut self.possession, lang.tr("Summoned by Possession-based Tradition"));
                         ui.add_enabled_ui(self.possession, |ui| {
-                            egui::ComboBox::from_id_salt("critter_possession").selected_text(self.method.clone()).show_ui(ui, |ui| {
+                            crate::combo::Combo::from_id_salt("critter_possession").selected_text(self.method.clone()).show_ui(ui, |ui| {
                                 for m in ["Inhabitation", "Possession"] {
-                                    ui.selectable_value(&mut self.method, m.to_owned(), m);
+                                    crate::combo::selectable_value(ui, &mut self.method, m.to_owned(), m);
                                 }
                             });
                         });
@@ -162,9 +162,9 @@ impl CritterWizard {
                     self.picks.resize(count, String::new());
                     for i in 0..count {
                         let cur = self.picks[i].clone();
-                        egui::ComboBox::from_id_salt(("critter_pick", i)).selected_text(if cur.is_empty() { lang.tr("Choose…") } else { cur.clone() }).width(220.0).show_ui(ui, |ui| {
+                        crate::combo::Combo::from_id_salt(("critter_pick", i)).selected_text(if cur.is_empty() { lang.tr("Choose…") } else { cur.clone() }).width(220.0).show_ui(ui, |ui| {
                             for p in &powers {
-                                if ui.selectable_label(cur == *p, p).clicked() {
+                                if crate::combo::selectable_label(ui, cur == *p, p).clicked() {
                                     self.picks[i] = p.clone();
                                 }
                             }
@@ -281,9 +281,9 @@ impl PacksWindow {
         }
         ui.horizontal(|ui| {
             ui.label(lang.tr("Category"));
-            egui::ComboBox::from_id_salt("packs_cat").selected_text(self.category.clone()).width(240.0).show_ui(ui, |ui| {
+            crate::combo::Combo::from_id_salt("packs_cat").selected_text(self.category.clone()).width(240.0).show_ui(ui, |ui| {
                 for c in &cats {
-                    if ui.selectable_label(*c == self.category, c).clicked() {
+                    if crate::combo::selectable_label(ui, *c == self.category, c).clicked() {
                         self.category = c.clone();
                         self.selected = None;
                     }
@@ -296,7 +296,7 @@ impl PacksWindow {
             egui::ScrollArea::vertical().id_salt("packs_list").max_height(360.0).show(&mut cols[0], |ui| {
                 for (n, c) in kits.iter().filter(|(_, c)| *c == self.category) {
                     let sel = self.selected.as_ref().is_some_and(|(sn, sc)| sn == n && sc == c);
-                    if ui.selectable_label(sel, n).clicked() {
+                    if crate::combo::selectable_label(ui, sel, n).clicked() {
                         self.selected = Some((n.clone(), c.clone()));
                         self.confirm_delete = false;
                     }
@@ -435,9 +435,9 @@ impl SpellDesigner {
                 ui.end_row();
                 ui.label(lang.tr("Category"));
                 let mut cat = d.category.clone();
-                egui::ComboBox::from_id_salt("spell_cat").selected_text(lang.tr(&cat)).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("spell_cat").selected_text(lang.tr(&cat)).show_ui(ui, |ui| {
                     for c in &categories {
-                        ui.selectable_value(&mut cat, c.clone(), lang.tr(c));
+                        crate::combo::selectable_value(ui, &mut cat, c.clone(), lang.tr(c));
                     }
                 });
                 if cat != d.category {
@@ -541,9 +541,9 @@ impl SpellDesigner {
 
 fn combo(ui: &mut egui::Ui, id: &str, value: &mut String, options: &[(&str, &str)], lang: &Language) {
     let shown = options.iter().find(|(v, _)| v == value).map_or_else(|| value.clone(), |(_, l)| lang.tr(l));
-    egui::ComboBox::from_id_salt(id).selected_text(shown).show_ui(ui, |ui| {
+    crate::combo::Combo::from_id_salt(id).selected_text(shown).show_ui(ui, |ui| {
         for (v, l) in options {
-            ui.selectable_value(value, (*v).to_owned(), lang.tr(l));
+            crate::combo::selectable_value(ui, value, (*v).to_owned(), lang.tr(l));
         }
     });
 }

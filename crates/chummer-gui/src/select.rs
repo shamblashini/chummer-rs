@@ -139,7 +139,7 @@ impl SelectDialog {
                 } else {
                     egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
                         for o in &c.options {
-                            if ui.selectable_label(answer == o, o).clicked() {
+                            if crate::combo::selectable_label(ui, answer == o, o).clicked() {
                                 *answer = o.clone();
                             }
                         }
@@ -164,12 +164,12 @@ impl SelectDialog {
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut self.search).hint_text(lang.tr("Search")).desired_width(220.0));
                 if !cats.is_empty() {
-                    egui::ComboBox::from_id_salt("sel_cat")
+                    crate::combo::Combo::from_id_salt("sel_cat")
                         .selected_text(if self.category.is_empty() { lang.tr("All categories") } else { lang.data_name(self.kind.file, "", &self.category) })
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.category, String::new(), lang.tr("All categories"));
+                            crate::combo::selectable_value(ui, &mut self.category, String::new(), lang.tr("All categories"));
                             for c in &cats {
-                                ui.selectable_value(&mut self.category, c.clone(), lang.data_name(self.kind.file, "", c));
+                                crate::combo::selectable_value(ui, &mut self.category, c.clone(), lang.data_name(self.kind.file, "", c));
                             }
                         });
                 }
@@ -214,7 +214,7 @@ impl SelectDialog {
                         if !why.is_empty() {
                             text = text.weak();
                         }
-                        let resp = ui.selectable_label(self.selected == Some(*i), text);
+                        let resp = crate::combo::selectable_label(ui, self.selected == Some(*i), text);
                         if resp.clicked() && self.selected != Some(*i) {
                             self.selected = Some(*i);
                             self.purchase.rating = rating_default(r);
@@ -286,9 +286,9 @@ impl SelectDialog {
                 ui.label(lang.tr("Grade"));
                 let grades = grades(&self.doc);
                 let cur = self.purchase.grade.clone().unwrap_or_else(|| "Standard".into());
-                egui::ComboBox::from_id_salt("grade").selected_text(cur.clone()).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("grade").selected_text(cur.clone()).show_ui(ui, |ui| {
                     for (g, mult) in &grades {
-                        if ui.selectable_label(cur == *g, format!("{g} ({} ×{mult})", lang.tr("ess"))).clicked() {
+                        if crate::combo::selectable_label(ui, cur == *g, format!("{g} ({} ×{mult})", lang.tr("ess"))).clicked() {
                             self.purchase.grade = Some(g.clone());
                         }
                     }
@@ -306,12 +306,12 @@ impl SelectDialog {
                 let cur = self.purchase.parent.as_ref().and_then(|g| parents.iter().find(|(pg, _)| pg == g)).map(|(_, n)| n.clone());
                 let required = parent_of(self.kind.tag).is_some();
                 let none_label = if required { lang.tr("Choose…") } else { lang.tr("Nothing (on its own)") };
-                egui::ComboBox::from_id_salt("parent").selected_text(cur.unwrap_or(none_label)).show_ui(ui, |ui| {
-                    if !required && ui.selectable_label(self.purchase.parent.is_none(), lang.tr("Nothing (on its own)")).clicked() {
+                crate::combo::Combo::from_id_salt("parent").selected_text(cur.unwrap_or(none_label)).show_ui(ui, |ui| {
+                    if !required && crate::combo::selectable_label(ui, self.purchase.parent.is_none(), lang.tr("Nothing (on its own)")).clicked() {
                         self.purchase.parent = None;
                     }
                     for (g, n) in &parents {
-                        if ui.selectable_label(self.purchase.parent.as_deref() == Some(g), n).clicked() {
+                        if crate::combo::selectable_label(ui, self.purchase.parent.as_deref() == Some(g), n).clicked() {
                             self.purchase.parent = Some(g.clone());
                         }
                     }

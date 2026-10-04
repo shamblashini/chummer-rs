@@ -234,7 +234,7 @@ impl CharacterView {
             }
             ui.horizontal_wrapped(|ui| {
                 for (t, label) in TABS {
-                    ui.selectable_value(&mut self.tab, *t, lang.tr(label));
+                    crate::combo::selectable_value(ui, &mut self.tab, *t, lang.tr(label));
                 }
             });
             ui.separator();
@@ -608,9 +608,9 @@ impl CharacterView {
             ui.heading(lang.tr("Knowledge Skills"));
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut self.new_kno.0).hint_text(lang.tr("New Knowledge Skill")).desired_width(200.0));
-                egui::ComboBox::from_id_salt("kno_type").selected_text(lang.data_name("skills.xml", "", &self.new_kno.1)).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("kno_type").selected_text(lang.data_name("skills.xml", "", &self.new_kno.1)).show_ui(ui, |ui| {
                     for t in ["Academic", "Interest", "Language", "Professional", "Street"] {
-                        ui.selectable_value(&mut self.new_kno.1, t.to_owned(), lang.data_name("skills.xml", "", t));
+                        crate::combo::selectable_value(ui, &mut self.new_kno.1, t.to_owned(), lang.data_name("skills.xml", "", t));
                     }
                 });
                 if self.new_kno.1 == "Language" {
@@ -709,10 +709,10 @@ impl CharacterView {
             ui.horizontal(|ui| {
                 ui.label(lang.tr("Tradition"));
                 let mut pick: Option<String> = None;
-                egui::ComboBox::from_id_salt("tradition").selected_text(if current.is_empty() { lang.tr("Choose…") } else { current.clone() }).width(240.0).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("tradition").selected_text(if current.is_empty() { lang.tr("Choose…") } else { current.clone() }).width(240.0).show_ui(ui, |ui| {
                     if let Ok(doc) = self.store.doc("traditions.xml") {
                         for r in data::records(&doc, "traditions", "tradition") {
-                            if ui.selectable_label(current == r.name(), r.name()).clicked() {
+                            if crate::combo::selectable_label(ui, current == r.name(), r.name()).clicked() {
                                 pick = Some(r.name());
                             }
                         }
@@ -730,7 +730,7 @@ impl CharacterView {
         ui.horizontal(|ui| {
             for (i, s) in present.iter().enumerate() {
                 let n = self.ch.items(s.container, s.item).len();
-                ui.selectable_value(&mut self.magic, i, format!("{} ({n})", lang.tr(s.label)));
+                crate::combo::selectable_value(ui, &mut self.magic, i, format!("{} ({n})", lang.tr(s.label)));
             }
         });
         let m = chummer_core::items::magic::magic_summary_with(&self.ch, &self.sheet, Some(&self.store));
@@ -879,7 +879,7 @@ impl CharacterView {
         ui.horizontal(|ui| {
             for (i, s) in sections::EQUIPMENT.iter().enumerate() {
                 let n = self.ch.items(s.container, s.item).len();
-                ui.selectable_value(&mut self.equipment, i, format!("{} ({n})", lang.tr(s.label)));
+                crate::combo::selectable_value(ui, &mut self.equipment, i, format!("{} ({n})", lang.tr(s.label)));
             }
         });
         ui.separator();
@@ -1197,18 +1197,18 @@ impl CharacterView {
                 if self.life.0.is_empty() {
                     self.life.0 = stages.first().cloned().unwrap_or_default();
                 }
-                egui::ComboBox::from_id_salt("lm_stage").selected_text(self.life.0.clone()).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("lm_stage").selected_text(self.life.0.clone()).show_ui(ui, |ui| {
                     for st in &stages {
-                        if ui.selectable_label(self.life.0 == *st, st).clicked() {
+                        if crate::combo::selectable_label(ui, self.life.0 == *st, st).clicked() {
                             self.life = (st.clone(), String::new(), String::new());
                         }
                     }
                 });
                 let in_stage: Vec<&chargen::LifeModule> = modules.iter().filter(|m| m.stage == self.life.0).collect();
                 let cur = in_stage.iter().find(|m| m.id == self.life.1).map(|m| format!("{} ({} {})", m.name, m.karma, lang.tr("karma"))).unwrap_or_else(|| lang.tr("Choose a module…"));
-                egui::ComboBox::from_id_salt("lm_module").selected_text(cur).width(320.0).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("lm_module").selected_text(cur).width(320.0).show_ui(ui, |ui| {
                     for m in &in_stage {
-                        if ui.selectable_label(self.life.1 == m.id, format!("{} ({} {})", m.name, m.karma, lang.tr("karma"))).clicked() {
+                        if crate::combo::selectable_label(ui, self.life.1 == m.id, format!("{} ({} {})", m.name, m.karma, lang.tr("karma"))).clicked() {
                             self.life.1 = m.id.clone();
                             self.life.2 = m.versions.first().map(|v| v.0.clone()).unwrap_or_default();
                         }
@@ -1217,9 +1217,9 @@ impl CharacterView {
                 if let Some(m) = in_stage.iter().find(|m| m.id == self.life.1) {
                     if m.versions.len() > 1 {
                         let cur = m.versions.iter().find(|v| v.0 == self.life.2).map(|v| v.1.clone()).unwrap_or_default();
-                        egui::ComboBox::from_id_salt("lm_version").selected_text(cur).show_ui(ui, |ui| {
+                        crate::combo::Combo::from_id_salt("lm_version").selected_text(cur).show_ui(ui, |ui| {
                             for (id, n) in &m.versions {
-                                ui.selectable_value(&mut self.life.2, id.clone(), n);
+                                crate::combo::selectable_value(ui, &mut self.life.2, id.clone(), n);
                             }
                         });
                     }
@@ -1362,9 +1362,9 @@ impl CharacterView {
             ));
             changed |= crate::career_ui::actions_ui(ui, &mut self.ch, engine, lang);
             ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt("manual_kind").selected_text(if self.manual.0 { lang.tr("Karma") } else { lang.tr("Nuyen") }).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.manual.0, true, lang.tr("Karma"));
-                    ui.selectable_value(&mut self.manual.0, false, lang.tr("Nuyen"));
+                crate::combo::Combo::from_id_salt("manual_kind").selected_text(if self.manual.0 { lang.tr("Karma") } else { lang.tr("Nuyen") }).show_ui(ui, |ui| {
+                    crate::combo::selectable_value(ui, &mut self.manual.0, true, lang.tr("Karma"));
+                    crate::combo::selectable_value(ui, &mut self.manual.0, false, lang.tr("Nuyen"));
                 });
                 ui.add(egui::DragValue::new(&mut self.manual.1).range(0.0..=1_000_000.0).max_decimals(2));
                 ui.add(egui::TextEdit::singleline(&mut self.manual.2).hint_text(lang.tr("Reason (e.g. run payout)")).desired_width(240.0));

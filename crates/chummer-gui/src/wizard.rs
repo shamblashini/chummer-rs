@@ -59,9 +59,9 @@ impl Wizard {
                 ui.text_edit_singleline(&mut self.name);
                 ui.end_row();
                 ui.label(lang.tr("Rules"));
-                egui::ComboBox::from_id_salt("wiz_preset").selected_text(settings.name()).width(260.0).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("wiz_preset").selected_text(settings.name()).width(260.0).show_ui(ui, |ui| {
                     for (i, p) in presets.iter().enumerate() {
-                        ui.selectable_value(&mut self.preset, i, format!("{} ({})", p.name(), p.build_method()));
+                        crate::combo::selectable_value(ui, &mut self.preset, i, format!("{} ({})", p.name(), p.build_method()));
                     }
                 });
                 ui.end_row();
@@ -88,9 +88,9 @@ impl Wizard {
                 for (ci, cat) in CATEGORIES.iter().enumerate() {
                     ui.label(lang.tr(cat));
                     let current = self.priorities[ci];
-                    egui::ComboBox::from_id_salt(("prio", ci)).selected_text(current.to_string()).width(50.0).show_ui(ui, |ui| {
+                    crate::combo::Combo::from_id_salt(("prio", ci)).selected_text(current.to_string()).width(50.0).show_ui(ui, |ui| {
                         for l in LETTERS {
-                            if ui.selectable_label(current == l, l.to_string()).clicked() && l != current {
+                            if crate::combo::selectable_label(ui, current == l, l.to_string()).clicked() && l != current {
                                 if !sum_to_ten {
                                     // Keep each letter used once: swap with the holder.
                                     if let Some(j) = self.priorities.iter().position(|x| *x == l) {
@@ -136,7 +136,7 @@ impl Wizard {
                             let karma = if h.karma > 0 { format!(" · {}", lang.tr_fmt("{0} karma", &[&h.karma])) } else { String::new() };
                             format!("{}  ·  {}{karma}", h.metatype, lang.tr_fmt("{0} special", &[&h.special]))
                         };
-                        if ui.selectable_label(self.metatype == h.metatype, label).clicked() {
+                        if crate::combo::selectable_label(ui, self.metatype == h.metatype, label).clicked() {
                             self.metatype = h.metatype.clone();
                             self.metavariant.clear();
                         }
@@ -144,12 +144,12 @@ impl Wizard {
                 });
                 if let Some(h) = heritage.iter().find(|h| h.metatype == self.metatype) {
                     if !h.metavariants.is_empty() {
-                        egui::ComboBox::from_id_salt("wiz_variant")
+                        crate::combo::Combo::from_id_salt("wiz_variant")
                             .selected_text(if self.metavariant.is_empty() { lang.tr("No metavariant") } else { self.metavariant.clone() })
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.metavariant, String::new(), lang.tr("No metavariant"));
+                                crate::combo::selectable_value(ui, &mut self.metavariant, String::new(), lang.tr("No metavariant"));
                                 for (n, sp, k) in &h.metavariants {
-                                    ui.selectable_value(&mut self.metavariant, n.clone(), format!("{n} · {} · {}", lang.tr_fmt("{0} special", &[sp]), lang.tr_fmt("{0} karma", &[k])));
+                                    crate::combo::selectable_value(ui, &mut self.metavariant, n.clone(), format!("{n} · {} · {}", lang.tr_fmt("{0} special", &[sp]), lang.tr_fmt("{0} karma", &[k])));
                                 }
                             });
                     }
@@ -172,7 +172,7 @@ impl Wizard {
                     }
                 }
                 for t in &allowed {
-                    if ui.selectable_label(self.talent == t.value, &t.display).clicked() && self.talent != t.value {
+                    if crate::combo::selectable_label(ui, self.talent == t.value, &t.display).clicked() && self.talent != t.value {
                         self.talent = t.value.clone();
                         self.talent_skills.clear();
                     }
@@ -186,12 +186,12 @@ impl Wizard {
                         self.talent_skills.resize(qty, String::new());
                         for i in 0..qty {
                             let cur = self.talent_skills[i].clone();
-                            egui::ComboBox::from_id_salt(("tskill", i)).selected_text(if cur.is_empty() { lang.tr("Choose…") } else { cur.clone() }).width(220.0).show_ui(
+                            crate::combo::Combo::from_id_salt(("tskill", i)).selected_text(if cur.is_empty() { lang.tr("Choose…") } else { cur.clone() }).width(220.0).show_ui(
                                 ui,
                                 |ui| {
                                     for o in &options {
                                         let taken = self.talent_skills.iter().enumerate().any(|(j, s)| j != i && s == o);
-                                        if !taken && ui.selectable_label(cur == *o, o).clicked() {
+                                        if !taken && crate::combo::selectable_label(ui, cur == *o, o).clicked() {
                                             self.talent_skills[i] = o.clone();
                                         }
                                     }

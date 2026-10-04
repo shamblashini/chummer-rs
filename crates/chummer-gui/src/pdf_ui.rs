@@ -71,9 +71,9 @@ impl SourcesWindow {
 
         ui.horizontal(|ui| {
             ui.label(lang.tr("PDF viewer"));
-            egui::ComboBox::from_id_salt("viewer_preset").selected_text(lang.tr("Choose…")).show_ui(ui, |ui| {
+            crate::combo::Combo::from_id_salt("viewer_preset").selected_text(lang.tr("Choose…")).show_ui(ui, |ui| {
                 for v in sources::installed_viewers() {
-                    if ui.selectable_label(lib.viewer == v.template, v.name).clicked() {
+                    if crate::combo::selectable_label(ui, lib.viewer == v.template, v.name).clicked() {
                         lib.viewer = v.template.to_owned();
                         changed = true;
                     }

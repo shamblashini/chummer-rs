@@ -113,9 +113,9 @@ impl SettingsEditor {
         self.selected = self.selected.min(presets.len() - 1);
         ui.horizontal(|ui| {
             ui.label(lang.tr("Preset"));
-            egui::ComboBox::from_id_salt("preset_pick").selected_text(label_of(&presets[self.selected], lang)).width(320.0).show_ui(ui, |ui| {
+            crate::combo::Combo::from_id_salt("preset_pick").selected_text(label_of(&presets[self.selected], lang)).width(320.0).show_ui(ui, |ui| {
                 for (i, p) in presets.iter().enumerate() {
-                    if ui.selectable_label(self.selected == i, label_of(p, lang)).clicked() {
+                    if crate::combo::selectable_label(ui, self.selected == i, label_of(p, lang)).clicked() {
                         self.selected = i;
                         self.draft = None;
                     }
@@ -179,9 +179,9 @@ impl SettingsEditor {
                     ui.end_row();
                     ui.label(lang.tr("Build Method"));
                     let mut bm = el.get("buildmethod");
-                    egui::ComboBox::from_id_salt("set_bm").selected_text(build_method_label(&bm, lang)).show_ui(ui, |ui| {
+                    crate::combo::Combo::from_id_salt("set_bm").selected_text(build_method_label(&bm, lang)).show_ui(ui, |ui| {
                         for m in ["Priority", "SumtoTen", "Karma", "LifeModule"] {
-                            if ui.selectable_value(&mut bm, m.to_owned(), build_method_label(m, lang)).changed() {
+                            if crate::combo::selectable_value(ui, &mut bm, m.to_owned(), build_method_label(m, lang)).changed() {
                                 dirty = true;
                             }
                         }

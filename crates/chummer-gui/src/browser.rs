@@ -44,9 +44,9 @@ impl DataBrowser {
         }
 
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("browser_kind").selected_text(lang.tr(label)).width(180.0).show_ui(ui, |ui| {
+            crate::combo::Combo::from_id_salt("browser_kind").selected_text(lang.tr(label)).width(180.0).show_ui(ui, |ui| {
                 for (i, (l, ..)) in data::BROWSABLE.iter().enumerate() {
-                    ui.selectable_value(&mut self.kind, i, lang.tr(l));
+                    crate::combo::selectable_value(ui, &mut self.kind, i, lang.tr(l));
                 }
             });
             ui.add(egui::TextEdit::singleline(&mut self.search).hint_text(lang.tr("Search name, category or source")).desired_width(280.0));
@@ -82,7 +82,7 @@ impl DataBrowser {
                 |ui, range| {
                     for (i, name, cat) in &shown[range] {
                         let text = if cat.is_empty() { name.clone() } else { format!("{name}  ·  {}", lang.data_name(file, "", cat)) };
-                        if ui.selectable_label(self.selected == Some(*i), text).clicked() {
+                        if crate::combo::selectable_label(ui, self.selected == Some(*i), text).clicked() {
                             self.selected = Some(*i);
                         }
                     }

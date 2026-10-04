@@ -3,6 +3,7 @@
 
 mod browser;
 mod career_ui;
+mod combo;
 mod dice_ui;
 mod drug_ui;
 mod gm_ui;
@@ -290,7 +291,7 @@ impl App {
             });
             ui.menu_button(self.lang.tr("Language"), |ui| {
                 for (code, name) in self.languages.clone() {
-                    if ui.selectable_label(self.lang.code == code, name).clicked() {
+                    if crate::combo::selectable_label(ui, self.lang.code == code, name).clicked() {
                         ui.close();
                         self.lang = Language::load(&self.lang_dir, &code);
                     }
@@ -416,9 +417,9 @@ impl App {
             return;
         };
         let formats: Vec<String> = chummer_core::export::BUILT_IN.iter().map(|s| s.to_string()).chain(chummer_core::export::stylesheets().into_iter().map(|(n, _)| n)).collect();
-        egui::ComboBox::from_id_salt("export_fmt").selected_text(self.export_format.clone()).show_ui(ui, |ui| {
+        crate::combo::Combo::from_id_salt("export_fmt").selected_text(self.export_format.clone()).show_ui(ui, |ui| {
             for f in &formats {
-                ui.selectable_value(&mut self.export_format, f.clone(), f);
+                crate::combo::selectable_value(ui, &mut self.export_format, f.clone(), f);
             }
         });
         ui.weak(self.lang.tr("XML and JSON contain the full print data; stylesheets produce their own format."));
@@ -446,9 +447,9 @@ impl App {
         let sheets = chummer_core::print::available_sheets(&self.lang.code);
         ui.horizontal(|ui| {
             ui.label(self.lang.tr("Character Sheet:"));
-            egui::ComboBox::from_id_salt("sheet").selected_text(self.print_sheet.clone()).width(320.0).show_ui(ui, |ui| {
+            crate::combo::Combo::from_id_salt("sheet").selected_text(self.print_sheet.clone()).width(320.0).show_ui(ui, |ui| {
                 for (name, _) in &sheets {
-                    ui.selectable_value(&mut self.print_sheet, name.clone(), name);
+                    crate::combo::selectable_value(ui, &mut self.print_sheet, name.clone(), name);
                 }
             });
         });
@@ -543,7 +544,7 @@ impl eframe::App for App {
                 ui.horizontal_wrapped(|ui| {
                     let mut close = None;
                     for (i, v) in self.views.iter().enumerate() {
-                        ui.selectable_value(&mut self.active, i, v.title());
+                        crate::combo::selectable_value(ui, &mut self.active, i, v.title());
                         if ui.small_button("×").on_hover_text(self.lang.tr("Close")).clicked() {
                             close = Some(i);
                         }

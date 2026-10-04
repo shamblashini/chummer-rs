@@ -41,10 +41,10 @@ impl LifestyleEditor {
         let mut changed = false;
         egui::CollapsingHeader::new(RichText::new(cx.lang.tr("Edit Lifestyle")).strong()).id_salt("lifestyle_ed").default_open(true).show(ui, |ui| {
             if lifestyles.len() > 1 {
-                egui::ComboBox::from_id_salt("lifestyle_pick").selected_text(l.get("name")).width(260.0).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("lifestyle_pick").selected_text(l.get("name")).width(260.0).show_ui(ui, |ui| {
                     for x in &lifestyles {
                         let g = x.get("guid");
-                        if ui.selectable_label(g == guid, x.get("name")).clicked() {
+                        if crate::combo::selectable_label(ui, g == guid, x.get("name")).clicked() {
                             self.selected = Some(g);
                         }
                     }
@@ -72,9 +72,9 @@ impl LifestyleEditor {
             ui.label(l.get("baselifestyle"));
             ui.end_row();
             ui.label(lang.tr("Type"));
-            egui::ComboBox::from_id_salt(("lifestyle_type", &guid)).selected_text(lang.tr(&o.style)).show_ui(ui, |ui| {
+            crate::combo::Combo::from_id_salt(("lifestyle_type", &guid)).selected_text(lang.tr(&o.style)).show_ui(ui, |ui| {
                 for s in STYLES {
-                    ui.selectable_value(&mut o.style, (*s).to_owned(), lang.tr(s));
+                    crate::combo::selectable_value(ui, &mut o.style, (*s).to_owned(), lang.tr(s));
                 }
             });
             ui.end_row();

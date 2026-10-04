@@ -119,7 +119,7 @@ fn picker(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language, c
         b if b.is_empty() => "Priority".to_owned(),
         b => b,
     };
-    egui::ComboBox::from_id_salt("change_settings_file").selected_text(lang.tr("Change Settings File")).width(220.0).show_ui(ui, |ui| {
+    crate::combo::Combo::from_id_salt("change_settings_file").selected_text(lang.tr("Change Settings File")).width(220.0).show_ui(ui, |ui| {
         for p in &engine.settings.presets {
             let same = current.is_some_and(|c| c.key() == p.key());
             let allowed = ch.created || p.build_method() == bm;

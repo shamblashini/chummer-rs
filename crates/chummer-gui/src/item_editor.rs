@@ -223,9 +223,9 @@ impl ItemEditor {
             let sizes = edit::weapon_mount_sizes(store);
             ui.horizontal(|ui| {
                 let cur = sizes.iter().find(|(id, _)| *id == self.mount_size).map(|(_, n)| n.clone()).unwrap_or_else(|| lang.tr("Mount size…"));
-                egui::ComboBox::from_id_salt(("mount_size", guid)).selected_text(cur).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt(("mount_size", guid)).selected_text(cur).show_ui(ui, |ui| {
                     for (id, n) in &sizes {
-                        ui.selectable_value(&mut self.mount_size, id.clone(), n);
+                        crate::combo::selectable_value(ui, &mut self.mount_size, id.clone(), n);
                     }
                 });
                 if ui.add_enabled(!self.mount_size.is_empty(), egui::Button::new(format!("➕ {}", lang.tr("Add Weapon Mount")))).clicked() {

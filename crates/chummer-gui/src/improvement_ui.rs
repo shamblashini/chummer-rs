@@ -37,7 +37,6 @@ struct Dialog {
     edit: Option<String>,
     /// Selection values for `pick`, computed when the type changes.
     options: Option<(usize, Vec<String>)>,
-    filter: String,
     error: Option<String>,
 }
 
@@ -45,7 +44,7 @@ impl Dialog {
     fn new(store: &DataStore, lang: &Language, group: &str) -> Dialog {
         let mut types = custom::types(store);
         types.sort_by_cached_key(|t| type_name(lang, t).to_lowercase());
-        Dialog { types, pick: None, form: Form::default(), group: group.to_owned(), edit: None, options: None, filter: String::new(), error: None }
+        Dialog { types, pick: None, form: Form::default(), group: group.to_owned(), edit: None, options: None, error: None }
     }
 
     fn current(&self) -> Option<&ImprovementType> {
@@ -216,7 +215,7 @@ impl ImprovementsPanel {
                 ui.menu_button("📁", |ui| {
                     for g in std::iter::once(String::new()).chain(groups.iter().cloned()) {
                         let label = if g.is_empty() { lang.tr("Selected Improvements") } else { g.clone() };
-                        if ui.selectable_label(i.custom_group == g, label).clicked() {
+                        if crate::combo::selectable_label(ui, i.custom_group == g, label).clicked() {
                             custom::set_group(ch, n, &g);
                             changed = true;
                             ui.close();
@@ -246,9 +245,9 @@ impl ImprovementsPanel {
                 ui.label(lang.tr("Improvement Type:"));
                 let shown = d.current().map(|t| type_name(lang, t)).unwrap_or_default();
                 let before = d.pick;
-                egui::ComboBox::from_id_salt("imp_type").width(320.0).selected_text(shown).height(420.0).show_ui(ui, |ui| {
+                crate::combo::Combo::from_id_salt("imp_type").width(320.0).selected_text(shown).height(420.0).show_ui(ui, |ui| {
                     for (k, t) in d.types.iter().enumerate() {
-                        ui.selectable_value(&mut d.pick, Some(k), type_name(lang, t));
+                        crate::combo::selectable_value(ui, &mut d.pick, Some(k), type_name(lang, t));
                     }
                 });
                 if d.pick != before {
@@ -256,7 +255,6 @@ impl ImprovementsPanel {
                     d.form.select.clear();
                     d.form.apply_to_rating = false;
                     d.form.free = false;
-                    d.filter.clear();
                     d.error = None;
                 }
                 ui.end_row();
@@ -275,13 +273,10 @@ impl ImprovementsPanel {
                     if opts.is_empty() {
                         ui.add(egui::TextEdit::singleline(&mut d.form.select).desired_width(320.0));
                     } else {
-                        let filter = &mut d.filter;
                         let form = &mut d.form;
-                        egui::ComboBox::from_id_salt("imp_select").width(320.0).selected_text(form.select.clone()).height(360.0).show_ui(ui, |ui| {
-                            ui.add(egui::TextEdit::singleline(filter).hint_text("🔍"));
-                            let f = filter.to_lowercase();
-                            for o in opts.iter().filter(|o| f.is_empty() || o.to_lowercase().contains(&f)) {
-                                ui.selectable_value(&mut form.select, o.clone(), o);
+                        crate::combo::Combo::from_id_salt("imp_select").width(320.0).selected_text(form.select.clone()).height(360.0).show_ui(ui, |ui| {
+                            for o in opts.iter() {
+                                crate::combo::selectable_value(ui, &mut form.select, o.clone(), o);
                             }
                         });
                     }
