@@ -42,11 +42,11 @@ fn sections(ctx: &Ctx, out: &mut Element) {
     out.push(list(ctx, "aiprograms", "aiprogram", magic::ai_program));
     out.push(list(ctx, "martialarts", "martialart", magic::martial_art));
     out.push(list(ctx, "armors", "armor", items::armor));
-    out.push(list(ctx, "weapons", "weapon", items::weapon));
+    out.push(list(ctx, "weapons", "weapon", |c, w| items::weapon(c, w, items::WeaponPlace::default())));
     out.push(list(ctx, "cyberwares", "cyberware", items::cyberware));
     out.push(social::qualities(ctx));
     out.push(list(ctx, "lifestyles", "lifestyle", social::lifestyle));
-    out.push(items::gear_list(ctx, &ch.items("gears", "gear")));
+    out.push(items::gear_list(ctx, &ch.items("gears", "gear"), items::GearParent::None));
     out.push(list(ctx, "drugs", "drug", items::drug));
     out.push(list(ctx, "vehicles", "vehicle", vehicles::vehicle));
     out.push(magic::initiation_grades(ctx));
@@ -213,38 +213,28 @@ fn points(ctx: &Ctx, out: &mut Element) {
 
 /// `Character.CareerKarma`: karma earned in career mode.
 fn career_karma(ctx: &Ctx) -> i32 {
-    ctx.ch
-        .items("expenses", "expense")
-        .iter()
-        .filter(|e| e.get("type") == "Karma" && !e.get_bool("refund").unwrap_or(false))
-        .filter_map(|e| e.get_f64("amount"))
-        .filter(|a| *a > 0.0)
-        .sum::<f64>() as i32
+    crate::career::ledger::career_karma(ctx.ch)
 }
 
-/// Street cred, notoriety, public awareness, astral and wild reputation.
+/// Street cred, notoriety, public awareness (`career::reputation_for`),
+/// astral and wild reputation.
 fn reputation(ctx: &Ctx, out: &mut Element) {
     let ch = ctx.ch;
     let imps = &ch.improvements;
-    let cred = ch.doc.get_i32("streetcred").unwrap_or(0);
-    let burnt = ch.doc.get_i32("burntstreetcred").unwrap_or(0);
-    let calc_cred = career_karma(ctx) / 10 + imps.val_int("StreetCred", None);
-    add(out, "streetcred", cred.to_string());
-    add(out, "calculatedstreetcred", calc_cred.to_string());
-    add(out, "totalstreetcred", (cred + calc_cred - burnt).max(0).to_string());
-    add(out, "burntstreetcred", burnt.to_string());
-    let noto = ch.doc.get_i32("notoriety").unwrap_or(0);
-    let calc_noto = imps.val_int("Notoriety", None);
-    add(out, "notoriety", noto.to_string());
-    add(out, "calculatednotoriety", calc_noto.to_string());
-    add(out, "totalnotoriety", (noto + calc_noto + burnt).to_string());
-    let pa = ch.doc.get_i32("publicawareness").unwrap_or(0);
-    let calc_pa = imps.val_int("PublicAwareness", None);
-    add(out, "publicawareness", pa.to_string());
-    add(out, "calculatedpublicawareness", calc_pa.to_string());
-    add(out, "totalpublicawareness", (pa + calc_pa).to_string());
+    let saved = |k: &str| ch.doc.get_i32(k).unwrap_or(0);
+    let r = crate::career::reputation_for(ctx.engine, ch);
+    add(out, "streetcred", saved("streetcred").to_string());
+    add(out, "calculatedstreetcred", r.street_cred_calculated.to_string());
+    add(out, "totalstreetcred", r.street_cred.to_string());
+    add(out, "burntstreetcred", r.burnt_street_cred.to_string());
+    add(out, "notoriety", saved("notoriety").to_string());
+    add(out, "calculatednotoriety", r.notoriety_calculated.to_string());
+    add(out, "totalnotoriety", r.notoriety.to_string());
+    add(out, "publicawareness", saved("publicawareness").to_string());
+    add(out, "calculatedpublicawareness", r.public_awareness_calculated.to_string());
+    add(out, "totalpublicawareness", r.public_awareness.to_string());
     for (k, imp) in [("astralreputation", "AstralReputation"), ("wildreputation", "WildReputation")] {
-        let v = ch.doc.get_i32(k).unwrap_or(0);
+        let v = saved(k);
         add(out, k, v.to_string());
         add(out, &format!("total{k}"), (v + imps.val_int(imp, None)).to_string());
     }
@@ -264,7 +254,7 @@ fn attribute_shown(ctx: &Ctx, name: &str) -> bool {
     let ch = ctx.ch;
     match name {
         "MAGAdept" => {
-            let second = ctx.engine.settings.resolve(&ch.field("settings")).is_some_and(|s| s.flag("mysadeptsecondmagattribute"));
+            let second = ctx.settings.is_some_and(|s| s.flag("mysadeptsecondmagattribute"));
             second && ch.mag_enabled() && ch.is_adept() && ch.is_magician()
         }
         "MAG" => ch.mag_enabled(),
@@ -406,7 +396,7 @@ fn derived(ctx: &Ctx, out: &mut Element) {
     let str_ = f64::from(s.attr("STR"));
     add(out, "liftweight", super::num(str_ * 15.0));
     add(out, "carryweight", super::num(str_ * 10.0));
-    add(out, "totalcarriedweight", "0");
+    add(out, "totalcarriedweight", super::weight(total_carried_weight(ctx)));
 }
 
 /// Resistance tests (`FatigueResist`, `ToxinContactResist`, ...).
@@ -453,4 +443,22 @@ fn resistances(ctx: &Ctx, out: &mut Element) {
     for (k, v) in list {
         add(out, k, v.to_string());
     }
+}
+
+/// `Character.TotalCarriedWeight`: equipped armor, weapons, gear and
+/// cyberware (`IsModularCurrentlyEquipped`: top-level ware that does not
+/// plug into a modular mount).
+pub(crate) fn total_carried_weight(ctx: &Ctx) -> f64 {
+    let ch = ctx.ch;
+    let equipped = |e: &&Element| e.get_bool("equipped").unwrap_or(true);
+    let armor: f64 = ch.items("armors", "armor").into_iter().filter(equipped).map(|a| items::armor_total_weight(ctx, a)).sum();
+    let weapons: f64 = ch.items("weapons", "weapon").into_iter().filter(equipped).map(|w| items::weapon_total_weight(ctx, w)).sum();
+    let gear: f64 = ch.items("gears", "gear").into_iter().filter(equipped).map(|g| items::gear_total_weight(ctx, g, None)).sum();
+    let ware: f64 = ch
+        .items("cyberwares", "cyberware")
+        .into_iter()
+        .filter(|c| c.get("plugsintomodularmount").is_empty())
+        .map(|c| items::ware_total_weight(ctx, c))
+        .sum();
+    armor + weapons + gear + ware
 }

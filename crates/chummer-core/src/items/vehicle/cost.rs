@@ -23,6 +23,34 @@ pub fn own_cost(vehicle: &Element) -> f64 {
     Veh::new(vehicle, &VehicleRules::default()).own_cost()
 }
 
+/// `(OwnCost, TotalCost)` of each part of a saved vehicle, in saved order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PartCosts {
+    /// `VehicleMod` under `<mods>`.
+    pub mods: Vec<(f64, f64)>,
+    /// `WeaponMount` under `<weaponmounts>`.
+    pub mounts: Vec<(f64, f64)>,
+    /// `VehicleMod` under each weapon mount's `<mods>`.
+    pub mount_mods: Vec<Vec<(f64, f64)>>,
+}
+
+/// Own and total costs of a vehicle's mods and weapon mounts.
+pub fn part_costs(vehicle: &Element) -> PartCosts {
+    let v = Veh::new(vehicle, &VehicleRules::default());
+    let mods = (0..v.mods.len()).map(|i| (v.mod_own_cost(ModAt::Vehicle(i)), v.mod_total_cost(ModAt::Vehicle(i)))).collect();
+    let mounts = (0..v.mounts.len()).map(|w| (v.mount_own_cost(w), v.mount_total_cost(w))).collect();
+    let mount_mods = v
+        .mounts
+        .iter()
+        .enumerate()
+        .map(|(w, m)| {
+            let n = m.child("mods").map_or(0, |c| c.children_named("mod").count());
+            (0..n).map(|i| (v.mod_own_cost(ModAt::Mount(w, i)), v.mod_total_cost(ModAt::Mount(w, i)))).collect()
+        })
+        .collect();
+    PartCosts { mods, mounts, mount_mods }
+}
+
 /// Cost of a gear, weapon or cyberware item inside a vehicle, from its
 /// saved `<cost>`, rating, quantity and children. This stands in for the
 /// gear/weapon/cyberware cost functions until those modules provide them.

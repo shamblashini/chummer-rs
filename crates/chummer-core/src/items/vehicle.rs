@@ -12,7 +12,7 @@
 mod cost;
 mod stats;
 
-pub use cost::{cost, own_cost};
+pub use cost::{cost, own_cost, part_costs, PartCosts};
 pub use stats::{is_drone, stats, stats_with, CategorySlots, VehicleRules, VehicleStats, SLOT_CATEGORIES};
 
 use crate::bonus::{self, BonusSource, Choice};

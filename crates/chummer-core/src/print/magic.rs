@@ -2,8 +2,9 @@
 //! spirits, complex forms, martial arts, initiation, critter powers, and
 //! the limit modifiers.
 //!
-//! Spell and complex-form fields (type, range, duration, DV/FV) are the
-//! saved codes; in English they equal Chummer's display strings.
+//! Spell and complex-form fields (type, range, duration, DV/FV) are
+//! translated as `Spell.Display*` / `ComplexForm.Display*` do, with the
+//! drain and fading values recalculated from the character's improvements.
 
 use super::{add, bool_text, copy, copy_bool, num, Ctx};
 use crate::expr::{self, standard_round};
@@ -194,8 +195,270 @@ pub fn mentor_spirits(ctx: &Ctx) -> Element {
     out
 }
 
-fn skill_pool(ctx: &Ctx, name: &str) -> i32 {
-    ctx.sheet.skills.iter().find(|s| s.name == name).map_or(0, |s| s.pool)
+/// The spell's descriptors (`HashDescriptors`).
+fn descriptors(item: &Element) -> Vec<String> {
+    item.get("descriptors").split(',').map(str::trim).filter(|d| !d.is_empty()).map(str::to_owned).collect()
+}
+
+/// `Spell._blnCustomExtended`: extended without the Extended Area descriptor.
+fn custom_extended(item: &Element) -> bool {
+    item.get_bool("extended").unwrap_or(false) && !descriptors(item).iter().any(|d| d.eq_ignore_ascii_case("Extended Area"))
+}
+
+/// `Spell.RelevantImprovements` for the given kinds.
+fn spell_improvements<'a>(ctx: &'a Ctx, item: &'a Element, kinds: &'a [&str]) -> impl Iterator<Item = &'a crate::improvement::Improvement> + 'a {
+    let name = item.get("name");
+    let id = item.get("sourceid");
+    let category = item.get("category");
+    let descs = descriptors(item);
+    ctx.ch.improvements.list.iter().filter(move |i| {
+        if !i.enabled || !kinds.contains(&i.kind.as_str()) {
+            return false;
+        }
+        match i.kind.as_str() {
+            "SpellDicePool" => i.improved_name == name || (!id.is_empty() && i.improved_name.eq_ignore_ascii_case(&id)),
+            "SpellCategory" | "SpellCategoryDamage" | "SpellCategoryDrain" => i.improved_name == category,
+            "SpellDescriptorDrain" | "SpellDescriptorDamage" => {
+                if descs.is_empty() {
+                    return false;
+                }
+                let mut allow = false;
+                for d in i.improved_name.split(',').filter(|d| !d.is_empty()) {
+                    if d.starts_with("NOT") {
+                        let inner = d.strip_prefix("NOT(").unwrap_or(d).strip_suffix(')').unwrap_or(d.strip_prefix("NOT(").unwrap_or(d));
+                        if descs.iter().any(|x| x == inner) {
+                            allow = false;
+                            break;
+                        }
+                    } else {
+                        allow = descs.iter().any(|x| x == d);
+                    }
+                }
+                allow
+            }
+            "DrainValue" => i.improved_name.is_empty() || i.improved_name == name,
+            _ => false,
+        }
+    })
+}
+
+const DRAIN_KINDS: &[&str] = &["DrainValue", "SpellCategoryDrain", "SpellDescriptorDrain"];
+
+/// `Spell.CalculatedDv`: the saved DV with drain improvements, limited
+/// (-2), custom extended (+2) and barehanded adept (x2) applied.
+fn calculated_dv(ctx: &Ctx, item: &Element) -> String {
+    let base = item.get("dv");
+    let limited = item.get_bool("limited").unwrap_or(false);
+    let extended = custom_extended(item);
+    let barehanded = item.get_bool("barehandedadept").unwrap_or(false);
+    let imps: Vec<f64> = spell_improvements(ctx, item, DRAIN_KINDS).map(|i| i.val).collect();
+    let plain = expr::parse_plain(base.trim());
+    if !limited && !extended && !barehanded && plain.is_some() && imps.is_empty() {
+        return base;
+    }
+    let force = base.starts_with('F');
+    let dv = if force { &base[1..] } else { base.as_str() };
+    let dv = if dv.is_empty() { "0".to_owned() } else { dv.trim_start_matches('+').to_owned() };
+    let mut append = String::new();
+    let mut drain = 0;
+    match expr::parse_plain(&dv) {
+        Some(mut v) => {
+            v += imps.iter().sum::<f64>();
+            if limited {
+                v -= 2.0;
+            }
+            if extended {
+                v += 2.0;
+            }
+            if barehanded && !force {
+                v *= 2.0;
+            }
+            drain = standard_round(v);
+        }
+        None => {
+            let mut e = format!("({dv})");
+            for v in &imps {
+                e.push_str(&format!("+({})", num_invariant(*v)));
+            }
+            if limited {
+                e.push_str("-2");
+            }
+            if extended {
+                e.push_str("+2");
+            }
+            if barehanded && !force {
+                e = format!("2*({e})");
+            }
+            let substituted = expr::substitute_attributes(&e, &crate::calc::SheetAttributes(&ctx.sheet.attributes));
+            match expr::evaluate_num(&substituted) {
+                Ok(v) => drain = standard_round(v),
+                Err(_) => append = e,
+            }
+        }
+    }
+    if force {
+        if !append.is_empty() {
+            let s = format!("{base}F{append}");
+            if barehanded { format!("2 * ({s})") } else { s }
+        } else {
+            let n = match drain {
+                0 => String::new(),
+                n if n > 0 => format!("+{n}"),
+                n => n.to_string(),
+            };
+            if barehanded { format!("2 * (F{n})") } else { format!("F{n}") }
+        }
+    } else if !append.is_empty() {
+        let s = format!("{base}{append}");
+        if barehanded { format!("2 * ({s})") } else { s }
+    } else {
+        drain.max(if barehanded { 4 } else { 2 }).to_string()
+    }
+}
+
+/// A decimal in invariant culture, as Chummer writes it into an expression.
+fn num_invariant(v: f64) -> String {
+    crate::improvement::fmt_num(v)
+}
+
+/// The DV/FV replacements of `DisplayDv` / `DisplayFv` for a
+/// non-English language.
+fn localize_value(ctx: &Ctx, s: &str, first: (&str, &str)) -> String {
+    let mut out = s.replace(first.0, &ctx.s(first.1));
+    for (from, key) in [
+        ("Overflow damage", "String_SpellOverflowDamage"),
+        ("Damage Value", "String_SpellDamageValue"),
+        ("Toxin DV", "String_SpellToxinDV"),
+        ("Disease DV", "String_SpellDiseaseDV"),
+        ("Radiation Power", "String_SpellRadiationPower"),
+        ("Special", "String_Special"),
+    ] {
+        out = out.replace(from, &ctx.s(key));
+    }
+    out
+}
+
+/// `Spell.DisplayDv`.
+fn display_dv(ctx: &Ctx, item: &Element, english: bool) -> String {
+    let s = calculated_dv(ctx, item).replace('/', "÷").replace('*', "×");
+    if english || ctx.is_english() { s } else { localize_value(ctx, &s, ("F", "String_SpellForce")) }
+}
+
+/// `Spell.DisplayType`.
+fn display_type(ctx: &Ctx, item: &Element, english: bool) -> String {
+    let key = if item.get("type").eq_ignore_ascii_case("M") { "String_SpellTypeMana" } else { "String_SpellTypePhysical" };
+    ctx.strings(english).s(key)
+}
+
+/// `Spell.DisplayDuration` / `ComplexForm.DisplayDuration`.
+fn display_duration(ctx: &Ctx, item: &Element, english: bool) -> String {
+    let key = match item.get("duration").to_ascii_uppercase().as_str() {
+        "P" => "String_SpellDurationPermanent",
+        "S" => "String_SpellDurationSustained",
+        "I" => "String_SpellDurationInstant",
+        "SPECIAL" => "String_SpellDurationSpecial",
+        _ => "String_None",
+    };
+    ctx.strings(english).s(key)
+}
+
+/// `Spell.DisplayRange`.
+fn display_range(ctx: &Ctx, item: &Element, english: bool) -> String {
+    let mut s = item.get("range");
+    if english || ctx.is_english() {
+        return s;
+    }
+    for (from, to) in [
+        ("Self", ctx.s("String_SpellRangeSelf")),
+        ("LOS", ctx.s("String_SpellRangeLineOfSight")),
+        ("LOI", ctx.s("String_SpellRangeLineOfInfluence")),
+        ("Touch", ctx.s("String_SpellRangeTouch")),
+        ("T", ctx.s("String_SpellRangeTouch")),
+        ("(A)", format!("({})", ctx.s("String_SpellRangeArea"))),
+        ("MAG", ctx.s("String_AttributeMAGShort")),
+        ("Special", ctx.s("String_Special")),
+    ] {
+        s = s.replace(from, &to);
+    }
+    s
+}
+
+/// `Spell.DisplayDamage`: `String_None` unless the spell does S or P
+/// damage, then the damage bonus and the localized type (`"0P"`).
+fn display_damage(ctx: &Ctx, item: &Element, english: bool) -> String {
+    let d = item.get("damage");
+    let l = ctx.strings(english);
+    if d != "S" && d != "P" {
+        return l.s("String_None");
+    }
+    let bonus: f64 = spell_improvements(ctx, item, &["SpellDescriptorDamage", "SpellCategoryDamage"]).map(|i| i.val).sum();
+    format!("{}{}", standard_round(bonus), l.s(if d == "P" { "String_DamagePhysical" } else { "String_DamageStun" }))
+}
+
+/// `Spell.DisplayDescriptors`.
+fn display_descriptors(ctx: &Ctx, item: &Element, english: bool) -> String {
+    let l = ctx.strings(english);
+    if item.get("descriptors").trim().is_empty() {
+        return l.s("String_None");
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for d in descriptors(item) {
+        if parts.contains(&d) {
+            continue;
+        }
+        parts.push(d);
+    }
+    let mut out: Vec<String> = parts
+        .iter()
+        .map(|d| {
+            let key = match d.to_uppercase().as_str() {
+                "ALCHEMICAL PREPARATION" => "String_DescAlchemicalPreparation".to_owned(),
+                "EXTENDED AREA" => "String_DescExtendedArea".to_owned(),
+                "MATERIAL LINK" => "String_DescMaterialLink".to_owned(),
+                "MULTI-SENSE" => "String_DescMultiSense".to_owned(),
+                "ORGANIC LINK" => "String_DescOrganicLink".to_owned(),
+                "SINGLE-SENSE" => "String_DescSingleSense".to_owned(),
+                _ => format!("String_Desc{d}"),
+            };
+            l.s(&key)
+        })
+        .collect();
+    if custom_extended(item) {
+        out.push(l.s("String_DescExtendedArea"));
+    }
+    out.join(&format!(",{}", ctx.space(english)))
+}
+
+/// `Spell.Skill`: Alchemy, Ritual Spellcasting, Artificing or Spellcasting.
+fn spell_skill(item: &Element) -> &'static str {
+    if item.get_bool("alchemical").unwrap_or(false) {
+        "Alchemy"
+    } else if item.get("category") == "Rituals" {
+        "Ritual Spellcasting"
+    } else if item.get("category") == "Enchantments" {
+        "Artificing"
+    } else {
+        "Spellcasting"
+    }
+}
+
+/// `Spell.DicePool`: the skill's pool (with MAG for barehanded adepts)
+/// plus its specialization bonus for the category, plus SpellCategory
+/// and SpellDicePool improvements.
+fn spell_pool(ctx: &Ctx, item: &Element) -> i32 {
+    let skill = ctx.sheet.skills.iter().find(|s| s.name == spell_skill(item));
+    let mut pool = skill.map_or(0, |s| {
+        let mut p = s.pool;
+        if item.get_bool("barehandedadept").unwrap_or(false) && s.rating > 0 {
+            p += ctx.sheet.attr("MAG") - ctx.sheet.attr(&s.attribute);
+        }
+        if s.specs.iter().any(|x| *x == item.get("category")) {
+            p += s.spec_bonus;
+        }
+        p
+    });
+    pool += standard_round(spell_improvements(ctx, item, &["SpellCategory", "SpellDicePool"]).map(|i| i.val).sum());
+    pool
 }
 
 /// `Spell.Print`.
@@ -209,29 +472,25 @@ pub fn spell(ctx: &Ctx, item: &Element) -> Element {
     }
     full.push_str(&extra_suffix(item));
     names(ctx, &mut out, item, "spells.xml", &full);
-    // Chummer writes name, fullname, name_english, fullname_english.
-    for f in ["descriptors", "category", "type", "range", "damage", "duration", "dv"] {
-        if f == "category" {
-            let cat = item.get("category");
-            add(&mut out, "category", ctx.tr_category("spells.xml", &cat));
-            add(&mut out, "category_english", cat);
-        } else {
-            pair(&mut out, item, f);
-        }
-    }
+    add(&mut out, "descriptors", display_descriptors(ctx, item, false));
+    add(&mut out, "descriptors_english", display_descriptors(ctx, item, true));
+    let cat = item.get("category");
+    add(&mut out, "category", ctx.tr_category("spells.xml", &cat));
+    add(&mut out, "category_english", cat);
+    add(&mut out, "type", display_type(ctx, item, false));
+    add(&mut out, "type_english", display_type(ctx, item, true));
+    add(&mut out, "range", display_range(ctx, item, false));
+    add(&mut out, "range_english", display_range(ctx, item, true));
+    add(&mut out, "damage", display_damage(ctx, item, false));
+    add(&mut out, "damage_english", display_damage(ctx, item, true));
+    add(&mut out, "duration", display_duration(ctx, item, false));
+    add(&mut out, "duration_english", display_duration(ctx, item, true));
+    add(&mut out, "dv", display_dv(ctx, item, false));
+    add(&mut out, "dv_english", display_dv(ctx, item, true));
     add(&mut out, "alchemy", bool_text(item.get_bool("alchemical").unwrap_or(false)));
     copy_bool(&mut out, item, "limited");
     copy_bool(&mut out, item, "barehandedadept");
-    let skill = if item.get_bool("alchemical").unwrap_or(false) {
-        "Alchemy"
-    } else if item.get("category") == "Rituals" {
-        "Ritual Spellcasting"
-    } else if item.get("category") == "Enchantments" {
-        "Artificing"
-    } else {
-        "Spellcasting"
-    };
-    add(&mut out, "dicepool", skill_pool(ctx, skill).to_string());
+    add(&mut out, "dicepool", spell_pool(ctx, item).to_string());
     source_page(&mut out, item);
     copy(&mut out, item, "extra");
     ctx.notes(&mut out, item);
@@ -241,8 +500,9 @@ pub fn spell(ctx: &Ctx, item: &Element) -> Element {
 /// `Power.Print`.
 pub fn power(ctx: &Ctx, item: &Element) -> Element {
     let mut out = Element::new("power");
-    let rating = item.get_i32("rating").unwrap_or(0);
     let levels = item.get_bool("levels").unwrap_or(false);
+    let second_mag = ctx.settings.is_some_and(|s| s.flag("mysadeptsecondmagattribute"));
+    let rating = crate::items::magic::power::total_rating(ctx.ch, item, crate::items::magic::account::adept_mag(ctx.ch, &ctx.sheet, second_mag));
     let full = format!("{}{}", extra_suffix(item), if levels && rating > 0 { format!(" ({rating})") } else { String::new() });
     names(ctx, &mut out, item, "powers.xml", &full);
     copy(&mut out, item, "extra");
@@ -250,9 +510,11 @@ pub fn power(ctx: &Ctx, item: &Element) -> Element {
     let ppl = item.get_f64("pointsperlevel").unwrap_or(0.0);
     add(&mut out, "pointsperlevel", num(ppl));
     add(&mut out, "adeptway", num(item.get_f64("adeptway").unwrap_or(0.0)));
-    add(&mut out, "rating", if levels { rating } else { 0 }.to_string());
-    let total = ppl * f64::from(rating.max(1)) + item.get_f64("extrapointcost").unwrap_or(0.0) - item.get_f64("freepoints").unwrap_or(0.0);
-    add(&mut out, "totalpoints", num(total.max(0.0)));
+    let second_mag = ctx.settings.is_some_and(|s| s.flag("mysadeptsecondmagattribute"));
+    let mag = crate::items::magic::account::adept_mag(ctx.ch, &ctx.sheet, second_mag);
+    let total_rating = crate::items::magic::power::total_rating(ctx.ch, item, mag);
+    add(&mut out, "rating", if levels { total_rating } else { 0 }.to_string());
+    add(&mut out, "totalpoints", num(crate::items::magic::power::power_point_cost(ctx.ch, item, mag)));
     pair(&mut out, item, "action");
     source_page(&mut out, item);
     ctx.notes(&mut out, item);
@@ -307,7 +569,7 @@ pub fn spirit(ctx: &Ctx, item: &Element) -> Element {
 }
 
 fn critter(ctx: &Ctx, name: &str) -> Option<Element> {
-    let doc = ctx.engine.store.doc("critters.xml").ok()?;
+    let doc = ctx.store.doc("critters.xml").ok()?;
     let found = doc.child("metatypes")?.children_named("metatype").find(|m| m.get("name") == name).cloned();
     found
 }
@@ -316,12 +578,85 @@ fn critter(ctx: &Ctx, name: &str) -> Option<Element> {
 pub fn complex_form(ctx: &Ctx, item: &Element) -> Element {
     let mut out = Element::new("complexform");
     names(ctx, &mut out, item, "complexforms.xml", &extra_suffix(item));
-    pair(&mut out, item, "duration");
-    pair(&mut out, item, "fv");
-    pair(&mut out, item, "target");
+    add(&mut out, "duration", display_duration(ctx, item, false));
+    add(&mut out, "duration_english", display_duration(ctx, item, true));
+    add(&mut out, "fv", display_fv(ctx, item, false));
+    add(&mut out, "fv_english", display_fv(ctx, item, true));
+    add(&mut out, "target", display_target(ctx, item, false));
+    add(&mut out, "target_english", display_target(ctx, item, true));
     source_page(&mut out, item);
     ctx.notes(&mut out, item);
     out
+}
+
+/// `ComplexForm.CalculatedFv`: the saved FV with FadingValue
+/// improvements for the form (or for all forms), minimum 2.
+fn calculated_fv(ctx: &Ctx, item: &Element) -> String {
+    let base = item.get("fv");
+    let name = item.get("name");
+    let imps: Vec<f64> =
+        ctx.ch.improvements.list.iter().filter(|i| i.enabled && i.kind == "FadingValue" && (i.improved_name.is_empty() || i.improved_name == name)).map(|i| i.val).collect();
+    if imps.is_empty() && expr::parse_plain(base.trim()).is_none() {
+        return base;
+    }
+    let force = base.starts_with('L');
+    let fv = if force { &base[1..] } else { base.as_str() };
+    let fv = if fv.is_empty() { "0".to_owned() } else { fv.trim_start_matches('+').to_owned() };
+    let mut append = String::new();
+    let fading = match expr::parse_plain(&fv) {
+        Some(v) => standard_round(v + imps.iter().sum::<f64>()),
+        None => {
+            let mut e = format!("({fv})");
+            for v in &imps {
+                e.push_str(&format!("+({})", num_invariant(*v)));
+            }
+            match expr::evaluate_num(&expr::substitute_attributes(&e, &crate::calc::SheetAttributes(&ctx.sheet.attributes))) {
+                Ok(v) => standard_round(v),
+                Err(_) => {
+                    append = e;
+                    0
+                }
+            }
+        }
+    };
+    if force {
+        if !append.is_empty() {
+            format!("{base}L{append}")
+        } else {
+            match fading {
+                0 => "L".to_owned(),
+                n if n > 0 => format!("L+{n}"),
+                n => format!("L{n}"),
+            }
+        }
+    } else if !append.is_empty() {
+        format!("{base}{append}")
+    } else {
+        fading.max(2).to_string()
+    }
+}
+
+/// `ComplexForm.DisplayFv`.
+fn display_fv(ctx: &Ctx, item: &Element, english: bool) -> String {
+    let s = calculated_fv(ctx, item).replace('/', "÷").replace('*', "×");
+    if english || ctx.is_english() { s } else { localize_value(ctx, &s, ("L", "String_ComplexFormLevel")) }
+}
+
+/// `ComplexForm.DisplayTarget`.
+fn display_target(ctx: &Ctx, item: &Element, english: bool) -> String {
+    let key = match item.get("target").to_ascii_uppercase().as_str() {
+        "PERSONA" => "String_ComplexFormTargetPersona",
+        "DEVICE" => "String_ComplexFormTargetDevice",
+        "FILE" => "String_ComplexFormTargetFile",
+        "SELF" => "String_SpellRangeSelf",
+        "SPRITE" => "String_ComplexFormTargetSprite",
+        "HOST" => "String_ComplexFormTargetHost",
+        "IC" => "String_ComplexFormTargetIC",
+        "ICON" => "String_ComplexFormTargetIcon",
+        "SPECIAL" => "String_Special",
+        _ => "String_None",
+    };
+    ctx.strings(english).s(key)
 }
 
 /// `AIProgram.Print`.

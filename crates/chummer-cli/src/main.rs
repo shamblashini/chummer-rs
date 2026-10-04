@@ -41,6 +41,8 @@ USAGE:
         --notes                include item and skill notes
         --expenses             include the karma and nuyen log
         --xml <out.xml>        also write the print XML
+        --all-sheets <dir>     render every sheet of the language into
+                               <dir>/<sheet>.html; fails if any sheet does
         --pdf                  convert to PDF (needs chromium, wkhtmltopdf
                                or weasyprint; else print the HTML from a browser)
     chummer-cli sheets [lang]              List available sheets
@@ -413,9 +415,6 @@ fn sheet_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
     let opt = |k: &str| rest.iter().position(|a| a == k).and_then(|i| rest.get(i + 1)).cloned();
     let flag = |k: &str| rest.iter().any(|a| a == k);
     let lang_code = opt("--lang").unwrap_or_else(|| "en-us".into());
-    let sheet_name = opt("--sheet").unwrap_or_else(|| print::DEFAULT_SHEET.into());
-    let xsl = print::find_sheet(&lang_code, &sheet_name)
-        .with_context(|| format!("no sheet {sheet_name:?} for {lang_code}; see `chummer-cli sheets {lang_code}`"))?;
     let ch = load(Path::new(file))?;
     let lang_dir = data::resource_dir("lang").context("lang directory not found")?;
     let lang = Language::load(&lang_dir, &lang_code);
@@ -424,6 +423,12 @@ fn sheet_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
     if let Some(x) = opt("--xml") {
         std::fs::write(&x, xml.to_xml_string()).with_context(|| format!("writing {x}"))?;
     }
+    if let Some(dir) = opt("--all-sheets") {
+        return all_sheets(&xml, &lang_code, Path::new(&dir));
+    }
+    let sheet_name = opt("--sheet").unwrap_or_else(|| print::DEFAULT_SHEET.into());
+    let xsl = print::find_sheet(&lang_code, &sheet_name)
+        .with_context(|| format!("no sheet {sheet_name:?} for {lang_code}; see `chummer-cli sheets {lang_code}`"))?;
     let out = opt("-o").map(PathBuf::from).unwrap_or_else(|| Path::new(file).with_extension("html"));
     let report = print::render_report(&xml, &xsl, &out)?;
     if !report.warnings.trim().is_empty() {
@@ -434,6 +439,37 @@ fn sheet_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
         let pdf = out.with_extension("pdf");
         print::html_to_pdf(&out, &pdf)?;
         println!("wrote {}", pdf.display());
+    }
+    Ok(())
+}
+
+/// `sheet --all-sheets <dir>`: render the print XML with every sheet of
+/// the language, report each, and fail if any sheet errors or warns.
+fn all_sheets(xml: &chummer_core::xml::Element, lang_code: &str, dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let sheets = print::available_sheets(lang_code);
+    if sheets.is_empty() {
+        bail!("no sheets for {lang_code}");
+    }
+    let mut failed = 0;
+    for (name, xsl) in &sheets {
+        let file_name: String = name.chars().map(|c| if matches!(c, '/' | '\\' | ':') { '_' } else { c }).collect();
+        let out = dir.join(format!("{file_name}.html"));
+        match print::render_report(xml, xsl, &out) {
+            Ok(r) if r.warnings.trim().is_empty() => println!("OK    {name}"),
+            Ok(r) => {
+                failed += 1;
+                println!("WARN  {name}: {}", r.warnings.trim().replace('\n', " | "));
+            }
+            Err(e) => {
+                failed += 1;
+                println!("FAIL  {name}: {e}");
+            }
+        }
+    }
+    println!("{} of {} sheets rendered into {}", sheets.len() - failed, sheets.len(), dir.display());
+    if failed > 0 {
+        bail!("{failed} sheet(s) failed");
     }
     Ok(())
 }

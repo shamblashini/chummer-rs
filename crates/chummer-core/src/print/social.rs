@@ -104,8 +104,7 @@ fn quality(ctx: &Ctx, q: &Element, count: i32) -> Element {
     out
 }
 
-/// `Lifestyle.Print`; totals from the saved cost, qualities, share and
-/// months.
+/// `Lifestyle.Print`; totals from `items::lifestyle`.
 pub fn lifestyle(ctx: &Ctx, l: &Element) -> Element {
     let mut out = Element::new("lifestyle");
     copy(&mut out, l, "guid");
@@ -116,14 +115,10 @@ pub fn lifestyle(ctx: &Ctx, l: &Element) -> Element {
     }
     let qualities: Vec<&Element> = l.child("lifestylequalities").map(|c| c.children_named("lifestylequality").collect()).unwrap_or_default();
     let cost = l.get_f64("cost").unwrap_or(0.0);
-    let extra: f64 = qualities.iter().filter(|q| !q.get_bool("free").unwrap_or(false)).map(|q| q.get_f64("cost").unwrap_or(0.0)).sum();
-    let mult: f64 = qualities.iter().map(|q| q.get_f64("multiplier").unwrap_or(0.0)).sum();
-    let share = l.get_f64("percentage").unwrap_or(100.0) / 100.0;
-    let monthly = ((cost + extra) * (1.0 + mult / 100.0) * share).max(0.0);
     let months = l.get_i32("months").unwrap_or(1);
     add(&mut out, "cost", ctx.nuyen(cost));
-    add(&mut out, "totalmonthlycost", ctx.nuyen(monthly));
-    add(&mut out, "totalcost", ctx.nuyen(monthly * f64::from(months)));
+    add(&mut out, "totalmonthlycost", ctx.nuyen(crate::items::lifestyle::monthly_cost(ctx.ch, l)));
+    add(&mut out, "totalcost", ctx.nuyen(crate::items::lifestyle::total_cost(ctx.ch, l)));
     add(&mut out, "dice", l.get_i32("dice").unwrap_or(0).to_string());
     add(&mut out, "multiplier", ctx.nuyen(l.get_f64("multiplier").unwrap_or(0.0)));
     add(&mut out, "months", months.to_string());
