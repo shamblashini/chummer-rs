@@ -20,6 +20,14 @@ const BASELINES: &[(&str, usize)] = &[
     ("mod", 33),
     ("weaponmount", 10),
     ("cyberware", 139),
+    ("spell", 100),
+    ("power", 64),
+    ("complexform", 17),
+    ("spirit", 7),
+    ("metamagic", 2),
+    ("martialart", 5),
+    ("critterpower", 0),
+    ("mentorspirit", 4),
 ];
 
 /// Never compared: per-instance state, user input, or presentation.

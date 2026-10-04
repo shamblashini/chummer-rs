@@ -12,10 +12,11 @@ use chummer_core::bonus::{self, BonusSource};
 use chummer_core::character::Character;
 use chummer_core::data::DataStore;
 use chummer_core::improvement::Improvement;
+use chummer_core::items::magic;
 use chummer_core::xml::Element;
 
 /// Exact matches must not fall below this. Raise it as handlers land.
-const BASELINE: usize = 627;
+const BASELINE: usize = 642;
 
 fn is_guid(s: &str) -> bool {
     s.len() == 36 && s.chars().filter(|c| *c == '-').count() == 4
@@ -65,9 +66,16 @@ fn source_kind(tag: &str, e: &Element) -> &'static str {
     }
 }
 
+/// Non-empty bonus-like child.
+fn has_bonus(e: &Element, tag: &str) -> bool {
+    e.child(tag).is_some_and(|b| b.elements().next().is_some())
+}
+
 fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {
     for c in e.elements() {
-        if c.child("bonus").is_some_and(|b| b.elements().next().is_some()) && !c.get("guid").is_empty() {
+        // Mentor spirits also grant the bonuses of the chosen <choice1>/<choice2>.
+        let mentor_choice = c.name == "mentorspirit" && (has_bonus(c, "choice1") || has_bonus(c, "choice2"));
+        if (has_bonus(c, "bonus") || mentor_choice) && !c.get("guid").is_empty() {
             out.push(c);
         }
         walk(c, out);
@@ -121,17 +129,13 @@ fn bonus_processor_reproduces_saved_improvements() {
             if saved.iter().any(|i| i.kind == "LimitModifier" && !is_guid(&i.improved_name)) {
                 continue;
             }
-            // Mentor spirits also apply the bonuses of the chosen
-            // <choice1>/<choice2>, which are not in <bonus>.
-            if it.name == "mentorspirit" {
-                continue;
-            }
             // Wireless, pair and first-level bonuses share the item guid;
             // only compare items whose improvements all come from <bonus>.
             if ["wirelessbonus", "pairbonus", "firstlevelbonus"].iter().any(|b| it.child(b).is_some_and(|x| x.elements().next().is_some())) {
                 continue;
             }
-            let bonus_el = it.child("bonus").unwrap();
+            let empty = Element::new("bonus");
+            let bonus_el = it.child("bonus").unwrap_or(&empty);
             let src = BonusSource {
                 kind: kind.into(),
                 guid: it.get("guid"),
@@ -140,7 +144,8 @@ fn bonus_processor_reproduces_saved_improvements() {
             };
             let extra = it.get("extra");
             let forced = Some(extra.as_str());
-            let out = bonus::apply(&ch, &store, bonus_el, &src, forced);
+            // Mentor spirits: <bonus>, <choice1> and <choice2> together.
+            let out = if it.name == "mentorspirit" { magic::mentor_outcome(&ch, &store, it, forced) } else { bonus::apply(&ch, &store, bonus_el, &src, forced) };
             // Version differences between the fixtures (5.18x-5.202) and
             // current Chummer5a, which this port follows:
             // - LimitModifier improvements used the item name as unique
@@ -151,9 +156,14 @@ fn bonus_processor_reproduces_saved_improvements() {
             //   names that come from it cannot be reproduced; compared
             //   without it. (The GUI applies bonuses from the data, which
             //   keeps the attribute.)
+            // - Mentor's Mask was a mentor spirit checkbox (`mentormask`)
+            //   that added +1 power point and -1 drain to the mentor; it is
+            //   now a quality, so those two are not the mentor's.
             let item_name = it.get("name");
+            let mentor_mask = it.name == "mentorspirit" && it.get_bool("mentormask").unwrap_or(false);
             let mut want: Vec<String> = saved
                 .iter()
+                .filter(|i| !(mentor_mask && i.improved_name.is_empty() && matches!((i.kind.as_str(), i.val), ("AdeptPowerPoints", 1.0) | ("DrainValue", -1.0))))
                 .map(|i| {
                     let mut i = (*i).clone();
                     if i.kind == "LimitModifier" && i.unique_name == item_name {

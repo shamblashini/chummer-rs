@@ -138,6 +138,7 @@ pub fn choice_for(ch: &Character, store: &DataStore, node: &Element, src: &Bonus
         "selectrestricted" => mk(format!("Name the restricted item for {}", src.name), Vec::new()),
         "selectweapon" => mk(format!("Choose a weapon for {}", src.name), names_of(store, "weapons.xml", "weapons", "weapon")),
         "selectarmor" => mk(format!("Choose armor for {}", src.name), names_of(store, "armor.xml", "armors", "armor")),
+        "selectpowers" | "optionalpowers" | "addspirit" | "limitspiritcategory" => crate::items::magic::hooks::choice(ch, store, node, src),
         _ => None,
     }
 }
