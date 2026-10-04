@@ -233,6 +233,7 @@ impl ItemEditor {
     }
 
     /// Career mode sells (`ICanSell.Sell`), creation mode deletes.
+    #[allow(clippy::too_many_arguments)]
     fn remove_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, guid: &str, tag: &str, included: bool, res: &mut EditorResult) {
         if included {
             return;
