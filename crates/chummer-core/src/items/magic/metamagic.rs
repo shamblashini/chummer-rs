@@ -62,7 +62,7 @@ pub fn add(ch: &mut Character, store: &DataStore, rec: Record<'_>, forced: Optio
     let src = if echo { "Echo" } else { "Metamagic" };
     let (el, out) = create(ch, store, rec, src, forced, taken + 1);
     let guid = el.get("guid");
-    commit(ch, "metamagics", el, &out);
+    commit(ch, store, "metamagics", el, &out);
     Ok(guid)
 }
 

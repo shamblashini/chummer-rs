@@ -70,7 +70,7 @@ pub fn add(ch: &mut Character, store: &DataStore, rec: Record<'_>, technique: Op
             out.added.extend(tout.added);
         }
     }
-    commit(ch, "martialarts", element(rec, &guid, techniques), &out);
+    commit(ch, store, "martialarts", element(rec, &guid, techniques), &out);
     guid
 }
 

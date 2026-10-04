@@ -669,9 +669,7 @@ pub fn add(tag: &str, ch: &mut Character, store: &DataStore, rec: Record<'_>, p:
         }
         None => ch.items_mut("cyberwares").push(w),
     }
-    for (container, el) in out.added.iter().cloned() {
-        ch.items_mut(&container).push(el);
-    }
+    crate::items::place_added(ch, store, &out.added);
     super::apply_outcome(ch, &out);
     Ok(guid)
 }

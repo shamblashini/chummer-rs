@@ -202,3 +202,37 @@ pub fn apply_outcome(ch: &mut Character, outcome: &Outcome) {
     }
     ch.dirty = true;
 }
+
+/// Put objects a bonus created (`Outcome.added`) where they belong.
+/// Most go into their top-level container. Specializations ride along as
+/// `skillspecializations` with a `<skill>` name and are attached to that
+/// skill; knowsofts go under `newskills/skilljackknowledgeskills`.
+pub fn place_added(ch: &mut Character, store: &DataStore, added: &[(String, Element)]) {
+    for (container, el) in added {
+        match container.as_str() {
+            "skillspecializations" => {
+                let skill = el.get("skill");
+                let id = store
+                    .doc("skills.xml")
+                    .ok()
+                    .and_then(|d| crate::data::find(&d, "skills", "skill", &skill).map(|r| r.id().to_ascii_lowercase()));
+                let spec = crate::skills::Specialization {
+                    guid: el.get("guid"),
+                    name: el.get("name"),
+                    free: el.get_bool("free").unwrap_or(false),
+                    expertise: el.get_bool("expertise").unwrap_or(false),
+                };
+                if let Some(s) = ch.skills.iter_mut().find(|s| id.as_deref() == Some(s.suid.to_ascii_lowercase().as_str())) {
+                    s.specs.push(spec);
+                } else if let Some(k) = ch.knowledge_skills.iter_mut().find(|k| k.name == skill) {
+                    k.specs.push(spec);
+                }
+            }
+            "skilljackknowledgeskills" => {
+                ch.doc.child_or_insert("newskills").child_or_insert("skilljackknowledgeskills").push(el.clone());
+            }
+            c => ch.items_mut(c).push(el.clone()),
+        }
+    }
+    ch.dirty = true;
+}

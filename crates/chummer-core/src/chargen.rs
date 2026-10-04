@@ -472,7 +472,7 @@ pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String>
     let src = BonusSource { kind: "Metatype".into(), guid: mt.id(), name: mt.name(), rating: 1 };
     if let Some(b) = node.child("bonus").filter(|b| b.elements().next().is_some()) {
         let out = bonus::apply(&ch, store, b, &src, None);
-        finish_outcome(&mut ch, out);
+        finish_outcome(&mut ch, store, out);
     }
     let qdoc = store.doc("qualities.xml").map_err(|e| e.to_string())?;
     if let Some(qs) = node.child("qualities") {
@@ -522,10 +522,8 @@ pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String>
     Ok(ch)
 }
 
-fn finish_outcome(ch: &mut Character, out: bonus::Outcome) {
-    for (container, el) in out.added.iter().cloned() {
-        ch.items_mut(&container).push(el);
-    }
+fn finish_outcome(ch: &mut Character, store: &DataStore, out: bonus::Outcome) {
+    items::place_added(ch, store, &out.added);
     items::apply_outcome(ch, &out);
 }
 
@@ -542,7 +540,7 @@ pub fn add_quality_with_source(ch: &mut Character, store: &DataStore, rec: Recor
         q.set_child_text("contributetobp", "False");
     }
     ch.items_mut("qualities").push(q);
-    finish_outcome(ch, out);
+    finish_outcome(ch, store, out);
     guid
 }
 
@@ -892,7 +890,7 @@ pub fn set_tradition(ch: &mut Character, store: &DataStore, name: &str) -> Resul
     if bonus_el.elements().next().is_some() {
         let src = BonusSource { kind: "Tradition".into(), guid, name: rec.name(), rating: 1 };
         let out = bonus::apply(ch, store, &bonus_el, &src, None);
-        finish_outcome(ch, out);
+        finish_outcome(ch, store, out);
     }
     ch.dirty = true;
     Ok(())

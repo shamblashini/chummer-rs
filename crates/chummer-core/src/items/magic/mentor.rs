@@ -133,9 +133,7 @@ pub fn add_mentor(ch: &mut Character, store: &DataStore, mentor_type: &str, name
         let rec = crate::data::find(&doc, "mentors", "mentor", name).ok_or("unknown mentor")?;
         let (el, out) = create(ch, store, rec, &guid, mentor_type, choice1, choice2, forced);
         super::super::apply_outcome(ch, &out);
-        for (c, e) in out.added {
-            ch.items_mut(&c).push(e);
-        }
+        crate::items::place_added(ch, store, &out.added);
         el
     };
     ch.items_mut("mentorspirits").push(el);
@@ -168,8 +166,6 @@ pub fn set_mentor_choices(ch: &mut Character, store: &DataStore, guid: &str, cho
         *m = el;
     }
     super::super::apply_outcome(ch, &out);
-    for (c, e) in out.added {
-        ch.items_mut(&c).push(e);
-    }
+    crate::items::place_added(ch, store, &out.added);
     Ok(())
 }

@@ -61,7 +61,7 @@ pub fn add(ch: &mut Character, store: &DataStore, rec: Record<'_>, rating: i32, 
     let out = apply_bonus(ch, store, rec.el().child("bonus"), &src, extra);
     let extra = out.selected.clone().or(extra.map(str::to_owned)).unwrap_or_default();
     let st = PowerState { rating, extra, ..Default::default() };
-    commit(ch, "powers", element(rec, &guid, &st, None), &out);
+    commit(ch, store, "powers", element(rec, &guid, &st, None), &out);
     guid
 }
 

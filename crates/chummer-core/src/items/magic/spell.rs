@@ -65,7 +65,7 @@ pub fn add(ch: &mut Character, store: &DataStore, rec: Record<'_>, extra: Option
     let src = source("Spell", &guid, &rec.name(), 1);
     let out = apply_bonus(ch, store, rec.el().child("bonus"), &src, extra);
     let extra = out.selected.clone().or(extra.map(str::to_owned)).unwrap_or_default();
-    commit(ch, "spells", element(rec, &guid, &extra, o), &out);
+    commit(ch, store, "spells", element(rec, &guid, &extra, o), &out);
     guid
 }
 

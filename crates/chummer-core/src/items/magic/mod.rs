@@ -204,11 +204,9 @@ pub(crate) fn apply_bonus(ch: &Character, store: &DataStore, node: Option<&Eleme
 }
 
 /// Store a new item, the objects its bonus created and its improvements.
-pub(crate) fn commit(ch: &mut Character, container: &str, el: Element, out: &Outcome) {
+pub(crate) fn commit(ch: &mut Character, store: &DataStore, container: &str, el: Element, out: &Outcome) {
     ch.items_mut(container).push(el);
-    for (c, e) in out.added.iter().cloned() {
-        ch.items_mut(&c).push(e);
-    }
+    crate::items::place_added(ch, store, &out.added);
     super::apply_outcome(ch, out);
 }
 

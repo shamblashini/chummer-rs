@@ -306,9 +306,7 @@ fn apply_bonus(ch: &mut Character, store: &DataStore, rec: Record<'_>, kind: &st
     let b = rec.el().child("bonus").filter(|b| b.elements().next().is_some())?;
     let src = BonusSource { kind: kind.into(), guid: guid.to_owned(), name: rec.name(), rating };
     let out = bonus::apply(ch, store, b, &src, answer);
-    for (container, el) in out.added.iter().cloned() {
-        ch.items_mut(&container).push(el);
-    }
+    crate::items::place_added(ch, store, &out.added);
     apply_outcome(ch, &out);
     out.selected
 }

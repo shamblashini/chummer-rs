@@ -31,7 +31,7 @@ pub fn add(ch: &mut Character, store: &DataStore, rec: Record<'_>, extra: Option
     let src = source("ComplexForm", &guid, &rec.name(), 1);
     let out = apply_bonus(ch, store, rec.el().child("bonus"), &src, extra);
     let extra = out.selected.clone().or(extra.map(str::to_owned)).unwrap_or_default();
-    commit(ch, "complexforms", element(rec, &guid, &extra, 0), &out);
+    commit(ch, store, "complexforms", element(rec, &guid, &extra, 0), &out);
     guid
 }
 

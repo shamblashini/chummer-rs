@@ -569,10 +569,8 @@ fn merge(into: &mut Outcome, o: Outcome) {
 }
 
 /// Store a bonus outcome: improvements, flags and the objects it created.
-fn store_outcome(ch: &mut Character, out: &Outcome) {
-    for (container, el) in out.added.iter().cloned() {
-        ch.items_mut(&container).push(el);
-    }
+fn store_outcome(ch: &mut Character, store: &DataStore, out: &Outcome) {
+    crate::items::place_added(ch, store, &out.added);
     super::apply_outcome(ch, out);
 }
 
@@ -590,7 +588,7 @@ pub fn add(ch: &mut Character, store: &DataStore, rec: Record<'_>, p: &Purchase)
         }
         None => ch.items_mut("gears").push(g),
     }
-    store_outcome(ch, &out);
+    store_outcome(ch, store, &out);
     Ok(guid)
 }
 

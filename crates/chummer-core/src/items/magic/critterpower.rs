@@ -75,7 +75,7 @@ pub fn create(ch: &Character, store: &DataStore, rec: Record<'_>, rating: i32, f
 pub fn add(ch: &mut Character, store: &DataStore, rec: Record<'_>, rating: i32, forced: Option<&str>) -> String {
     let (el, out) = create(ch, store, rec, rating, forced, 0);
     let guid = el.get("guid");
-    commit(ch, "critterpowers", el, &out);
+    commit(ch, store, "critterpowers", el, &out);
     guid
 }
 
