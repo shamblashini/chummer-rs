@@ -979,7 +979,8 @@ pub fn stamp_totals(ch: &mut Character, sheet: &Sheet, rules: &Rules) {
             }
         }
     }
-    ch.doc.set_child_text("totaless", format!("{:.*}", rules.essence_decimals as usize, sheet.essence));
+    // decimal.ToString(): no trailing zeros ("6", "5.78").
+    ch.doc.set_child_text("totaless", crate::improvement::fmt_num(crate::expr::round_away(sheet.essence, rules.essence_decimals)));
 }
 
 #[cfg(test)]

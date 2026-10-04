@@ -88,8 +88,9 @@ impl Improvement {
         put("customname", self.custom_name.clone());
         put("customid", self.custom_id.clone());
         put("customgroup", self.custom_group.clone());
-        put("addtorating", bool_str(self.add_to_rating));
-        put("enabled", bool_str(self.enabled));
+        // Chummer5a writes these two as integers (Improvement.Save).
+        put("addtorating", u8::from(self.add_to_rating).to_string());
+        put("enabled", u8::from(self.enabled).to_string());
         put("order", self.order.to_string());
         put("notes", self.notes.clone());
         e
