@@ -1,8 +1,8 @@
 //! New character wizard: build method preset, priorities, metatype,
 //! magic or resonance, free talent skills.
 
-use chummer_core::chargen::{self, HeritageOption, NewCharacter, Priorities, TalentOption, CATEGORIES, LETTERS};
 use chummer_core::character::Character;
+use chummer_core::chargen::{self, HeritageOption, NewCharacter, Priorities, TalentOption, CATEGORIES, LETTERS};
 use chummer_core::engine::Engine;
 use chummer_core::settings::CharacterSettings;
 use eframe::egui::{self, RichText};
@@ -42,13 +42,14 @@ impl Wizard {
     }
 
     pub fn show(&mut self, ctx: &egui::Context, engine: &Engine) -> WizardResult {
-        let presets = chargen::priority_presets(engine);
+        let presets = chargen::creation_presets(engine);
         if presets.is_empty() {
             return WizardResult::Cancel;
         }
         self.preset = self.preset.min(presets.len() - 1);
         let settings: CharacterSettings = presets[self.preset].clone();
         let sum_to_ten = settings.build_method() == "SumtoTen";
+        let karma_build = settings.build_method() == "Karma";
         let mut result = WizardResult::Open;
         let mut open = true;
         egui::Window::new("New character").open(&mut open).default_size([760.0, 640.0]).collapsible(false).show(ctx, |ui| {
@@ -66,12 +67,19 @@ impl Wizard {
             });
             ui.weak(format!(
                 "Build: {} · {} karma · availability {}",
-                if sum_to_ten { format!("Sum-to-Ten ({})", settings.int("sumtoten", 10)) } else { "Priority".to_owned() },
+                if karma_build {
+                    "Point buy (karma)".to_owned()
+                } else if sum_to_ten {
+                    format!("Sum-to-Ten ({})", settings.int("sumtoten", 10))
+                } else {
+                    "Priority".to_owned()
+                },
                 settings.int("buildpoints", 25),
                 settings.max_availability()
             ));
             ui.separator();
 
+            if !karma_build {
             ui.heading("Priorities");
             egui::Grid::new("wiz_prio").num_columns(3).spacing([12.0, 6.0]).show(ui, |ui| {
                 for (ci, cat) in CATEGORIES.iter().enumerate() {
@@ -94,9 +102,14 @@ impl Wizard {
                     ui.end_row();
                 }
             });
+            }
             let prios = Priorities(self.priorities);
-            if let Err(e) = prios.validate(&settings) {
-                ui.colored_label(WARN, e);
+            if !karma_build {
+                if let Err(e) = prios.validate(&settings) {
+                    ui.colored_label(WARN, e);
+                }
+            } else {
+                ui.weak("Everything is bought with karma. Magic and resonance come from qualities (Magician, Adept, Technomancer, ...) added after creation starts.");
             }
             ui.separator();
 
@@ -104,7 +117,8 @@ impl Wizard {
                 // Metatype
                 let ui = &mut cols[0];
                 ui.heading("Metatype");
-                let heritage: Vec<HeritageOption> = chargen::heritage_options(&engine.store, &settings, prios.get("Heritage"));
+                let heritage: Vec<HeritageOption> =
+                    if karma_build { chargen::karma_metatypes(&engine.store) } else { chargen::heritage_options(&engine.store, &settings, prios.get("Heritage")) };
                 if !heritage.iter().any(|h| h.metatype == self.metatype) {
                     if let Some(h) = heritage.first() {
                         self.metatype = h.metatype.clone();
@@ -113,7 +127,11 @@ impl Wizard {
                 }
                 egui::ScrollArea::vertical().id_salt("wiz_meta").max_height(220.0).show(ui, |ui| {
                     for h in &heritage {
-                        let label = format!("{}  ·  {} special{}", h.metatype, h.special, if h.karma > 0 { format!(" · {} karma", h.karma) } else { String::new() });
+                        let label = if karma_build {
+                            format!("{}  ·  {} karma", h.metatype, h.karma)
+                        } else {
+                            format!("{}  ·  {} special{}", h.metatype, h.special, if h.karma > 0 { format!(" · {} karma", h.karma) } else { String::new() })
+                        };
                         if ui.selectable_label(self.metatype == h.metatype, label).clicked() {
                             self.metatype = h.metatype.clone();
                             self.metavariant.clear();
@@ -135,6 +153,11 @@ impl Wizard {
 
                 // Talent
                 let ui = &mut cols[1];
+                if karma_build {
+                    self.talent = "Mundane".into();
+                    self.talent_skills.clear();
+                    return;
+                }
                 ui.heading("Magic or Resonance");
                 let talents: Vec<TalentOption> = chargen::talent_options(&engine.store, &settings, prios.get("Talent"));
                 let allowed: Vec<&TalentOption> = talents.iter().filter(|t| talent_allowed(t, &self.metatype)).collect();
@@ -182,7 +205,7 @@ impl Wizard {
             }
             ui.horizontal(|ui| {
                 let skills_ok = self.talent_skills.iter().all(|s| !s.is_empty());
-                let ok = prios.validate(&settings).is_ok() && skills_ok;
+                let ok = (karma_build || prios.validate(&settings).is_ok()) && skills_ok;
                 if ui.add_enabled(ok, egui::Button::new(RichText::new("Create character").color(ACCENT))).clicked() {
                     let spec = NewCharacter {
                         settings_id: settings.id(),

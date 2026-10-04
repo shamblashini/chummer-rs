@@ -202,12 +202,88 @@ fn find_metatype<'a>(doc: &'a Element, name: &str) -> Option<Record<'a>> {
     data::find(doc, "metatypes", "metatype", name)
 }
 
+/// Starting resources of a new character.
+struct StartBudget {
+    special: i32,
+    metatype_karma: i32,
+    talent: TalentOption,
+    attributes: i32,
+    skills: i32,
+    groups: i32,
+    nuyen: i32,
+}
+
+/// Priority and Sum-to-Ten: resources come from the priority table.
+fn priority_budget(store: &DataStore, settings: &CharacterSettings, spec: &NewCharacter, mt: Record<'_>, node: &Element) -> Result<StartBudget, String> {
+    let heritage = heritage_options(store, settings, spec.priorities.get("Heritage"));
+    let h = heritage.iter().find(|h| h.metatype == spec.metatype).ok_or("metatype not available at this heritage priority")?;
+    let (special, metatype_karma) = match &spec.metavariant {
+        Some(v) => h.metavariants.iter().find(|m| m.0 == *v).map(|m| (m.1, m.2)).ok_or("metavariant not available at this priority")?,
+        None => (h.special, h.karma),
+    };
+    let talents = talent_options(store, settings, spec.priorities.get("Talent"));
+    let talent = talents.iter().find(|t| t.value == spec.talent).cloned().ok_or("talent not available at this priority")?;
+    let attr_node = priority_node(store, settings, "Attributes", spec.priorities.get("Attributes"));
+    let mut attributes = attr_node.as_ref().and_then(|n| n.get_i32("attributes")).unwrap_or(0);
+    if node.child("halveattributepoints").is_some() || mt.el().child("halveattributepoints").is_some() {
+        attributes /= 2;
+    }
+    let skills_node = priority_node(store, settings, "Skills", spec.priorities.get("Skills"));
+    Ok(StartBudget {
+        special,
+        metatype_karma,
+        talent,
+        attributes,
+        skills: skills_node.as_ref().and_then(|n| n.get_i32("skills")).unwrap_or(0),
+        groups: skills_node.as_ref().and_then(|n| n.get_i32("skillgroups")).unwrap_or(0),
+        nuyen: priority_node(store, settings, "Resources", spec.priorities.get("Resources")).and_then(|n| n.get_i32("resources")).unwrap_or(0),
+    })
+}
+
+/// Karma (point buy) and Life Module builds: no points, the metatype costs
+/// karma (`SelectMetatypeKarma`), magic comes from qualities bought later.
+fn karma_build_budget(settings: &CharacterSettings, mt: Record<'_>, mv: Option<&Element>) -> StartBudget {
+    let karma = mv.and_then(|v| v.get_i32("karma")).unwrap_or_else(|| mt.el().get_i32("karma").unwrap_or(0));
+    let mult = settings.int("metatypecostskarmamultiplier", 1);
+    let mundane = Element::with_text("talent", "");
+    StartBudget {
+        special: 0,
+        metatype_karma: karma * mult,
+        talent: TalentOption { display: "Mundane".into(), value: "Mundane".into(), node: mundane },
+        attributes: 0,
+        skills: 0,
+        groups: 0,
+        nuyen: 0,
+    }
+}
+
+/// All metatypes for karma builds, with their karma cost.
+pub fn karma_metatypes(store: &DataStore) -> Vec<HeritageOption> {
+    let Ok(doc) = store.doc("metatypes.xml") else { return Vec::new() };
+    data::records(&doc, "metatypes", "metatype")
+        .into_iter()
+        .map(|m| HeritageOption {
+            metatype: m.name(),
+            special: 0,
+            karma: m.el().get_i32("karma").unwrap_or(0),
+            metavariants: m
+                .el()
+                .child("metavariants")
+                .map(|v| v.children_named("metavariant").map(|x| (x.get("name"), 0, x.get_i32("karma").unwrap_or(0))).collect())
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
 /// Build a new creation-mode character (`Character.Create` +
-/// `SelectMetatypePriority.MetatypeSelected`).
+/// `SelectMetatypePriority.MetatypeSelected` or `SelectMetatypeKarma`).
 pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String> {
     let store = &engine.store;
     let settings = engine.settings.resolve(&spec.settings_id).ok_or("unknown settings preset")?.clone();
-    spec.priorities.validate(&settings)?;
+    let karma_build = !crate::character::uses_priority_tables(&settings.build_method());
+    if !karma_build {
+        spec.priorities.validate(&settings)?;
+    }
     let metatypes = store.doc("metatypes.xml").map_err(|e| e.to_string())?;
     let mt = find_metatype(&metatypes, &spec.metatype).ok_or_else(|| format!("unknown metatype {}", spec.metatype))?;
     let mv = spec.metavariant.as_ref().and_then(|v| {
@@ -216,23 +292,9 @@ pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String>
     // Attributes come from the metavariant node when one is chosen.
     let node: &Element = mv.unwrap_or(mt.el());
 
-    let heritage = heritage_options(store, &settings, spec.priorities.get("Heritage"));
-    let h = heritage.iter().find(|h| h.metatype == spec.metatype).ok_or("metatype not available at this heritage priority")?;
-    let (special, metatype_karma) = match &spec.metavariant {
-        Some(v) => h.metavariants.iter().find(|m| m.0 == *v).map(|m| (m.1, m.2)).ok_or("metavariant not available at this priority")?,
-        None => (h.special, h.karma),
-    };
-    let talents = talent_options(store, &settings, spec.priorities.get("Talent"));
-    let talent = talents.iter().find(|t| t.value == spec.talent).cloned().ok_or("talent not available at this priority")?;
-    let attr_node = priority_node(store, &settings, "Attributes", spec.priorities.get("Attributes"));
-    let mut attr_points = attr_node.as_ref().and_then(|n| n.get_i32("attributes")).unwrap_or(0);
-    if node.child("halveattributepoints").is_some() || mt.el().child("halveattributepoints").is_some() {
-        attr_points /= 2;
-    }
-    let skills_node = priority_node(store, &settings, "Skills", spec.priorities.get("Skills"));
-    let skill_points = skills_node.as_ref().and_then(|n| n.get_i32("skills")).unwrap_or(0);
-    let group_points = skills_node.as_ref().and_then(|n| n.get_i32("skillgroups")).unwrap_or(0);
-    let nuyen = priority_node(store, &settings, "Resources", spec.priorities.get("Resources")).and_then(|n| n.get_i32("resources")).unwrap_or(0);
+    let b = if karma_build { karma_build_budget(&settings, mt, mv) } else { priority_budget(store, &settings, spec, mt, node)? };
+    let (special, metatype_karma, talent) = (b.special, b.metatype_karma, b.talent.clone());
+    let (attr_points, skill_points, group_points, nuyen) = (b.attributes, b.skills, b.groups, b.nuyen);
     let special_total = special + talent.int("specialattribpoints");
 
     let mut doc = Element::new("character");
@@ -597,20 +659,29 @@ pub fn budget(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &Character
     b.contact_points = (sheet.contact_points, contact_cost);
 
     // Qualities.
-    let (mut pos, mut neg) = (0, 0);
+    // Karma for qualities (all that contribute to BP) and, separately, the
+    // part that counts toward the quality limit.
+    let (mut pos, mut neg, mut pos_limit, mut neg_limit) = (0, 0, 0, 0);
     for q in ch.items("qualities", "quality") {
         if !q.get_bool("contributetobp").unwrap_or(true) || q.get("qualitysource") != "Selected" && q.get("qualitysource") != "Improvement" {
             continue;
         }
         let bp = q.get_i32("bp").unwrap_or(0) * rules.karma_quality;
+        let limited = q.get_bool("contributetolimit").unwrap_or(true);
         if q.get("qualitytype") == "Negative" {
             neg += bp.abs();
+            if limited {
+                neg_limit += bp.abs();
+            }
         } else {
             pos += bp;
+            if limited {
+                pos_limit += bp;
+            }
         }
     }
-    b.positive_quality_karma = pos;
-    b.negative_quality_karma = neg;
+    b.positive_quality_karma = pos_limit;
+    b.negative_quality_karma = neg_limit;
     b.quality_limit = settings.int("qualitykarmalimit", 25);
 
     // Spells beyond the free ones cost karma.
@@ -741,6 +812,12 @@ fn now_iso() -> String {
 /// Settings presets that use priority tables (what the wizard offers).
 pub fn priority_presets(engine: &Engine) -> Vec<&CharacterSettings> {
     engine.settings.presets.iter().filter(|p| crate::character::uses_priority_tables(&p.build_method())).collect()
+}
+
+/// Presets the new-character wizard offers: priority tables and karma
+/// point buy. (Life Modules is not supported yet.)
+pub fn creation_presets(engine: &Engine) -> Vec<&CharacterSettings> {
+    engine.settings.presets.iter().filter(|p| matches!(p.build_method().as_str(), "Priority" | "SumtoTen" | "Karma")).collect()
 }
 
 // ---------------------------------------------------------------------------

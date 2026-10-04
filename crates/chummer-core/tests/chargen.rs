@@ -139,3 +139,35 @@ fn creation_rules_for_specs_gender_and_magic_skills() {
     let problems = chargen::validity_problems(&ch, &b, engine.settings.resolve(STANDARD).unwrap());
     assert!(problems.iter().any(|p| p.contains("Pistols has more than one specialization")), "{problems:?}");
 }
+
+#[test]
+fn karma_point_buy_build() {
+    let engine = Engine::load().unwrap();
+    let pb = engine.settings.presets.iter().find(|p| p.build_method() == "Karma").unwrap().clone();
+    let elf_karma = chargen::karma_metatypes(&engine.store).into_iter().find(|m| m.metatype == "Elf").unwrap().karma;
+    let spec = NewCharacter {
+        settings_id: pb.id(),
+        metatype: "Elf".into(),
+        metavariant: None,
+        priorities: Priorities(['A', 'B', 'C', 'D', 'E']),
+        talent: "Mundane".into(),
+        talent_skills: vec![],
+        name: "Point Buy".into(),
+    };
+    let mut ch = chargen::create(&engine, &spec).unwrap();
+    let (_, b) = sheet(&engine, &ch);
+    assert_eq!(b.karma, (800, elf_karma), "metatype costs karma");
+    assert_eq!(b.attribute_points.0, 0);
+    assert_eq!(b.skill_points.0, 0);
+    // Raising an attribute with karma costs karma.
+    ch.attribute_mut("AGI").unwrap().karma = 1;
+    let (_, b2) = sheet(&engine, &ch);
+    assert_eq!(b2.karma.1, elf_karma + 3 * 5, "AGI 2 -> 3 at 5 karma per point");
+    // Becoming a magician is a quality.
+    let qdoc = engine.store.doc("qualities.xml").unwrap();
+    let mage = chummer_core::data::find(&qdoc, "qualities", "quality", "Magician").unwrap();
+    chargen::add_quality(&mut ch, &engine.store, mage, None);
+    assert!(ch.mag_enabled() && ch.is_magician());
+    let (_, b3) = sheet(&engine, &ch);
+    assert!(b3.karma.1 > b2.karma.1);
+}
