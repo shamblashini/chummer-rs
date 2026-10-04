@@ -12,6 +12,8 @@ mod select;
 mod settings_ui;
 mod view;
 mod wizard;
+#[cfg(test)]
+mod tr_coverage;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -195,18 +197,18 @@ impl App {
 
     fn menu(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.add(egui::Button::new("New character…").shortcut_text("Ctrl+N")).clicked() {
+            ui.menu_button(self.lang.tr("File"), |ui| {
+                if ui.add(egui::Button::new(self.lang.tr("New Character…")).shortcut_text("Ctrl+N")).clicked() {
                     ui.close();
                     self.wizard = Some(wizard::Wizard::new());
                 }
-                if ui.add(egui::Button::new("Open…").shortcut_text("Ctrl+O")).clicked() {
+                if ui.add(egui::Button::new(self.lang.tr("Open…")).shortcut_text("Ctrl+O")).clicked() {
                     ui.close();
                     self.open_dialog();
                 }
-                ui.menu_button("Open recent", |ui| {
+                ui.menu_button(self.lang.tr("Open recent"), |ui| {
                     if self.recent.is_empty() {
-                        ui.weak("No recent files");
+                        ui.weak(self.lang.tr("No recent files"));
                     }
                     for p in self.recent.clone() {
                         let label = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
@@ -218,55 +220,55 @@ impl App {
                 });
                 ui.separator();
                 let has = !self.views.is_empty();
-                if ui.add_enabled(has, egui::Button::new("Print / character sheet…").shortcut_text("Ctrl+P")).clicked() {
+                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Print…")).shortcut_text("Ctrl+P")).clicked() {
                     ui.close();
                     self.show_print = true;
                 }
-                if ui.add_enabled(has, egui::Button::new("Export…")).clicked() {
+                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Export…"))).clicked() {
                     ui.close();
                     self.show_export = true;
                 }
-                if ui.add_enabled(has, egui::Button::new("Save").shortcut_text("Ctrl+S")).clicked() {
+                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Save")).shortcut_text("Ctrl+S")).clicked() {
                     ui.close();
                     self.save(self.active, false);
                 }
-                if ui.add_enabled(has, egui::Button::new("Save as…")).clicked() {
+                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Save As…"))).clicked() {
                     ui.close();
                     self.save(self.active, true);
                 }
-                if ui.add_enabled(has, egui::Button::new("Close").shortcut_text("Ctrl+W")).clicked() {
+                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Close")).shortcut_text("Ctrl+W")).clicked() {
                     ui.close();
                     self.close_tab(self.active, false);
                 }
                 ui.separator();
-                if ui.add(egui::Button::new("Quit").shortcut_text("Ctrl+Q")).clicked() {
+                if ui.add(egui::Button::new(self.lang.tr("Exit")).shortcut_text("Ctrl+Q")).clicked() {
                     ui.close();
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
-            ui.menu_button("Tools", |ui| {
-                if ui.button("Character settings (house rules)…").clicked() {
+            ui.menu_button(self.lang.tr("Tools"), |ui| {
+                if ui.button(self.lang.tr("Character Settings…")).clicked() {
                     ui.close();
                     self.show_settings = true;
                 }
-                if ui.button("Sourcebooks (PDFs)…").clicked() {
+                if ui.button(self.lang.tr("Sourcebooks (PDFs)…")).clicked() {
                     ui.close();
                     self.show_sources = true;
                 }
-                if ui.button("Data browser").clicked() {
+                if ui.button(self.lang.tr("Data browser")).clicked() {
                     ui.close();
                     self.show_browser = true;
                 }
-                if ui.button("Dice roller").clicked() {
+                if ui.button(self.lang.tr("Dice Roller")).clicked() {
                     ui.close();
                     self.show_dice = true;
                 }
-                if ui.button("Initiative tracker").clicked() {
+                if ui.button(self.lang.tr("Initiative tracker")).clicked() {
                     ui.close();
                     self.show_initiative = true;
                 }
             });
-            ui.menu_button("Language", |ui| {
+            ui.menu_button(self.lang.tr("Language"), |ui| {
                 for (code, name) in self.languages.clone() {
                     if ui.selectable_label(self.lang.code == code, name).clicked() {
                         ui.close();
@@ -274,8 +276,8 @@ impl App {
                     }
                 }
             });
-            ui.menu_button("Help", |ui| {
-                if ui.button("About").clicked() {
+            ui.menu_button(self.lang.tr("Help"), |ui| {
+                if ui.button(self.lang.tr("About")).clicked() {
                     ui.close();
                     self.show_about = true;
                 }
@@ -321,18 +323,18 @@ impl App {
             ui.vertical_centered(|ui| {
                 ui.add_space(ui.available_height() * 0.2);
                 ui.label(RichText::new("chummer-rs").size(40.0).color(ACCENT).strong());
-                ui.label("Shadowrun 5th Edition character manager");
+                ui.label(self.lang.tr("Shadowrun 5th Edition character manager"));
                 ui.add_space(20.0);
-                if ui.button(RichText::new("✨  Create a new character…").size(18.0)).clicked() {
+                if ui.button(RichText::new(format!("✨  {}", self.lang.tr("Create New Character…"))).size(18.0)).clicked() {
                     self.wizard = Some(wizard::Wizard::new());
                 }
-                if ui.button(RichText::new("📂  Open a character…").size(18.0)).clicked() {
+                if ui.button(RichText::new(format!("📂  {}", self.lang.tr("Open Character…"))).size(18.0)).clicked() {
                     self.open_dialog();
                 }
-                ui.weak("or drop .chum5 files onto this window");
+                ui.weak(self.lang.tr("or drop .chum5 files onto this window"));
                 ui.add_space(16.0);
                 if !self.recent.is_empty() {
-                    ui.label(RichText::new("Recent").strong());
+                    ui.label(RichText::new(self.lang.tr("Recent Characters")).strong());
                     for p in self.recent.clone() {
                         let label = p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
                         if ui.link(label).on_hover_text(p.display().to_string()).clicked() {
@@ -341,18 +343,18 @@ impl App {
                     }
                 }
                 ui.add_space(16.0);
-                ui.label(RichText::new("Character roster").strong());
+                ui.label(RichText::new(self.lang.tr("Character Roster")).strong());
                 ui.horizontal(|ui| {
-                    if ui.button("Add folder…").clicked() {
+                    if ui.button(self.lang.tr("Add folder…")).clicked() {
                         if let Some(d) = rfd::FileDialog::new().pick_folder() {
                             self.roster_folders.push(d);
                             self.roster = chummer_core::roster::scan(&self.roster_folders);
                         }
                     }
-                    if !self.roster_folders.is_empty() && ui.button("Refresh").clicked() {
+                    if !self.roster_folders.is_empty() && ui.button(self.lang.tr("Refresh")).clicked() {
                         self.roster = chummer_core::roster::scan(&self.roster_folders);
                     }
-                    if !self.roster_folders.is_empty() && ui.button("Clear folders").clicked() {
+                    if !self.roster_folders.is_empty() && ui.button(self.lang.tr("Clear folders")).clicked() {
                         self.roster_folders.clear();
                         self.roster.clear();
                     }
@@ -365,8 +367,8 @@ impl App {
                                 open_path = Some(e.path.clone());
                             }
                             ui.label(&e.metatype);
-                            ui.weak(if e.career { "career" } else { "creation" });
-                            ui.weak(e.error.clone().unwrap_or_else(|| format!("karma {}", e.karma)));
+                            ui.weak(if e.career { self.lang.tr("Career Mode") } else { self.lang.tr("Create Mode") });
+                            ui.weak(e.error.clone().unwrap_or_else(|| format!("{} {}", self.lang.tr("Karma"), e.karma)));
                             ui.end_row();
                         }
                     });
@@ -375,13 +377,13 @@ impl App {
                     self.open(&p);
                 }
                 ui.add_space(16.0);
-                if self.pdfs.linked_count() == 0 && ui.button("📖 Link your sourcebook PDFs…").clicked() {
+                if self.pdfs.linked_count() == 0 && ui.button(format!("📖 {}", self.lang.tr("Link your sourcebook PDFs…"))).clicked() {
                     self.show_sources = true;
                 }
-                if ui.button("Data browser").clicked() {
+                if ui.button(self.lang.tr("Data browser")).clicked() {
                     self.show_browser = true;
                 }
-                if ui.button("Dice roller").clicked() {
+                if ui.button(self.lang.tr("Dice Roller")).clicked() {
                     self.show_dice = true;
                 }
             });
@@ -390,7 +392,7 @@ impl App {
 
     fn export_ui(&mut self, ui: &mut egui::Ui) {
         let Some(v) = self.views.get(self.active) else {
-            ui.label("Open a character first.");
+            ui.label(self.lang.tr("Open a character first."));
             return;
         };
         let formats: Vec<String> = chummer_core::export::BUILT_IN.iter().map(|s| s.to_string()).chain(chummer_core::export::stylesheets().into_iter().map(|(n, _)| n)).collect();
@@ -399,8 +401,8 @@ impl App {
                 ui.selectable_value(&mut self.export_format, f.clone(), f);
             }
         });
-        ui.weak("XML and JSON contain the full print data; stylesheets produce their own format.");
-        if ui.button("Export…").clicked() {
+        ui.weak(self.lang.tr("XML and JSON contain the full print data; stylesheets produce their own format."));
+        if ui.button(self.lang.tr("Export…")).clicked() {
             let ext = match self.export_format.as_str() {
                 "JSON" => "json",
                 "XML" => "xml",
@@ -418,21 +420,21 @@ impl App {
     /// Render the active character with a Chummer sheet and open it.
     fn print_ui(&mut self, ui: &mut egui::Ui) {
         let Some(v) = self.views.get(self.active) else {
-            ui.label("Open a character first.");
+            ui.label(self.lang.tr("Open a character first."));
             return;
         };
         let sheets = chummer_core::print::available_sheets(&self.lang.code);
         ui.horizontal(|ui| {
-            ui.label("Sheet");
+            ui.label(self.lang.tr("Character Sheet:"));
             egui::ComboBox::from_id_salt("sheet").selected_text(self.print_sheet.clone()).width(320.0).show_ui(ui, |ui| {
                 for (name, _) in &sheets {
                     ui.selectable_value(&mut self.print_sheet, name.clone(), name);
                 }
             });
         });
-        ui.checkbox(&mut self.print_notes, "Include notes");
-        ui.weak("The sheet opens in your browser; use its Print command for paper or PDF.");
-        if ui.button(RichText::new("Open sheet").strong()).clicked() {
+        ui.checkbox(&mut self.print_notes, self.lang.tr("Include notes"));
+        ui.weak(self.lang.tr("The sheet opens in your browser; use its Print command for paper or PDF."));
+        if ui.button(RichText::new(self.lang.tr("Open sheet")).strong()).clicked() {
             let Some((_, path)) = sheets.iter().find(|(n, _)| *n == self.print_sheet).or(sheets.first()) else {
                 self.status = Some(("No character sheets found".into(), true));
                 return;
@@ -462,17 +464,17 @@ impl App {
         };
         let mut choice = None;
         egui::Modal::new(egui::Id::new("unsaved")).show(ctx, |ui| {
-            ui.heading("Unsaved changes");
+            ui.heading(self.lang.tr("Unsaved Changes"));
             ui.label(format!("Save changes to {what} before closing?"));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
+                if ui.button(self.lang.tr("Save")).clicked() {
                     choice = Some(0);
                 }
-                if ui.button("Don't save").clicked() {
+                if ui.button(self.lang.tr("Don't save")).clicked() {
                     choice = Some(1);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(self.lang.tr("Cancel")).clicked() {
                     choice = Some(2);
                 }
             });
@@ -522,7 +524,7 @@ impl eframe::App for App {
                     let mut close = None;
                     for (i, v) in self.views.iter().enumerate() {
                         ui.selectable_value(&mut self.active, i, v.title());
-                        if ui.small_button("×").on_hover_text("Close").clicked() {
+                        if ui.small_button("×").on_hover_text(self.lang.tr("Close")).clicked() {
                             close = Some(i);
                         }
                         ui.separator();
@@ -542,7 +544,7 @@ impl eframe::App for App {
                     ui.weak(msg);
                 }
                 None => {
-                    ui.weak("Ready");
+                    ui.weak(self.lang.tr("Ready"));
                 }
             });
         });
@@ -559,16 +561,16 @@ impl eframe::App for App {
         }
 
         let mut open = self.show_browser;
-        egui::Window::new("Data browser").open(&mut open).default_size([900.0, 600.0]).show(ctx, |ui| {
+        egui::Window::new(self.lang.tr("Data browser")).id(egui::Id::new("data_browser")).open(&mut open).default_size([900.0, 600.0]).show(ctx, |ui| {
             self.browser.ui(ui, &self.engine.store, &self.lang, &self.pdfs, &mut self.status);
         });
         self.show_browser = open;
         let mut open = self.show_dice;
-        egui::Window::new("Dice roller").open(&mut open).default_width(360.0).show(ctx, |ui| self.dice.ui(ui));
+        egui::Window::new(self.lang.tr("Dice Roller")).id(egui::Id::new("dice_roller")).open(&mut open).default_width(360.0).show(ctx, |ui| self.dice.ui(ui, &self.lang));
         self.show_dice = open;
         let mut open = self.show_sources;
-        egui::Window::new("Sourcebooks").open(&mut open).default_size([820.0, 620.0]).show(ctx, |ui| {
-            if self.sources_window.ui(ui, &mut self.pdfs) {
+        egui::Window::new(self.lang.tr("Sourcebooks")).id(egui::Id::new("sourcebooks")).open(&mut open).default_size([820.0, 620.0]).show(ctx, |ui| {
+            if self.sources_window.ui(ui, &mut self.pdfs, &self.lang) {
                 if let Err(e) = self.pdfs.save() {
                     self.status = Some((format!("Could not save sourcebook settings: {e}"), true));
                 }
@@ -576,18 +578,18 @@ impl eframe::App for App {
         });
         self.show_sources = open;
         let mut open = self.show_export;
-        egui::Window::new("Export character").open(&mut open).default_width(420.0).show(ctx, |ui| self.export_ui(ui));
+        egui::Window::new(self.lang.tr("Export Character")).id(egui::Id::new("export_character")).open(&mut open).default_width(420.0).show(ctx, |ui| self.export_ui(ui));
         self.show_export = open;
         let mut open = self.show_print;
-        egui::Window::new("Character sheet").open(&mut open).default_width(460.0).show(ctx, |ui| self.print_ui(ui));
+        egui::Window::new(self.lang.tr("Character Sheet")).id(egui::Id::new("character_sheet")).open(&mut open).default_width(460.0).show(ctx, |ui| self.print_ui(ui));
         self.show_print = open;
         let mut open = self.show_initiative;
         let chars: Vec<(String, i32, u32)> = self.views.iter().map(|v| (v.ch.display_name(), v.sheet.initiative, v.sheet.initiative_dice.max(1) as u32)).collect();
-        egui::Window::new("Initiative tracker").open(&mut open).default_width(480.0).show(ctx, |ui| self.initiative.ui(ui, &chars));
+        egui::Window::new(self.lang.tr("Initiative tracker")).id(egui::Id::new("initiative_tracker")).open(&mut open).default_width(480.0).show(ctx, |ui| self.initiative.ui(ui, &self.lang, &chars));
         self.show_initiative = open;
         let mut open = self.show_settings;
         let mut reload = false;
-        egui::Window::new("Character settings").open(&mut open).default_size([820.0, 680.0]).show(ctx, |ui| {
+        egui::Window::new(self.lang.tr("Character Settings")).id(egui::Id::new("character_settings")).open(&mut open).default_size([820.0, 680.0]).show(ctx, |ui| {
             reload = self.settings_editor.ui(ui, &self.engine, &self.lang);
         });
         self.show_settings = open;
@@ -599,15 +601,15 @@ impl eframe::App for App {
             }
         }
         let mut open = self.show_about;
-        egui::Window::new("About chummer-rs").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+        egui::Window::new(format!("{} chummer-rs", self.lang.tr("About"))).id(egui::Id::new("about")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             ui.label(format!("chummer-rs {}", env!("CARGO_PKG_VERSION")));
-            ui.label("A Rust rewrite of Chummer5a, the Shadowrun 5e character manager.");
-            ui.label("Game data and translations come from Chummer5a (GPL-3.0).");
+            ui.label(self.lang.tr("A Rust rewrite of Chummer5a, the Shadowrun 5e character manager."));
+            ui.label(self.lang.tr("Game data and translations come from Chummer5a (GPL-3.0)."));
             ui.hyperlink("https://github.com/chummer5a/chummer5a");
         });
         self.show_about = open;
         if let Some(w) = self.wizard.as_mut() {
-            match w.show(ctx, &self.engine) {
+            match w.show(ctx, &self.engine, &self.lang) {
                 wizard::WizardResult::Open => {}
                 wizard::WizardResult::Cancel => self.wizard = None,
                 wizard::WizardResult::Created(ch) => {

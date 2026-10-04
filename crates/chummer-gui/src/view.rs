@@ -36,7 +36,7 @@ pub enum Tab {
     Notes,
 }
 
-const TABS: &[(Tab, &str)] = &[
+pub(crate) const TABS: &[(Tab, &str)] = &[
     (Tab::Info, "Info"),
     (Tab::Attributes, "Attributes"),
     (Tab::Skills, "Skills"),
@@ -189,48 +189,48 @@ impl CharacterView {
         let mut roll: Option<u32> = None;
         egui::SidePanel::right("sheet_panel").resizable(true).default_width(270.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                changed |= self.sidebar(ui, &mut roll);
+                changed |= self.sidebar(ui, lang, &mut roll);
             });
         });
-        changed |= self.item_editor_panel(ctx, engine, status);
+        changed |= self.item_editor_panel(ctx, engine, lang, status);
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for (t, label) in TABS {
-                    ui.selectable_value(&mut self.tab, *t, *label);
+                    ui.selectable_value(&mut self.tab, *t, lang.tr(label));
                 }
             });
             ui.separator();
             changed |= match self.tab {
-                Tab::Info => self.info_tab(ui),
-                Tab::Attributes => self.attributes_tab(ui, engine),
-                Tab::Skills => self.skills_tab(ui, engine, pdfs, status, &mut roll),
+                Tab::Info => self.info_tab(ui, lang),
+                Tab::Attributes => self.attributes_tab(ui, engine, lang),
+                Tab::Skills => self.skills_tab(ui, engine, lang, pdfs, status, &mut roll),
                 Tab::Qualities => {
                     let mut c = false;
                     egui::ScrollArea::both().show(ui, |ui| {
-                        if ui.button("➕ Add quality…").clicked() {
+                        if ui.button(format!("➕ {}", lang.tr("Add Quality…"))).clicked() {
                             self.open_select("quality", engine);
                         }
                         if !self.ch.created && self.ch.field("buildmethod") == "LifeModule" {
-                            c |= self.life_module_picker(ui, engine, status);
+                            c |= self.life_module_picker(ui, engine, lang, status);
                         }
                         c |= self.section(ui, &sections::QUALITIES, lang, pdfs, status);
                         ui.add_space(12.0);
-                        c |= self.contact_form(ui);
+                        c |= self.contact_form(ui, lang);
                         c |= self.section(ui, &sections::CONTACTS, lang, pdfs, status);
                     });
                     c
                 }
                 Tab::Magic => self.magic_tab(ui, engine, lang, pdfs, status),
                 Tab::Equipment => self.equipment_tab(ui, engine, lang, pdfs, status),
-                Tab::Improvements => self.improvements_tab(ui),
-                Tab::Log => self.log_tab(ui, engine),
-                Tab::Notes => self.notes_tab(ui),
+                Tab::Improvements => self.improvements_tab(ui, lang),
+                Tab::Log => self.log_tab(ui, engine, lang),
+                Tab::Notes => self.notes_tab(ui, lang),
             };
         });
-        changed |= self.confirm_dialog(ctx);
+        changed |= self.confirm_dialog(ctx, lang);
         changed |= self.select_dialog(ctx, engine, lang, pdfs, status);
-        changed |= self.drug_builder.window(ctx, &mut self.ch, &self.store, status);
-        changed |= self.finish_dialog(ctx);
+        changed |= self.drug_builder.window(ctx, &mut self.ch, &self.store, lang, status);
+        changed |= self.finish_dialog(ctx, lang);
         if let Some(a) = self.action.take() {
             changed |= self.run_action(a, engine, status);
         }
@@ -243,7 +243,7 @@ impl CharacterView {
 
     // ----- sidebar -----
 
-    fn sidebar(&mut self, ui: &mut egui::Ui, roll: &mut Option<u32>) -> bool {
+    fn sidebar(&mut self, ui: &mut egui::Ui, lang: &Language, roll: &mut Option<u32>) -> bool {
         let mut changed = false;
         let s = &self.sheet;
         ui.add_space(4.0);
@@ -252,25 +252,25 @@ impl CharacterView {
         ui.label(meta.join(" · "));
         ui.weak(format!(
             "{} · {}",
-            if self.ch.created { "Career" } else { "Creation" },
+            if self.ch.created { lang.tr("Career") } else { lang.tr("Creation") },
             match self.ch.field("buildmethod").as_str() {
-                "SumtoTen" => "Sum-to-Ten".to_owned(),
-                "" => "Priority".to_owned(),
-                b => b.to_owned(),
+                "SumtoTen" => lang.tr("Sum-to-Ten"),
+                "" => lang.tr("Priority"),
+                b => lang.tr(b),
             }
         ));
         ui.separator();
 
         egui::Grid::new("resources").num_columns(2).show(ui, |ui| {
-            ui.label("Karma");
+            ui.label(lang.tr("Karma"));
             changed |= ui.add(egui::DragValue::new(&mut self.ch.karma).speed(0.2)).changed();
             ui.end_row();
-            ui.label("Nuyen");
+            ui.label(lang.tr("Nuyen"));
             ui.horizontal(|ui| {
                 changed |= ui.add(egui::DragValue::new(&mut self.ch.nuyen).speed(10.0).max_decimals(2).suffix("¥")).changed();
             });
             ui.end_row();
-            ui.label("Essence");
+            ui.label(lang.tr("Essence"));
             ui.strong(format::essence(s.essence, self.rules.essence_decimals));
             ui.end_row();
         });
@@ -282,23 +282,23 @@ impl CharacterView {
             ui.end_row();
         };
         egui::Grid::new("derived").num_columns(2).striped(true).show(ui, |ui| {
-            stat(ui, "Initiative", format!("{} + {}d6", s.initiative, s.initiative_dice));
-            stat(ui, "Astral", format!("{} + {}d6", s.astral_initiative, s.astral_initiative_dice));
-            stat(ui, "Matrix cold-sim", format!("{} + {}d6", s.matrix_cold_initiative, s.matrix_cold_dice));
-            stat(ui, "Matrix hot-sim", format!("{} + {}d6", s.matrix_hot_initiative, s.matrix_hot_dice));
-            stat(ui, "Physical limit", s.limit_physical.to_string());
-            stat(ui, "Mental limit", s.limit_mental.to_string());
-            stat(ui, "Social limit", s.limit_social.to_string());
+            stat(ui, &lang.tr("Initiative"), format!("{} + {}d6", s.initiative, s.initiative_dice));
+            stat(ui, &lang.tr("Astral"), format!("{} + {}d6", s.astral_initiative, s.astral_initiative_dice));
+            stat(ui, &lang.tr("Matrix cold-sim"), format!("{} + {}d6", s.matrix_cold_initiative, s.matrix_cold_dice));
+            stat(ui, &lang.tr("Matrix hot-sim"), format!("{} + {}d6", s.matrix_hot_initiative, s.matrix_hot_dice));
+            stat(ui, &lang.tr("Physical limit"), s.limit_physical.to_string());
+            stat(ui, &lang.tr("Mental limit"), s.limit_mental.to_string());
+            stat(ui, &lang.tr("Social limit"), s.limit_social.to_string());
             if self.ch.mag_enabled() {
-                stat(ui, "Astral limit", s.limit_astral.to_string());
+                stat(ui, &lang.tr("Astral limit"), s.limit_astral.to_string());
             }
-            stat(ui, "Armor", s.armor.to_string());
-            stat(ui, "Composure", s.composure.to_string());
-            stat(ui, "Judge Intentions", s.judge_intentions.to_string());
-            stat(ui, "Memory", s.memory.to_string());
-            stat(ui, "Lift / Carry", s.lift_carry.to_string());
+            stat(ui, &lang.tr("Armor"), s.armor.to_string());
+            stat(ui, &lang.tr("Composure"), s.composure.to_string());
+            stat(ui, &lang.tr("Judge Intentions"), s.judge_intentions.to_string());
+            stat(ui, &lang.tr("Memory"), s.memory.to_string());
+            stat(ui, &lang.tr("Lift and Carry"), s.lift_carry.to_string());
             if s.wound_modifier != 0 {
-                ui.colored_label(WARN, "Wound modifier");
+                ui.colored_label(WARN, lang.tr("Wound modifier"));
                 ui.colored_label(WARN, s.wound_modifier.to_string());
                 ui.end_row();
             }
@@ -306,14 +306,14 @@ impl CharacterView {
         ui.separator();
 
         let (pcm, scm, thr) = (s.physical_cm, s.stun_cm, s.cm_threshold);
-        ui.label(RichText::new("Physical damage").strong());
+        ui.label(RichText::new(lang.tr("Physical damage")).strong());
         changed |= cm_track(ui, "pcm", pcm, thr, &mut self.ch.physical_cm_filled, Color32::from_rgb(200, 60, 60));
-        ui.label(RichText::new("Stun damage").strong());
+        ui.label(RichText::new(lang.tr("Stun damage")).strong());
         changed |= cm_track(ui, "scm", scm, thr, &mut self.ch.stun_cm_filled, Color32::from_rgb(70, 130, 220));
-        ui.weak(format!("Overflow {} · −1 die per {thr} boxes", s.cm_overflow));
+        ui.weak(lang.tr_fmt("Overflow {0} · −1 die per {1} boxes", &[&s.cm_overflow, &thr]));
         ui.separator();
-        changed |= self.budget_panel(ui);
-        if ui.button("🎲 Open dice roller").clicked() {
+        changed |= self.budget_panel(ui, lang);
+        if ui.button(format!("🎲 {}", lang.tr("Open Dice Roller"))).clicked() {
             *roll = Some(6);
         }
         changed
@@ -321,12 +321,12 @@ impl CharacterView {
 
     // ----- tabs -----
 
-    fn info_tab(&mut self, ui: &mut egui::Ui) -> bool {
+    fn info_tab(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
         let mut changed = false;
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("info").num_columns(4).spacing([16.0, 6.0]).show(ui, |ui| {
                 for (i, (key, label)) in INFO_FIELDS.iter().enumerate() {
-                    ui.label(*label);
+                    ui.label(lang.tr(label));
                     let mut v = self.ch.field(key);
                     let editable = !matches!(*key, "metatype" | "metavariant");
                     let r = ui.add_enabled_ui(editable, |ui| ui.add_sized([220.0, 20.0], egui::TextEdit::singleline(&mut v))).inner;
@@ -341,7 +341,7 @@ impl CharacterView {
             });
             ui.add_space(8.0);
             egui::Grid::new("reputation").num_columns(6).spacing([16.0, 6.0]).show(ui, |ui| {
-                for (key, label) in [("streetcred", "Street Cred"), ("notoriety", "Notoriety"), ("publicawareness", "Public Awareness")] {
+                for (key, label) in [("streetcred", lang.tr("Street Cred")), ("notoriety", lang.tr("Notoriety")), ("publicawareness", lang.tr("Public Awareness"))] {
                     ui.label(label);
                     let mut v = self.ch.doc.get_i32(key).unwrap_or(0);
                     if ui.add(egui::DragValue::new(&mut v).range(0..=100)).changed() {
@@ -352,7 +352,7 @@ impl CharacterView {
             });
             ui.add_space(8.0);
             for (key, label) in TEXT_FIELDS.iter().filter(|(k, _)| matches!(*k, "concept" | "description" | "background")) {
-                ui.label(RichText::new(*label).strong());
+                ui.label(RichText::new(lang.tr(label)).strong());
                 let mut v = self.ch.field(key);
                 if ui.add(egui::TextEdit::multiline(&mut v).desired_width(f32::INFINITY).desired_rows(4)).changed() {
                     self.ch.set_field(key, v);
@@ -364,7 +364,7 @@ impl CharacterView {
         changed
     }
 
-    fn attributes_tab(&mut self, ui: &mut egui::Ui, engine: &Engine) -> bool {
+    fn attributes_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language) -> bool {
         let mut changed = false;
         let career = self.ch.created;
         let priority = chummer_core::character::uses_priority_tables(&self.ch.field("buildmethod"));
@@ -383,9 +383,9 @@ impl CharacterView {
             })
             .collect();
         ui.label(if career {
-            "Career mode: Raise spends karma and records it in the Karma & Nuyen log, where it can be undone."
+            lang.tr("Career mode: Raise spends karma and records it in the Karma & Nuyen log, where it can be undone.")
         } else {
-            "Creation mode: base uses attribute points (priority builds). Changing levels does not deduct karma automatically; the Karma cost column shows what they are worth."
+            lang.tr("Creation mode: base uses attribute points (priority builds). Changing levels does not deduct karma automatically; the Karma cost column shows what they are worth.")
         });
         ui.add_space(6.0);
         TableBuilder::new(ui)
@@ -394,7 +394,7 @@ impl CharacterView {
             .columns(Column::auto().at_least(60.0), 6)
             .column(Column::remainder())
             .header(22.0, |mut h| {
-                for t in ["Attribute", "Min/Max", "Base", "Karma", "Natural", "Augmented", "Karma cost", "Next level"] {
+                for t in lang.tr_all(["Attribute", "Min/Max", "Base", "Karma", "Natural", "Augmented", "Karma cost", "Next level"]) {
                     h.col(|ui| {
                         ui.strong(t);
                     });
@@ -405,7 +405,7 @@ impl CharacterView {
                     let Some(v) = self.sheet.attr_values(name).cloned() else { continue };
                     body.row(24.0, |mut row| {
                         row.col(|ui| {
-                            ui.label(format!("{} ({name})", attributes::long_name(name)));
+                            ui.label(format!("{} ({name})", lang.tr(attributes::long_name(name))));
                         });
                         row.col(|ui| {
                             ui.label(format!("{}/{} ({})", v.total_min, v.total_max, v.total_aug_max));
@@ -440,19 +440,19 @@ impl CharacterView {
                             if career {
                                 match career::attribute_upgrade_karma_cost(engine, &self.ch, name) {
                                     Some(c) => {
-                                        let r = ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("Raise ({c} karma)")));
+                                        let r = ui.add_enabled(self.ch.karma >= c, egui::Button::new(lang.tr_fmt("Raise ({0} karma)", &[&c])));
                                         if r.clicked() {
                                             self.action = Some(CareerAction::RaiseAttribute(name.to_owned()));
                                         }
                                     }
                                     None => {
-                                        ui.weak("at maximum");
+                                        ui.weak(lang.tr("at maximum"));
                                     }
                                 }
                             } else {
                                 match calc::attribute_upgrade_cost(&v, &self.rules) {
-                                    Some(c) => ui.label(format!("{c} karma")),
-                                    None => ui.weak("at maximum"),
+                                    Some(c) => ui.label(lang.tr_fmt("{0} karma", &[&c])),
+                                    None => ui.weak(lang.tr("at maximum")),
                                 };
                             }
                         });
@@ -460,22 +460,26 @@ impl CharacterView {
                 }
             });
         ui.add_space(8.0);
-        ui.label(format!("Karma spent on attributes: {}", self.sheet.attribute_karma_spent));
+        ui.label(format!("{} {}", lang.tr("Karma spent on attributes:"), self.sheet.attribute_karma_spent));
         changed
     }
 
-    fn skills_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, pdfs: &SourcebookLibrary, status: &mut Status, roll: &mut Option<u32>) -> bool {
+    fn skills_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, roll: &mut Option<u32>) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.skill_filter).hint_text("Filter skills").desired_width(200.0));
-            ui.checkbox(&mut self.only_rated, "Only skills with a rating");
+            ui.add(egui::TextEdit::singleline(&mut self.skill_filter).hint_text(lang.tr("Filter skills")).desired_width(200.0));
+            ui.checkbox(&mut self.only_rated, lang.tr("Only skills with a rating"));
             ui.separator();
             if self.ch.created {
-                ui.label(format!("Karma value of skills: {}", self.sheet.skill_karma_spent));
+                ui.label(format!("{} {}", lang.tr("Karma value of skills:"), self.sheet.skill_karma_spent));
             } else {
                 ui.label(format!(
-                    "Knowledge points: {} / {} · karma spent on skills: {}",
-                    self.sheet.knowledge_points_used, self.sheet.knowledge_points, self.sheet.skill_karma_spent
+                    "{} {} / {} · {} {}",
+                    lang.tr("Knowledge Points:"),
+                    self.sheet.knowledge_points_used,
+                    self.sheet.knowledge_points,
+                    lang.tr("karma spent on skills:"),
+                    self.sheet.skill_karma_spent
                 ));
             }
         });
@@ -490,9 +494,9 @@ impl CharacterView {
         // Skills cap at 6 during creation (setting-dependent), 12 in career.
         let cap = if career { self.rules.max_skill_rating_career } else { self.rules.max_skill_rating_create };
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.heading("Active skills");
+            ui.heading(lang.tr("Active Skills"));
             egui::Grid::new("skills").striped(true).num_columns(8).spacing([14.0, 4.0]).show(ui, |ui| {
-                for h in ["Skill", "Attr", "Group", "Base", "Karma", "Rating", "Pool", "Specializations"] {
+                for h in lang.tr_all(["Skill", "Attr", "Group", "Base", "Karma", "Rating", "Pool", "Specializations"]) {
                     ui.strong(h);
                 }
                 ui.end_row();
@@ -501,7 +505,7 @@ impl CharacterView {
                     let label = if s.disabled { RichText::new(&s.name).weak() } else { RichText::new(&s.name) };
                     let name = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
                     if let Some(r) = r {
-                        if name.on_hover_text(format!("{r} — click to open the rulebook")).clicked() {
+                        if name.on_hover_text(format!("{r} — {}", lang.tr("click to open the rulebook"))).clicked() {
                             pdf_ui::open(pdfs, &r, status);
                         }
                     }
@@ -513,13 +517,13 @@ impl CharacterView {
                     changed |= ui.add_enabled(on && !career, egui::DragValue::new(&mut sk.karma).range(0..=cap)).changed();
                     ui.label(s.rating.to_string());
                     let pool = if s.rating == 0 && !s.default { "—".to_owned() } else { s.pool.to_string() };
-                    if ui.add(egui::Button::new(RichText::new(pool).strong()).frame(false)).on_hover_text("Roll this pool").clicked() {
+                    if ui.add(egui::Button::new(RichText::new(pool).strong()).frame(false)).on_hover_text(lang.tr("Roll this pool")).clicked() {
                         *roll = Some(s.pool.max(1) as u32);
                     }
                     ui.horizontal(|ui| {
                         if career && !s.disabled {
                             if let Some(c) = career::skill_upgrade_karma_cost(engine, &self.ch, &s.guid) {
-                                if ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("▲ {c}"))).on_hover_text("Raise for karma").clicked() {
+                                if ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("▲ {c}"))).on_hover_text(lang.tr("Raise for karma")).clicked() {
                                     self.action = Some(CareerAction::RaiseSkill(s.guid.clone()));
                                 }
                             }
@@ -544,24 +548,24 @@ impl CharacterView {
                             }
                         })
                         .response
-                        .on_hover_text("Add a specialization");
+                        .on_hover_text(lang.tr("Add a specialization"));
                     });
                     ui.end_row();
                 }
             });
             ui.add_space(12.0);
-            ui.heading("Knowledge & language skills");
+            ui.heading(lang.tr("Knowledge Skills"));
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.new_kno.0).hint_text("New knowledge skill").desired_width(200.0));
-                egui::ComboBox::from_id_salt("kno_type").selected_text(self.new_kno.1.clone()).show_ui(ui, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.new_kno.0).hint_text(lang.tr("New Knowledge Skill")).desired_width(200.0));
+                egui::ComboBox::from_id_salt("kno_type").selected_text(lang.data_name("skills.xml", "", &self.new_kno.1)).show_ui(ui, |ui| {
                     for t in ["Academic", "Interest", "Language", "Professional", "Street"] {
-                        ui.selectable_value(&mut self.new_kno.1, t.to_owned(), t);
+                        ui.selectable_value(&mut self.new_kno.1, t.to_owned(), lang.data_name("skills.xml", "", t));
                     }
                 });
                 if self.new_kno.1 == "Language" {
-                    ui.checkbox(&mut self.new_kno.2, "Native");
+                    ui.checkbox(&mut self.new_kno.2, lang.tr("Native"));
                 }
-                if ui.add_enabled(!self.new_kno.0.trim().is_empty(), egui::Button::new("Add")).clicked() {
+                if ui.add_enabled(!self.new_kno.0.trim().is_empty(), egui::Button::new(lang.tr("Add"))).clicked() {
                     let native = self.new_kno.1 == "Language" && self.new_kno.2;
                     if career {
                         self.action = Some(CareerAction::LearnKnowledge(self.new_kno.0.trim().to_owned(), self.new_kno.1.clone()));
@@ -574,15 +578,15 @@ impl CharacterView {
             });
             let mut remove_kno: Option<String> = None;
             egui::Grid::new("kskills").striped(true).num_columns(7).spacing([14.0, 4.0]).show(ui, |ui| {
-                for h in ["Skill", "Type", "Base", "Karma", "Rating", "Pool", ""] {
+                for h in lang.tr_all(["Skill", "Type", "Base", "Karma", "Rating", "Pool", ""]) {
                     ui.strong(h);
                 }
                 ui.end_row();
                 for (i, s) in &kno {
                     ui.label(&s.name);
-                    ui.weak(&s.category);
+                    ui.weak(lang.data_name("skills.xml", "", &s.category));
                     if s.native {
-                        ui.weak("native");
+                        ui.weak(lang.tr("native"));
                         ui.label("");
                         ui.label("N");
                         ui.label("N");
@@ -602,7 +606,7 @@ impl CharacterView {
                         });
                         ui.strong(s.pool.to_string());
                     }
-                    if ui.small_button("🗑").on_hover_text("Remove").clicked() {
+                    if ui.small_button("🗑").on_hover_text(lang.tr("Remove")).clicked() {
                         remove_kno = Some(s.guid.clone());
                     }
                     ui.end_row();
@@ -614,9 +618,9 @@ impl CharacterView {
             }
             if !self.ch.skill_groups.is_empty() {
                 ui.add_space(12.0);
-                ui.heading("Skill groups");
+                ui.heading(lang.tr("Skill Groups"));
                 egui::Grid::new("groups").striped(true).num_columns(4).spacing([14.0, 4.0]).show(ui, |ui| {
-                    for h in ["Group", "Base", "Karma", "Rating"] {
+                    for h in lang.tr_all(["Group", "Base", "Karma", "Rating"]) {
                         ui.strong(h);
                     }
                     ui.end_row();
@@ -652,9 +656,9 @@ impl CharacterView {
         if self.ch.mag_enabled() && self.ch.is_magician() {
             let current = self.ch.doc.child("tradition").map(|t| t.get("name")).unwrap_or_default();
             ui.horizontal(|ui| {
-                ui.label("Tradition");
+                ui.label(lang.tr("Tradition"));
                 let mut pick: Option<String> = None;
-                egui::ComboBox::from_id_salt("tradition").selected_text(if current.is_empty() { "Choose…".to_owned() } else { current.clone() }).width(240.0).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("tradition").selected_text(if current.is_empty() { lang.tr("Choose…") } else { current.clone() }).width(240.0).show_ui(ui, |ui| {
                     if let Ok(doc) = self.store.doc("traditions.xml") {
                         for r in data::records(&doc, "traditions", "tradition") {
                             if ui.selectable_label(current == r.name(), r.name()).clicked() {
@@ -675,38 +679,38 @@ impl CharacterView {
         ui.horizontal(|ui| {
             for (i, s) in present.iter().enumerate() {
                 let n = self.ch.items(s.container, s.item).len();
-                ui.selectable_value(&mut self.magic, i, format!("{} ({n})", s.label));
+                ui.selectable_value(&mut self.magic, i, format!("{} ({n})", lang.tr(s.label)));
             }
         });
         let m = chummer_core::items::magic::magic_summary_with(&self.ch, &self.sheet, Some(&self.store));
         ui.horizontal_wrapped(|ui| {
             if !m.tradition.is_empty() {
-                ui.label(format!("Tradition: {}", m.tradition));
-                ui.label(format!("Drain {} = {} dice", m.drain_expression.replace(['{', '}'], ""), m.drain_pool));
+                ui.label(format!("{} {}", lang.tr("Tradition:"), m.tradition));
+                ui.label(lang.tr_fmt("Drain {0} = {1} dice", &[&m.drain_expression.replace(['{', '}'], ""), &m.drain_pool]));
             }
             if !m.stream.is_empty() {
-                ui.label(format!("Stream: {} · Fading {} = {} dice", m.stream, m.fading_expression.replace(['{', '}'], ""), m.fading_pool));
+                ui.label(lang.tr_fmt("Stream: {0} · Fading {1} = {2} dice", &[&m.stream, &m.fading_expression.replace(['{', '}'], ""), &m.fading_pool]));
             }
             if let Some((total, used)) = m.power_points {
-                let t = RichText::new(format!("Power points {used} / {total}"));
+                let t = RichText::new(format!("{} {used} / {total}", lang.tr("Power Points")));
                 ui.label(if used > total { t.color(ui.visuals().error_fg_color) } else { t });
             }
             if self.ch.mag_enabled() {
-                ui.label(format!("Astral {} + {}d6, limit {}", m.astral_initiative, m.astral_initiative_dice, m.astral_limit));
+                ui.label(lang.tr_fmt("Astral {0} + {1}d6, limit {2}", &[&m.astral_initiative, &m.astral_initiative_dice, &m.astral_limit]));
             }
         });
         let techno = self.ch.res_enabled() && !self.ch.mag_enabled();
         let grade = self.ch.doc.get_i32(if techno { "submersiongrade" } else { "initiategrade" }).unwrap_or(0);
         ui.horizontal(|ui| {
             if grade > 0 {
-                ui.label(format!("{} grade {grade}", if techno { "Submersion" } else { "Initiate" }));
+                ui.label(format!("{} {grade}", if techno { lang.tr("Submersion Grade") } else { lang.tr("Initiate Grade") }));
             }
             if self.ch.created && (self.ch.mag_enabled() || self.ch.res_enabled()) {
-                ui.checkbox(&mut self.initiation.group, "Group");
-                ui.checkbox(&mut self.initiation.ordeal, "Ordeal");
-                ui.checkbox(&mut self.initiation.schooling, "Schooling");
+                ui.checkbox(&mut self.initiation.group, lang.tr("Group"));
+                ui.checkbox(&mut self.initiation.ordeal, lang.tr("Ordeal"));
+                ui.checkbox(&mut self.initiation.schooling, lang.tr("Schooling"));
                 let cost = career::initiation_karma_cost(engine, &self.ch, self.initiation);
-                let label = format!("{} ({cost} karma)", if techno { "Submerge" } else { "Initiate" });
+                let label = format!("{} ({cost} {})", if techno { lang.tr("Submerge") } else { lang.tr("Initiate") }, lang.tr("karma"));
                 if ui.add_enabled(self.ch.karma >= cost, egui::Button::new(label)).clicked() {
                     self.action = Some(CareerAction::Initiate(self.initiation));
                 }
@@ -717,22 +721,22 @@ impl CharacterView {
             let sec = **sec;
             let cx = crate::magic_ui::Ctx { store: &self.store, engine, sheet: &self.sheet, settings: self.settings.as_ref(), lang, pdfs };
             changed |= self.magic_editor.ui(ui, &mut self.ch, &cx, sec.container, status);
-            self.add_buttons(ui, engine, sec.container);
+            self.add_buttons(ui, engine, lang, sec.container);
             egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));
         }
         changed
     }
 
     /// Final weapon stats (damage with STR, AP, accuracy, dice pool, ranges).
-    fn weapon_summary(&self, ui: &mut egui::Ui) {
+    fn weapon_summary(&self, ui: &mut egui::Ui, lang: &Language) {
         let weapons = self.ch.items("weapons", "weapon");
         if weapons.is_empty() {
             return;
         }
         let rules = self.settings.as_ref().map(chummer_core::items::weapon::WeaponRules::from_settings).unwrap_or_default();
-        egui::CollapsingHeader::new(RichText::new("Combat stats").strong()).default_open(true).show(ui, |ui| {
+        egui::CollapsingHeader::new(RichText::new(lang.tr("Combat stats")).strong()).id_salt("combat_stats").default_open(true).show(ui, |ui| {
             egui::Grid::new("weapon_stats").striped(true).num_columns(8).spacing([14.0, 3.0]).show(ui, |ui| {
-                for h in ["Weapon", "Pool", "DV", "AP", "Acc", "RC", "Reach", "Ranges"] {
+                for h in lang.tr_all(["Weapon", "Pool", "DV", "AP", "Acc", "RC", "Reach", "Ranges"]) {
                     ui.strong(h);
                 }
                 ui.end_row();
@@ -755,14 +759,14 @@ impl CharacterView {
     }
 
     /// Vehicle totals after mods.
-    fn vehicle_summary(&self, ui: &mut egui::Ui) {
+    fn vehicle_summary(&self, ui: &mut egui::Ui, lang: &Language) {
         let vehicles = self.ch.items("vehicles", "vehicle");
         if vehicles.is_empty() {
             return;
         }
-        egui::CollapsingHeader::new(RichText::new("Vehicle stats").strong()).default_open(true).show(ui, |ui| {
+        egui::CollapsingHeader::new(RichText::new(lang.tr("Vehicle stats")).strong()).id_salt("vehicle_stats").default_open(true).show(ui, |ui| {
             egui::Grid::new("vehicle_stats").striped(true).num_columns(10).spacing([14.0, 3.0]).show(ui, |ui| {
-                for h in ["Vehicle", "Handling", "Speed", "Accel", "Body", "Armor", "Pilot", "Sensor", "Seats", "Slots"] {
+                for h in lang.tr_all(["Vehicle", "Handling", "Speed", "Accel", "Body", "Armor", "Pilot", "Sensor", "Seats", "Slots"]) {
                     ui.strong(h);
                 }
                 ui.end_row();
@@ -789,7 +793,7 @@ impl CharacterView {
     }
 
     /// "Add …" buttons for the kinds that live in a section's container.
-    fn add_buttons(&mut self, ui: &mut egui::Ui, engine: &Engine, container: &str) {
+    fn add_buttons(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, container: &str) {
         let tags: &[&str] = match container {
             "gears" => &["gear"],
             "cyberwares" => &["cyberware", "bioware"],
@@ -809,7 +813,7 @@ impl CharacterView {
         ui.horizontal(|ui| {
             for t in tags {
                 let label = chummer_core::items::kind(t).map_or(*t, |k| k.label);
-                if ui.button(format!("➕ Add {}…", label.to_lowercase())).clicked() {
+                if ui.button(format!("➕ {}", lang.tr_fmt("Add {0}…", &[&kind_noun(lang, label)]))).clicked() {
                     self.open_select(t, engine);
                 }
             }
@@ -821,17 +825,17 @@ impl CharacterView {
         ui.horizontal(|ui| {
             for (i, s) in sections::EQUIPMENT.iter().enumerate() {
                 let n = self.ch.items(s.container, s.item).len();
-                ui.selectable_value(&mut self.equipment, i, format!("{} ({n})", s.label));
+                ui.selectable_value(&mut self.equipment, i, format!("{} ({n})", lang.tr(s.label)));
             }
         });
         ui.separator();
         let sec = sections::EQUIPMENT[self.equipment];
-        self.add_buttons(ui, engine, sec.container);
+        self.add_buttons(ui, engine, lang, sec.container);
         match sec.container {
-            "weapons" => self.weapon_summary(ui),
-            "vehicles" => self.vehicle_summary(ui),
+            "weapons" => self.weapon_summary(ui, lang),
+            "vehicles" => self.vehicle_summary(ui, lang),
             "gears" => {
-                if ui.button("🧪 Build custom drug…").clicked() {
+                if ui.button(format!("🧪 {}", lang.tr("Build custom drug…"))).clicked() {
                     self.drug_builder.open = true;
                 }
             }
@@ -848,14 +852,14 @@ impl CharacterView {
     /// A table of items. Returns true if the character changed.
     fn section(&mut self, ui: &mut egui::Ui, sec: &Section, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let items: Vec<Element> = self.ch.items(sec.container, sec.item).into_iter().cloned().collect();
-        ui.heading(format!("{} ({})", sec.label, items.len()));
+        ui.heading(format!("{} ({})", lang.tr(sec.label), items.len()));
         if items.is_empty() {
-            ui.weak("None.");
+            ui.weak(lang.tr("None."));
             return false;
         }
         egui::Grid::new(sec.container).striped(true).num_columns(sec.columns.len() + 1).spacing([14.0, 4.0]).show(ui, |ui| {
             for c in sec.columns {
-                ui.strong(c.header);
+                ui.strong(lang.tr(c.header));
             }
             ui.label("");
             ui.end_row();
@@ -864,7 +868,7 @@ impl CharacterView {
                 clicked = item_rows(ui, sec, it, lang, 0).or(clicked);
                 ui.horizontal(|ui| {
                     pdf_ui::source_icon(ui, pdfs, SourceRef::of(it), status);
-                    if ui.small_button("🗑").on_hover_text("Remove (also removes its improvements)").clicked() {
+                    if ui.small_button("🗑").on_hover_text(lang.tr("Remove (also removes its improvements)")).clicked() {
                         self.confirm_remove = Some((sec.container.to_owned(), it.get("guid"), display_name(sec, it, lang)));
                     }
                 });
@@ -885,17 +889,17 @@ impl CharacterView {
     }
 
     /// The item detail pane, when an item is selected (see `item_editor`).
-    fn item_editor_panel(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, status: &mut Status) -> bool {
+    fn item_editor_panel(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, status: &mut Status) -> bool {
         let Some((guid, mut ed)) = self.item_editor.take() else { return false };
         let store = self.store.clone();
         let mut res = crate::item_editor::EditorResult::default();
         let mut close = false;
         egui::SidePanel::right("item_editor").resizable(true).default_width(300.0).show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.strong("Item");
-                close = ui.small_button("✖").on_hover_text("Close").clicked();
+                ui.strong(lang.tr("Item"));
+                close = ui.small_button("✖").on_hover_text(lang.tr("Close")).clicked();
             });
-            egui::ScrollArea::vertical().show(ui, |ui| res = ed.ui(ui, &mut self.ch, &store, engine, &guid));
+            egui::ScrollArea::vertical().show(ui, |ui| res = ed.ui(ui, &mut self.ch, &store, engine, lang, &guid));
         });
         if let Some(s) = res.status.take() {
             *status = Some(s);
@@ -913,18 +917,18 @@ impl CharacterView {
     }
 
     /// Confirmation dialog for item removal. Returns true if an item went.
-    fn confirm_dialog(&mut self, ctx: &egui::Context) -> bool {
+    fn confirm_dialog(&mut self, ctx: &egui::Context, lang: &Language) -> bool {
         let Some((container, guid, name)) = self.confirm_remove.clone() else { return false };
         let mut choice = None;
         egui::Modal::new(egui::Id::new("confirm_remove")).show(ctx, |ui| {
-            ui.heading("Remove item");
-            ui.label(format!("Remove {name}? Its improvements are removed too. This cannot be undone."));
+            ui.heading(lang.tr("Remove item"));
+            ui.label(lang.tr_fmt("Remove {0}? Its improvements are removed too. This cannot be undone.", &[&name]));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("Remove").clicked() {
+                if ui.button(lang.tr("Remove")).clicked() {
                     choice = Some(true);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(lang.tr("Cancel")).clicked() {
                     choice = Some(false);
                 }
             });
@@ -951,10 +955,10 @@ impl CharacterView {
     }
 
     /// Creation-mode budgets in the sidebar, with Finish creation.
-    fn budget_panel(&mut self, ui: &mut egui::Ui) -> bool {
+    fn budget_panel(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
         let Some(b) = self.budget.clone() else { return false };
         let mut changed = false;
-        ui.label(RichText::new("Creation").strong());
+        ui.label(RichText::new(lang.tr("Creation")).strong());
         let row = |ui: &mut egui::Ui, label: &str, total: i32, used: i32| {
             let left = total - used;
             ui.label(label);
@@ -963,31 +967,31 @@ impl CharacterView {
             ui.end_row();
         };
         egui::Grid::new("budget").num_columns(2).striped(true).show(ui, |ui| {
-            row(ui, "Karma", b.karma.0, b.karma.1);
-            row(ui, "Attribute points", b.attribute_points.0, b.attribute_points.1);
-            row(ui, "Special points", b.special_points.0, b.special_points.1);
-            row(ui, "Skill points", b.skill_points.0, b.skill_points.1);
-            row(ui, "Skill group points", b.skill_group_points.0, b.skill_group_points.1);
-            row(ui, "Knowledge points", b.knowledge_points.0, b.knowledge_points.1);
-            row(ui, "Contact points", b.contact_points.0, b.contact_points.1);
+            row(ui, &lang.tr("Karma"), b.karma.0, b.karma.1);
+            row(ui, &lang.tr("Attribute Points"), b.attribute_points.0, b.attribute_points.1);
+            row(ui, &lang.tr("Special points"), b.special_points.0, b.special_points.1);
+            row(ui, &lang.tr("Skill Points"), b.skill_points.0, b.skill_points.1);
+            row(ui, &lang.tr("Skill Group Points"), b.skill_group_points.0, b.skill_group_points.1);
+            row(ui, &lang.tr("Knowledge Points"), b.knowledge_points.0, b.knowledge_points.1);
+            row(ui, &lang.tr("Contact Points"), b.contact_points.0, b.contact_points.1);
             if b.free_spells.0 > 0 {
-                row(ui, "Free spells", b.free_spells.0, b.free_spells.1);
+                row(ui, &lang.tr("Free Spells"), b.free_spells.0, b.free_spells.1);
             }
-            ui.label("Positive qualities");
+            ui.label(lang.tr("Positive Qualities"));
             ui.label(format!("{} / {}", b.positive_quality_karma, b.quality_limit));
             ui.end_row();
-            ui.label("Negative qualities");
+            ui.label(lang.tr("Negative Qualities"));
             ui.label(format!("{} / {}", b.negative_quality_karma, b.quality_limit));
             ui.end_row();
-            ui.label("Nuyen left");
+            ui.label(lang.tr("Nuyen left"));
             let left = b.nuyen_left();
             let t = RichText::new(chummer_core::format::nuyen(left));
             ui.label(if left < 0.0 { t.color(ui.visuals().error_fg_color) } else { t });
             ui.end_row();
-            ui.label("Karma for nuyen");
+            ui.label(lang.tr("Karma for nuyen"));
             let mut bp = self.ch.doc.get_i32("nuyenbp").unwrap_or(0);
             let max = self.settings.as_ref().map_or(10, |s| s.int("nuyenmaxbp", 10));
-            if ui.add(egui::DragValue::new(&mut bp).range(0..=max).suffix(" karma")).on_hover_text("2,000¥ per karma").changed() {
+            if ui.add(egui::DragValue::new(&mut bp).range(0..=max).suffix(format!(" {}", lang.tr("karma")))).on_hover_text(lang.tr("2,000¥ per karma")).changed() {
                 self.ch.set_field("nuyenbp", bp.to_string());
                 changed = true;
             }
@@ -997,35 +1001,35 @@ impl CharacterView {
             ui.colored_label(WARN, format!("• {p}"));
         }
         let ok = self.problems.is_empty();
-        let r = ui.add_enabled(ok, egui::Button::new(RichText::new("Finish creation").color(ACCENT)));
-        if r.on_disabled_hover_text("Fix the problems above first").clicked() {
+        let r = ui.add_enabled(ok, egui::Button::new(RichText::new(lang.tr("Finish creation")).color(ACCENT)));
+        if r.on_disabled_hover_text(lang.tr("Fix the problems above first")).clicked() {
             self.confirm_finish = true;
         }
         ui.separator();
         changed
     }
 
-    fn finish_dialog(&mut self, ctx: &egui::Context) -> bool {
+    fn finish_dialog(&mut self, ctx: &egui::Context, lang: &Language) -> bool {
         if !self.confirm_finish {
             return false;
         }
         let mut choice = None;
         let b = self.budget.clone().unwrap_or_default();
         egui::Modal::new(egui::Id::new("finish_creation")).show(ctx, |ui| {
-            ui.heading("Finish creation?");
-            ui.label("The character switches to career mode. Creation budgets go away; karma and nuyen become plain resources.");
+            ui.heading(lang.tr("Finish creation?"));
+            ui.label(lang.tr("The character switches to career mode. Creation budgets go away; karma and nuyen become plain resources."));
             let carry_k = self.settings.as_ref().map_or(7, |s| s.karma("karmacarryover", 7));
             if b.karma_left() > carry_k {
-                ui.colored_label(WARN, format!("{} karma is left, only {carry_k} carries over.", b.karma_left()));
+                ui.colored_label(WARN, lang.tr_fmt("{0} karma is left, only {1} carries over.", &[&b.karma_left(), &carry_k]));
             }
             if b.nuyen_left() > 5000.0 {
-                ui.colored_label(WARN, format!("{} is left, only 5,000¥ carries over.", chummer_core::format::nuyen(b.nuyen_left())));
+                ui.colored_label(WARN, lang.tr_fmt("{0} is left, only 5,000¥ carries over.", &[&chummer_core::format::nuyen(b.nuyen_left())]));
             }
             ui.horizontal(|ui| {
-                if ui.button("Finish").clicked() {
+                if ui.button(lang.tr("Finish")).clicked() {
                     choice = Some(true);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(lang.tr("Cancel")).clicked() {
                     choice = Some(false);
                 }
             });
@@ -1138,11 +1142,11 @@ impl CharacterView {
         }
     }
 
-    fn life_module_picker(&mut self, ui: &mut egui::Ui, _engine: &Engine, status: &mut Status) -> bool {
+    fn life_module_picker(&mut self, ui: &mut egui::Ui, _engine: &Engine, lang: &Language, status: &mut Status) -> bool {
         let (stages, modules) = chargen::life_modules(&self.store);
         let mut added = false;
         ui.group(|ui| {
-            ui.label(RichText::new("Life modules").strong());
+            ui.label(RichText::new(lang.tr("Life Modules")).strong());
             ui.horizontal(|ui| {
                 if self.life.0.is_empty() {
                     self.life.0 = stages.first().cloned().unwrap_or_default();
@@ -1155,10 +1159,10 @@ impl CharacterView {
                     }
                 });
                 let in_stage: Vec<&chargen::LifeModule> = modules.iter().filter(|m| m.stage == self.life.0).collect();
-                let cur = in_stage.iter().find(|m| m.id == self.life.1).map(|m| format!("{} ({} karma)", m.name, m.karma)).unwrap_or_else(|| "Choose a module…".into());
+                let cur = in_stage.iter().find(|m| m.id == self.life.1).map(|m| format!("{} ({} {})", m.name, m.karma, lang.tr("karma"))).unwrap_or_else(|| lang.tr("Choose a module…"));
                 egui::ComboBox::from_id_salt("lm_module").selected_text(cur).width(320.0).show_ui(ui, |ui| {
                     for m in &in_stage {
-                        if ui.selectable_label(self.life.1 == m.id, format!("{} ({} karma)", m.name, m.karma)).clicked() {
+                        if ui.selectable_label(self.life.1 == m.id, format!("{} ({} {})", m.name, m.karma, lang.tr("karma"))).clicked() {
                             self.life.1 = m.id.clone();
                             self.life.2 = m.versions.first().map(|v| v.0.clone()).unwrap_or_default();
                         }
@@ -1174,7 +1178,7 @@ impl CharacterView {
                         });
                     }
                 }
-                if ui.add_enabled(!self.life.1.is_empty(), egui::Button::new("Add")).clicked() {
+                if ui.add_enabled(!self.life.1.is_empty(), egui::Button::new(lang.tr("Add"))).clicked() {
                     let v = (!self.life.2.is_empty()).then(|| self.life.2.clone());
                     match chargen::add_life_module(&mut self.ch, &self.store, &self.life.1, v.as_deref()) {
                         Ok(_) => added = true,
@@ -1186,16 +1190,16 @@ impl CharacterView {
         added
     }
 
-    fn contact_form(&mut self, ui: &mut egui::Ui) -> bool {
+    fn contact_form(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.new_contact.0).hint_text("Contact name").desired_width(160.0));
-            ui.add(egui::TextEdit::singleline(&mut self.new_contact.1).hint_text("Role").desired_width(120.0));
-            ui.label("Connection");
+            ui.add(egui::TextEdit::singleline(&mut self.new_contact.0).hint_text(lang.tr("Contact name")).desired_width(160.0));
+            ui.add(egui::TextEdit::singleline(&mut self.new_contact.1).hint_text(lang.tr("Role")).desired_width(120.0));
+            ui.label(lang.tr("Connection"));
             ui.add(egui::DragValue::new(&mut self.new_contact.2).range(1..=12));
-            ui.label("Loyalty");
+            ui.label(lang.tr("Loyalty"));
             ui.add(egui::DragValue::new(&mut self.new_contact.3).range(1..=6));
-            if ui.add_enabled(!self.new_contact.0.trim().is_empty(), egui::Button::new("➕ Add contact")).clicked() {
+            if ui.add_enabled(!self.new_contact.0.trim().is_empty(), egui::Button::new(format!("➕ {}", lang.tr("Add Contact")))).clicked() {
                 let (n, r, c, l) = self.new_contact.clone();
                 chargen::add_contact(&mut self.ch, n.trim(), r.trim(), c, l);
                 self.new_contact.0.clear();
@@ -1206,17 +1210,16 @@ impl CharacterView {
         changed
     }
 
-    fn improvements_tab(&mut self, ui: &mut egui::Ui) -> bool {
+    fn improvements_tab(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
         let imps = &self.ch.improvements;
-        ui.label(format!(
-            "{} improvements ({} active). These modifiers come from qualities, ware, powers and gear.",
-            imps.list.len(),
-            imps.active().count()
+        ui.label(lang.tr_fmt(
+            "{0} improvements ({1} active). These modifiers come from qualities, ware, powers and gear.",
+            &[&imps.list.len(), &imps.active().count()],
         ));
         ui.add_space(4.0);
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("imps").striped(true).num_columns(7).spacing([14.0, 3.0]).show(ui, |ui| {
-                for h in ["Type", "Target", "Value", "Aug", "Min/Max", "Source", "Condition"] {
+                for h in lang.tr_all(["Type", "Target", "Value", "Aug", "Min/Max", "Source", "Condition"]) {
                     ui.strong(h);
                 }
                 ui.end_row();
@@ -1259,34 +1262,38 @@ impl CharacterView {
         }
     }
 
-    fn log_tab(&mut self, ui: &mut egui::Ui, engine: &Engine) -> bool {
+    fn log_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language) -> bool {
         let mut changed = false;
         let entries = career::entries(&self.ch);
         let totals = career::totals(&self.ch);
         if self.ch.created {
             let rep = career::reputation_for(engine, &self.ch);
             ui.label(format!(
-                "Career karma {} · Street Cred {} · Notoriety {} · Public Awareness {}",
+                "{} {} · {} {} · {} {} · {} {}",
+                lang.tr("Career Karma"),
                 career::career_karma(&self.ch),
+                lang.tr("Street Cred"),
                 rep.street_cred,
+                lang.tr("Notoriety"),
                 rep.notoriety,
+                lang.tr("Public Awareness"),
                 rep.public_awareness
             ));
             ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt("manual_kind").selected_text(if self.manual.0 { "Karma" } else { "Nuyen" }).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.manual.0, true, "Karma");
-                    ui.selectable_value(&mut self.manual.0, false, "Nuyen");
+                egui::ComboBox::from_id_salt("manual_kind").selected_text(if self.manual.0 { lang.tr("Karma") } else { lang.tr("Nuyen") }).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.manual.0, true, lang.tr("Karma"));
+                    ui.selectable_value(&mut self.manual.0, false, lang.tr("Nuyen"));
                 });
                 ui.add(egui::DragValue::new(&mut self.manual.1).range(0.0..=1_000_000.0).max_decimals(2));
-                ui.add(egui::TextEdit::singleline(&mut self.manual.2).hint_text("Reason (e.g. run payout)").desired_width(240.0));
+                ui.add(egui::TextEdit::singleline(&mut self.manual.2).hint_text(lang.tr("Reason (e.g. run payout)")).desired_width(240.0));
                 let ok = self.manual.1 > 0.0;
                 let rules = career::CareerRules::for_character(engine, &self.ch);
                 let entry = career::ManualExpense { amount: self.manual.1, reason: self.manual.2.clone(), ..Default::default() };
                 let mut result = None;
-                if ui.add_enabled(ok, egui::Button::new("Gain")).clicked() {
+                if ui.add_enabled(ok, egui::Button::new(lang.tr("Gain"))).clicked() {
                     result = Some(if self.manual.0 { career::karma_gained(&mut self.ch, &rules, &entry) } else { career::nuyen_gained(&mut self.ch, &rules, &entry) });
                 }
-                if ui.add_enabled(ok, egui::Button::new("Spend")).clicked() {
+                if ui.add_enabled(ok, egui::Button::new(lang.tr("Spend"))).clicked() {
                     result = Some(if self.manual.0 { career::karma_spent(&mut self.ch, &rules, &entry) } else { career::nuyen_spent(&mut self.ch, &rules, &entry) });
                 }
                 if let Some(r) = result {
@@ -1303,33 +1310,30 @@ impl CharacterView {
                 }
             });
         }
-        ui.label(format!(
-            "{} entries · karma earned {} · spent {} · nuyen earned {}",
-            entries.len(),
-            totals.career_karma,
-            totals.karma_spent,
-            format::nuyen(totals.career_nuyen)
+        ui.label(lang.tr_fmt(
+            "{0} entries · karma earned {1} · spent {2} · nuyen earned {3}",
+            &[&entries.len(), &totals.career_karma, &totals.karma_spent, &format::nuyen(totals.career_nuyen)],
         ));
         ui.add_space(4.0);
         if entries.is_empty() {
-            ui.weak("No entries yet. Career-mode spending and income appear here.");
+            ui.weak(lang.tr("No entries yet. Career-mode spending and income appear here."));
             return changed;
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
             egui::Grid::new("log").striped(true).num_columns(5).spacing([14.0, 3.0]).show(ui, |ui| {
-                for h in ["Date", "Type", "Amount", "Reason", ""] {
+                for h in lang.tr_all(["Date", "Type", "Amount", "Reason", ""]) {
                     ui.strong(h);
                 }
                 ui.end_row();
                 for e in entries.iter().rev() {
                     ui.label(e.date.replace('T', " "));
                     let karma = e.kind == career::ExpenseType::Karma;
-                    ui.label(if karma { "Karma" } else { "Nuyen" });
+                    ui.label(if karma { lang.tr("Karma") } else { lang.tr("Nuyen") });
                     let text = if karma { chummer_core::improvement::fmt_num(e.amount) } else { format::nuyen(e.amount) };
                     ui.colored_label(if e.amount < 0.0 { WARN } else { ACCENT }, text);
                     ui.label(&e.reason);
                     if self.ch.created && e.undo.is_some() {
-                        if ui.small_button("Undo").on_hover_text("Reverse this and refund it").clicked() {
+                        if ui.small_button(lang.tr("Undo")).on_hover_text(lang.tr("Reverse this and refund it")).clicked() {
                             self.action = Some(CareerAction::Undo(e.guid.clone()));
                         }
                     } else {
@@ -1342,11 +1346,11 @@ impl CharacterView {
         changed
     }
 
-    fn notes_tab(&mut self, ui: &mut egui::Ui) -> bool {
+    fn notes_tab(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
         let mut changed = false;
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (key, label) in TEXT_FIELDS.iter().filter(|(k, _)| matches!(*k, "notes" | "gamenotes")) {
-                ui.label(RichText::new(*label).strong());
+                ui.label(RichText::new(lang.tr(label)).strong());
                 let mut v = self.ch.field(key);
                 if ui.add(egui::TextEdit::multiline(&mut v).desired_width(f32::INFINITY).desired_rows(12)).changed() {
                     self.ch.set_field(key, v);
@@ -1357,6 +1361,13 @@ impl CharacterView {
         });
         changed
     }
+}
+
+/// An item kind's label for use inside a sentence ("Add weapon…"). Only
+/// English lowercases it; other languages (German nouns) keep their case.
+pub fn kind_noun(lang: &Language, label: &str) -> String {
+    let t = lang.tr(label);
+    if lang.code.starts_with("en") { t.to_lowercase() } else { t }
 }
 
 fn fmt_opt(v: f64) -> String {

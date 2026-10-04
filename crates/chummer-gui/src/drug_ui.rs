@@ -7,6 +7,7 @@ use chummer_core::character::Character;
 use chummer_core::data::{self, DataStore, Record};
 use chummer_core::format;
 use chummer_core::items::{self, drug};
+use chummer_core::lang::Language;
 use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
@@ -35,7 +36,7 @@ impl Default for DrugBuilder {
 impl DrugBuilder {
     /// Draw the builder window when open. Returns true if a drug was added
     /// or removed.
-    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Character, store: &DataStore, status: &mut Status) -> bool {
+    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Character, store: &DataStore, lang: &Language, status: &mut Status) -> bool {
         if !self.open {
             return false;
         }
@@ -46,24 +47,24 @@ impl DrugBuilder {
         let mut changed = false;
         let mut open = true;
         let mut add = false;
-        egui::Window::new("Build custom drug").open(&mut open).default_size([860.0, 560.0]).collapsible(false).show(ctx, |ui| {
+        egui::Window::new(lang.tr("Build custom drug")).id(egui::Id::new("drug_builder")).open(&mut open).default_size([860.0, 560.0]).collapsible(false).show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Name");
-                ui.add(egui::TextEdit::singleline(&mut self.name).hint_text("Custom drug").desired_width(220.0));
-                ui.label("Grade");
+                ui.label(lang.tr("Name"));
+                ui.add(egui::TextEdit::singleline(&mut self.name).hint_text(lang.tr("Custom drug")).desired_width(220.0));
+                ui.label(lang.tr("Grade"));
                 let grades = data::records(&doc, "grades", "grade");
                 egui::ComboBox::from_id_salt("drug_grade").selected_text(self.grade.clone()).show_ui(ui, |ui| {
                     for g in &grades {
-                        ui.selectable_value(&mut self.grade, g.name(), format!("{} (cost ×{})", g.name(), g.get("cost")));
+                        ui.selectable_value(&mut self.grade, g.name(), format!("{} ({} ×{})", g.name(), lang.tr("cost"), g.get("cost")));
                     }
                 });
             });
             ui.separator();
             ui.columns(2, |cols| {
-                self.components_list(&mut cols[0], &doc);
-                self.chosen_panel(&mut cols[1], &doc, store, &mut add);
+                self.components_list(&mut cols[0], &doc, lang);
+                self.chosen_panel(&mut cols[1], &doc, store, lang, &mut add);
             });
-            changed |= existing_drugs(ui, ch);
+            changed |= existing_drugs(ui, ch, lang);
         });
         if !open {
             self.open = false;
@@ -75,11 +76,11 @@ impl DrugBuilder {
     }
 
     /// Available components by category, with a level picker.
-    fn components_list(&mut self, ui: &mut egui::Ui, doc: &Element) {
+    fn components_list(&mut self, ui: &mut egui::Ui, doc: &Element, lang: &Language) {
         let comps = data::records(doc, "drugcomponents", "drugcomponent");
         egui::ScrollArea::vertical().id_salt("drug_components").max_height(330.0).show(ui, |ui| {
             for cat in CATEGORIES {
-                egui::CollapsingHeader::new(RichText::new(*cat).strong()).id_salt(("drug_cat", *cat)).default_open(true).show(ui, |ui| {
+                egui::CollapsingHeader::new(RichText::new(lang.data_name(FILE, "", cat)).strong()).id_salt(("drug_cat", *cat)).default_open(true).show(ui, |ui| {
                     for r in comps.iter().filter(|r| r.category() == *cat && !r.hidden()) {
                         let name = r.name();
                         let sel = self.pick.as_ref().is_some_and(|(n, _)| *n == name);
@@ -93,7 +94,7 @@ impl DrugBuilder {
             }
         });
         let Some((name, mut level)) = self.pick.clone() else {
-            ui.weak("Select a component.");
+            ui.weak(lang.tr("Select a component."));
             return;
         };
         let Some(rec) = data::find(doc, "drugcomponents", "drugcomponent", &name) else { return };
@@ -102,14 +103,14 @@ impl DrugBuilder {
         ui.horizontal(|ui| {
             ui.strong(rec.name());
             if levels.len() > 1 {
-                ui.label("Level");
+                ui.label(lang.tr("Level"));
                 egui::ComboBox::from_id_salt("drug_level").selected_text((index_of(&levels, level) + 1).to_string()).show_ui(ui, |ui| {
                     for (i, l) in levels.iter().enumerate() {
                         ui.selectable_value(&mut level, *l, (i + 1).to_string());
                     }
                 });
             }
-            if ui.button("Add component").clicked() {
+            if ui.button(lang.tr("Add component")).clicked() {
                 self.message = self.check_component(doc, rec, &name, level).err();
                 if self.message.is_none() {
                     self.chosen.push((name.clone(), level));
@@ -117,7 +118,7 @@ impl DrugBuilder {
             }
         });
         self.pick = Some((name, level));
-        let probe = component_effect_text(rec, level);
+        let probe = component_effect_text(rec, level, lang);
         if !probe.is_empty() {
             ui.weak(probe);
         }
@@ -154,15 +155,15 @@ impl DrugBuilder {
     }
 
     /// Chosen components, effects and cost preview, and the Add button.
-    fn chosen_panel(&mut self, ui: &mut egui::Ui, doc: &Element, store: &DataStore, add: &mut bool) {
-        ui.strong("Components");
+    fn chosen_panel(&mut self, ui: &mut egui::Ui, doc: &Element, store: &DataStore, lang: &Language, add: &mut bool) {
+        ui.strong(lang.tr("Components"));
         let mut remove = None;
         egui::Grid::new("drug_chosen").striped(true).num_columns(4).show(ui, |ui| {
             for (i, (n, l)) in self.chosen.iter().enumerate() {
                 let levels = data::find(doc, "drugcomponents", "drugcomponent", n).map(drug::component_levels).unwrap_or_default();
                 ui.label(n);
-                ui.weak(category(doc, n));
-                ui.label(if levels.len() > 1 { format!("level {}", index_of(&levels, *l) + 1) } else { String::new() });
+                ui.weak(lang.data_name(FILE, "", &category(doc, n)));
+                ui.label(if levels.len() > 1 { lang.tr_fmt("level {0}", &[&(index_of(&levels, *l) + 1)]) } else { String::new() });
                 if ui.small_button("🗑").clicked() {
                     remove = Some(i);
                 }
@@ -173,19 +174,19 @@ impl DrugBuilder {
             self.chosen.remove(i);
         }
         if self.chosen.is_empty() {
-            ui.weak("Add a foundation, then blocks and enhancers.");
+            ui.weak(lang.tr("Add a foundation, then blocks and enhancers."));
         }
         ui.separator();
         match self.build(store) {
             Ok(d) => {
                 let fx = drug::effects(&d);
-                ui.strong("Effects");
-                for line in effect_lines(&fx) {
+                ui.strong(lang.tr("Effects"));
+                for line in effect_lines(&fx, lang) {
                     ui.label(line);
                 }
-                ui.label(format!("Cost per dose: {}", format::nuyen(drug::cost(&d))));
+                ui.label(format!("{} {}", lang.tr("Cost per dose:"), format::nuyen(drug::cost(&d))));
                 ui.add_space(6.0);
-                if ui.button(RichText::new("Add drug").color(crate::view::ACCENT)).clicked() {
+                if ui.button(RichText::new(lang.tr("Add drug")).color(crate::view::ACCENT)).clicked() {
                     *add = true;
                 }
             }
@@ -230,20 +231,20 @@ impl DrugBuilder {
 }
 
 /// The character's drugs (no other tab lists them), with removal.
-fn existing_drugs(ui: &mut egui::Ui, ch: &mut Character) -> bool {
+fn existing_drugs(ui: &mut egui::Ui, ch: &mut Character, lang: &Language) -> bool {
     let drugs: Vec<Element> = ch.items("drugs", "drug").into_iter().cloned().collect();
     if drugs.is_empty() {
         return false;
     }
     let mut changed = false;
     ui.separator();
-    egui::CollapsingHeader::new(RichText::new(format!("Your drugs ({})", drugs.len())).strong()).id_salt("drugs_owned").default_open(true).show(ui, |ui| {
+    egui::CollapsingHeader::new(RichText::new(format!("{} ({})", lang.tr("Your drugs"), drugs.len())).strong()).id_salt("drugs_owned").default_open(true).show(ui, |ui| {
         egui::Grid::new("drugs_owned_grid").striped(true).num_columns(4).spacing([14.0, 3.0]).show(ui, |ui| {
             for d in &drugs {
                 ui.label(d.get("name"));
                 ui.weak(d.get("grade"));
                 ui.label(format!("×{}", d.get("quantity")));
-                if ui.small_button("🗑").on_hover_text("Remove (no refund)").clicked() {
+                if ui.small_button("🗑").on_hover_text(lang.tr("Remove (no refund)")).clicked() {
                     let g = d.get("guid");
                     ch.improvements.remove_from_source(&g);
                     changed |= ch.remove_item("drugs", &g);
@@ -272,7 +273,7 @@ fn effect_attributes(rec: Record<'_>, level: i32) -> Vec<(String, f64)> {
 }
 
 /// One component's effect at a level, as a single line.
-fn component_effect_text(rec: Record<'_>, level: i32) -> String {
+fn component_effect_text(rec: Record<'_>, level: i32, lang: &Language) -> String {
     let Some(e) = effect_at(rec, level) else { return String::new() };
     let mut parts: Vec<String> = Vec::new();
     for tag in ["attribute", "limit"] {
@@ -283,7 +284,8 @@ fn component_effect_text(rec: Record<'_>, level: i32) -> String {
     for q in e.children_named("quality") {
         parts.push(q.text());
     }
-    for (k, label) in [("initiative", "Initiative"), ("initiativedice", "Initiative dice"), ("duration", "Duration"), ("speed", "Speed"), ("crashdamage", "Crash damage")] {
+    let labels = lang.tr_all(["Initiative", "Initiative Dice", "Duration", "Speed", "Crash damage"]);
+    for (k, label) in ["initiative", "initiativedice", "duration", "speed", "crashdamage"].into_iter().zip(labels) {
         if let Some(v) = e.get_i32(k).filter(|v| *v != 0) {
             parts.push(format!("{label} {}", signed(f64::from(v))));
         }
@@ -302,20 +304,20 @@ fn signed(v: f64) -> String {
     }
 }
 
-fn effect_lines(fx: &drug::Effects) -> Vec<String> {
+fn effect_lines(fx: &drug::Effects, lang: &Language) -> Vec<String> {
     let mut out = Vec::new();
     if !fx.attributes.is_empty() {
         out.push(fx.attributes.iter().map(|(a, v)| format!("{a} {}", signed(*v))).collect::<Vec<_>>().join(", "));
     }
     if !fx.limits.is_empty() {
-        out.push(format!("Limits: {}", fx.limits.iter().map(|(a, v)| format!("{a} {}", signed(f64::from(*v)))).collect::<Vec<_>>().join(", ")));
+        out.push(format!("{} {}", lang.tr("Limits:"), fx.limits.iter().map(|(a, v)| format!("{a} {}", signed(f64::from(*v)))).collect::<Vec<_>>().join(", ")));
     }
     if fx.initiative != 0 || fx.initiative_dice != 0 {
-        out.push(format!("Initiative {} / +{}d6", signed(f64::from(fx.initiative)), fx.initiative_dice));
+        out.push(format!("{} {} / +{}d6", lang.tr("Initiative"), signed(f64::from(fx.initiative)), fx.initiative_dice));
     }
     if !fx.qualities.is_empty() {
-        out.push(format!("Qualities: {}", fx.qualities.join(", ")));
+        out.push(format!("{} {}", lang.tr("Qualities:"), fx.qualities.join(", ")));
     }
-    out.push(format!("Speed {} · Crash damage {}", fx.speed, fx.crash_damage));
+    out.push(format!("{} {} · {} {}", lang.tr("Speed"), fx.speed, lang.tr("Crash damage"), fx.crash_damage));
     out
 }

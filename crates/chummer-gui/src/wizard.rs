@@ -4,6 +4,7 @@
 use chummer_core::character::Character;
 use chummer_core::chargen::{self, HeritageOption, NewCharacter, Priorities, TalentOption, CATEGORIES, LETTERS};
 use chummer_core::engine::Engine;
+use chummer_core::lang::Language;
 use chummer_core::settings::CharacterSettings;
 use eframe::egui::{self, RichText};
 
@@ -41,7 +42,7 @@ impl Wizard {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, engine: &Engine) -> WizardResult {
+    pub fn show(&mut self, ctx: &egui::Context, engine: &Engine, lang: &Language) -> WizardResult {
         let presets = chargen::creation_presets(engine);
         if presets.is_empty() {
             return WizardResult::Cancel;
@@ -52,12 +53,12 @@ impl Wizard {
         let karma_build = matches!(settings.build_method().as_str(), "Karma" | "LifeModule");
         let mut result = WizardResult::Open;
         let mut open = true;
-        egui::Window::new("New character").open(&mut open).default_size([760.0, 640.0]).collapsible(false).show(ctx, |ui| {
+        egui::Window::new(lang.tr("New Character")).id(egui::Id::new("new_character")).open(&mut open).default_size([760.0, 640.0]).collapsible(false).show(ctx, |ui| {
             egui::Grid::new("wiz_top").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-                ui.label("Name");
+                ui.label(lang.tr("Name"));
                 ui.text_edit_singleline(&mut self.name);
                 ui.end_row();
-                ui.label("Rules");
+                ui.label(lang.tr("Rules"));
                 egui::ComboBox::from_id_salt("wiz_preset").selected_text(settings.name()).width(260.0).show_ui(ui, |ui| {
                     for (i, p) in presets.iter().enumerate() {
                         ui.selectable_value(&mut self.preset, i, format!("{} ({})", p.name(), p.build_method()));
@@ -65,25 +66,27 @@ impl Wizard {
                 });
                 ui.end_row();
             });
-            ui.weak(format!(
-                "Build: {} · {} karma · availability {}",
-                if karma_build {
-                    if settings.build_method() == "LifeModule" { "Life modules (karma)".to_owned() } else { "Point buy (karma)".to_owned() }
-                } else if sum_to_ten {
-                    format!("Sum-to-Ten ({})", settings.int("sumtoten", 10))
-                } else {
-                    "Priority".to_owned()
-                },
-                settings.int("buildpoints", 25),
-                settings.max_availability()
+            ui.weak(lang.tr_fmt(
+                "Build: {0} · {1} karma · availability {2}",
+                &[
+                    &if karma_build {
+                        if settings.build_method() == "LifeModule" { lang.tr("Life modules (karma)") } else { lang.tr("Point buy (karma)") }
+                    } else if sum_to_ten {
+                        format!("{} ({})", lang.tr("Sum-to-Ten"), settings.int("sumtoten", 10))
+                    } else {
+                        lang.tr("Priority")
+                    },
+                    &settings.int("buildpoints", 25),
+                    &settings.max_availability(),
+                ],
             ));
             ui.separator();
 
             if !karma_build {
-            ui.heading("Priorities");
+            ui.heading(lang.tr("Priorities"));
             egui::Grid::new("wiz_prio").num_columns(3).spacing([12.0, 6.0]).show(ui, |ui| {
                 for (ci, cat) in CATEGORIES.iter().enumerate() {
-                    ui.label(*cat);
+                    ui.label(lang.tr(cat));
                     let current = self.priorities[ci];
                     egui::ComboBox::from_id_salt(("prio", ci)).selected_text(current.to_string()).width(50.0).show_ui(ui, |ui| {
                         for l in LETTERS {
@@ -98,7 +101,7 @@ impl Wizard {
                             }
                         }
                     });
-                    ui.weak(describe(engine, &settings, cat, self.priorities[ci]));
+                    ui.weak(describe(engine, &settings, lang, cat, self.priorities[ci]));
                     ui.end_row();
                 }
             });
@@ -109,14 +112,14 @@ impl Wizard {
                     ui.colored_label(WARN, e);
                 }
             } else {
-                ui.weak("Everything is bought with karma. Magic and resonance come from qualities (Magician, Adept, Technomancer, ...) added after creation starts.");
+                ui.weak(lang.tr("Everything is bought with karma. Magic and resonance come from qualities (Magician, Adept, Technomancer, ...) added after creation starts."));
             }
             ui.separator();
 
             ui.columns(2, |cols| {
                 // Metatype
                 let ui = &mut cols[0];
-                ui.heading("Metatype");
+                ui.heading(lang.tr("Metatype"));
                 let heritage: Vec<HeritageOption> =
                     if karma_build { chargen::karma_metatypes(&engine.store) } else { chargen::heritage_options(&engine.store, &settings, prios.get("Heritage")) };
                 if !heritage.iter().any(|h| h.metatype == self.metatype) {
@@ -128,9 +131,10 @@ impl Wizard {
                 egui::ScrollArea::vertical().id_salt("wiz_meta").max_height(220.0).show(ui, |ui| {
                     for h in &heritage {
                         let label = if karma_build {
-                            format!("{}  ·  {} karma", h.metatype, h.karma)
+                            format!("{}  ·  {}", h.metatype, lang.tr_fmt("{0} karma", &[&h.karma]))
                         } else {
-                            format!("{}  ·  {} special{}", h.metatype, h.special, if h.karma > 0 { format!(" · {} karma", h.karma) } else { String::new() })
+                            let karma = if h.karma > 0 { format!(" · {}", lang.tr_fmt("{0} karma", &[&h.karma])) } else { String::new() };
+                            format!("{}  ·  {}{karma}", h.metatype, lang.tr_fmt("{0} special", &[&h.special]))
                         };
                         if ui.selectable_label(self.metatype == h.metatype, label).clicked() {
                             self.metatype = h.metatype.clone();
@@ -141,11 +145,11 @@ impl Wizard {
                 if let Some(h) = heritage.iter().find(|h| h.metatype == self.metatype) {
                     if !h.metavariants.is_empty() {
                         egui::ComboBox::from_id_salt("wiz_variant")
-                            .selected_text(if self.metavariant.is_empty() { "No metavariant".to_owned() } else { self.metavariant.clone() })
+                            .selected_text(if self.metavariant.is_empty() { lang.tr("No metavariant") } else { self.metavariant.clone() })
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.metavariant, String::new(), "No metavariant");
+                                ui.selectable_value(&mut self.metavariant, String::new(), lang.tr("No metavariant"));
                                 for (n, sp, k) in &h.metavariants {
-                                    ui.selectable_value(&mut self.metavariant, n.clone(), format!("{n} · {sp} special · {k} karma"));
+                                    ui.selectable_value(&mut self.metavariant, n.clone(), format!("{n} · {} · {}", lang.tr_fmt("{0} special", &[sp]), lang.tr_fmt("{0} karma", &[k])));
                                 }
                             });
                     }
@@ -158,7 +162,7 @@ impl Wizard {
                     self.talent_skills.clear();
                     return;
                 }
-                ui.heading("Magic or Resonance");
+                ui.heading(lang.tr("Magic or Resonance"));
                 let talents: Vec<TalentOption> = chargen::talent_options(&engine.store, &settings, prios.get("Talent"));
                 let allowed: Vec<&TalentOption> = talents.iter().filter(|t| talent_allowed(t, &self.metatype)).collect();
                 if !allowed.iter().any(|t| t.value == self.talent) {
@@ -177,12 +181,12 @@ impl Wizard {
                     let qty = t.skill_qty().max(0) as usize;
                     if qty > 0 {
                         ui.add_space(6.0);
-                        ui.label(format!("Choose {qty} {} at rating {}", if t.grouped() { "skill groups" } else { "skills" }, t.skill_val()));
+                        ui.label(if t.grouped() { lang.tr_fmt("Choose {0} skill groups at rating {1}", &[&qty, &t.skill_val()]) } else { lang.tr_fmt("Choose {0} skills at rating {1}", &[&qty, &t.skill_val()]) });
                         let options = chargen::talent_skill_options(&engine.store, t);
                         self.talent_skills.resize(qty, String::new());
                         for i in 0..qty {
                             let cur = self.talent_skills[i].clone();
-                            egui::ComboBox::from_id_salt(("tskill", i)).selected_text(if cur.is_empty() { "Choose…".to_owned() } else { cur.clone() }).width(220.0).show_ui(
+                            egui::ComboBox::from_id_salt(("tskill", i)).selected_text(if cur.is_empty() { lang.tr("Choose…") } else { cur.clone() }).width(220.0).show_ui(
                                 ui,
                                 |ui| {
                                     for o in &options {
@@ -206,7 +210,7 @@ impl Wizard {
             ui.horizontal(|ui| {
                 let skills_ok = self.talent_skills.iter().all(|s| !s.is_empty());
                 let ok = (karma_build || prios.validate(&settings).is_ok()) && skills_ok;
-                if ui.add_enabled(ok, egui::Button::new(RichText::new("Create character").color(ACCENT))).clicked() {
+                if ui.add_enabled(ok, egui::Button::new(RichText::new(lang.tr("Create character")).color(ACCENT))).clicked() {
                     let spec = NewCharacter {
                         settings_id: settings.key(),
                         metatype: self.metatype.clone(),
@@ -221,7 +225,7 @@ impl Wizard {
                         Err(e) => self.error = Some(e),
                     }
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(lang.tr("Cancel")).clicked() {
                     result = WizardResult::Cancel;
                 }
             });
@@ -242,11 +246,11 @@ fn talent_allowed(t: &TalentOption, metatype: &str) -> bool {
     !forbidden.iter().any(|m| m == metatype) && (required.is_empty() || required.iter().any(|m| m == metatype))
 }
 
-fn describe(engine: &Engine, settings: &CharacterSettings, cat: &str, letter: char) -> String {
+fn describe(engine: &Engine, settings: &CharacterSettings, lang: &Language, cat: &str, letter: char) -> String {
     let Some(n) = chargen::priority_node(&engine.store, settings, cat, letter) else { return String::new() };
     match cat {
-        "Attributes" => format!("{} attribute points", n.get("attributes")),
-        "Skills" => format!("{} skill points, {} group points", n.get("skills"), n.get("skillgroups")),
+        "Attributes" => lang.tr_fmt("{0} attribute points", &[&n.get("attributes")]),
+        "Skills" => lang.tr_fmt("{0} skill points, {1} group points", &[&n.get("skills"), &n.get("skillgroups")]),
         "Resources" => chummer_core::format::nuyen(n.get_f64("resources").unwrap_or(0.0)),
         "Heritage" => {
             let names: Vec<String> = n.child("metatypes").map(|m| m.children_named("metatype").map(|x| x.get("name")).take(5).collect()).unwrap_or_default();

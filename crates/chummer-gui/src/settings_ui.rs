@@ -10,7 +10,7 @@ use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
 /// Labels for options Chummer5a's language files do not name directly.
-const LABELS: &[(&str, &str)] = &[
+pub(crate) const LABELS: &[(&str, &str)] = &[
     ("buildpoints", "Starting karma / build points"),
     ("qualitykarmalimit", "Quality karma limit"),
     ("sumtoten", "Sum-to-Ten total"),
@@ -76,15 +76,15 @@ impl SettingsEditor {
         let mut saved = false;
         let presets = &engine.settings.presets;
         if presets.is_empty() {
-            ui.label("No settings found.");
+            ui.label(lang.tr("No settings found."));
             return false;
         }
         self.selected = self.selected.min(presets.len() - 1);
         ui.horizontal(|ui| {
-            ui.label("Preset");
-            egui::ComboBox::from_id_salt("preset_pick").selected_text(label_of(&presets[self.selected])).width(320.0).show_ui(ui, |ui| {
+            ui.label(lang.tr("Preset"));
+            egui::ComboBox::from_id_salt("preset_pick").selected_text(label_of(&presets[self.selected], lang)).width(320.0).show_ui(ui, |ui| {
                 for (i, p) in presets.iter().enumerate() {
-                    if ui.selectable_label(self.selected == i, label_of(p)).clicked() {
+                    if ui.selectable_label(self.selected == i, label_of(p, lang)).clicked() {
                         self.selected = i;
                         self.draft = None;
                     }
@@ -97,8 +97,8 @@ impl SettingsEditor {
             self.draft = Some(preset.raw.clone());
         }
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.new_name).hint_text("Name for a copy").desired_width(220.0));
-            if ui.add_enabled(!self.new_name.trim().is_empty(), egui::Button::new("Duplicate")).clicked() {
+            ui.add(egui::TextEdit::singleline(&mut self.new_name).hint_text(lang.tr("Name for a copy")).desired_width(220.0));
+            if ui.add_enabled(!self.new_name.trim().is_empty(), egui::Button::new(lang.tr("Duplicate"))).clicked() {
                 match duplicate(preset, self.new_name.trim()) {
                     Ok(path) => {
                         self.message = Some(format!("Saved {}", path.display()));
@@ -110,7 +110,7 @@ impl SettingsEditor {
             }
         });
         if !editable {
-            ui.weak("Built-in presets cannot be changed. Duplicate one to make your own house rules.");
+            ui.weak(lang.tr("Built-in presets cannot be changed. Duplicate one to make your own house rules."));
         }
         if let Some(m) = &self.message {
             ui.label(m);
@@ -121,27 +121,27 @@ impl SettingsEditor {
         let mut dirty = false;
         egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
             ui.add_enabled_ui(editable, |ui| {
-                ui.heading("General");
+                ui.heading(lang.tr("General"));
                 egui::Grid::new("set_general").num_columns(2).striped(true).show(ui, |ui| {
-                    ui.label("Name");
+                    ui.label(lang.tr("Name"));
                     let mut name = el.get("name");
                     if ui.text_edit_singleline(&mut name).changed() {
                         el.set_child_text("name", name);
                         dirty = true;
                     }
                     ui.end_row();
-                    ui.label("Build method");
+                    ui.label(lang.tr("Build Method"));
                     let mut bm = el.get("buildmethod");
-                    egui::ComboBox::from_id_salt("set_bm").selected_text(bm.clone()).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("set_bm").selected_text(build_method_label(&bm, lang)).show_ui(ui, |ui| {
                         for m in ["Priority", "SumtoTen", "Karma", "LifeModule"] {
-                            if ui.selectable_value(&mut bm, m.to_owned(), m).changed() {
+                            if ui.selectable_value(&mut bm, m.to_owned(), build_method_label(m, lang)).changed() {
                                 dirty = true;
                             }
                         }
                     });
                     el.set_child_text("buildmethod", bm);
                     ui.end_row();
-                    ui.label("Priority table");
+                    ui.label(lang.tr("Priority Table"));
                     let mut pt = el.get("prioritytable");
                     if ui.text_edit_singleline(&mut pt).changed() {
                         el.set_child_text("prioritytable", pt);
@@ -162,7 +162,7 @@ impl SettingsEditor {
                     }
                 });
                 ui.add_space(8.0);
-                egui::CollapsingHeader::new(RichText::new("Options").strong()).default_open(true).show(ui, |ui| {
+                egui::CollapsingHeader::new(RichText::new(lang.tr("Options")).strong()).id_salt("set_options").default_open(true).show(ui, |ui| {
                     egui::Grid::new("set_bools").num_columns(2).show(ui, |ui| {
                         let bools: Vec<Element> = el.elements().filter(|c| matches!(c.text().trim(), "True" | "False")).cloned().collect();
                         for (i, c) in bools.iter().enumerate() {
@@ -177,7 +177,7 @@ impl SettingsEditor {
                         }
                     });
                 });
-                egui::CollapsingHeader::new(RichText::new("Karma costs").strong()).show(ui, |ui| {
+                egui::CollapsingHeader::new(RichText::new(lang.tr("Karma Costs")).strong()).id_salt("set_karma_costs").show(ui, |ui| {
                     egui::Grid::new("set_karma").num_columns(4).show(ui, |ui| {
                         let costs: Vec<Element> = el.child("karmacost").map(|k| k.elements().cloned().collect()).unwrap_or_default();
                         for (i, c) in costs.iter().enumerate() {
@@ -193,10 +193,10 @@ impl SettingsEditor {
                         }
                     });
                 });
-                egui::CollapsingHeader::new(RichText::new("Custom data (optional rules)").strong()).show(ui, |ui| {
-                    dirty |= custom_data_ui(ui, &mut el, engine);
+                egui::CollapsingHeader::new(RichText::new(lang.tr("Custom data (optional rules)")).strong()).id_salt("set_custom_data").show(ui, |ui| {
+                    dirty |= custom_data_ui(ui, &mut el, engine, lang);
                 });
-                egui::CollapsingHeader::new(RichText::new("Books").strong()).show(ui, |ui| {
+                egui::CollapsingHeader::new(RichText::new(lang.tr("Books")).strong()).id_salt("set_books").show(ui, |ui| {
                     let enabled: Vec<String> = el.child("books").map(|b| b.children_named("book").map(Element::text).collect()).unwrap_or_default();
                     let mut set = enabled.clone();
                     egui::Grid::new("set_books").num_columns(3).show(ui, |ui| {
@@ -230,7 +230,7 @@ impl SettingsEditor {
                 self.draft = Some(el);
             }
             ui.separator();
-            if ui.button(RichText::new("Save house rules").strong()).clicked() {
+            if ui.button(RichText::new(lang.tr("Save house rules")).strong()).clicked() {
                 if let (Some(path), Some(d)) = (preset.file.clone(), self.draft.clone()) {
                     let mut root = d;
                     root.name = "settings".into();
@@ -248,9 +248,9 @@ impl SettingsEditor {
     }
 }
 
-fn label_of(p: &CharacterSettings) -> String {
+fn label_of(p: &CharacterSettings, lang: &Language) -> String {
     if p.file.is_some() {
-        format!("{} (yours)", p.name())
+        lang.tr_fmt("{0} (yours)", &[&p.name()])
     } else {
         p.name()
     }
@@ -258,7 +258,7 @@ fn label_of(p: &CharacterSettings) -> String {
 
 fn label(tag: &str, lang: &Language) -> String {
     if let Some((_, l)) = LABELS.iter().find(|(t, _)| *t == tag) {
-        return (*l).to_owned();
+        return lang.tr(l);
     }
     for prefix in ["Checkbox_Options_", "Label_Options_"] {
         for key in [format!("{prefix}{tag}"), format!("{prefix}{}", capitalize(tag))] {
@@ -294,11 +294,20 @@ fn duplicate(preset: &CharacterSettings, name: &str) -> Result<std::path::PathBu
 
 /// Toggle custom data directories for a preset. Writes Chummer's
 /// `<customdatadirectorynames>` layout (directoryname, order, enabled).
-fn custom_data_ui(ui: &mut egui::Ui, el: &mut Element, engine: &Engine) -> bool {
+/// Display name of a `<buildmethod>` value.
+fn build_method_label(m: &str, lang: &Language) -> String {
+    match m {
+        "SumtoTen" => lang.tr("Sum-to-Ten"),
+        "LifeModule" => lang.tr("Life Modules"),
+        _ => lang.tr(m),
+    }
+}
+
+fn custom_data_ui(ui: &mut egui::Ui, el: &mut Element, engine: &Engine, lang: &Language) -> bool {
     use chummer_core::custom_data;
     let dirs = engine.custom_data_directories();
     if dirs.is_empty() {
-        ui.weak("No custom data directories found.");
+        ui.weak(lang.tr("No custom data directories found."));
         return false;
     }
     let enabled: Vec<String> = custom_data::enabled_directories(el, dirs).iter().map(|d| d.name.clone()).collect();
