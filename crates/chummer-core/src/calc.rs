@@ -62,6 +62,10 @@ pub struct Rules {
     pub karma_initiation_flat: i32,
     pub karma_metamagic: i32,
     pub limb_count: i32,
+    /// `ESSLossReducesMaximumOnly` (essence loss).
+    pub ess_loss_reduces_maximum_only: bool,
+    /// `SpecialKarmaCostBasedOnShownValue`: essence loss as an augmented malus.
+    pub special_karma_cost_based_on_shown_value: bool,
 }
 
 impl Default for Rules {
@@ -99,6 +103,8 @@ impl Default for Rules {
             karma_initiation_flat: 10,
             karma_metamagic: 15,
             limb_count: 6,
+            ess_loss_reduces_maximum_only: false,
+            special_karma_cost_based_on_shown_value: false,
         }
     }
 }
@@ -139,6 +145,8 @@ impl Rules {
             karma_initiation_flat: s.karma("karmainitiationflat", d.karma_initiation_flat),
             karma_metamagic: s.karma("karmametamagic", d.karma_metamagic),
             limb_count: s.int("limbcount", d.limb_count),
+            ess_loss_reduces_maximum_only: s.flag("esslossreducesmaximumonly"),
+            special_karma_cost_based_on_shown_value: s.flag("specialkarmacostbasedonshownvalue"),
         }
     }
 }

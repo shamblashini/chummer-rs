@@ -14,7 +14,13 @@ use chummer_core::items;
 use chummer_core::xml::Element;
 
 /// Exact matches per kind must not fall below these. Raise as kinds land.
-const BASELINES: &[(&str, usize)] = &[("quality", 291), ("vehicle", 24), ("mod", 33), ("weaponmount", 10)];
+const BASELINES: &[(&str, usize)] = &[
+    ("quality", 291),
+    ("vehicle", 24),
+    ("mod", 33),
+    ("weaponmount", 10),
+    ("cyberware", 139),
+];
 
 /// Never compared: per-instance state, user input, or presentation.
 const COMMON_IGNORE: &[&str] = &[
