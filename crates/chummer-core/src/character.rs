@@ -292,6 +292,24 @@ impl Character {
         self.doc.child_or_insert(container)
     }
 
+    /// Remove an item by guid wherever it is nested, with its improvements.
+    pub fn remove_item_anywhere(&mut self, guid: &str) -> bool {
+        fn strip(e: &mut Element, guid: &str) -> bool {
+            let before = e.children.len();
+            e.children.retain(|n| !matches!(n, xml::Node::Element(c) if c.get("guid").eq_ignore_ascii_case(guid)));
+            if e.children.len() != before {
+                return true;
+            }
+            e.elements_mut().any(|c| strip(c, guid))
+        }
+        let removed = strip(&mut self.doc, guid);
+        if removed {
+            self.improvements.remove_from_source(guid);
+            self.dirty = true;
+        }
+        removed
+    }
+
     /// Remove a top-level item by guid, along with the improvements it made.
     pub fn remove_item(&mut self, container: &str, guid: &str) -> bool {
         let Some(c) = self.doc.child_mut(container) else { return false };

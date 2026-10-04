@@ -12,6 +12,7 @@ use chummer_core::lang::Language;
 use chummer_core::sections::{self, Section};
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
 
+use chummer_core::career;
 use chummer_core::chargen;
 use chummer_core::data;
 use chummer_core::settings::CharacterSettings;
@@ -68,6 +69,24 @@ pub struct CharacterView {
     new_contact: (String, String, i32, i32),
     /// Life module picker: (stage, module id, version id).
     life: (String, String, String),
+    action: Option<CareerAction>,
+    /// Manual ledger entry: (karma?, amount, reason).
+    manual: (bool, f64, String),
+    initiation: career::InitiationOptions,
+}
+
+/// A career-mode purchase chosen while drawing, run afterwards (it needs
+/// the engine and may fail with "not enough karma").
+#[derive(Debug, Clone)]
+enum CareerAction {
+    RaiseAttribute(String),
+    RaiseSkill(String),
+    RaiseGroup(String),
+    Specialize(String, String),
+    LearnKnowledge(String, String),
+    Undo(String),
+    Initiate(career::InitiationOptions),
+    RemoveQuality(String),
 }
 
 pub const ACCENT: Color32 = Color32::from_rgb(0, 200, 170);
@@ -107,6 +126,9 @@ impl CharacterView {
             new_kno: (String::new(), "Academic".into(), false),
             new_contact: (String::new(), String::new(), 1, 1),
             life: (String::new(), String::new(), String::new()),
+            action: None,
+            manual: (true, 0.0, String::new()),
+            initiation: career::InitiationOptions::default(),
         };
         v.refresh_budget();
         v
@@ -161,7 +183,7 @@ impl CharacterView {
             ui.separator();
             changed |= match self.tab {
                 Tab::Info => self.info_tab(ui),
-                Tab::Attributes => self.attributes_tab(ui),
+                Tab::Attributes => self.attributes_tab(ui, engine),
                 Tab::Skills => self.skills_tab(ui, engine, pdfs, status, &mut roll),
                 Tab::Qualities => {
                     let mut c = false;
@@ -182,13 +204,16 @@ impl CharacterView {
                 Tab::Magic => self.magic_tab(ui, engine, lang, pdfs, status),
                 Tab::Equipment => self.equipment_tab(ui, engine, lang, pdfs, status),
                 Tab::Improvements => self.improvements_tab(ui),
-                Tab::Log => self.log_tab(ui),
+                Tab::Log => self.log_tab(ui, engine),
                 Tab::Notes => self.notes_tab(ui),
             };
         });
         changed |= self.confirm_dialog(ctx);
         changed |= self.select_dialog(ctx, engine, lang, pdfs, status);
         changed |= self.finish_dialog(ctx);
+        if let Some(a) = self.action.take() {
+            changed |= self.run_action(a, engine, status);
+        }
         if changed {
             self.ch.dirty = true;
             self.recompute(engine);
@@ -319,7 +344,7 @@ impl CharacterView {
         changed
     }
 
-    fn attributes_tab(&mut self, ui: &mut egui::Ui) -> bool {
+    fn attributes_tab(&mut self, ui: &mut egui::Ui, engine: &Engine) -> bool {
         let mut changed = false;
         let career = self.ch.created;
         let priority = chummer_core::character::uses_priority_tables(&self.ch.field("buildmethod"));
@@ -338,7 +363,7 @@ impl CharacterView {
             })
             .collect();
         ui.label(if career {
-            "Career mode: raising an attribute here spends no karma automatically — adjust Karma in the sidebar."
+            "Career mode: Raise spends karma and records it in the Karma & Nuyen log, where it can be undone."
         } else {
             "Creation mode: base uses attribute points (priority builds). Changing levels does not deduct karma automatically; the Karma cost column shows what they are worth."
         });
@@ -375,7 +400,7 @@ impl CharacterView {
                         row.col(|ui| {
                             if let Some(a) = self.ch.attribute_mut(name) {
                                 let max = (v.total_max - v.total_base).max(a.karma);
-                                changed |= ui.add(egui::DragValue::new(&mut a.karma).range(0..=max)).changed();
+                                changed |= ui.add_enabled(!career, egui::DragValue::new(&mut a.karma).range(0..=max)).changed();
                             }
                         });
                         row.col(|ui| {
@@ -392,10 +417,24 @@ impl CharacterView {
                             ui.label(calc::attribute_karma_cost(&v, &self.rules).to_string());
                         });
                         row.col(|ui| {
-                            match calc::attribute_upgrade_cost(&v, &self.rules) {
-                                Some(c) => ui.label(format!("{c} karma")),
-                                None => ui.weak("at maximum"),
-                            };
+                            if career {
+                                match career::attribute_upgrade_karma_cost(engine, &self.ch, name) {
+                                    Some(c) => {
+                                        let r = ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("Raise ({c} karma)")));
+                                        if r.clicked() {
+                                            self.action = Some(CareerAction::RaiseAttribute(name.to_owned()));
+                                        }
+                                    }
+                                    None => {
+                                        ui.weak("at maximum");
+                                    }
+                                }
+                            } else {
+                                match calc::attribute_upgrade_cost(&v, &self.rules) {
+                                    Some(c) => ui.label(format!("{c} karma")),
+                                    None => ui.weak("at maximum"),
+                                };
+                            }
                         });
                     });
                 }
@@ -451,13 +490,20 @@ impl CharacterView {
                     let sk = &mut self.ch.skills[*i];
                     let on = !s.disabled;
                     changed |= ui.add_enabled(!career && on, egui::DragValue::new(&mut sk.base).range(0..=cap)).changed();
-                    changed |= ui.add_enabled(on, egui::DragValue::new(&mut sk.karma).range(0..=cap)).changed();
+                    changed |= ui.add_enabled(on && !career, egui::DragValue::new(&mut sk.karma).range(0..=cap)).changed();
                     ui.label(s.rating.to_string());
                     let pool = if s.rating == 0 && !s.default { "—".to_owned() } else { s.pool.to_string() };
                     if ui.add(egui::Button::new(RichText::new(pool).strong()).frame(false)).on_hover_text("Roll this pool").clicked() {
                         *roll = Some(s.pool.max(1) as u32);
                     }
                     ui.horizontal(|ui| {
+                        if career && !s.disabled {
+                            if let Some(c) = career::skill_upgrade_karma_cost(engine, &self.ch, &s.guid) {
+                                if ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("▲ {c}"))).on_hover_text("Raise for karma").clicked() {
+                                    self.action = Some(CareerAction::RaiseSkill(s.guid.clone()));
+                                }
+                            }
+                        }
                         if !s.specs.is_empty() {
                             ui.label(format!("{} (+{})", s.specs.join(", "), s.spec_bonus));
                         }
@@ -467,8 +513,12 @@ impl CharacterView {
                             let opts = engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default();
                             for o in opts.iter().filter(|o| !s.specs.contains(o)) {
                                 if ui.button(o).clicked() {
-                                    chargen::add_specialization(&mut self.ch, &guid, o);
-                                    changed = true;
+                                    if career {
+                                        self.action = Some(CareerAction::Specialize(guid.clone(), o.clone()));
+                                    } else {
+                                        chargen::add_specialization(&mut self.ch, &guid, o);
+                                        changed = true;
+                                    }
                                     ui.close();
                                 }
                             }
@@ -493,9 +543,13 @@ impl CharacterView {
                 }
                 if ui.add_enabled(!self.new_kno.0.trim().is_empty(), egui::Button::new("Add")).clicked() {
                     let native = self.new_kno.1 == "Language" && self.new_kno.2;
-                    chargen::add_knowledge_skill(&mut self.ch, self.new_kno.0.trim(), &self.new_kno.1.clone(), native);
+                    if career {
+                        self.action = Some(CareerAction::LearnKnowledge(self.new_kno.0.trim().to_owned(), self.new_kno.1.clone()));
+                    } else {
+                        chargen::add_knowledge_skill(&mut self.ch, self.new_kno.0.trim(), &self.new_kno.1.clone(), native);
+                        changed = true;
+                    }
                     self.new_kno.0.clear();
-                    changed = true;
                 }
             });
             let mut remove_kno: Option<String> = None;
@@ -515,8 +569,17 @@ impl CharacterView {
                     } else {
                         let k = &mut self.ch.knowledge_skills[*i];
                         changed |= ui.add_enabled(!career, egui::DragValue::new(&mut k.base).range(0..=cap)).changed();
-                        changed |= ui.add(egui::DragValue::new(&mut k.karma).range(0..=cap)).changed();
-                        ui.label(s.rating.to_string());
+                        changed |= ui.add_enabled(!career, egui::DragValue::new(&mut k.karma).range(0..=cap)).changed();
+                        ui.horizontal(|ui| {
+                            ui.label(s.rating.to_string());
+                            if career {
+                                if let Some(c) = career::skill_upgrade_karma_cost(engine, &self.ch, &s.guid) {
+                                    if ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("▲ {c}"))).clicked() {
+                                        self.action = Some(CareerAction::RaiseSkill(s.guid.clone()));
+                                    }
+                                }
+                            }
+                        });
                         ui.strong(s.pool.to_string());
                     }
                     if ui.small_button("🗑").on_hover_text("Remove").clicked() {
@@ -537,11 +600,25 @@ impl CharacterView {
                         ui.strong(h);
                     }
                     ui.end_row();
-                    for g in &mut self.ch.skill_groups {
+                    let costs: Vec<Option<i32>> = self
+                        .ch
+                        .skill_groups
+                        .iter()
+                        .map(|g| if career { career::skill_group_upgrade_karma_cost(engine, &self.ch, &g.name) } else { None })
+                        .collect();
+                    let karma = self.ch.karma;
+                    for (g, cost) in self.ch.skill_groups.iter_mut().zip(costs) {
                         ui.label(&g.name);
                         changed |= ui.add_enabled(!career, egui::DragValue::new(&mut g.base).range(0..=cap)).changed();
-                        changed |= ui.add(egui::DragValue::new(&mut g.karma).range(0..=cap)).changed();
-                        ui.label(g.rating().to_string());
+                        changed |= ui.add_enabled(!career, egui::DragValue::new(&mut g.karma).range(0..=cap)).changed();
+                        ui.horizontal(|ui| {
+                            ui.label(g.rating().to_string());
+                            if let Some(c) = cost {
+                                if ui.add_enabled(karma >= c, egui::Button::new(format!("▲ {c}"))).clicked() {
+                                    self.action = Some(CareerAction::RaiseGroup(g.name.clone()));
+                                }
+                            }
+                        });
                         ui.end_row();
                     }
                 });
@@ -585,10 +662,23 @@ impl CharacterView {
         if !tradition.is_empty() {
             ui.label(format!("Tradition: {tradition} · drain {}", self.ch.doc.child("tradition").map(|t| t.get("drain")).unwrap_or_default()));
         }
-        let grade = self.ch.doc.get_i32("initiategrade").unwrap_or(0);
-        if grade > 0 {
-            ui.label(format!("Initiate grade {grade}"));
-        }
+        let techno = self.ch.res_enabled() && !self.ch.mag_enabled();
+        let grade = self.ch.doc.get_i32(if techno { "submersiongrade" } else { "initiategrade" }).unwrap_or(0);
+        ui.horizontal(|ui| {
+            if grade > 0 {
+                ui.label(format!("{} grade {grade}", if techno { "Submersion" } else { "Initiate" }));
+            }
+            if self.ch.created && (self.ch.mag_enabled() || self.ch.res_enabled()) {
+                ui.checkbox(&mut self.initiation.group, "Group");
+                ui.checkbox(&mut self.initiation.ordeal, "Ordeal");
+                ui.checkbox(&mut self.initiation.schooling, "Schooling");
+                let cost = career::initiation_karma_cost(engine, &self.ch, self.initiation);
+                let label = format!("{} ({cost} karma)", if techno { "Submerge" } else { "Initiate" });
+                if ui.add_enabled(self.ch.karma >= cost, egui::Button::new(label)).clicked() {
+                    self.action = Some(CareerAction::Initiate(self.initiation));
+                }
+            }
+        });
         ui.separator();
         if let Some(sec) = present.get(self.magic) {
             let sec = **sec;
@@ -697,6 +787,11 @@ impl CharacterView {
             Some(yes) => {
                 self.confirm_remove = None;
                 if yes && container == "qualities" {
+                    if self.ch.created {
+                        // Career mode: buying off a negative quality costs karma.
+                        self.action = Some(CareerAction::RemoveQuality(guid));
+                        return false;
+                    }
                     chargen::remove_quality(&mut self.ch, &guid);
                     true
                 } else {
@@ -828,16 +923,41 @@ impl CharacterView {
                 let rec = data::Record(&rec);
                 let name = rec.name();
                 let karma = rec.el().get_i32("karma").unwrap_or(0);
-                match chummer_core::items::add(tag, &mut self.ch, store, rec, &purchase) {
-                    Ok(_) => {
-                        if tag == "quality" && self.ch.created && karma > 0 {
-                            // Career mode: positive qualities cost double karma.
-                            let cost = if rec.el().get_bool("doublecareer").unwrap_or(true) { karma * 2 } else { karma };
-                            self.ch.karma -= cost;
-                            *status = Some((format!("Added {name} for {cost} karma"), false));
-                        } else {
+                let _ = karma;
+                if self.ch.created && tag == "quality" {
+                    // Career mode: karma is spent and logged (double for most qualities).
+                    return match career::add_quality(&mut self.ch, engine, rec, purchase.answer.as_deref()) {
+                        Ok(_) => {
                             *status = Some((format!("Added {name}"), false));
+                            self.select = None;
+                            true
                         }
+                        Err(e) => {
+                            *status = Some((e.to_string(), true));
+                            false
+                        }
+                    };
+                }
+                match chummer_core::items::add(tag, &mut self.ch, store, rec, &purchase) {
+                    Ok(guid) => {
+                        let mut msg = format!("Added {name}");
+                        if self.ch.created && tag != "quality" {
+                            // Career mode: pay for it and log the purchase.
+                            let cost = chummer_core::items::find_by_guid_mut(&mut self.ch.doc, &guid).map(|e| chargen::item_cost(e)).unwrap_or(0.0);
+                            let parent_tag = purchase.parent.as_ref().and_then(|p| chummer_core::items::find_by_guid_mut(&mut self.ch.doc, p).map(|e| e.name.clone()));
+                            if cost > 0.0 {
+                                match career::pay_for_item(&mut self.ch, tag, parent_tag.as_deref(), &guid, cost) {
+                                    Ok(_) => msg = format!("Bought {name} for {}", format::nuyen(cost)),
+                                    Err(e) => {
+                                        // Not affordable: take it back out.
+                                        self.ch.remove_item_anywhere(&guid);
+                                        *status = Some((e.to_string(), true));
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                        *status = Some((msg, false));
                         self.select = None;
                         true
                     }
@@ -948,41 +1068,110 @@ impl CharacterView {
         false
     }
 
-    fn log_tab(&mut self, ui: &mut egui::Ui) -> bool {
-        let entries: Vec<Element> = self.ch.items("expenses", "expense").into_iter().cloned().collect();
-        let (mut karma, mut nuyen) = (0.0, 0.0);
-        for e in &entries {
-            let amount = e.get_f64("amount").unwrap_or(0.0);
-            if e.get("type") == "Karma" {
-                karma += amount;
-            } else {
-                nuyen += amount;
+    fn run_action(&mut self, a: CareerAction, engine: &Engine, status: &mut Status) -> bool {
+        let r: Result<String, career::CareerError> = match &a {
+            CareerAction::RaiseAttribute(n) => career::improve_attribute(&mut self.ch, engine, n),
+            CareerAction::RaiseSkill(g) => career::improve_skill(&mut self.ch, engine, g),
+            CareerAction::RaiseGroup(g) => career::improve_skill_group(&mut self.ch, engine, g),
+            CareerAction::Specialize(g, n) => career::buy_specialization(&mut self.ch, engine, g, n),
+            CareerAction::LearnKnowledge(n, k) => career::learn_knowledge_skill(&mut self.ch, engine, n, k),
+            CareerAction::Undo(g) => career::undo_expense(&mut self.ch, engine, g).map(|_| String::new()),
+            CareerAction::Initiate(o) => career::add_initiation_grade(&mut self.ch, engine, *o),
+            CareerAction::RemoveQuality(g) => career::remove_quality(&mut self.ch, engine, g).map(|x| x.unwrap_or_default()),
+        };
+        match r {
+            Ok(_) => {
+                *status = Some((format!("Done: {}", describe_action(&a)), false));
+                true
+            }
+            Err(e) => {
+                *status = Some((e.to_string(), true));
+                false
             }
         }
-        ui.label(format!("{} entries · karma total {karma} · nuyen total {}", entries.len(), format::nuyen(nuyen)));
+    }
+
+    fn log_tab(&mut self, ui: &mut egui::Ui, engine: &Engine) -> bool {
+        let mut changed = false;
+        let entries = career::entries(&self.ch);
+        let totals = career::totals(&self.ch);
+        if self.ch.created {
+            let rep = career::reputation_for(engine, &self.ch);
+            ui.label(format!(
+                "Career karma {} · Street Cred {} · Notoriety {} · Public Awareness {}",
+                career::career_karma(&self.ch),
+                rep.street_cred,
+                rep.notoriety,
+                rep.public_awareness
+            ));
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("manual_kind").selected_text(if self.manual.0 { "Karma" } else { "Nuyen" }).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.manual.0, true, "Karma");
+                    ui.selectable_value(&mut self.manual.0, false, "Nuyen");
+                });
+                ui.add(egui::DragValue::new(&mut self.manual.1).range(0.0..=1_000_000.0).max_decimals(2));
+                ui.add(egui::TextEdit::singleline(&mut self.manual.2).hint_text("Reason (e.g. run payout)").desired_width(240.0));
+                let ok = self.manual.1 > 0.0;
+                let rules = career::CareerRules::for_character(engine, &self.ch);
+                let entry = career::ManualExpense { amount: self.manual.1, reason: self.manual.2.clone(), ..Default::default() };
+                let mut result = None;
+                if ui.add_enabled(ok, egui::Button::new("Gain")).clicked() {
+                    result = Some(if self.manual.0 { career::karma_gained(&mut self.ch, &rules, &entry) } else { career::nuyen_gained(&mut self.ch, &rules, &entry) });
+                }
+                if ui.add_enabled(ok, egui::Button::new("Spend")).clicked() {
+                    result = Some(if self.manual.0 { career::karma_spent(&mut self.ch, &rules, &entry) } else { career::nuyen_spent(&mut self.ch, &rules, &entry) });
+                }
+                if let Some(r) = result {
+                    match r {
+                        Ok(_) => {
+                            self.manual.1 = 0.0;
+                            self.manual.2.clear();
+                            changed = true;
+                        }
+                        Err(e) => {
+                            ui.colored_label(ui.visuals().error_fg_color, e.to_string());
+                        }
+                    }
+                }
+            });
+        }
+        ui.label(format!(
+            "{} entries · karma earned {} · spent {} · nuyen earned {}",
+            entries.len(),
+            totals.career_karma,
+            totals.karma_spent,
+            format::nuyen(totals.career_nuyen)
+        ));
         ui.add_space(4.0);
         if entries.is_empty() {
-            ui.weak("No expenses recorded. Career-mode spending appears here.");
-            return false;
+            ui.weak("No entries yet. Career-mode spending and income appear here.");
+            return changed;
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("log").striped(true).num_columns(4).spacing([14.0, 3.0]).show(ui, |ui| {
-                for h in ["Date", "Type", "Amount", "Reason"] {
+            egui::Grid::new("log").striped(true).num_columns(5).spacing([14.0, 3.0]).show(ui, |ui| {
+                for h in ["Date", "Type", "Amount", "Reason", ""] {
                     ui.strong(h);
                 }
                 ui.end_row();
                 for e in entries.iter().rev() {
-                    ui.label(e.get("date").replace('T', " "));
-                    ui.label(e.get("type"));
-                    let a = e.get_f64("amount").unwrap_or(0.0);
-                    let text = if e.get("type") == "Karma" { format!("{a}") } else { format::nuyen(a) };
-                    ui.colored_label(if a < 0.0 { WARN } else { ACCENT }, text);
-                    ui.label(e.get("reason"));
+                    ui.label(e.date.replace('T', " "));
+                    let karma = e.kind == career::ExpenseType::Karma;
+                    ui.label(if karma { "Karma" } else { "Nuyen" });
+                    let text = if karma { chummer_core::improvement::fmt_num(e.amount) } else { format::nuyen(e.amount) };
+                    ui.colored_label(if e.amount < 0.0 { WARN } else { ACCENT }, text);
+                    ui.label(&e.reason);
+                    if self.ch.created && e.undo.is_some() {
+                        if ui.small_button("Undo").on_hover_text("Reverse this and refund it").clicked() {
+                            self.action = Some(CareerAction::Undo(e.guid.clone()));
+                        }
+                    } else {
+                        ui.label("");
+                    }
                     ui.end_row();
                 }
             });
         });
-        false
+        changed
     }
 
     fn notes_tab(&mut self, ui: &mut egui::Ui) -> bool {
@@ -1108,4 +1297,17 @@ fn cm_track(ui: &mut egui::Ui, id: &str, boxes: i32, threshold: i32, filled: &mu
         });
     });
     changed
+}
+
+fn describe_action(a: &CareerAction) -> String {
+    match a {
+        CareerAction::RaiseAttribute(n) => format!("raised {n}"),
+        CareerAction::RaiseSkill(_) => "raised skill".into(),
+        CareerAction::RaiseGroup(g) => format!("raised {g}"),
+        CareerAction::Specialize(_, n) => format!("specialized in {n}"),
+        CareerAction::LearnKnowledge(n, _) => format!("learned {n}"),
+        CareerAction::Undo(_) => "undone".into(),
+        CareerAction::Initiate(_) => "initiated".into(),
+        CareerAction::RemoveQuality(_) => "quality removed".into(),
+    }
 }
