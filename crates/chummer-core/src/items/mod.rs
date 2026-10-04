@@ -18,6 +18,7 @@
 pub mod armor;
 pub mod cyberware;
 pub mod drug;
+pub mod edit;
 pub mod gear;
 pub mod lifestyle;
 pub mod magic;

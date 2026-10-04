@@ -80,6 +80,8 @@ pub struct SelectDialog {
     purchase: Purchase,
     max_avail: i32,
     nuyen_left: Option<f64>,
+    /// The parent was preset by [`SelectDialog::with_parent`]: no picker.
+    parent_locked: bool,
 }
 
 impl SelectDialog {
@@ -99,7 +101,15 @@ impl SelectDialog {
             purchase: Purchase { qty: 1.0, cost_multiplier: 1.0, ..Default::default() },
             max_avail,
             nuyen_left,
+            parent_locked: false,
         })
+    }
+
+    /// Preset where the new item goes (an item editor's "Add …" command).
+    pub fn with_parent(mut self, parent: Option<String>) -> Self {
+        self.parent_locked = parent.is_some();
+        self.purchase.parent = parent;
+        self
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -285,7 +295,12 @@ impl SelectDialog {
                 });
                 ui.end_row();
             }
-            if let Some((container, tag)) = parent_of(self.kind.tag).or(optional_parent(self.kind.tag)) {
+            if self.parent_locked {
+                let name = self.purchase.parent.as_deref().and_then(|g| items::edit::find(ch, g)).map(|e| e.get("name")).unwrap_or_default();
+                ui.label("Install in");
+                ui.label(name);
+                ui.end_row();
+            } else if let Some((container, tag)) = parent_of(self.kind.tag).or(optional_parent(self.kind.tag)) {
                 ui.label("Install in");
                 let parents: Vec<(String, String)> = ch.items(container, tag).iter().map(|e| (e.get("guid"), e.get("name"))).collect();
                 let cur = self.purchase.parent.as_ref().and_then(|g| parents.iter().find(|(pg, _)| pg == g)).map(|(_, n)| n.clone());

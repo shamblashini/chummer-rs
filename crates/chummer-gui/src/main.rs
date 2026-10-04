@@ -6,6 +6,7 @@ mod drug_ui;
 mod initiative;
 mod lifestyle_ui;
 mod magic_ui;
+mod item_editor;
 mod pdf_ui;
 mod select;
 mod settings_ui;

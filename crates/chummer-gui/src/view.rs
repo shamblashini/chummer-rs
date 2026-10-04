@@ -79,6 +79,8 @@ pub struct CharacterView {
     magic_editor: crate::magic_ui::MagicEditor,
     lifestyle_editor: crate::lifestyle_ui::LifestyleEditor,
     drug_builder: crate::drug_ui::DrugBuilder,
+    /// Item detail pane: (selected item guid, editor).
+    item_editor: Option<(String, crate::item_editor::ItemEditor)>,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -140,6 +142,7 @@ impl CharacterView {
             magic_editor: Default::default(),
             lifestyle_editor: Default::default(),
             drug_builder: Default::default(),
+            item_editor: None,
         };
         v.refresh_budget();
         v
@@ -189,6 +192,7 @@ impl CharacterView {
                 changed |= self.sidebar(ui, &mut roll);
             });
         });
+        changed |= self.item_editor_panel(ctx, engine, status);
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for (t, label) in TABS {
@@ -855,8 +859,9 @@ impl CharacterView {
             }
             ui.label("");
             ui.end_row();
+            let mut clicked: Option<String> = None;
             for it in &items {
-                item_rows(ui, sec, it, lang, 0);
+                clicked = item_rows(ui, sec, it, lang, 0).or(clicked);
                 ui.horizontal(|ui| {
                     pdf_ui::source_icon(ui, pdfs, SourceRef::of(it), status);
                     if ui.small_button("🗑").on_hover_text("Remove (also removes its improvements)").clicked() {
@@ -867,13 +872,44 @@ impl CharacterView {
                 for (container, item) in sec.child_containers {
                     if let Some(c) = it.child(container) {
                         for child in c.children_named(item) {
-                            child_rows(ui, sec, child, lang, 1, pdfs, status);
+                            clicked = child_rows(ui, sec, child, lang, 1, pdfs, status).or(clicked);
                         }
                     }
                 }
             }
+            if let Some(g) = clicked {
+                self.item_editor = Some((g, crate::item_editor::ItemEditor::default()));
+            }
         });
         false
+    }
+
+    /// The item detail pane, when an item is selected (see `item_editor`).
+    fn item_editor_panel(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, status: &mut Status) -> bool {
+        let Some((guid, mut ed)) = self.item_editor.take() else { return false };
+        let store = self.store.clone();
+        let mut res = crate::item_editor::EditorResult::default();
+        let mut close = false;
+        egui::SidePanel::right("item_editor").resizable(true).default_width(300.0).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.strong("Item");
+                close = ui.small_button("✖").on_hover_text("Close").clicked();
+            });
+            egui::ScrollArea::vertical().show(ui, |ui| res = ed.ui(ui, &mut self.ch, &store, engine, &guid));
+        });
+        if let Some(s) = res.status.take() {
+            *status = Some(s);
+        }
+        if let Some((tag, parent)) = res.add_child.take() {
+            self.open_select(&tag, engine);
+            self.select = self.select.take().map(|d| d.with_parent(Some(parent)));
+        }
+        if let Some(g) = res.select.take() {
+            self.item_editor = Some((g, crate::item_editor::ItemEditor::default()));
+        } else if !close && !res.removed {
+            self.item_editor = Some((guid, ed));
+        }
+        res.changed
     }
 
     /// Confirmation dialog for item removal. Returns true if an item went.
@@ -1053,6 +1089,7 @@ impl CharacterView {
                 }
                 match chummer_core::items::add(tag, &mut self.ch, store, rec, &purchase) {
                     Ok(guid) => {
+                        chummer_core::items::edit::settle_new_item(&mut self.ch, &guid);
                         let mut msg = format!("Added {name}");
                         // Martial arts cost karma, not nuyen (MartialArt.Cost).
                         if self.ch.created && tag == "martialart" {
@@ -1368,7 +1405,9 @@ fn cell(it: &Element, field: &str) -> String {
     }
 }
 
-fn item_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, depth: usize) {
+/// One table row. Returns the item's guid when its name was clicked.
+fn item_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, depth: usize) -> Option<String> {
+    let mut clicked = None;
     for (i, c) in sec.columns.iter().enumerate() {
         if i == 0 {
             let indent = "    ".repeat(depth);
@@ -1376,8 +1415,13 @@ fn item_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, de
             if depth == 0 {
                 text = text.strong();
             }
-            let r = ui.label(text);
+            let editable = chummer_core::items::edit::is_item(it);
+            let r = ui.add(egui::Label::new(text).sense(if editable { egui::Sense::click() } else { egui::Sense::hover() }));
+            if r.clicked() {
+                clicked = Some(it.get("guid"));
+            }
             let notes = it.get("notes");
+            let r = if editable { r.on_hover_cursor(egui::CursorIcon::PointingHand) } else { r };
             if !notes.trim().is_empty() {
                 r.on_hover_text(notes);
             }
@@ -1385,22 +1429,24 @@ fn item_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, de
             ui.label(cell(it, c.field));
         }
     }
+    clicked
 }
 
-fn child_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, depth: usize, pdfs: &SourcebookLibrary, status: &mut Status) {
+fn child_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, depth: usize, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<String> {
     if depth > 6 {
-        return;
+        return None;
     }
-    item_rows(ui, sec, it, lang, depth);
+    let mut clicked = item_rows(ui, sec, it, lang, depth);
     pdf_ui::source_icon(ui, pdfs, SourceRef::of(it), status);
     ui.end_row();
     for (container, item) in sec.child_containers {
         if let Some(c) = it.child(container) {
             for child in c.children_named(item) {
-                child_rows(ui, sec, child, lang, depth + 1, pdfs, status);
+                clicked = child_rows(ui, sec, child, lang, depth + 1, pdfs, status).or(clicked);
             }
         }
     }
+    clicked
 }
 
 /// Clickable condition-monitor boxes. Clicking box N sets damage to N, or
