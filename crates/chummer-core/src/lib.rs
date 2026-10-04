@@ -5,6 +5,7 @@
 
 pub mod xml;
 pub mod data;
+pub mod custom_data;
 pub mod lang;
 pub mod expr;
 pub mod settings;

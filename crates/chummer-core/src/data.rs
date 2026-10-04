@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::custom_data;
 use crate::xml::{self, Element};
 
 #[derive(Debug, thiserror::Error)]
@@ -50,15 +51,50 @@ impl<'a> Record<'a> {
     }
 }
 
-/// Lazily loaded, shared view of the data directory.
+/// Parsed documents by file name.
+type DocCache = Mutex<HashMap<String, Arc<Element>>>;
+
+/// Lazily loaded, shared view of the data directory, optionally with a set
+/// of enabled custom data directories applied on top.
 pub struct DataStore {
     data_dir: PathBuf,
-    cache: Mutex<HashMap<String, Arc<Element>>>,
+    /// Base (unmodified) documents; shared between stores made with
+    /// [`DataStore::with_enabled_custom_data`].
+    cache: Arc<DocCache>,
+    /// Enabled custom data directories, in load order.
+    custom_dirs: Vec<PathBuf>,
+    /// Documents with custom data applied.
+    merged: DocCache,
+    warnings: Mutex<Vec<String>>,
 }
 
 impl DataStore {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
-        Self { data_dir: data_dir.into(), cache: Mutex::new(HashMap::new()) }
+        Self::with_custom_data(data_dir, Vec::new())
+    }
+
+    /// A store whose documents have `dirs` (custom data directories, in
+    /// load order) applied, as `XmlManager.Load` does with a settings
+    /// preset's enabled custom data paths.
+    pub fn with_custom_data(data_dir: impl Into<PathBuf>, dirs: Vec<PathBuf>) -> Self {
+        Self {
+            data_dir: data_dir.into(),
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            custom_dirs: dirs,
+            merged: Mutex::new(HashMap::new()),
+            warnings: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Same data directory and base-document cache, different custom data.
+    pub fn with_enabled_custom_data(&self, dirs: Vec<PathBuf>) -> Self {
+        Self {
+            data_dir: self.data_dir.clone(),
+            cache: self.cache.clone(),
+            custom_dirs: dirs,
+            merged: Mutex::new(HashMap::new()),
+            warnings: Mutex::new(Vec::new()),
+        }
     }
 
     /// Locate the bundled `resources/data` directory.
@@ -73,8 +109,41 @@ impl DataStore {
         &self.data_dir
     }
 
-    /// Parsed root element of a data file, e.g. `doc("skills.xml")`.
+    /// The enabled custom data directories, in load order.
+    pub fn custom_data_dirs(&self) -> &[PathBuf] {
+        &self.custom_dirs
+    }
+
+    /// Problems met while applying custom data (unreadable files,
+    /// unsupported XPath or regex constructs). Those parts were skipped.
+    pub fn custom_data_warnings(&self) -> Vec<String> {
+        self.warnings.lock().unwrap().clone()
+    }
+
+    /// Parsed root element of a data file, e.g. `doc("skills.xml")`, with
+    /// the enabled custom data applied.
     pub fn doc(&self, file: &str) -> Result<Arc<Element>, DataError> {
+        if self.custom_dirs.is_empty() {
+            return self.base_doc(file);
+        }
+        if let Some(d) = self.merged.lock().unwrap().get(file) {
+            return Ok(d.clone());
+        }
+        let relevant = custom_data::relevant_directories(file, &self.custom_dirs);
+        let doc = if relevant.is_empty() {
+            self.base_doc(file)?
+        } else {
+            let mut root = (*self.base_doc(file)?).clone();
+            let report = custom_data::apply(&mut root, file, &relevant);
+            self.warnings.lock().unwrap().extend(report.warnings);
+            Arc::new(root)
+        };
+        self.merged.lock().unwrap().insert(file.to_owned(), doc.clone());
+        Ok(doc)
+    }
+
+    /// A data file exactly as shipped, without custom data.
+    pub fn base_doc(&self, file: &str) -> Result<Arc<Element>, DataError> {
         if let Some(d) = self.cache.lock().unwrap().get(file) {
             return Ok(d.clone());
         }
