@@ -133,6 +133,12 @@ fn stripped(e: &Element) -> Element {
     c
 }
 
+/// Identifier text for a filter, with the C#'s `Replace("&amp;", "&")`
+/// (entities are already decoded once by the parser).
+pub(crate) fn id_text(e: &Element) -> String {
+    xpath::string_value(e).replace("&amp;", "&")
+}
+
 /// `bool.TrueString` comparison as done by `InnerTextIsTrueString`.
 fn is_true(s: &str) -> bool {
     s.trim().eq_ignore_ascii_case("true")
@@ -214,15 +220,15 @@ impl<'w> Amender<'w> {
     /// children exist), plus every `isidnode="True"` child.
     fn default_filter(amending: &Element, op: Op) -> Option<Expr> {
         let mut filter = if let Some(id) = amending.child("id") {
-            Some(Expr::child_equals("id", &xpath::string_value(id)))
+            Some(Expr::child_equals("id", &id_text(id)))
         } else {
             let name = amending.child("name");
             let other_children = amending.elements().any(|e| e.name != "name");
-            name.filter(|_| op == Op::Remove || other_children).map(|n| Expr::child_equals("name", &xpath::string_value(n)))
+            name.filter(|_| op == Op::Remove || other_children).map(|n| Expr::child_equals("name", &id_text(n)))
         };
         // `child::*[@isidnode = 'True']`: XPath equality is case-sensitive.
         for extra in amending.elements().filter(|e| e.attr("isidnode") == Some("True")) {
-            let cond = Expr::child_equals(&extra.name, &xpath::string_value(extra));
+            let cond = Expr::child_equals(&extra.name, &id_text(extra));
             filter = Some(match filter {
                 Some(f) => f.and(cond),
                 None => cond,
@@ -280,8 +286,7 @@ impl<'w> Amender<'w> {
         }
         if !targets.is_empty() || (d.op == Op::Recurse && !d.add_if_not_found) {
             if d.op == Op::Recurse {
-                self.recurse(doc, amending, xpath, &new_path, targets.len(), &d, extra);
-                return true;
+                return self.recurse(doc, amending, xpath, &new_path, !targets.is_empty(), extra);
             }
             self.edit_targets(doc, amending, xpath, &targets, &d);
             if d.add_if_not_found {
@@ -340,21 +345,13 @@ impl<'w> Amender<'w> {
 
     /// `recurse`: apply each element child against the targets' path. With
     /// no targets (or pending ancestors) this node is recorded so a
-    /// descendant that appends can recreate it.
-    #[allow(clippy::too_many_arguments)]
-    fn recurse(
-        &mut self,
-        doc: &mut Element,
-        amending: &mut Element,
-        xpath: &DocPath,
-        new_path: &DocPath,
-        target_count: usize,
-        d: &Directives,
-        extra: &mut Vec<ExtraNode>,
-    ) {
-        if extra.is_empty() && target_count > 0 {
+    /// descendant that appends can recreate it. Returns the last child's
+    /// result, as the C# does.
+    fn recurse(&mut self, doc: &mut Element, amending: &mut Element, xpath: &DocPath, new_path: &DocPath, found: bool, extra: &mut Vec<ExtraNode>) -> bool {
+        let mut result = false;
+        if extra.is_empty() && found {
             for child in amending.elements_mut() {
-                self.amend_node_children(doc, child, new_path, extra);
+                result = self.amend_node_children(doc, child, new_path, extra);
             }
         } else {
             let id = self.next_extra_id;
@@ -362,15 +359,13 @@ impl<'w> Amender<'w> {
             let shallow = Element { name: amending.name.clone(), attrs: amending.attrs.clone(), children: Vec::new() };
             extra.push(ExtraNode { id, node: shallow, parent_path: xpath.clone() });
             for child in amending.elements_mut() {
-                self.amend_node_children(doc, child, new_path, extra);
+                result = self.amend_node_children(doc, child, new_path, extra);
             }
             if let Some(i) = extra.iter().position(|x| x.id == id) {
                 extra.remove(i);
             }
         }
-        if target_count > 0 && d.add_if_not_found {
-            self.add_to_parents_without_target(doc, amending, xpath, target_count, d);
-        }
+        result
     }
 
     /// The per-target loop for `remove`, `append`, `replace`, `regexreplace`.

@@ -19,6 +19,8 @@ pub mod xpath;
 
 use std::path::{Path, PathBuf};
 
+use amend::id_text;
+
 use crate::xml::{self, Element, Node};
 
 // ---------------------------------------------------------------- versions
@@ -453,12 +455,6 @@ pub fn apply_directory(doc: &mut Element, file_name: &str, dir: &Path, report: &
     }
 }
 
-/// `Replace("&amp;", "&")` on identifier text, as the C# does before
-/// building its filter (our parser has already decoded entities once).
-fn id_text(e: &Element) -> String {
-    xpath::string_value(e).replace("&amp;", "&")
-}
-
 /// The id/name filter of `override_` and `custom_` records.
 fn record_filter(record: &Element, with_isidnode: bool) -> Option<xpath::Expr> {
     let mut f = match (record.child("id"), record.child("name")) {
@@ -635,6 +631,12 @@ mod tests {
         // append recreates it before appending.
         let doc = amend(BASE, "<chummer><qualities><quality><name>B</name><bonus><z>3</z></bonus></quality></qualities></chummer>");
         assert_eq!(quality(&doc, "B").unwrap().path("bonus/z").unwrap().text(), "3");
+        // Explicit recurse over both qualities: A's <bonus> is found, so B
+        // (which has none) is not given one, as in Chummer.
+        let doc = amend(BASE, r#"<chummer><qualities><quality xpathfilter="karma &lt; 10" amendoperation="recurse"><bonus><z>4</z></bonus></quality></qualities></chummer>"#);
+        assert!(quality(&doc, "B").unwrap().child("bonus").is_none());
+        let a = quality(&doc, "A").unwrap();
+        assert_eq!((a.path("bonus/x").unwrap().text(), a.path("bonus/z").unwrap().text()), ("1".into(), "4".into()));
     }
 
     #[test]
