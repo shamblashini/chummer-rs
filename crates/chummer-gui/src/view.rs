@@ -223,7 +223,14 @@ impl CharacterView {
                 Tab::Magic => self.magic_tab(ui, engine, lang, pdfs, status),
                 Tab::Equipment => self.equipment_tab(ui, engine, lang, pdfs, status),
                 Tab::Improvements => self.improvements_tab(ui, lang),
-                Tab::Log => self.log_tab(ui, engine, lang),
+                Tab::Log => {
+                    let mut c = self.log_tab(ui, engine, lang);
+                    if self.ch.created {
+                        ui.separator();
+                        c |= self.calendar_ui(ui, lang);
+                    }
+                    c
+                }
                 Tab::Notes => self.notes_tab(ui, lang),
             };
         });
@@ -1262,6 +1269,39 @@ impl CharacterView {
                 false
             }
         }
+    }
+
+    /// Career calendar: in-game weeks with notes (`CalendarWeek`).
+    fn calendar_ui(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
+        use chummer_core::calendar;
+        let mut changed = false;
+        egui::CollapsingHeader::new(RichText::new(lang.tr("Calendar")).strong()).id_salt("calendar").show(ui, |ui| {
+            if ui.button(format!("➕ {}", lang.tr("Add Week"))).clicked() {
+                calendar::add_next_week(&mut self.ch, None);
+                changed = true;
+            }
+            let mut weeks = calendar::weeks(&self.ch);
+            weeks.sort_by_key(|w| std::cmp::Reverse((w.year, w.week)));
+            let mut remove = None;
+            egui::Grid::new("calendar_weeks").striped(true).num_columns(3).show(ui, |ui| {
+                for w in &weeks {
+                    ui.label(w.label());
+                    let mut notes = w.notes.clone();
+                    if ui.add(egui::TextEdit::singleline(&mut notes).desired_width(420.0)).changed() {
+                        calendar::set_notes(&mut self.ch, &w.guid, &notes);
+                        changed = true;
+                    }
+                    if ui.small_button("🗑").clicked() {
+                        remove = Some(w.guid.clone());
+                    }
+                    ui.end_row();
+                }
+            });
+            if let Some(g) = remove {
+                changed |= calendar::remove_week(&mut self.ch, &g);
+            }
+        });
+        changed
     }
 
     fn log_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language) -> bool {
