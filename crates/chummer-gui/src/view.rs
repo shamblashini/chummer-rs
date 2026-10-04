@@ -79,6 +79,7 @@ pub struct CharacterView {
     magic_editor: crate::magic_ui::MagicEditor,
     lifestyle_editor: crate::lifestyle_ui::LifestyleEditor,
     drug_builder: crate::drug_ui::DrugBuilder,
+    custom_improvements: crate::improvement_ui::ImprovementsPanel,
     /// Item detail pane: (selected item guid, editor).
     item_editor: Option<(String, crate::item_editor::ItemEditor)>,
 }
@@ -142,6 +143,7 @@ impl CharacterView {
             magic_editor: Default::default(),
             lifestyle_editor: Default::default(),
             drug_builder: Default::default(),
+            custom_improvements: Default::default(),
             item_editor: None,
         };
         v.refresh_budget();
@@ -237,6 +239,7 @@ impl CharacterView {
         changed |= self.confirm_dialog(ctx, lang);
         changed |= self.select_dialog(ctx, engine, lang, pdfs, status);
         changed |= self.drug_builder.window(ctx, &mut self.ch, &self.store, lang, status);
+        changed |= self.custom_improvements.window(ctx, &mut self.ch, &self.store, self.settings.as_ref(), lang);
         changed |= self.finish_dialog(ctx, lang);
         if let Some(a) = self.action.take() {
             changed |= self.run_action(a, engine, status);
@@ -1220,6 +1223,8 @@ impl CharacterView {
     }
 
     fn improvements_tab(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
+        let changed = self.custom_improvements.tab(ui, &mut self.ch, &self.store, lang);
+        ui.separator();
         let imps = &self.ch.improvements;
         ui.label(lang.tr_fmt(
             "{0} improvements ({1} active). These modifiers come from qualities, ware, powers and gear.",
@@ -1245,7 +1250,7 @@ impl CharacterView {
                 }
             });
         });
-        false
+        changed
     }
 
     fn run_action(&mut self, a: CareerAction, engine: &Engine, status: &mut Status) -> bool {
