@@ -402,7 +402,8 @@ impl MagicEditor {
                 });
                 let (c1, c2) = entry.clone();
                 let saved_ok = m.get("extrachoice1") == c1 && m.get("extrachoice2") == c2;
-                if ui.add_enabled(!saved_ok, egui::Button::new("Apply choices")).clicked() {
+                let complete = (set1.is_empty() || !c1.is_empty()) && (set2.is_empty() || !c2.is_empty());
+                if ui.add_enabled(!saved_ok && complete, egui::Button::new("Apply choices")).clicked() {
                     let r = mentor::set_mentor_choices(ch, cx.store, &guid, Some(c1.as_str()).filter(|s| !s.is_empty()), Some(c2.as_str()).filter(|s| !s.is_empty()));
                     changed |= report(status, r, |_| format!("Mentor choices set for {}", m.get("name")));
                 }
@@ -486,7 +487,13 @@ impl MagicEditor {
             let guid = art.get("guid");
             let known: Vec<String> = art.child("martialarttechniques").map(|t| t.children_named("martialarttechnique").map(|x| x.get("name")).collect()).unwrap_or_default();
             let rec = mentor_like_find(&doc, "martialarts", "martialart", art);
-            let offered: Vec<String> = rec.map(martialart::technique_names).unwrap_or_default().into_iter().filter(|t| !known.contains(t)).collect();
+            // `<alltechniques />` (One Trick Pony) teaches any technique.
+            let names = match rec {
+                Some(r) if r.el().child("alltechniques").is_some() => data::records(&doc, "techniques", "technique").into_iter().filter(|t| !t.hidden()).map(|t| t.name()).collect(),
+                Some(r) => martialart::technique_names(r),
+                None => Vec::new(),
+            };
+            let offered: Vec<String> = names.into_iter().filter(|t| !known.contains(t)).collect();
             ui.horizontal_wrapped(|ui| {
                 ui.strong(art.get("name"));
                 ui.weak(if known.is_empty() { "no techniques".to_owned() } else { known.join(", ") });
