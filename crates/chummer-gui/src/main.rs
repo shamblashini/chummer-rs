@@ -3,6 +3,7 @@
 mod browser;
 mod dice_ui;
 mod initiative;
+mod item_editor;
 mod pdf_ui;
 mod select;
 mod settings_ui;
