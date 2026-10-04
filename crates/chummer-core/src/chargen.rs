@@ -791,7 +791,8 @@ pub fn finalize(ch: &mut Character, b: &Budget, settings: &CharacterSettings) {
     ch.dirty = true;
 }
 
-fn now_iso() -> String {
+/// The current UTC time in .NET's sortable `"s"` format, as expense dates use.
+pub fn now_iso() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let days = secs.div_euclid(86_400);
     let tod = secs.rem_euclid(86_400);
