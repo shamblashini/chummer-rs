@@ -604,6 +604,8 @@ impl eframe::App for App {
                 if let Ok(lib) = chummer_core::settings::SettingsLibrary::load(&engine.store, chummer_core::settings::user_settings_dir().as_deref()) {
                     engine.settings = lib;
                 }
+            } else {
+                self.status = Some(("Could not reload the settings library; restart chummer-rs to use the new settings".into(), true));
             }
             for v in &mut self.views {
                 v.refresh_settings(&self.engine);
