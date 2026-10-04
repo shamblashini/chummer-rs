@@ -763,7 +763,7 @@ pub fn validity_problems(ch: &Character, b: &Budget, settings: &CharacterSetting
         }
     }
     if (ch.is_magician() || ch.is_adept()) && ch.mag_enabled() && ch.doc.child("tradition").is_none_or(|t| t.get("name").is_empty()) && ch.is_magician() {
-        p.push("Magicians need a tradition (choose one on the Magic tab)".into());
+        p.push("Magicians need a tradition (choose one on the Spells & Spirits tab)".into());
     }
     p
 }

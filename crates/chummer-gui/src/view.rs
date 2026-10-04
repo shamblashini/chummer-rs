@@ -531,7 +531,7 @@ impl CharacterView {
     /// starting nuyen above the attributes on the right.
     fn common_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let mut changed = false;
-        egui::SidePanel::left("common_qualities").resizable(true).default_width(330.0).min_width(200.0).show_inside(ui, |ui| {
+        egui::SidePanel::left("common_qualities").resizable(true).default_width(280.0).min_width(200.0).show_inside(ui, |ui| {
             if ui.button(format!("➕ {}", lang.tr("Add Quality…"))).clicked() {
                 self.open_select("quality", engine);
             }
@@ -652,19 +652,21 @@ impl CharacterView {
             })
             .collect();
         let accent = crate::theme::accent(ui);
+        // Scrolls sideways instead of clipping the Raise buttons when the
+        // window is narrow; cells never wrap.
+        egui::ScrollArea::horizontal().id_salt("attributes_scroll").show(ui, |ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         TableBuilder::new(ui)
             .id_salt("attributes")
             .striped(true)
-            .column(Column::exact(150.0))
+            .column(Column::auto().at_least(130.0))
             .columns(Column::auto().at_least(56.0), 6)
-            .column(Column::remainder())
             .header(22.0, |mut h| {
                 for t in lang.tr_all(["Attributes", "Points", "Karma", "Val (Aug)", "Metatype Limits", "Karma cost", "Next level"]) {
                     h.col(|ui| {
                         ui.strong(t);
                     });
                 }
-                h.col(|_| {});
             })
             .body(|mut body| {
                 for name in shown {
@@ -722,10 +724,10 @@ impl CharacterView {
                                 };
                             }
                         });
-                        row.col(|_| {});
                     });
                 }
             });
+        });
         ui.add_space(8.0);
         ui.weak(if career {
             lang.tr("Career mode: Raise spends karma and records it in the Karma & Nuyen log, where it can be undone.")

@@ -172,18 +172,51 @@ Item requirements (`<required>`/`<forbidden>`) are checked.
   - All of Chummer5a's optional rule packs can be applied through house-rule presets.
   - Tools → Character settings duplicates and edits presets: build method, budgets, books, karma costs, options and custom data.
   - Share house rules: Export saves a preset as a Chummer settings file (Chummer5a reads it too); Import installs one, and asks before it replaces a different file of the same name.
-  - A character whose settings file is not installed shows a warning with an Import button; its budgets use Standard, and its `<settings>` stays as it was until you pick another file with "Change Settings File" (Info tab).
+  - A character whose settings file is not installed shows a warning with an Import button; its budgets use Standard, and its `<settings>` stays as it was until you pick another file with "Change Settings File" (Common tab).
 - **Tools:**
-  - A data browser that searches every item, quality and spell.
+  - A data browser (the Master Index tab) that searches every item, quality and spell.
   - Searchable drop-downs: lists with more than 8 entries filter as you type (words in any order); Enter picks the first match.
   - A dice roller (click any skill pool) and an initiative tracker.
-  - A character roster on the start screen.
+  - A character roster (the Character Roster tab).
 - **GM tools:**
   - File → New Critter… builds a critter or NPC from `critters.xml`, as Chummer does. Spirits, sprites and other Force creatures are built at a chosen Force: attributes, skills and powers follow from it. Spirits get their optional powers and Materialization (or Possession or Inhabitation). Critters open in career mode with rules ignored.
-  - Tools → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, martial arts, spells, complex forms, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen.
-  - Tools → Create PACKS Kit… saves the character's things as a Custom kit in `~/.local/share/chummer-rs/packs/custom_*_packs.xml`. Custom kits can also be deleted there.
-  - Magic tab → Create Spell… designs a custom spell (Street Grimoire). Chummer's rules compute its drain value and descriptors. In career mode it costs spell karma.
+  - Special → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, martial arts, spells, complex forms, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen.
+  - Special → Create PACKS Kit… saves the character's things as a Custom kit in `~/.local/share/chummer-rs/packs/custom_*_packs.xml`. Custom kits can also be deleted there.
+  - Spells & Spirits tab → Create Spell… designs a custom spell (Street Grimoire). Chummer's rules compute its drain value and descriptors. In career mode it costs spell karma.
 - **Languages:** English, German, French, Japanese, Portuguese and Chinese data names and sheets.
+
+### Layout and themes
+
+The main window uses Chummer5a's layout: the File, Tools, Special, View,
+Window and Help menus, a toolbar, and one tab per open character next to
+the Master Index and Character Roster tabs. A character has Chummer's
+tabs in Chummer's order (Common, Skills, Limits, Martial Arts, Spells &
+Spirits, Adept Powers, Complex Forms & Sprites, Critter Powers,
+Initiation, Cyberware & Bioware, Street Gear, Vehicles & Drones,
+Character Info, Karma & Nuyen, Calendar, Game Notes, Improvements,
+Relationships). The magic, resonance and critter tabs show only when the
+character has them. The right-hand panel has Karma Summary (creation),
+Condition Monitor and Other Info; the status bar shows karma, essence and
+nuyen.
+
+View → Theme selects one of two themes. The choice is saved in
+`~/.config/chummer-rs/gui.ini`; `--theme classic|graphite` overrides it.
+
+| Theme | Look |
+|---|---|
+| Graphite (default) | Dark greys with one teal accent, IBM Plex Sans and Plex Mono. |
+| Classic | Chummer5a's Windows look: light grey panels, white fields, square corners, Windows-blue selection, the Selawik font. |
+
+![Classic theme](docs/screenshots/chummer-rs-classic-common.png)
+![Graphite theme](docs/screenshots/chummer-rs-graphite-common.png)
+![Graphite theme, Skills tab](docs/screenshots/chummer-rs-graphite-skills.png)
+
+For comparison, Chummer5a 5.226 under Wine:
+[creation](docs/screenshots/chummer5a-create-common.png),
+[career](docs/screenshots/chummer5a-career-common.png).
+
+The fonts are in `crates/chummer-gui/assets/fonts/` with their SIL Open
+Font License files (Selawik: Microsoft; IBM Plex: IBM).
 
 ### Command line
 
@@ -254,6 +287,10 @@ cargo test --workspace
   - "Select Martial Art" entries and A.I. programs in kits are skipped.
   - Chummer reads custom kits from its own `packs` folder. To use a kit in both programs, copy the file.
 - Critters: A.I. programs that come with a critter are not added.
+- Layout differences from Chummer5a: no Spell Defense or Advanced
+  Programs tabs and no Pets & Cohorts sub-tab; lists are tables, not
+  trees; Improvements shows in creation mode too, and Condition Monitor
+  is a right-hand tab in creation mode too.
 - About 290 UI labels have no Chummer translation string and stay English.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute
