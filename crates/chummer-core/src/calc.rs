@@ -14,6 +14,9 @@ use crate::settings::CharacterSettings;
 use crate::skills::{KnowledgeSkill, Skill};
 use crate::xml::Element;
 
+mod karma_cost;
+pub use karma_cost::skill_range_cost;
+
 /// Integer division rounded away from zero (`DivAwayFromZero`).
 pub fn div_away_from_zero(a: i32, b: i32) -> i32 {
     let q = a / b;
@@ -371,7 +374,8 @@ pub fn attribute_values_with(ch: &Character, name: &str, rules: &Rules, store: O
     }
 }
 
-/// Karma spent on an attribute's karma levels (`TotalKarmaCost`, sync).
+/// Karma spent on an attribute's karma levels (`TotalKarmaCost`, sync)
+/// before cost improvements; see `karma_cost::attribute`.
 pub fn attribute_karma_cost(v: &AttributeValues, rules: &Rules) -> i32 {
     if v.karma <= 0 {
         return 0;
@@ -484,6 +488,8 @@ pub struct SkillValues {
     /// mundane), or an improvement disables it.
     pub disabled: bool,
     pub karma_cost: i32,
+    /// `TotalBaseRating`: base + karma + rating modifiers.
+    pub total_base: i32,
     pub source: String,
     pub page: String,
 }
@@ -524,6 +530,8 @@ pub struct Sheet {
     pub knowledge_skills: Vec<SkillValues>,
     pub attribute_karma_spent: i32,
     pub skill_karma_spent: i32,
+    /// `SkillGroup.CurrentKarmaCost` summed.
+    pub skill_group_karma_spent: i32,
 }
 
 impl Sheet {
@@ -727,13 +735,14 @@ pub fn compute(ch: &Character, rules: &Rules, store: Option<&DataStore>, catalog
     s.armor = armor;
     s.knowledge_points = knowledge_points;
     s.contact_points = contact_points;
-    s.attribute_karma_spent = s.attributes.iter().map(|a| attribute_karma_cost(a, rules)).sum();
+    s.attribute_karma_spent = s.attributes.iter().map(|a| karma_cost::attribute(ch, a, rules)).sum();
 
     if let Some(cat) = catalog {
         let skills: Vec<SkillValues> = ch.skills.iter().map(|sk| skill_values(ch, &s, sk, cat, rules)).collect();
         let kno: Vec<SkillValues> = ch.knowledge_skills.iter().map(|k| knowledge_values(ch, &s, k, rules)).collect();
         s.knowledge_points_used = ch.knowledge_skills.iter().map(|k| if k.native_language { 0 } else { k.base }).sum();
         s.skill_karma_spent = skills.iter().chain(kno.iter()).map(|v| v.karma_cost).sum();
+        s.skill_group_karma_spent = ch.skill_groups.iter().map(|g| karma_cost::skill_group(ch, g, &skills.iter().filter(|v| v.group == g.name).collect::<Vec<_>>(), rules)).sum();
         s.skills = skills;
         s.knowledge_skills = kno;
     }
@@ -821,29 +830,26 @@ fn rating_modifiers(ch: &Character, key: &str) -> i32 {
     standard_round(ch.improvements.of_kind("Skill").filter(|i| i.add_to_rating && i.improved_name == key).map(|i| i.val).sum())
 }
 
-/// Karma for raising a skill from `lower` to `upper` (`RangeCost`).
-pub fn skill_range_cost(lower: i32, upper: i32, new_cost: i32, improve_cost: i32) -> i32 {
-    if lower >= upper {
-        return 0;
-    }
-    let tri = (upper * (upper + 1) - lower * (lower + 1)) / 2;
-    if lower == 0 {
-        (tri - 1) * improve_cost + new_cost
-    } else {
-        tri * improve_cost
-    }
+/// A skill's base and karma ratings (`Skill.Base`, `Skill.Karma`,
+/// `TotalBaseRating`), shared by the rating and the karma cost.
+struct SkillLevels {
+    key: String,
+    base: i32,
+    karma: i32,
+    free_karma: i32,
+    rating_mods: i32,
+    total_base: i32,
+    /// The skill group's karma levels (`SkillGroup.Karma`).
+    group_karma: i32,
 }
 
-fn skill_values(ch: &Character, sheet: &Sheet, sk: &Skill, cat: &SkillCatalog, rules: &Rules) -> SkillValues {
-    let def = cat.get(&sk.suid).cloned().unwrap_or_else(|| SkillDef { name: "(unknown skill)".into(), ..Default::default() });
+fn skill_def(cat: &SkillCatalog, sk: &Skill) -> SkillDef {
+    cat.get(&sk.suid).cloned().unwrap_or_else(|| SkillDef { name: "(unknown skill)".into(), ..Default::default() })
+}
+
+fn skill_levels(ch: &Character, sk: &Skill, def: &SkillDef, rules: &Rules) -> SkillLevels {
     let key = if def.exotic && !sk.specific.is_empty() { format!("{} ({})", def.name, sk.specific) } else { def.name.clone() };
     let imps = &ch.improvements;
-    let attribute = imps
-        .of_kind("SwapSkillAttribute")
-        .filter(|i| i.target == key)
-        .last()
-        .map(|i| i.improved_name.clone())
-        .unwrap_or_else(|| def.attribute.clone());
     let rating_max = if ch.created { rules.max_skill_rating_career } else { rules.max_skill_rating_create }
         + imps.of_kind("Skill").filter(|i| i.improved_name == key).map(|i| i.max as i32).sum::<i32>();
     let group = ch.skill_groups.iter().find(|g| g.name == def.group && !def.group.is_empty());
@@ -858,7 +864,36 @@ fn skill_values(ch: &Character, sheet: &Sheet, sk: &Skill, cat: &SkillCatalog, r
         .unwrap_or((0, 0));
     let base = if group_base > 0 { (group_base + free_base).min(rating_max) } else { (sk.base + free_base).min(rating_max) };
     let karma = (sk.karma + free_karma + group_karma).min(rating_max);
-    let total_base_rating = base + karma + rating_modifiers(ch, &key);
+    let rating_mods = rating_modifiers(ch, &key);
+    SkillLevels { total_base: base + karma + rating_mods, key, base, karma, free_karma, rating_mods, group_karma }
+}
+
+/// The group's karma levels `(lower, upper)` a grouped skill does not pay
+/// for: `upper` is the lowest `Base + Karma + RatingModifiers` in the group.
+fn group_karma_range(ch: &Character, def: &SkillDef, lv: &SkillLevels, cat: &SkillCatalog, rules: &Rules) -> Option<(i32, i32)> {
+    if lv.group_karma <= 0 {
+        return None;
+    }
+    let upper = ch
+        .skills
+        .iter()
+        .filter_map(|o| cat.get(&o.suid).filter(|d| d.group == def.group).map(|d| skill_levels(ch, o, d, rules).total_base))
+        .min()?;
+    Some((upper - lv.group_karma, upper))
+}
+
+fn skill_values(ch: &Character, sheet: &Sheet, sk: &Skill, cat: &SkillCatalog, rules: &Rules) -> SkillValues {
+    let def = skill_def(cat, sk);
+    let lv = skill_levels(ch, sk, &def, rules);
+    let key = lv.key.clone();
+    let imps = &ch.improvements;
+    let attribute = imps
+        .of_kind("SwapSkillAttribute")
+        .filter(|i| i.target == key)
+        .last()
+        .map(|i| i.improved_name.clone())
+        .unwrap_or_else(|| def.attribute.clone());
+    let (base, karma, total_base_rating) = (lv.base, lv.karma, lv.total_base);
     let hardwire = imps.of_kind("Hardwire").filter(|i| i.improved_name == key).map(|i| i.val as i32).max();
     let rating = total_base_rating.max(hardwire.unwrap_or(0));
 
@@ -896,13 +931,9 @@ fn skill_values(ch: &Character, sheet: &Sheet, sk: &Skill, cat: &SkillCatalog, r
     } else {
         2
     };
-    let lower = base + free_karma + rating_modifiers(ch, &key);
-    let mut karma_cost =
-        if total_base_rating == 0 { 0 } else { skill_range_cost(lower, total_base_rating, rules.karma_new_active_skill, rules.karma_improve_active_skill) };
-    let priority = matches!(ch.field("buildmethod").as_str(), "Priority" | "SumtoTen");
-    if sk.buy_with_karma || !priority {
-        karma_cost += sk.specs.iter().filter(|s| !s.free).count() as i32 * rules.karma_specialization;
-    }
+    let lower = base + lv.free_karma + lv.rating_mods;
+    let cost_skill = karma_cost::ActiveSkill { key: &key, category: &def.category, exotic: def.exotic, buy_with_karma: sk.buy_with_karma, specs: &sk.specs };
+    let karma_cost = karma_cost::active_skill(ch, &cost_skill, lower, total_base_rating, group_karma_range(ch, &def, &lv, cat, rules), rules);
     SkillValues {
         guid: sk.guid.clone(),
         name: key,
@@ -920,6 +951,7 @@ fn skill_values(ch: &Character, sheet: &Sheet, sk: &Skill, cat: &SkillCatalog, r
         native: false,
         disabled,
         karma_cost,
+        total_base: total_base_rating,
         source: def.source.clone(),
         page: def.page.clone(),
     }
@@ -948,11 +980,8 @@ fn knowledge_values(ch: &Character, sheet: &Sheet, k: &KnowledgeSkill, rules: &R
     } else {
         0
     };
-    let l = base + free_karma;
-    let mut karma_cost = (total * (total + 1) - l * (l + 1)) / 2 * rules.karma_improve_knowledge_skill;
-    if l == 0 && karma_cost > 0 {
-        karma_cost += rules.karma_new_knowledge_skill - rules.karma_improve_knowledge_skill;
-    }
+    let lower = base + free_karma + rating_modifiers(ch, &k.name);
+    let karma_cost = karma_cost::knowledge_skill(ch, &k.name, &k.kind, lower, total, rules);
     SkillValues {
         guid: k.guid.clone(),
         name: k.name.clone(),
@@ -969,7 +998,8 @@ fn knowledge_values(ch: &Character, sheet: &Sheet, k: &KnowledgeSkill, rules: &R
         knowledge: true,
         native: k.native_language,
         disabled: false,
-        karma_cost: karma_cost.max(0),
+        karma_cost,
+        total_base: total,
         source: String::new(),
         page: String::new(),
     }

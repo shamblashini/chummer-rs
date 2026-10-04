@@ -106,7 +106,14 @@ pub fn spell_counts(ch: &Character, sheet: &Sheet) -> SpellCounts {
     c.spells -= touch - (touch - limit_touch).max(0);
     c.free = ch.doc.get_i32("spelllimit").unwrap_or(0) + standard_round(limit);
     c.free_touch_only = limit_touch;
-    let (mut s, mut r, mut p) = (c.spells, c.rituals, c.preparations);
+    c.over = over_free(&c, 0);
+    c
+}
+
+/// Spells, rituals and preparations left once the free spells are used
+/// up in that order, with `extra` more spells to pay for.
+fn over_free(c: &SpellCounts, extra: i32) -> (i32, i32, i32) {
+    let (mut s, mut r, mut p) = (c.spells + extra, c.rituals, c.preparations);
     for _ in 0..c.free.max(0) {
         if s > 0 {
             s -= 1;
@@ -118,8 +125,7 @@ pub fn spell_counts(ch: &Character, sheet: &Sheet) -> SpellCounts {
             break;
         }
     }
-    c.over = (s.max(0), r.max(0), p.max(0));
-    c
+    (s.max(0), r.max(0), p.max(0))
 }
 
 /// `Character.SpellKarmaCost(category)`: KarmaSpell plus NewSpellKarmaCost,
@@ -142,11 +148,17 @@ pub fn spell_karma_cost(ch: &Character, rules: &Rules, category: &str) -> i32 {
 /// Karma the spells beyond the free ones cost at creation (0 in career
 /// mode, where each new spell costs [`spell_karma_cost`]).
 pub fn spell_karma(ch: &Character, sheet: &Sheet, rules: &Rules) -> i32 {
+    spell_karma_with_extra(ch, sheet, rules, 0)
+}
+
+/// [`spell_karma`] with `extra` spells more, e.g. mystic adept power
+/// points bought with free spells (`PrioritySpellsAsAdeptPowers`).
+pub fn spell_karma_with_extra(ch: &Character, sheet: &Sheet, rules: &Rules, extra: i32) -> i32 {
     if ch.created {
         return 0;
     }
-    let c = spell_counts(ch, sheet);
-    c.over.0 * spell_karma_cost(ch, rules, "Spells") + c.over.1 * spell_karma_cost(ch, rules, "Rituals") + c.over.2 * spell_karma_cost(ch, rules, "Preparations")
+    let (s, r, p) = over_free(&spell_counts(ch, sheet), extra);
+    s * spell_karma_cost(ch, rules, "Spells") + r * spell_karma_cost(ch, rules, "Rituals") + p * spell_karma_cost(ch, rules, "Preparations")
 }
 
 // ---------------------------------------------------------------------------

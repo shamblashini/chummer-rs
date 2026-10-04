@@ -193,7 +193,10 @@ fn life_modules_build() {
     let v = ucas.versions.first().map(|v| v.0.clone());
     chargen::add_life_module(&mut ch, &engine.store, &ucas.id, v.as_deref()).unwrap();
     let (s, after) = sheet(&engine, &ch);
-    assert_eq!(after.karma.1, before.karma.1 + ucas.karma);
+    // The module's karma, plus its FreeNegativeQualities -5 (the SINner
+    // level it grants), which `NegativeQualityKarma` charges.
+    let free_negative = ch.improvements.val("FreeNegativeQualities", None) as i32;
+    assert_eq!(after.karma.1, before.karma.1 + ucas.karma - free_negative);
     assert_eq!(after.positive_quality_karma, before.positive_quality_karma, "life modules don't count toward the quality limit");
     // General UCAS gives +1 LOG and a level of Etiquette.
     assert_eq!(s.attr_values("LOG").unwrap().free_base, 1);

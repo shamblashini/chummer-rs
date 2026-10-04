@@ -15,6 +15,9 @@ use crate::items::{self, new_guid};
 use crate::settings::CharacterSettings;
 use crate::xml::Element;
 
+mod karma;
+pub use karma::karma_breakdown;
+
 /// Version written as `<appversion>`. Chummer5a uses it to choose load
 /// fix-ups, so it must be a real Chummer version, not ours.
 pub const CHUMMER_APP_VERSION: &str = "5.226.0";
@@ -666,45 +669,18 @@ pub fn budget_with(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &Char
     b.knowledge_points = (sheet.knowledge_points, kno_sp.min(sheet.knowledge_points));
     b.skill_group_points = (group_max, ch.skill_groups.iter().map(|g| g.base).sum());
 
-    // Contacts: points are CHA x3; anything above costs karma.
-    let contact_cost: i32 = ch
-        .items("contacts", "contact")
-        .iter()
-        .filter(|c| !c.get_bool("free").unwrap_or(false))
-        .map(|c| c.get_i32("connection").unwrap_or(0) + c.get_i32("loyalty").unwrap_or(0))
-        .sum();
-    b.contact_points = (sheet.contact_points, contact_cost);
+    // Contacts: free points (CHA x 3); anything above costs karma.
+    b.contact_points = (karma::free_contact_points(ch, sheet), karma::contact_points_used(ch).0);
 
-    // Qualities.
-    // Karma for qualities (all that contribute to BP) and, separately, the
-    // part that counts toward the quality limit.
-    let (mut pos, mut neg, mut pos_limit, mut neg_limit) = (0, 0, 0, 0);
-    for q in ch.items("qualities", "quality") {
-        if !q.get_bool("contributetobp").unwrap_or(true) || q.get("qualitysource") != "Selected" && q.get("qualitysource") != "Improvement" {
-            continue;
-        }
-        let bp = q.get_i32("bp").unwrap_or(0) * rules.karma_quality;
-        let limited = q.get_bool("contributetolimit").unwrap_or(true);
-        if q.get("qualitytype") == "Negative" {
-            neg += bp.abs();
-            if limited {
-                neg_limit += bp.abs();
-            }
-        } else {
-            pos += bp;
-            if limited {
-                pos_limit += bp;
-            }
-        }
-    }
-    b.positive_quality_karma = pos_limit;
-    b.negative_quality_karma = neg_limit;
-    b.quality_limit = settings.int("qualitykarmalimit", 25);
+    // Quality karma that counts toward the quality limit.
+    let q = karma::quality_karma(ch, rules, settings);
+    b.positive_quality_karma = q.positive_limit;
+    b.negative_quality_karma = q.negative_limit;
+    b.quality_limit = karma::quality_limit(ch, settings);
 
     // Spells and complex forms beyond the free ones cost karma.
     let counts = crate::items::magic::spell_counts(ch, sheet);
     b.free_spells = (counts.free, counts.spells + counts.rituals + counts.preparations);
-    let spell_karma = crate::items::magic::spell_karma(ch, sheet, rules) + crate::items::magic::complex_form_karma(ch, rules);
     if ch.is_adept() {
         b.power_points = Some(crate::items::magic::power_points(ch, sheet));
     }
@@ -712,10 +688,7 @@ pub fn budget_with(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &Char
     let nuyen_bp = ch.doc.get_i32("nuyenbp").unwrap_or(0);
     // Files from before 5.214 store the starting karma themselves.
     let start = ch.doc.get_i32("buildkarma").unwrap_or_else(|| settings.int("buildpoints", 25));
-    let spent = ch.doc.get_i32("metatypebp").unwrap_or(0) + pos - neg + sheet.attribute_karma_spent + sheet.skill_karma_spent
-        + (contact_cost - sheet.contact_points).max(0) * rules.karma_contact
-        + spell_karma
-        + nuyen_bp;
+    let spent = karma_breakdown(ch, sheet, rules, settings, store).iter().map(|(_, v)| v).sum();
     b.karma = (start, spent);
 
     let starting = ch.doc.get_f64("startingnuyen").unwrap_or(0.0) + f64::from(nuyen_bp) * f64::from(settings.int("nuyenperbpwftm", 2000));
