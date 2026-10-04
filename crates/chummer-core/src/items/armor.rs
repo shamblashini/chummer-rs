@@ -478,7 +478,7 @@ fn rebuild_feature_mod(ch: &Character, doc: &Element, saved: &Element) -> Option
 
 /// `OwnCost` of an armor or mod: cost at its rating, 10% off when
 /// discounted.
-fn own_cost(e: &Element) -> f64 {
+pub fn own_cost(e: &Element) -> f64 {
     let c = rating_value(&e.get("cost"), e.get_i32("rating").unwrap_or(0));
     if e.get_bool("discountedcost").unwrap_or(false) { c * 0.9 } else { c }
 }

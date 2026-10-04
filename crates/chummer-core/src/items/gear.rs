@@ -177,6 +177,36 @@ pub fn cost(e: &Element) -> f64 {
     total_cost(e, None)
 }
 
+/// `Gear.OwnCostPreMultipliers`: the evaluated `<cost>` (with the
+/// black-market discount), before quantity and `CostFor`.
+pub fn own_cost_pre_multipliers(e: &Element, parent: Option<&Element>) -> f64 {
+    own_cost_pre(e, parent)
+}
+
+/// `Gear.CostFor` (1 unless the gear is priced per N units).
+pub fn cost_for_units(e: &Element) -> f64 {
+    cost_for(e)
+}
+
+/// `Gear.OwnWeight`: the evaluated `<weight>`, 0 for gear included in
+/// its parent.
+pub fn own_weight(e: &Element, parent: Option<&Element>) -> f64 {
+    if e.get_bool("includedinparent").unwrap_or(false) {
+        return 0.0;
+    }
+    let w = e.get("weight");
+    if w.trim().is_empty() { 0.0 } else { Ev::of(e, parent, &NoAttributes).dec(&w) }
+}
+
+/// `Gear.TotalWeight`: own weight plus equipped children, times quantity.
+pub fn total_weight(e: &Element, parent: Option<&Element>) -> f64 {
+    let kids: f64 = e
+        .child("children")
+        .map(|c| c.children_named("gear").filter(|k| k.get_bool("equipped").unwrap_or(true)).map(|k| total_weight(k, Some(e))).sum())
+        .unwrap_or(0.0);
+    (own_weight(e, parent) + kids) * qty(e)
+}
+
 /// `Gear.TotalCost` for a gear inside `parent` (another gear, armor,
 /// cyberware...), whose rating and child cost multiplier apply.
 pub fn cost_in(e: &Element, parent: &Element) -> f64 {
