@@ -29,6 +29,7 @@ const BASELINES: &[(&str, usize)] = &[
     ("critterpower", 0),
     ("mentorspirit", 4),
 ];
+const BASELINES: &[(&str, usize)] = &[("quality", 291), ("gear", 1236), ("lifestyle", 24)];
 
 /// Never compared: per-instance state, user input, or presentation.
 const COMMON_IGNORE: &[&str] = &[
