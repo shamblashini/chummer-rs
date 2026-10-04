@@ -16,14 +16,19 @@
 //! - [`karma`]: spending karma on attributes, skills, qualities, spells and
 //!   initiation.
 //! - [`nuyen`]: spending nuyen and selling items.
+//! - [`magic`]: karma for the magic editors (foci, martial arts,
+//!   metamagics, critter powers, spirit fettering).
+//! - [`actions`]: Edge, burning Edge and street cred, groups, quickening.
 //! - [`undo`]: reversing an entry.
 
+pub mod actions;
 pub mod karma;
 pub mod ledger;
 pub mod magic;
 pub mod nuyen;
 pub mod undo;
 
+pub use actions::*;
 pub use karma::*;
 pub use ledger::*;
 pub use magic::*;

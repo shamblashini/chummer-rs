@@ -87,9 +87,14 @@ karma and 5,000¥.
 - Raise attributes, skills, skill groups and knowledge skills for karma at Chummer's costs.
 - Buy specializations, qualities and spells.
 - Buy off negative qualities.
-- Initiate or submerge (group, ordeal and schooling discounts).
-- Learn martial art techniques.
-- Bind foci.
+- Initiate or submerge (group, ordeal and schooling discounts). A mystic adept with the second-MAG house rule is also limited by MAGAdept.
+- Learn martial arts and their techniques.
+- Learn metamagics and echoes. The first one at a grade is free; each further one costs karma.
+- Buy critter powers.
+- Bind foci, up to MAG foci and MAG × 5 total force.
+- Fetter a spirit (Force × 3 karma) or a sprite (Force karma). A fettered spirit lowers MAG by 1.
+- Join or leave a magical group, and quicken spells.
+- Spend and regain Edge, burn a point of Edge and burn street cred.
 
 Every purchase is written to the karma/nuyen ledger. The Karma & Nuyen tab:
 - Lists the ledger with Undo.
@@ -99,7 +104,7 @@ Every purchase is written to the karma/nuyen ledger. The Karma & Nuyen tab:
 The calendar tracks in-game weeks.
 
 **At the table** (career mode), as in Chummer5a's career form:
-- Edge boxes in the sidebar: click to spend, regain or refresh (`<edgeused>`).
+- Edge boxes in the sidebar: click a box to mark Edge spent up to it, or reset it all for a new session (`<edgeused>`).
 - Weapon ammunition: clips per slot (accessories add slots), reload from
   the ammunition the character or vehicle carries (split off the stack,
   spare clips and speed loaders, external sources), unload back onto the
@@ -145,6 +150,14 @@ custom name, location and notes, add things inside it, or sell it.
 The "bonus" of every quality, piece of ware, power and item applies, just
 as in Chummer5a. Every bonus type in the game data is handled.
 
+**Custom improvements.** On the Improvements tab, in creation and career
+mode, a GM can add one-off modifiers of any type in `improvements.xml`
+(Add Improvement), for example +1 Agility or an extra condition monitor
+box. They can be edited, deleted, turned on and off, sorted into groups
+(with Enable All / Disable All), and given notes. They are saved in
+Chummer5a's format (`<custom>`, `<customname>`, `<customgroup>`,
+`<improvementgroups>`). The tab also lists every automatic improvement.
+
 Item requirements (`<required>`/`<forbidden>`) are checked.
 
 ### More
@@ -157,6 +170,8 @@ Item requirements (`<required>`/`<forbidden>`) are checked.
 - **Custom data:**
   - All of Chummer5a's optional rule packs can be applied through house-rule presets.
   - Tools → Character settings duplicates and edits presets: build method, budgets, books, karma costs, options and custom data.
+  - Share house rules: Export saves a preset as a Chummer settings file (Chummer5a reads it too); Import installs one, and asks before it replaces a different file of the same name.
+  - A character whose settings file is not installed shows a warning with an Import button; its budgets use Standard, and its `<settings>` stays as it was until you pick another file with "Change Settings File" (Info tab).
 - **Tools:**
   - A data browser that searches every item, quality and spell.
   - A dice roller (click any skill pool) and an initiative tracker.
@@ -175,6 +190,7 @@ chummer-cli sheet character.chum5 -o sheet.html [--sheet NAME] [--lang de-de]
 chummer-cli export character.chum5 JSON -o character.json
 chummer-cli roster ~/characters/
 chummer-cli search "ares" gear
+chummer-cli settings list | export "House rules" -o house.xml | import house.xml
 chummer-cli sources import-wine | scan <dir> | detect | open SR5 143
 ```
 
@@ -219,13 +235,18 @@ cargo test --workspace
 
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
 - Some career-mode details:
-  - Burning Edge.
+  - AI programs, and enchantments, rituals and enhancements learned at a grade.
+  - Binding stacked foci (undo of a stacked focus binding works).
   - Home nodes for A.I.s and the Living Persona's matrix bonuses.
-  - The mystic adept's second-MAG limit on grades.
-  - Undo for focus binding and technique purchases.
-  - Karma for spirit fettering.
 - PDF export needs a browser's Print to PDF; no converter is bundled.
+- Settings files:
+  - "Change Settings File" in creation mode only offers presets with the same build method. Chummer re-runs metatype and priority selection to switch build methods.
+  - Chummer also finds a missing settings file by its `<settingshashcode>`; chummer-rs does not compute that hash.
 - About 290 UI labels have no Chummer translation string and stay English.
+- Custom improvements: no drag and drop between groups (use the 📁 menu),
+  and disabling one only switches its modifiers and the special attribute
+  and tab flags; objects it created (a free spell, say) stay until it is
+  deleted.
 
 ## Layout
 

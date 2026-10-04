@@ -66,6 +66,15 @@ pub fn add(ch: &mut Character, store: &DataStore, rec: Record<'_>, forced: Optio
     Ok(guid)
 }
 
+/// Add a metamagic or echo (`improvement_source`) at a given grade, with
+/// no slot check. Returns its guid.
+pub fn add_at(ch: &mut Character, store: &DataStore, rec: Record<'_>, improvement_source: &str, forced: Option<&str>, grade: i32) -> String {
+    let (el, out) = create(ch, store, rec, improvement_source, forced, grade);
+    let guid = el.get("guid");
+    commit(ch, store, "metamagics", el, &out);
+    guid
+}
+
 /// Oracle: rebuild a saved `<metamagic>`. Its name may carry the bonus
 /// selection, "Name (Value)".
 pub fn rebuild(store: &DataStore, saved: &Element) -> Option<Element> {

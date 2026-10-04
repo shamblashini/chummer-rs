@@ -5,6 +5,7 @@
 use super::karma::{group_karma_unbroken, sync_grades};
 use super::ledger::{find_entry, remove_entry, ExpenseEntry, ExpenseType, KarmaExpenseType as K, NuyenExpenseType as N};
 use super::nuyen::{find_item_deep_mut, take_item};
+use crate::items::magic::account;
 use super::{require_career, CareerError};
 use crate::character::Character;
 use crate::chargen;
@@ -50,7 +51,10 @@ fn undo_karma_object(ch: &mut Character, engine: &Engine, e: &ExpenseEntry) -> R
     let u = e.undo.as_ref().expect("checked by caller");
     let id = u.object_id.as_str();
     match u.karma_type {
-        K::ImproveAttribute => degrade_attribute(ch, id),
+        K::ImproveAttribute => {
+            let rules = super::CareerRules::for_character(engine, ch).rules;
+            super::actions::degrade_attribute(ch, &rules, id);
+        }
         K::AddQuality => chargen::remove_quality(ch, id),
         K::AddSpell => {
             ch.remove_item("spells", id);
@@ -81,20 +85,53 @@ fn undo_karma_object(ch: &mut Character, engine: &Engine, e: &ExpenseEntry) -> R
             let pp = ch.doc.get_i32("magsplitadept").unwrap_or(0);
             ch.doc.set_child_text("magsplitadept", (pp - 1).max(0).to_string());
         }
-        K::BindFocus | K::AddMartialArtTechnique => return Err(CareerError::Unsupported(u.karma_type.as_str().into())),
-        K::ManualAdd | K::ManualSubtract | K::QuickeningMetamagic | K::AddAIProgram | K::AddAIAdvancedProgram | K::SpiritFettering => {}
+        K::BindFocus => unbind_focus(ch, engine, id),
+        K::AddMartialArtTechnique => remove_technique(ch, id),
+        K::ManualAdd | K::ManualSubtract | K::QuickeningMetamagic => {}
+        // Chummer has no case for these: the karma is refunded and the
+        // entry dropped, but the program stays and the spirit stays
+        // fettered.
+        K::AddAIProgram | K::AddAIAdvancedProgram | K::SpiritFettering => {}
     }
     Ok(())
 }
 
-/// `CharacterAttrib.Degrade`: karma points first, then base points.
-fn degrade_attribute(ch: &mut Character, abbrev: &str) {
-    if let Some(a) = ch.attribute_mut(abbrev) {
-        if a.karma > 0 {
-            a.karma -= 1;
-        } else if a.base > 0 {
-            a.base -= 1;
+/// `BindFocus` undo: the id is the focus guid, or a stacked focus guid,
+/// or (old files) the focus gear's guid. The gear loses its bonded flag
+/// and bonus, the focus is dropped; a stacked focus is only unbonded.
+fn unbind_focus(ch: &mut Character, engine: &Engine, id: &str) {
+    let gear = ch.items("foci", "focus").into_iter().find(|f| f.get("guid").eq_ignore_ascii_case(id)).map(|f| f.get("gearid"));
+    if let Some(gear) = gear {
+        account::unbind_focus(ch, &gear);
+        account::set_focus_bonded(ch, &engine.store, &gear, false);
+        return;
+    }
+    if let Some(stack) = ch.doc.child_mut("stackedfoci").and_then(|c| c.elements_mut().find(|s| s.name == "stackedfocus" && s.get("guid").eq_ignore_ascii_case(id))) {
+        stack.set_child_text("bonded", "False");
+        ch.improvements.list.retain(|i| !(i.source == "StackedFocus" && i.source_name.eq_ignore_ascii_case(id)));
+        ch.dirty = true;
+        return;
+    }
+    if account::unbind_focus(ch, id) {
+        account::set_focus_bonded(ch, &engine.store, id, false);
+    }
+}
+
+/// `AddMartialArtTechnique` undo: remove the technique from its art, with
+/// its improvements.
+fn remove_technique(ch: &mut Character, id: &str) {
+    let Some(arts) = ch.doc.child_mut("martialarts") else { return };
+    let mut removed = false;
+    for art in arts.elements_mut() {
+        if let Some(list) = art.child_mut("martialarttechniques") {
+            let before = list.children.len();
+            list.children.retain(|n| !matches!(n, crate::xml::Node::Element(t) if t.get("guid").eq_ignore_ascii_case(id)));
+            removed |= list.children.len() != before;
         }
+    }
+    if removed {
+        ch.improvements.remove_from_source(id);
+        ch.dirty = true;
     }
 }
 

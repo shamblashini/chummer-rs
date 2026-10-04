@@ -100,6 +100,8 @@ fn binding_a_focus_in_career() {
     ch.created = true;
     ch.improvements.career = true;
     give_karma(&mut ch, 50.0);
+    // MAG 1 allows one bound focus, and one is bound already.
+    ch.attribute_mut("MAG").unwrap().karma = 4;
     let gear = ch.items("gears", "gear").into_iter().find(|g| g.get("category") == "Foci" && !ch.items("foci", "focus").iter().any(|f| f.get("gearid") == g.get("guid"))).cloned();
     let gear = gear.expect("an unbound focus");
     let guid = gear.get("guid");

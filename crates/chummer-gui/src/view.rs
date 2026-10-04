@@ -79,6 +79,7 @@ pub struct CharacterView {
     magic_editor: crate::magic_ui::MagicEditor,
     lifestyle_editor: crate::lifestyle_ui::LifestyleEditor,
     drug_builder: crate::drug_ui::DrugBuilder,
+    custom_improvements: crate::improvement_ui::ImprovementsPanel,
     /// Item detail pane: (selected item guid, editor).
     item_editor: Option<(String, crate::item_editor::ItemEditor)>,
 }
@@ -142,6 +143,7 @@ impl CharacterView {
             magic_editor: Default::default(),
             lifestyle_editor: Default::default(),
             drug_builder: Default::default(),
+            custom_improvements: Default::default(),
             item_editor: None,
         };
         v.refresh_budget();
@@ -175,6 +177,30 @@ impl CharacterView {
         self.ch.file.clone()
     }
 
+    /// Re-resolve the character's preset, e.g. after the settings library
+    /// was reloaded.
+    pub fn refresh_settings(&mut self, engine: &Engine) {
+        self.rules = engine.rules_for(&self.ch);
+        self.store = engine.store_for_character(&self.ch);
+        self.settings = engine.settings.resolve(&self.ch.field("settings")).cloned();
+        self.recompute(engine);
+    }
+
+    /// Chummer's "Change Settings File": use another preset.
+    fn switch_settings(&mut self, key: &str, engine: &Engine, status: &mut Status) -> bool {
+        let Some(preset) = engine.settings.find(key).cloned() else { return false };
+        match chummer_core::settings::switch_character(&mut self.ch, &preset) {
+            Ok(()) => {
+                self.refresh_settings(engine);
+                true
+            }
+            Err(e) => {
+                *status = Some((e, true));
+                false
+            }
+        }
+    }
+
     fn recompute(&mut self, engine: &Engine) {
         if !self.ch.created {
             // Essence loss in creation follows the ware installed now.
@@ -194,6 +220,9 @@ impl CharacterView {
         });
         changed |= self.item_editor_panel(ctx, engine, lang, status);
         egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some(key) = crate::ruleset_ui::banner(ui, &self.ch, engine, lang, self.tab == Tab::Info) {
+                changed |= self.switch_settings(&key, engine, status);
+            }
             ui.horizontal_wrapped(|ui| {
                 for (t, label) in TABS {
                     ui.selectable_value(&mut self.tab, *t, lang.tr(label));
@@ -237,6 +266,7 @@ impl CharacterView {
         changed |= self.confirm_dialog(ctx, lang);
         changed |= self.select_dialog(ctx, engine, lang, pdfs, status);
         changed |= self.drug_builder.window(ctx, &mut self.ch, &self.store, lang, status);
+        changed |= self.custom_improvements.window(ctx, &mut self.ch, &self.store, self.settings.as_ref(), lang);
         changed |= self.finish_dialog(ctx, lang);
         if let Some(a) = self.action.take() {
             changed |= self.run_action(a, engine, status);
@@ -1087,9 +1117,15 @@ impl CharacterView {
                 let name = rec.name();
                 let karma = rec.el().get_i32("karma").unwrap_or(0);
                 let _ = karma;
-                if self.ch.created && tag == "quality" {
+                if self.ch.created && matches!(tag, "quality" | "martialart" | "critterpower") {
                     // Career mode: karma is spent and logged (double for most qualities).
-                    return match career::add_quality(&mut self.ch, engine, rec, purchase.answer.as_deref()) {
+                    let answer = purchase.answer.as_deref();
+                    let r = match tag {
+                        "martialart" => career::learn_martial_art(&mut self.ch, engine, rec, answer),
+                        "critterpower" => career::learn_critter_power(&mut self.ch, engine, rec, purchase.rating, answer),
+                        _ => career::add_quality(&mut self.ch, engine, rec, answer),
+                    };
+                    return match r {
                         Ok(_) => {
                             *status = Some((format!("Added {name}"), false));
                             self.select = None;
@@ -1105,20 +1141,6 @@ impl CharacterView {
                     Ok(guid) => {
                         chummer_core::items::edit::settle_new_item(&mut self.ch, &guid);
                         let mut msg = format!("Added {name}");
-                        // Martial arts cost karma, not nuyen (MartialArt.Cost).
-                        if self.ch.created && tag == "martialart" {
-                            let karma = chummer_core::items::find_by_guid_mut(&mut self.ch.doc, &guid).and_then(|e| e.get_f64("cost")).unwrap_or(0.0);
-                            let rules = career::CareerRules::for_character(engine, &self.ch);
-                            let entry = career::ManualExpense { amount: karma, reason: format!("Learned martial art {name}"), ..Default::default() };
-                            if karma > 0.0 {
-                                if let Err(e) = career::karma_spent(&mut self.ch, &rules, &entry) {
-                                    self.ch.remove_item_anywhere(&guid);
-                                    *status = Some((e.to_string(), true));
-                                    return true;
-                                }
-                                msg = format!("Learned {name} for {karma} karma");
-                            }
-                        }
                         let nuyen_kind = matches!(
                             tag,
                             "gear" | "cyberware" | "bioware" | "armor" | "armormod" | "weapon" | "accessory" | "vehicle" | "mod" | "weaponmount" | "lifestyle" | "drug"
@@ -1221,6 +1243,8 @@ impl CharacterView {
     }
 
     fn improvements_tab(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
+        let changed = self.custom_improvements.tab(ui, &mut self.ch, &self.store, lang);
+        ui.separator();
         let imps = &self.ch.improvements;
         ui.label(lang.tr_fmt(
             "{0} improvements ({1} active). These modifiers come from qualities, ware, powers and gear.",
@@ -1246,7 +1270,7 @@ impl CharacterView {
                 }
             });
         });
-        false
+        changed
     }
 
     fn run_action(&mut self, a: CareerAction, engine: &Engine, status: &mut Status) -> bool {
@@ -1322,6 +1346,7 @@ impl CharacterView {
                 lang.tr("Public Awareness"),
                 rep.public_awareness
             ));
+            changed |= crate::career_ui::actions_ui(ui, &mut self.ch, engine, lang);
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt("manual_kind").selected_text(if self.manual.0 { lang.tr("Karma") } else { lang.tr("Nuyen") }).show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.manual.0, true, lang.tr("Karma"));

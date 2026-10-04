@@ -49,6 +49,12 @@ USAGE:
                                or weasyprint; else print the HTML from a browser)
     chummer-cli sheets [lang]              List available sheets
 
+    chummer-cli settings list              List settings presets (house rules)
+    chummer-cli settings export <name|key> -o <file.xml>
+                                           Save a preset as a Chummer settings file
+    chummer-cli settings import <file.xml> [--overwrite | --keep-both]
+                                           Install a shared settings file
+
     chummer-cli sources list               Show linked sourcebook PDFs
     chummer-cli sources import-wine [pfx]  Import PDF links from Chummer5a under Wine
     chummer-cli sources scan <dir>         Link PDFs in a folder by title
@@ -86,6 +92,7 @@ fn run(args: &[String]) -> Result<()> {
         "check" => check(&Engine::load()?, rest),
         "search" => search(&Engine::load()?, rest),
         "sources" => sources_cmd(&Engine::load()?, rest),
+        "settings" => settings_cmd(&Engine::load()?, rest),
         "new" => new_cmd(&Engine::load()?, rest),
         "export" => export_cmd(&Engine::load()?, rest),
         "roster" => {
@@ -143,6 +150,10 @@ fn info(engine: &Engine, path: &Path) -> Result<()> {
         ch.field("buildmethod"),
         engine.settings.resolve(&ch.field("settings")).map(|p| p.name()).unwrap_or_default()
     );
+    if let Some(missing) = engine.settings.missing_preset(&ch.field("settings")) {
+        let fallback = engine.settings.fallback().map(|p| p.name()).unwrap_or_default();
+        println!("warning: settings file {missing:?} is not installed; costs and budgets use {fallback}");
+    }
     println!();
     for group in [attributes::PHYSICAL, attributes::MENTAL, attributes::SPECIAL] {
         for name in group {
@@ -298,6 +309,44 @@ fn search(engine: &Engine, rest: &[String]) -> Result<()> {
                 println!("{:<18} {:<45} {:<28} {} p.{}", label, r.name(), r.category(), r.source(), r.page());
             }
         }
+    }
+    Ok(())
+}
+
+fn settings_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
+    use chummer_core::settings::{self, ImportMode};
+    let lib = &engine.settings;
+    match rest.first().map(String::as_str) {
+        None | Some("list") => {
+            for p in &lib.presets {
+                let kind = if p.file.is_some() { "yours" } else { "built-in" };
+                println!("{:<40} {:<9} {:<11} {}", p.name(), kind, p.build_method(), p.key());
+            }
+            if let Some(d) = settings::user_settings_dir() {
+                println!("user settings: {}", d.display());
+            }
+        }
+        Some("export") => {
+            let name = rest.get(1).filter(|a| *a != "-o").context("expected a preset name or key")?;
+            let preset = lib.find(name).with_context(|| format!("no settings preset {name:?} (see `settings list`)"))?;
+            let out = rest.iter().position(|a| a == "-o").and_then(|i| rest.get(i + 1)).context("missing -o OUT")?;
+            settings::export(preset, Path::new(out)).with_context(|| format!("writing {out}"))?;
+            println!("{} -> {out}", preset.name());
+        }
+        Some("import") => {
+            let file = rest.get(1).context("expected a settings file")?;
+            let mode = match (rest.iter().any(|a| a == "--overwrite"), rest.iter().any(|a| a == "--keep-both")) {
+                (true, true) => bail!("--overwrite and --keep-both exclude each other"),
+                (true, false) => ImportMode::Overwrite,
+                (false, true) => ImportMode::KeepBoth,
+                _ => ImportMode::New,
+            };
+            let dir = settings::user_settings_dir().context("no settings directory")?;
+            let plan = lib.plan_import(Path::new(file), &dir).map_err(anyhow::Error::msg)?;
+            let done = settings::import(&plan, lib, &dir, &mode).map_err(|e| anyhow::anyhow!("{e}; pass --overwrite or --keep-both"))?;
+            println!("{} installed as {} (characters refer to it as {})", done.name, done.path.display(), done.key);
+        }
+        Some(other) => bail!("unknown settings command {other:?}"),
     }
     Ok(())
 }

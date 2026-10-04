@@ -248,7 +248,7 @@ impl MagicEditor {
         changed |= match container {
             "spells" => self.spells_ui(ui, ch, cx, status),
             "powers" => powers_ui(ui, ch, cx, status),
-            "spirits" => spirits_ui(ui, ch, cx.lang),
+            "spirits" => spirits_ui(ui, ch, cx, status),
             "metamagics" => self.metamagic_ui(ui, ch, cx, status),
             "martialarts" => self.martial_arts_ui(ui, ch, cx, status),
             _ => false,
@@ -291,6 +291,9 @@ impl MagicEditor {
             }
         }
         changed |= self.spell_options_window(&ctx, ch, cx, status);
+        if ch.created {
+            changed |= quicken_ui(ui, ch, lang, status);
+        }
         changed
     }
 
@@ -454,10 +457,19 @@ impl MagicEditor {
         let grade = metamagic::current_grade(ch);
         let taken = ch.items("metamagics", "metamagic").iter().filter(|m| m.get_i32("grade").unwrap_or(0) > 0).count() as i32;
         let free = (grade - taken).max(0);
+        // Career mode: the first metamagic at a grade is free, more cost
+        // karma; they go to the lowest grade with a free slot, else the top.
+        let career_grade = (1..=grade).find(|g| career::metamagic_karma_cost(cx.engine, ch, *g) == 0).unwrap_or(grade);
+        let career_cost = if ch.created && grade > 0 { career::metamagic_karma_cost(cx.engine, ch, career_grade) } else { 0 };
         let lang = cx.lang;
         let what_label = if echo { lang.tr("echo") } else { lang.tr("metamagic") };
         ui.horizontal(|ui| {
-            let b = ui.add_enabled(free > 0, egui::Button::new(format!("➕ {}", lang.tr_fmt("Add {0}…", &[&what_label]))));
+            let can = if ch.created { grade > 0 && ch.karma >= career_cost } else { free > 0 };
+            let mut text = format!("➕ {}", lang.tr_fmt("Add {0}…", &[&what_label]));
+            if career_cost > 0 {
+                text += &format!(" ({})", lang.tr_fmt("{0} karma", &[&career_cost]));
+            }
+            let b = ui.add_enabled(can, egui::Button::new(text));
             if b.on_disabled_hover_text(if grade == 0 { lang.tr("Initiate or submerge first") } else { lang.tr("Every grade already has one") }).clicked() {
                 self.metamagic = Some(Picker::new(lang.tr_fmt("Add {0}", &[&what_label]), file, container, item, cx.books()));
             }
@@ -479,7 +491,11 @@ impl MagicEditor {
                 Pick::Done(name, answer) => {
                     let r = store.doc(file).map_err(|e| e.to_string()).and_then(|doc| {
                         let rec = data::find(&doc, container, item, &name).ok_or_else(|| format!("unknown {what} {name}"))?;
-                        metamagic::add(ch, store, rec, answer.as_deref())
+                        if ch.created {
+                            career::learn_metamagic(ch, cx.engine, rec, answer.as_deref(), career_grade).map_err(|e| e.to_string())
+                        } else {
+                            metamagic::add(ch, store, rec, answer.as_deref())
+                        }
                     });
                     changed |= report(status, r, |_| format!("Added {name}"));
                     self.metamagic = None;
@@ -644,6 +660,36 @@ fn powers_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut S
     changed
 }
 
+/// Career mode: spend karma to quicken a spell (`cmdQuickenSpell_Click`).
+fn quicken_ui(ui: &mut egui::Ui, ch: &mut Character, lang: &Language, status: &mut Status) -> bool {
+    let spells: Vec<(String, String)> = ch.items("spells", "spell").iter().map(|s| (s.get("guid"), s.get("name"))).collect();
+    if spells.is_empty() {
+        return false;
+    }
+    let (pick_id, karma_id) = (egui::Id::new("quicken_spell"), egui::Id::new("quicken_karma"));
+    let mut pick: String = ui.data(|d| d.get_temp(pick_id)).unwrap_or_default();
+    let mut karma: i32 = ui.data(|d| d.get_temp(karma_id)).unwrap_or(1);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let shown = spells.iter().find(|(g, _)| *g == pick).map_or_else(|| lang.tr("Spell…"), |(_, n)| n.clone());
+        egui::ComboBox::from_id_salt("quicken_spell_combo").selected_text(shown).width(220.0).show_ui(ui, |ui| {
+            for (g, n) in &spells {
+                ui.selectable_value(&mut pick, g.clone(), n);
+            }
+        });
+        ui.add(egui::DragValue::new(&mut karma).range(1..=999).suffix(" karma"));
+        let can = !pick.is_empty() && ch.karma >= karma;
+        if ui.add_enabled(can, egui::Button::new(lang.tr("Quicken"))).clicked() {
+            changed = report(status, career::quicken_spell(ch, &pick, karma), |_| lang.tr_fmt("Quickened ({0} karma)", &[&karma]));
+        }
+    });
+    ui.data_mut(|d| {
+        d.insert_temp(pick_id, pick);
+        d.insert_temp(karma_id, karma);
+    });
+    changed
+}
+
 fn fmt_pp(v: f64) -> String {
     let s = format!("{v:.2}");
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
@@ -651,7 +697,8 @@ fn fmt_pp(v: f64) -> String {
 
 // ----- spirits and sprites -----
 
-fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character, lang: &Language) -> bool {
+fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+    let lang = cx.lang;
     let spirits: Vec<Element> = ch.items("spirits", "spirit").into_iter().cloned().collect();
     if spirits.is_empty() {
         return false;
@@ -679,7 +726,15 @@ fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character, lang: &Language) -> bool {
                 c |= ui.checkbox(&mut fettered, "").changed();
             }
             if c {
-                changed |= spirit::set_state(ch, &s.get("guid"), force, services, bound, fettered);
+                let guid = s.get("guid");
+                let was = s.get_bool("fettered").unwrap_or(false);
+                if ch.created && fettered != was {
+                    // Career mode: fettering costs karma (Spirit.Fettered).
+                    let r = career::set_spirit_fettered(ch, cx.engine, &guid, fettered);
+                    changed |= report(status, r, |_| if fettered { format!("Fettered {}", s.get("name")) } else { format!("Released {}", s.get("name")) });
+                } else {
+                    changed |= spirit::set_state(ch, &guid, force, services, bound, fettered);
+                }
             }
             ui.end_row();
         }

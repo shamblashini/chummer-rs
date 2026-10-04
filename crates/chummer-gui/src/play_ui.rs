@@ -10,7 +10,8 @@ use chummer_core::character::Character;
 use chummer_core::data::DataStore;
 use chummer_core::items::vehicle::VehicleRules;
 use chummer_core::lang::Language;
-use chummer_core::play::{ammo, edge, matrix, vehicle};
+use chummer_core::career;
+use chummer_core::play::{ammo, matrix, vehicle};
 use chummer_core::xml::Element;
 use eframe::egui::{self, Color32, RichText};
 
@@ -21,29 +22,24 @@ const PHYSICAL_COLOR: Color32 = Color32::from_rgb(200, 60, 60);
 const MATRIX_COLOR: Color32 = Color32::from_rgb(60, 180, 120);
 
 /// Sidebar Edge track (career mode): click a box to mark Edge spent up to
-/// it, ➖/➕ spend or regain a point, ⟲ refreshes it all.
+/// it, ⟲ regains it all. Spending and regaining single points and burning
+/// Edge are on the Karma & Nuyen tab (`career_ui`).
 pub fn edge_track(ui: &mut egui::Ui, ch: &mut Character, sheet: &Sheet, lang: &Language) -> bool {
     if !ch.created {
         return false;
     }
-    let total = edge::total(sheet);
+    let total = sheet.attr("EDG").max(0);
+    let mut spent = ch.doc.get_i32("edgeused").unwrap_or(0).clamp(0, total);
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label(RichText::new(lang.tr("Edge")).strong());
-        ui.weak(format!("{} / {}", edge::remaining(ch, sheet), total));
-        if ui.small_button("➖").on_hover_text(lang.tr("Spend a point of Edge")).clicked() {
-            changed |= edge::spend(ch, sheet).is_ok();
-        }
-        if ui.small_button("➕").on_hover_text(lang.tr("Regain a point of Edge")).clicked() {
-            changed |= edge::regain(ch, sheet).is_ok();
-        }
+        ui.weak(format!("{} / {}", total - spent, total));
         if ui.small_button("⟲").on_hover_text(lang.tr("Reset")).clicked() {
-            changed |= edge::refresh(ch);
+            changed |= career::refresh_edge(ch);
         }
     });
-    let mut spent = edge::used(ch).min(total);
     if cm_track(ui, "edge", total, 0, &mut spent, EDGE_COLOR) {
-        changed |= edge::set_spent(ch, sheet, spent);
+        changed |= career::set_edge_used(ch, total, spent);
     }
     changed
 }

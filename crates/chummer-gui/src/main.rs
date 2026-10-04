@@ -2,14 +2,17 @@
 //! chummer-rs desktop application.
 
 mod browser;
+mod career_ui;
 mod dice_ui;
 mod drug_ui;
+mod improvement_ui;
 mod initiative;
 mod lifestyle_ui;
 mod magic_ui;
 mod item_editor;
 mod pdf_ui;
 mod play_ui;
+mod ruleset_ui;
 mod select;
 mod settings_ui;
 mod view;
@@ -591,8 +594,12 @@ impl eframe::App for App {
         self.show_initiative = open;
         let mut open = self.show_settings;
         let mut reload = false;
+        if ruleset_ui::take_import_request(ctx) {
+            open = true;
+            reload = self.settings_editor.start_import(&self.engine, &self.lang);
+        }
         egui::Window::new(self.lang.tr("Character Settings")).id(egui::Id::new("character_settings")).open(&mut open).default_size([820.0, 680.0]).show(ctx, |ui| {
-            reload = self.settings_editor.ui(ui, &self.engine, &self.lang);
+            reload |= self.settings_editor.ui(ui, &self.engine, &self.lang);
         });
         self.show_settings = open;
         if reload {
@@ -600,6 +607,11 @@ impl eframe::App for App {
                 if let Ok(lib) = chummer_core::settings::SettingsLibrary::load(&engine.store, chummer_core::settings::user_settings_dir().as_deref()) {
                     engine.settings = lib;
                 }
+            } else {
+                self.status = Some(("Could not reload the settings library; restart chummer-rs to use the new settings".into(), true));
+            }
+            for v in &mut self.views {
+                v.refresh_settings(&self.engine);
             }
         }
         let mut open = self.show_about;

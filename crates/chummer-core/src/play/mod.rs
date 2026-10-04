@@ -1,10 +1,9 @@
-//! In-play tracking at the table (`CharacterCareer`'s "Regain/Spend Edge",
-//! weapon ammunition, and the condition monitors of devices and
-//! vehicles). Everything is stored in the `.chum5` under Chummer5a's own
+//! In-play tracking at the table: weapon ammunition and the condition
+//! monitors of devices and vehicles (Edge is in `career::actions`).
+//! Everything is stored in the `.chum5` under Chummer5a's own
 //! element names.
 
 pub mod ammo;
-pub mod edge;
 pub mod matrix;
 pub mod vehicle;
 

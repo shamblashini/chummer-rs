@@ -11,6 +11,7 @@ pub mod expr;
 pub mod settings;
 pub mod dice;
 pub mod improvement;
+pub mod custom_improvement;
 pub mod sections;
 pub mod attributes;
 pub mod character;

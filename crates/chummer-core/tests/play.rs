@@ -8,7 +8,8 @@ use chummer_core::calc::{self, Rules};
 use chummer_core::character::Character;
 use chummer_core::data::{self, DataStore};
 use chummer_core::items::{self, edit, vehicle as vcalc, Purchase};
-use chummer_core::play::{ammo, edge, matrix, vehicle};
+use chummer_core::career;
+use chummer_core::play::{ammo, matrix, vehicle};
 use chummer_core::xml::Element;
 
 fn fixture(name: &str) -> Character {
@@ -28,31 +29,20 @@ fn qty(ch: &Character, guid: &str) -> Option<f64> {
 }
 
 #[test]
-fn edge_spend_regain_refresh() {
+fn edge_boxes_and_refresh() {
     let mut ch = fixture("Barrett.chum5");
     ch.doc.remove_children("edgeused");
-    let s = sheet(&ch);
-    let total = edge::total(&s);
+    let total = sheet(&ch).attr("EDG");
     assert!(total >= 2, "EDG {total}");
-    assert_eq!(edge::used(&ch), 0);
-    assert_eq!(edge::regain(&mut ch, &s), Err(edge::EdgeError::AtMaximum));
-
-    edge::spend(&mut ch, &s).unwrap();
-    edge::spend(&mut ch, &s).unwrap();
-    assert_eq!(edge::used(&ch), 2);
-    assert_eq!(edge::remaining(&ch, &s), total - 2);
-    assert_eq!(ch.doc.get("edgeused"), "2");
-
-    let mut back = reload(&ch);
-    assert_eq!(edge::used(&back), 2);
-    edge::regain(&mut back, &s).unwrap();
-    assert_eq!(edge::used(&back), 1);
-
-    assert!(edge::set_spent(&mut ch, &s, total + 5));
-    assert_eq!(edge::used(&ch), total);
-    assert_eq!(edge::spend(&mut ch, &s), Err(edge::EdgeError::NoneLeft));
-    assert!(edge::refresh(&mut ch));
-    assert_eq!(edge::remaining(&reload(&ch), &s), total);
+    assert!(career::set_edge_used(&mut ch, total, 2));
+    assert!(!career::set_edge_used(&mut ch, total, 2));
+    assert_eq!(reload(&ch).doc.get("edgeused"), "2");
+    // Clamped to the Edge total.
+    assert!(career::set_edge_used(&mut ch, total, total + 5));
+    assert_eq!(ch.doc.get_i32("edgeused"), Some(total));
+    assert!(career::refresh_edge(&mut ch));
+    assert!(!career::refresh_edge(&mut ch));
+    assert_eq!(reload(&ch).doc.get("edgeused"), "0");
 }
 
 /// A character with an Ares Predator V and 50 regular rounds for it.
