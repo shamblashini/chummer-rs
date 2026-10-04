@@ -67,6 +67,9 @@ pub fn to_json(root: &Element) -> String {
     s
 }
 
+/// Writes one JSON value at an indentation depth.
+type FieldWriter<'a> = Box<dyn Fn(&mut String, usize) + 'a>;
+
 fn write_value(s: &mut String, e: &Element, depth: usize) {
     let kids: Vec<&Element> = e.elements().collect();
     let text: String = e
@@ -87,7 +90,7 @@ fn write_value(s: &mut String, e: &Element, depth: usize) {
     }
     // Object: attributes, then text, then children grouped by name.
     let pad = "  ".repeat(depth + 1);
-    let mut fields: Vec<(String, Box<dyn Fn(&mut String, usize) + '_>)> = Vec::new();
+    let mut fields: Vec<(String, FieldWriter<'_>)> = Vec::new();
     for (k, v) in &e.attrs {
         let v = v.clone();
         fields.push((format!("@{k}"), Box::new(move |s: &mut String, _| s.push_str(&quote(&v)))));
