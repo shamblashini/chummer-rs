@@ -751,8 +751,11 @@ pub fn add_initiation_grade(ch: &mut Character, engine: &Engine, o: InitiationOp
     }
     let cr = CareerRules::for_character(engine, ch);
     let grade = grade_count(ch, tech);
-    let attr = if tech { "RES" } else { "MAG" };
-    if grade + 1 > calc::attribute_values(ch, attr, &cr.rules).total {
+    // The grade cannot pass RES, or MAG (and MAGAdept for a mystic adept
+    // with the second-MAG house rule).
+    let limits = if tech { vec![calc::attribute_values(ch, "RES", &cr.rules).total] } else { super::magic::mag_limits(engine, ch, &cr.rules) };
+    if limits.iter().any(|&m| grade + 1 > m) {
+        let attr = if tech { "RES" } else { "MAG" };
         return Err(CareerError::AtMaximum(format!("{attr} limits the grade to {grade}")));
     }
     let cost = grade_karma_cost(&cr, grade + 1, tech, o);
