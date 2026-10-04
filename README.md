@@ -133,6 +133,14 @@ custom name, location and notes, add things inside it, or sell it.
 The "bonus" of every quality, piece of ware, power and item applies, just
 as in Chummer5a. Every bonus type in the game data is handled.
 
+**Custom improvements.** On the Improvements tab, in creation and career
+mode, a GM can add one-off modifiers of any type in `improvements.xml`
+(Add Improvement), for example +1 Agility or an extra condition monitor
+box. They can be edited, deleted, turned on and off, sorted into groups
+(with Enable All / Disable All), and given notes. They are saved in
+Chummer5a's format (`<custom>`, `<customname>`, `<customgroup>`,
+`<improvementgroups>`). The tab also lists every automatic improvement.
+
 Item requirements (`<required>`/`<forbidden>`) are checked.
 
 ### More
@@ -219,6 +227,10 @@ cargo test --workspace
   - "Change Settings File" in creation mode only offers presets with the same build method. Chummer re-runs metatype and priority selection to switch build methods.
   - Chummer also finds a missing settings file by its `<settingshashcode>`; chummer-rs does not compute that hash.
 - About 290 UI labels have no Chummer translation string and stay English.
+- Custom improvements: no drag and drop between groups (use the 📁 menu),
+  and disabling one only switches its modifiers and the special attribute
+  and tab flags; objects it created (a free spell, say) stay until it is
+  deleted.
 
 ## Layout
 
