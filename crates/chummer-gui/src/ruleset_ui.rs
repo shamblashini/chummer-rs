@@ -8,7 +8,6 @@ use chummer_core::lang::Language;
 use chummer_core::settings::{self, CharacterSettings, FileClash, ImportMode, ImportPlan, Imported};
 use eframe::egui::{self, RichText};
 
-use crate::view::WARN;
 
 /// Picks a settings file and installs it into the user settings directory,
 /// asking when a different file of the same name is already there.
@@ -40,7 +39,7 @@ impl ImportFlow {
         let mut mode = None;
         let mut cancel = false;
         egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.colored_label(WARN, lang.tr_fmt("A different settings file named {0} is already installed.", &[&file_name]));
+            ui.colored_label(crate::theme::warn(ui), lang.tr_fmt("A different settings file named {0} is already installed.", &[&file_name]));
             ui.horizontal(|ui| {
                 if ui.button(lang.tr("Overwrite")).on_hover_text(lang.tr("Characters using the installed file will use the imported rules.")).clicked() {
                     mode = Some(ImportMode::Overwrite);
@@ -87,8 +86,8 @@ pub fn banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Languag
     let mut picked = None;
     if let Some(missing) = lib.missing_preset(&key) {
         let fallback = lib.fallback().map(CharacterSettings::name).unwrap_or_default();
-        egui::Frame::group(ui.style()).stroke(egui::Stroke::new(1.0_f32, WARN)).show(ui, |ui| {
-            ui.colored_label(WARN, RichText::new(lang.tr("Cannot Find Settings File")).strong());
+        egui::Frame::group(ui.style()).stroke(egui::Stroke::new(1.0_f32, crate::theme::warn(ui))).show(ui, |ui| {
+            ui.colored_label(crate::theme::warn(ui), RichText::new(lang.tr("Cannot Find Settings File")).strong());
             ui.label(lang.tr_fmt("The character's settings file ({0}) could not be found.", &[&missing]));
             ui.label(lang.tr_fmt("Costs and budgets shown use {0}. Saving keeps the character's settings file unless you pick another one.", &[&fallback]));
             ui.horizontal(|ui| {

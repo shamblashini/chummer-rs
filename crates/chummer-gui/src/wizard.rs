@@ -8,7 +8,6 @@ use chummer_core::lang::Language;
 use chummer_core::settings::CharacterSettings;
 use eframe::egui::{self, RichText};
 
-use crate::view::{ACCENT, WARN};
 
 pub struct Wizard {
     preset: usize,
@@ -109,7 +108,7 @@ impl Wizard {
             let prios = Priorities(self.priorities);
             if !karma_build {
                 if let Err(e) = prios.validate(&settings) {
-                    ui.colored_label(WARN, e);
+                    ui.colored_label(crate::theme::warn(ui), e);
                 }
             } else {
                 ui.weak(lang.tr("Everything is bought with karma. Magic and resonance come from qualities (Magician, Adept, Technomancer, ...) added after creation starts."));
@@ -210,7 +209,7 @@ impl Wizard {
             ui.horizontal(|ui| {
                 let skills_ok = self.talent_skills.iter().all(|s| !s.is_empty());
                 let ok = (karma_build || prios.validate(&settings).is_ok()) && skills_ok;
-                if ui.add_enabled(ok, egui::Button::new(RichText::new(lang.tr("Create character")).color(ACCENT))).clicked() {
+                if ui.add_enabled(ok, crate::theme::primary_button(ui, lang.tr("Create character"))).clicked() {
                     let spec = NewCharacter {
                         settings_id: settings.key(),
                         metatype: self.metatype.clone(),

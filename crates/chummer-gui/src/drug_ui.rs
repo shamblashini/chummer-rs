@@ -186,7 +186,7 @@ impl DrugBuilder {
                 }
                 ui.label(format!("{} {}", lang.tr("Cost per dose:"), format::nuyen(drug::cost(&d))));
                 ui.add_space(6.0);
-                if ui.button(RichText::new(lang.tr("Add drug")).color(crate::view::ACCENT)).clicked() {
+                if ui.add(crate::theme::primary_button(ui, lang.tr("Add drug"))).clicked() {
                     *add = true;
                 }
             }

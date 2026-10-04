@@ -420,7 +420,7 @@ impl MagicEditor {
             for (qguid, qname, mtype) in &pending {
                 ui.horizontal(|ui| {
                     let kind = if mtype == "Paragon" { lang.tr("Paragon") } else { lang.tr("Mentor Spirit") };
-                    ui.colored_label(crate::view::WARN, lang.tr_fmt("{0} grants a {1} that is not chosen yet.", &[qname, &kind]));
+                    ui.colored_label(crate::theme::warn(ui), lang.tr_fmt("{0} grants a {1} that is not chosen yet.", &[qname, &kind]));
                     if ui.button(lang.tr("Choose…")).clicked() {
                         let picker = Picker::new(lang.tr_fmt("Choose a {0}", &[&kind]), mentor::data_file(mtype), "mentors", "mentor", cx.books());
                         self.mentor = Some((qguid.clone(), mtype.clone(), picker));

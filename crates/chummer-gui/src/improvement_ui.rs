@@ -319,7 +319,7 @@ impl ImprovementsPanel {
                 });
             }
             if let Some(e) = &d.error {
-                ui.colored_label(crate::view::WARN, e);
+                ui.colored_label(crate::theme::warn(ui), e);
             }
             ui.separator();
             ui.horizontal(|ui| {

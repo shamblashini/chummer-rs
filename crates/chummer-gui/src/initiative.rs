@@ -4,7 +4,6 @@ use chummer_core::dice::{self, Rng};
 use chummer_core::lang::Language;
 use eframe::egui::{self, RichText};
 
-use crate::view::ACCENT;
 
 struct Combatant {
     name: String,
@@ -106,7 +105,7 @@ impl Tracker {
             for (i, c) in self.list.iter_mut().enumerate() {
                 let active = self.pass > 0 && c.score > 0;
                 let name = RichText::new(&c.name);
-                ui.label(if active && !c.acted { name.color(ACCENT).strong() } else if active { name } else { name.weak() });
+                ui.label(if active && !c.acted { name.color(crate::theme::accent(ui)).strong() } else if active { name } else { name.weak() });
                 ui.label(format!("{} + {}d6", c.base, c.dice));
                 ui.add(egui::DragValue::new(&mut c.score));
                 ui.checkbox(&mut c.acted, "");

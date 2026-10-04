@@ -20,7 +20,7 @@ use chummer_core::settings::CharacterSettings;
 use crate::pdf_ui::{self, Status};
 use crate::select::{self, SelectDialog};
 use chummer_core::xml::Element;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use egui_extras::{Column, TableBuilder};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,8 +101,6 @@ enum CareerAction {
     RemoveQuality(String),
 }
 
-pub const ACCENT: Color32 = Color32::from_rgb(0, 200, 170);
-pub const WARN: Color32 = Color32::from_rgb(230, 170, 60);
 
 impl Tab {
     pub fn parse(s: &str) -> Option<Tab> {
@@ -295,7 +293,7 @@ impl CharacterView {
         let mut changed = false;
         let s = &self.sheet;
         ui.add_space(4.0);
-        ui.heading(RichText::new(self.ch.display_name()).color(ACCENT));
+        ui.heading(RichText::new(self.ch.display_name()).color(crate::theme::accent(ui)));
         let meta: Vec<String> = ["metatype", "metavariant"].iter().map(|k| self.ch.field(k)).filter(|v| !v.is_empty()).collect();
         ui.label(meta.join(" · "));
         ui.weak(format!(
@@ -346,8 +344,8 @@ impl CharacterView {
             stat(ui, &lang.tr("Memory"), s.memory.to_string());
             stat(ui, &lang.tr("Lift and Carry"), s.lift_carry.to_string());
             if s.wound_modifier != 0 {
-                ui.colored_label(WARN, lang.tr("Wound modifier"));
-                ui.colored_label(WARN, s.wound_modifier.to_string());
+                ui.colored_label(crate::theme::warn(ui), lang.tr("Wound modifier"));
+                ui.colored_label(crate::theme::warn(ui), s.wound_modifier.to_string());
                 ui.end_row();
             }
         });
@@ -355,9 +353,9 @@ impl CharacterView {
 
         let (pcm, scm, thr) = (s.physical_cm, s.stun_cm, s.cm_threshold);
         ui.label(RichText::new(lang.tr("Physical damage")).strong());
-        changed |= cm_track(ui, "pcm", pcm, thr, &mut self.ch.physical_cm_filled, Color32::from_rgb(200, 60, 60));
+        changed |= cm_track(ui, "pcm", pcm, thr, &mut self.ch.physical_cm_filled, crate::theme::palette(ui).physical);
         ui.label(RichText::new(lang.tr("Stun damage")).strong());
-        changed |= cm_track(ui, "scm", scm, thr, &mut self.ch.stun_cm_filled, Color32::from_rgb(70, 130, 220));
+        changed |= cm_track(ui, "scm", scm, thr, &mut self.ch.stun_cm_filled, crate::theme::palette(ui).stun);
         ui.weak(lang.tr_fmt("Overflow {0} · −1 die per {1} boxes", &[&s.cm_overflow, &thr]));
         changed |= crate::play_ui::edge_track(ui, &mut self.ch, &self.sheet, lang);
         ui.separator();
@@ -479,7 +477,7 @@ impl CharacterView {
                         });
                         row.col(|ui| {
                             if v.total != v.value {
-                                ui.colored_label(ACCENT, v.total.to_string());
+                                ui.colored_label(crate::theme::accent(ui), v.total.to_string());
                             } else {
                                 ui.label(v.total.to_string());
                             }
@@ -568,13 +566,13 @@ impl CharacterView {
                     changed |= ui.add_enabled(on && !career, egui::DragValue::new(&mut sk.karma).range(0..=cap)).changed();
                     ui.label(s.rating.to_string());
                     let pool = if s.rating == 0 && !s.default { "—".to_owned() } else { s.pool.to_string() };
-                    if ui.add(egui::Button::new(RichText::new(pool).strong()).frame(false)).on_hover_text(lang.tr("Roll this pool")).clicked() {
+                    if crate::theme::pool_chip(ui, pool).on_hover_text(lang.tr("Roll this pool")).clicked() {
                         *roll = Some(s.pool.max(1) as u32);
                     }
                     ui.horizontal(|ui| {
                         if career && !s.disabled {
                             if let Some(c) = career::skill_upgrade_karma_cost(engine, &self.ch, &s.guid) {
-                                if ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("▲ {c}"))).on_hover_text(lang.tr("Raise for karma")).clicked() {
+                                if ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("↑ {c}"))).on_hover_text(lang.tr("Raise for karma")).clicked() {
                                     self.action = Some(CareerAction::RaiseSkill(s.guid.clone()));
                                 }
                             }
@@ -584,7 +582,7 @@ impl CharacterView {
                         }
                         let guid = s.guid.clone();
                         let suid = self.ch.skills[*i].suid.clone();
-                        ui.menu_button("＋", |ui| {
+                        ui.menu_button("+", |ui| {
                             let opts = engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default();
                             for o in opts.iter().filter(|o| !s.specs.contains(o)) {
                                 if ui.button(o).clicked() {
@@ -649,7 +647,7 @@ impl CharacterView {
                             ui.label(s.rating.to_string());
                             if career {
                                 if let Some(c) = career::skill_upgrade_karma_cost(engine, &self.ch, &s.guid) {
-                                    if ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("▲ {c}"))).clicked() {
+                                    if ui.add_enabled(self.ch.karma >= c, egui::Button::new(format!("↑ {c}"))).clicked() {
                                         self.action = Some(CareerAction::RaiseSkill(s.guid.clone()));
                                     }
                                 }
@@ -689,7 +687,7 @@ impl CharacterView {
                         ui.horizontal(|ui| {
                             ui.label(g.rating().to_string());
                             if let Some(c) = cost {
-                                if ui.add_enabled(karma >= c, egui::Button::new(format!("▲ {c}"))).clicked() {
+                                if ui.add_enabled(karma >= c, egui::Button::new(format!("↑ {c}"))).clicked() {
                                     self.action = Some(CareerAction::RaiseGroup(g.name.clone()));
                                 }
                             }
@@ -1017,7 +1015,7 @@ impl CharacterView {
             let left = total - used;
             ui.label(label);
             let t = RichText::new(format!("{left} / {total}"));
-            ui.label(if left < 0 { t.color(ui.visuals().error_fg_color) } else if left == 0 { t.weak() } else { t.color(ACCENT) });
+            ui.label(if left < 0 { t.color(ui.visuals().error_fg_color) } else if left == 0 { t.weak() } else { t.color(crate::theme::accent(ui)) });
             ui.end_row();
         };
         egui::Grid::new("budget").num_columns(2).striped(true).show(ui, |ui| {
@@ -1052,10 +1050,10 @@ impl CharacterView {
             ui.end_row();
         });
         for p in &self.problems {
-            ui.colored_label(WARN, format!("• {p}"));
+            ui.colored_label(crate::theme::warn(ui), format!("• {p}"));
         }
         let ok = self.problems.is_empty();
-        let r = ui.add_enabled(ok, egui::Button::new(RichText::new(lang.tr("Finish creation")).color(ACCENT)));
+        let r = ui.add_enabled(ok, crate::theme::primary_button(ui, lang.tr("Finish creation")));
         if r.on_disabled_hover_text(lang.tr("Fix the problems above first")).clicked() {
             self.confirm_finish = true;
         }
@@ -1074,10 +1072,10 @@ impl CharacterView {
             ui.label(lang.tr("The character switches to career mode. Creation budgets go away; karma and nuyen become plain resources."));
             let carry_k = self.settings.as_ref().map_or(7, |s| s.karma("karmacarryover", 7));
             if b.karma_left() > carry_k {
-                ui.colored_label(WARN, lang.tr_fmt("{0} karma is left, only {1} carries over.", &[&b.karma_left(), &carry_k]));
+                ui.colored_label(crate::theme::warn(ui), lang.tr_fmt("{0} karma is left, only {1} carries over.", &[&b.karma_left(), &carry_k]));
             }
             if b.nuyen_left() > 5000.0 {
-                ui.colored_label(WARN, lang.tr_fmt("{0} is left, only 5,000¥ carries over.", &[&chummer_core::format::nuyen(b.nuyen_left())]));
+                ui.colored_label(crate::theme::warn(ui), lang.tr_fmt("{0} is left, only 5,000¥ carries over.", &[&chummer_core::format::nuyen(b.nuyen_left())]));
             }
             ui.horizontal(|ui| {
                 if ui.button(lang.tr("Finish")).clicked() {
@@ -1412,7 +1410,7 @@ impl CharacterView {
                     let karma = e.kind == career::ExpenseType::Karma;
                     ui.label(if karma { lang.tr("Karma") } else { lang.tr("Nuyen") });
                     let text = if karma { chummer_core::improvement::fmt_num(e.amount) } else { format::nuyen(e.amount) };
-                    ui.colored_label(if e.amount < 0.0 { WARN } else { ACCENT }, text);
+                    ui.colored_label(if e.amount < 0.0 { crate::theme::warn(ui) } else { crate::theme::accent(ui) }, text);
                     ui.label(&e.reason);
                     if self.ch.created && e.undo.is_some() {
                         if ui.small_button(lang.tr("Undo")).on_hover_text(lang.tr("Reverse this and refund it")).clicked() {
@@ -1543,28 +1541,53 @@ fn child_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, d
 }
 
 /// Clickable condition-monitor boxes. Clicking box N sets damage to N, or
-/// clears it if N was the last filled box.
-pub(crate) fn cm_track(ui: &mut egui::Ui, id: &str, boxes: i32, threshold: i32, filled: &mut i32, color: Color32) -> bool {
+/// clears it if N was the last filled box. Classic lays them out like
+/// Chummer (rows of `threshold` boxes, the penalty in the last box of a
+/// row); Graphite in one wrapped row.
+pub(crate) fn cm_track(ui: &mut egui::Ui, id: &str, boxes: i32, threshold: i32, filled: &mut i32, color: egui::Color32) -> bool {
+    let theme = crate::theme::current(ui.ctx());
+    let p = theme.palette;
+    let classic = theme.kind == crate::theme::ThemeKind::Classic;
+    let radius = theme.widget_radius.min(3);
+    let size = if classic { 20.0 } else { 18.0 };
+    let per_row = if classic && threshold > 0 { threshold } else { boxes.max(1) };
     let mut changed = false;
-    let size = 18.0;
+    let mut draw = |ui: &mut egui::Ui, n: i32| {
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
+        let on = n <= *filled;
+        let painter = ui.painter();
+        let fill = if on { color } else if resp.hovered() { p.surface_hover } else { p.field };
+        painter.rect_filled(rect, radius, fill);
+        let edge = if resp.hovered() { p.stroke_focus } else { p.stroke };
+        painter.rect_stroke(rect, radius, egui::Stroke::new(1.0_f32, edge), egui::StrokeKind::Inside);
+        if threshold > 0 && n % threshold == 0 {
+            let text = if on { p.panel } else { p.weak };
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, format!("-{}", n / threshold), egui::FontId::proportional(9.5), text);
+        }
+        if resp.clicked() {
+            *filled = if *filled == n { n - 1 } else { n };
+            changed = true;
+        }
+    };
     ui.push_id(id, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
-            for n in 1..=boxes.max(0) {
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
-                let on = n <= *filled;
-                let painter = ui.painter();
-                painter.rect_filled(rect, 3.0, if on { color } else { ui.visuals().extreme_bg_color });
-                painter.rect_stroke(rect, 3.0, egui::Stroke::new(1.0_f32, ui.visuals().widgets.noninteractive.fg_stroke.color), egui::StrokeKind::Inside);
-                if threshold > 0 && n % threshold == 0 {
-                    painter.text(rect.center(), egui::Align2::CENTER_CENTER, format!("-{}", n / threshold), egui::FontId::proportional(9.0), ui.visuals().weak_text_color());
-                }
-                if resp.clicked() {
-                    *filled = if *filled == n { n - 1 } else { n };
-                    changed = true;
-                }
+        ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+        if classic {
+            let mut n = 1;
+            while n <= boxes {
+                ui.horizontal(|ui| {
+                    for k in n..(n + per_row).min(boxes + 1) {
+                        draw(ui, k);
+                    }
+                });
+                n += per_row;
             }
-        });
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                for n in 1..=boxes.max(0) {
+                    draw(ui, n);
+                }
+            });
+        }
     });
     changed
 }

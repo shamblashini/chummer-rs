@@ -17,6 +17,7 @@ mod play_ui;
 mod ruleset_ui;
 mod select;
 mod settings_ui;
+mod theme;
 mod view;
 mod wizard;
 #[cfg(test)]
@@ -32,7 +33,7 @@ use chummer_core::lang::Language;
 use chummer_core::sources::SourcebookLibrary;
 use eframe::egui::{self, RichText};
 
-use view::{CharacterView, ACCENT};
+use view::CharacterView;
 
 const RECENT_KEY: &str = "recent_files";
 const LANG_KEY: &str = "language";
@@ -76,11 +77,13 @@ struct App {
     status: Option<(String, bool)>,
     pending: Option<Pending>,
     allow_close: bool,
+    theme: theme::ThemeKind,
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, engine: Engine, files: Vec<PathBuf>, tab: Option<view::Tab>) -> Self {
-        setup_style(&cc.egui_ctx);
+    fn new(cc: &eframe::CreationContext<'_>, engine: Engine, files: Vec<PathBuf>, tab: Option<view::Tab>, theme_arg: Option<theme::ThemeKind>) -> Self {
+        let theme = theme_arg.unwrap_or_else(theme::load_kind);
+        theme::apply(&cc.egui_ctx, &theme::Theme::of(theme));
         let lang_dir = data::resource_dir("lang").unwrap_or_default();
         let storage = cc.storage;
         let code = storage.and_then(|s| s.get_string(LANG_KEY)).unwrap_or_else(|| "en-us".into());
@@ -121,6 +124,7 @@ impl App {
             status: None,
             pending: None,
             allow_close: false,
+            theme,
         };
         app.roster_folders = storage
             .and_then(|s| s.get_string(ROSTER_KEY))
@@ -136,6 +140,14 @@ impl App {
             }
         }
         app
+    }
+
+    fn set_theme(&mut self, ctx: &egui::Context, kind: theme::ThemeKind) {
+        self.theme = kind;
+        theme::apply(ctx, &theme::Theme::of(kind));
+        if let Err(e) = theme::save_kind(kind) {
+            self.status = Some((format!("Could not save the theme choice: {e}"), true));
+        }
     }
 
     fn open(&mut self, path: &Path) {
@@ -289,6 +301,16 @@ impl App {
                     }
                 }
             });
+            ui.menu_button(self.lang.tr("View"), |ui| {
+                ui.menu_button(self.lang.tr("Theme"), |ui| {
+                    for k in theme::ThemeKind::ALL {
+                        if crate::combo::selectable_label(ui, self.theme == k, self.lang.tr(k.label())).clicked() {
+                            ui.close();
+                            self.set_theme(ctx, k);
+                        }
+                    }
+                });
+            });
             ui.menu_button(self.lang.tr("Language"), |ui| {
                 for (code, name) in self.languages.clone() {
                     if crate::combo::selectable_label(ui, self.lang.code == code, name).clicked() {
@@ -343,7 +365,7 @@ impl App {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(ui.available_height() * 0.2);
-                ui.label(RichText::new("chummer-rs").size(40.0).color(ACCENT).strong());
+                ui.label(RichText::new("chummer-rs").size(40.0).color(crate::theme::accent(ui)).strong());
                 ui.label(self.lang.tr("Shadowrun 5th Edition character manager"));
                 ui.add_space(20.0);
                 if ui.button(RichText::new(format!("✨  {}", self.lang.tr("Create New Character…"))).size(18.0)).clicked() {
@@ -676,29 +698,20 @@ impl eframe::App for App {
     }
 }
 
-fn setup_style(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.selection.bg_fill = egui::Color32::from_rgb(0, 120, 105);
-    visuals.hyperlink_color = ACCENT;
-    ctx.set_visuals(visuals);
-    ctx.style_mut(|s| {
-        s.spacing.item_spacing = egui::vec2(8.0, 5.0);
-        s.spacing.button_padding = egui::vec2(8.0, 3.0);
-    });
-}
-
 fn main() -> anyhow::Result<()> {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut tab = None;
     let mut window: Option<String> = None;
+    let mut theme_arg = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--tab" => tab = args.next().and_then(|t| view::Tab::parse(&t)),
             "--window" => window = args.next(),
+            "--theme" => theme_arg = args.next().and_then(|t| theme::ThemeKind::parse(&t)),
             "--new" => window = Some("new".into()),
             "-h" | "--help" => {
-                println!("usage: chummer-rs [--tab <info|attributes|skills|qualities|magic|equipment|improvements|karma|notes>] [--window <sources|browser|dice>] [file.chum5 ...]");
+                println!("usage: chummer-rs [--tab <info|attributes|skills|qualities|magic|equipment|improvements|karma|notes>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5 ...]");
                 return Ok(());
             }
             _ => files.push(PathBuf::from(a)),
@@ -721,7 +734,7 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     eframe::run_native("chummer-rs", options, Box::new(move |cc| {
-        let mut app = App::new(cc, engine, files, tab);
+        let mut app = App::new(cc, engine, files, tab, theme_arg);
         match window.as_deref() {
             Some("sources") => app.show_sources = true,
             Some("browser") => app.show_browser = true,

@@ -16,7 +16,6 @@ use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
 use crate::pdf_ui::Status;
-use crate::view::{ACCENT, WARN};
 
 // ---------------------------------------------------------------------------
 // New Critter
@@ -116,7 +115,7 @@ impl CritterWizard {
                     ui.weak(lang.tr("Choose a critter."));
                     return;
                 };
-                ui.heading(RichText::new(&o.name).color(ACCENT));
+                ui.heading(RichText::new(&o.name).color(crate::theme::accent(ui)));
                 ui.weak(format!("{} · {} {}", o.category, o.source, o.page));
                 if !o.metavariants.is_empty() {
                     let shown = o.metavariants.iter().find(|(id, _)| *id == self.metavariant).map_or_else(|| lang.tr("None"), |(_, n)| n.clone());
@@ -177,7 +176,7 @@ impl CritterWizard {
                 ui.colored_label(ui.visuals().error_fg_color, e);
             }
             ui.horizontal(|ui| {
-                if ui.add_enabled(self.selected.is_some(), egui::Button::new(RichText::new(lang.tr("Create Critter")).color(ACCENT))).clicked() {
+                if ui.add_enabled(self.selected.is_some(), crate::theme::primary_button(ui, lang.tr("Create Critter"))).clicked() {
                     let o = options.iter().find(|o| Some(&o.id) == self.selected.as_ref());
                     let spec = NewCritter {
                         settings_id: settings.key(),
@@ -250,7 +249,7 @@ impl PacksWindow {
         let title = if mode == PacksMode::Add { lang.tr("Select a PACKS Kit") } else { lang.tr("Create PACKS Kit") };
         egui::Window::new(title).id(egui::Id::new("packs_kit")).open(&mut open).default_size([760.0, 520.0]).collapsible(false).show(ctx, |ui| {
             if ch.created {
-                ui.colored_label(WARN, lang.tr("PACKS kits can only be used while the character is in Create Mode."));
+                ui.colored_label(crate::theme::warn(ui), lang.tr("PACKS kits can only be used while the character is in Create Mode."));
                 return;
             }
             match mode {
@@ -261,7 +260,7 @@ impl PacksWindow {
                 if *err {
                     ui.colored_label(ui.visuals().error_fg_color, m);
                 } else {
-                    ui.colored_label(ACCENT, m);
+                    ui.colored_label(crate::theme::accent(ui), m);
                 }
             }
         });
@@ -311,14 +310,14 @@ impl PacksWindow {
             ui.label(RichText::new(lang.tr("Contents:")).strong());
             egui::ScrollArea::vertical().id_salt("packs_contents").max_height(300.0).show(ui, |ui| {
                 for (section, lines) in packs::contents(kit) {
-                    ui.label(RichText::new(lang.tr(section)).color(ACCENT));
+                    ui.label(RichText::new(lang.tr(section)).color(crate::theme::accent(ui)));
                     for l in lines {
                         ui.label(format!("  {l}"));
                     }
                 }
             });
             ui.horizontal(|ui| {
-                if ui.button(RichText::new(lang.tr("Add Kit")).color(ACCENT)).clicked() {
+                if ui.add(crate::theme::primary_button(ui, lang.tr("Add Kit"))).clicked() {
                     let report = packs::apply(ch, store, settings, kit);
                     changed = true;
                     let msg = lang.tr_fmt("Added {0}: {1} items", &[&name, &report.added.len()]);
@@ -331,7 +330,7 @@ impl PacksWindow {
                             self.confirm_delete = true;
                         }
                     } else {
-                        ui.colored_label(WARN, lang.tr_fmt("Are you sure you want to delete the custom PACKS Kit {0}?", &[&name]));
+                        ui.colored_label(crate::theme::warn(ui), lang.tr_fmt("Are you sure you want to delete the custom PACKS Kit {0}?", &[&name]));
                         if ui.button(lang.tr("Yes")).clicked() {
                             self.confirm_delete = false;
                             match dir.map(|d| packs::delete(d, &name)) {
@@ -388,7 +387,7 @@ impl PacksWindow {
             }
         });
         ui.separator();
-        if ui.button(RichText::new(lang.tr("Create PACKS Kit")).color(ACCENT)).clicked() {
+        if ui.add(crate::theme::primary_button(ui, lang.tr("Create PACKS Kit"))).clicked() {
             let Some(dir) = dir else {
                 self.message = Some((lang.tr("No PACKS folder."), true));
                 return;
@@ -497,14 +496,14 @@ impl SpellDesigner {
                 }
             });
             for p in custom_spell::problems(d) {
-                ui.colored_label(WARN, lang.tr(p));
+                ui.colored_label(crate::theme::warn(ui), lang.tr(p));
             }
             if let Some(m) = &self.message {
                 ui.colored_label(ui.visuals().error_fg_color, m);
             }
             ui.horizontal(|ui| {
                 let label = if ch.created { lang.tr_fmt("Create Spell ({0} karma)", &[&chummer_core::career::spell_karma_cost(engine, ch, "Spells")]) } else { lang.tr("Create Spell") };
-                if ui.add_enabled(custom_spell::problems(d).is_empty(), egui::Button::new(RichText::new(label).color(ACCENT))).clicked() {
+                if ui.add_enabled(custom_spell::problems(d).is_empty(), crate::theme::primary_button(ui, label)).clicked() {
                     add = true;
                 }
                 if ui.button(lang.tr("Cancel")).clicked() {

@@ -13,13 +13,10 @@ use chummer_core::lang::Language;
 use chummer_core::career;
 use chummer_core::play::{ammo, matrix, vehicle};
 use chummer_core::xml::Element;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
-use crate::view::{cm_track, WARN};
+use crate::view::cm_track;
 
-const EDGE_COLOR: Color32 = Color32::from_rgb(220, 180, 50);
-const PHYSICAL_COLOR: Color32 = Color32::from_rgb(200, 60, 60);
-const MATRIX_COLOR: Color32 = Color32::from_rgb(60, 180, 120);
 
 /// Sidebar Edge track (career mode): click a box to mark Edge spent up to
 /// it, ⟲ regains it all. Spending and regaining single points and burning
@@ -38,7 +35,7 @@ pub fn edge_track(ui: &mut egui::Ui, ch: &mut Character, sheet: &Sheet, lang: &L
             changed |= career::refresh_edge(ch);
         }
     });
-    if cm_track(ui, "edge", total, 0, &mut spent, EDGE_COLOR) {
+    if cm_track(ui, "edge", total, 0, &mut spent, crate::theme::palette(ui).edge) {
         changed |= career::set_edge_used(ch, total, spent);
     }
     changed
@@ -145,7 +142,7 @@ impl PlayPanel {
         });
         if let Some(m) = self.confirm {
             ui.horizontal_wrapped(|ui| {
-                ui.colored_label(WARN, lang.tr(m));
+                ui.colored_label(crate::theme::warn(ui), lang.tr(m));
                 if ui.button(lang.tr("OK")).clicked() {
                     changed |= ammo::set_remaining(ch, &guid, 0);
                     self.confirm = None;
@@ -241,7 +238,7 @@ fn vehicle_track(ui: &mut egui::Ui, ch: &mut Character, lang: &Language, v: &Ele
     let mut filled = vehicle::filled(v);
     ui.add_space(6.0);
     ui.label(RichText::new(lang.tr("Condition Monitor")).strong());
-    if cm_track(ui, &format!("vcm{}", v.get("guid")), boxes, 0, &mut filled, PHYSICAL_COLOR) {
+    if cm_track(ui, &format!("vcm{}", v.get("guid")), boxes, 0, &mut filled, crate::theme::palette(ui).physical) {
         return vehicle::set_filled(ch, &v.get("guid"), filled, &rules);
     }
     false
@@ -271,7 +268,7 @@ fn device_ui(ui: &mut egui::Ui, ch: &mut Character, lang: &Language, e: &Element
     }
     ui.label(RichText::new(lang.tr("Matrix Condition Monitor")).strong());
     let mut filled = matrix::filled(e);
-    if cm_track(ui, &format!("mcm{guid}"), matrix::condition_monitor(e), 0, &mut filled, MATRIX_COLOR) {
+    if cm_track(ui, &format!("mcm{guid}"), matrix::condition_monitor(e), 0, &mut filled, crate::theme::palette(ui).matrix) {
         changed |= matrix::set_filled(ch, &guid, filled);
     }
     changed

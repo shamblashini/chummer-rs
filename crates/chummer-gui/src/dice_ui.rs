@@ -44,8 +44,8 @@ impl DiceRoller {
             ui.horizontal_wrapped(|ui| {
                 for d in &r.dice {
                     let color = match d {
-                        5 | 6 => egui::Color32::from_rgb(80, 200, 120),
-                        1 => egui::Color32::from_rgb(220, 80, 80),
+                        5 | 6 => crate::theme::palette(ui).good,
+                        1 => crate::theme::palette(ui).bad,
                         _ => ui.visuals().weak_text_color(),
                     };
                     ui.label(egui::RichText::new(d.to_string()).monospace().size(18.0).color(color));

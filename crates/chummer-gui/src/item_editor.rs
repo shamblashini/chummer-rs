@@ -13,7 +13,6 @@ use chummer_core::items::{self, edit};
 use chummer_core::lang::Language;
 use eframe::egui::{self, RichText};
 
-use crate::view::{ACCENT, WARN};
 
 /// What the editor asks of its caller this frame.
 #[derive(Debug, Default)]
@@ -58,7 +57,7 @@ impl ItemEditor {
         let career = ch.created;
         let label = items::kind(&tag).map_or_else(|| tag.clone(), |k| lang.tr(k.label));
 
-        ui.heading(RichText::new(e.get("name")).color(ACCENT));
+        ui.heading(RichText::new(e.get("name")).color(crate::theme::accent(ui)));
         let cat = e.get("category");
         ui.weak(if cat.is_empty() { label.clone() } else { format!("{label} · {cat}") });
         if let Some(p) = edit::parent(ch, guid) {
@@ -262,7 +261,7 @@ impl ItemEditor {
             return;
         }
         let text = if self.confirm_remove { lang.tr("Click again to delete") } else { format!("🗑 {}", lang.tr("Delete")) };
-        let b = ui.button(RichText::new(text).color(if self.confirm_remove { WARN } else { ui.visuals().text_color() }));
+        let b = ui.button(RichText::new(text).color(if self.confirm_remove { crate::theme::warn(ui) } else { ui.visuals().text_color() }));
         if b.on_hover_text(lang.tr("Also removes its improvements and everything inside it")).clicked() {
             if self.confirm_remove {
                 if edit::remove(ch, guid) {
