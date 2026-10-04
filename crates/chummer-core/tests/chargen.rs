@@ -171,3 +171,33 @@ fn karma_point_buy_build() {
     let (_, b3) = sheet(&engine, &ch);
     assert!(b3.karma.1 > b2.karma.1);
 }
+
+#[test]
+fn life_modules_build() {
+    let engine = Engine::load().unwrap();
+    let lm = engine.settings.presets.iter().find(|p| p.build_method() == "LifeModule").unwrap().clone();
+    let spec = NewCharacter {
+        settings_id: lm.id(),
+        metatype: "Human".into(),
+        metavariant: None,
+        priorities: Priorities(['A', 'B', 'C', 'D', 'E']),
+        talent: "Mundane".into(),
+        talent_skills: vec![],
+        name: "Life".into(),
+    };
+    let mut ch = chargen::create(&engine, &spec).unwrap();
+    let (stages, modules) = chargen::life_modules(&engine.store);
+    assert_eq!(stages.first().map(String::as_str), Some("Nationality"));
+    let ucas = modules.iter().find(|m| m.name == "United Canadian American States").unwrap();
+    let (_, before) = sheet(&engine, &ch);
+    let v = ucas.versions.first().map(|v| v.0.clone());
+    chargen::add_life_module(&mut ch, &engine.store, &ucas.id, v.as_deref()).unwrap();
+    let (s, after) = sheet(&engine, &ch);
+    assert_eq!(after.karma.1, before.karma.1 + ucas.karma);
+    assert_eq!(after.positive_quality_karma, before.positive_quality_karma, "life modules don't count toward the quality limit");
+    // General UCAS gives +1 LOG and a level of Etiquette.
+    assert_eq!(s.attr_values("LOG").unwrap().free_base, 1);
+    assert!(ch.improvements.list.iter().any(|i| i.kind == "SkillLevel" && i.improved_name == "Etiquette"));
+    let q = ch.items("qualities", "quality").into_iter().find(|q| q.get("qualitytype") == "LifeModule").unwrap();
+    assert_eq!(q.get("stage"), "Nationality");
+}

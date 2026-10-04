@@ -49,7 +49,7 @@ impl Wizard {
         self.preset = self.preset.min(presets.len() - 1);
         let settings: CharacterSettings = presets[self.preset].clone();
         let sum_to_ten = settings.build_method() == "SumtoTen";
-        let karma_build = settings.build_method() == "Karma";
+        let karma_build = matches!(settings.build_method().as_str(), "Karma" | "LifeModule");
         let mut result = WizardResult::Open;
         let mut open = true;
         egui::Window::new("New character").open(&mut open).default_size([760.0, 640.0]).collapsible(false).show(ctx, |ui| {
@@ -68,7 +68,7 @@ impl Wizard {
             ui.weak(format!(
                 "Build: {} · {} karma · availability {}",
                 if karma_build {
-                    "Point buy (karma)".to_owned()
+                    if settings.build_method() == "LifeModule" { "Life modules (karma)".to_owned() } else { "Point buy (karma)".to_owned() }
                 } else if sum_to_ten {
                     format!("Sum-to-Ten ({})", settings.int("sumtoten", 10))
                 } else {

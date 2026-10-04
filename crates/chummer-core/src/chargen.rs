@@ -815,9 +815,9 @@ pub fn priority_presets(engine: &Engine) -> Vec<&CharacterSettings> {
 }
 
 /// Presets the new-character wizard offers: priority tables and karma
-/// point buy. (Life Modules is not supported yet.)
+/// point buy and life modules.
 pub fn creation_presets(engine: &Engine) -> Vec<&CharacterSettings> {
-    engine.settings.presets.iter().filter(|p| matches!(p.build_method().as_str(), "Priority" | "SumtoTen" | "Karma")).collect()
+    engine.settings.presets.iter().filter(|p| matches!(p.build_method().as_str(), "Priority" | "SumtoTen" | "Karma" | "LifeModule")).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -921,4 +921,69 @@ pub fn add_specialization(ch: &mut Character, skill_guid: &str, spec: &str) {
         s.specs.push(crate::skills::Specialization { guid: new_guid(), name: spec.to_owned(), free: false, expertise: false });
         ch.dirty = true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Life Modules build
+// ---------------------------------------------------------------------------
+
+/// A life module and its versions (`lifemodules.xml`).
+#[derive(Debug, Clone)]
+pub struct LifeModule {
+    pub id: String,
+    pub stage: String,
+    pub name: String,
+    pub karma: i32,
+    /// (id, name) of each version; empty when the module has none.
+    pub versions: Vec<(String, String)>,
+}
+
+/// Stages in order, then the modules of each stage.
+pub fn life_modules(store: &DataStore) -> (Vec<String>, Vec<LifeModule>) {
+    let Ok(doc) = store.doc("lifemodules.xml") else { return (Vec::new(), Vec::new()) };
+    let mut stages: Vec<(i32, String)> = doc
+        .child("stages")
+        .map(|s| s.children_named("stage").map(|e| (e.attr("order").and_then(|o| o.parse().ok()).unwrap_or(99), e.text())).collect())
+        .unwrap_or_default();
+    stages.sort();
+    let modules = data::records(&doc, "modules", "module")
+        .into_iter()
+        .map(|m| LifeModule {
+            id: m.id(),
+            stage: m.get("stage"),
+            name: m.name(),
+            karma: m.el().get_i32("karma").unwrap_or(0),
+            versions: m.el().child("versions").map(|v| v.children_named("version").map(|x| (x.get("id"), x.get("name"))).collect()).unwrap_or_default(),
+        })
+        .collect();
+    (stages.into_iter().map(|(_, s)| s).collect(), modules)
+}
+
+/// Add a life module as a `LifeModule` quality, running the chosen
+/// version's bonus (`SelectLifeModule` + `Quality.Create`).
+pub fn add_life_module(ch: &mut Character, store: &DataStore, module_id: &str, version_id: Option<&str>) -> Result<String, String> {
+    let doc = store.doc("lifemodules.xml").map_err(|e| e.to_string())?;
+    let m = data::find(&doc, "modules", "module", module_id).ok_or("unknown life module")?;
+    let version = version_id.and_then(|v| m.el().child("versions").and_then(|vs| vs.children_named("version").find(|x| x.get("id").eq_ignore_ascii_case(v))));
+    // A quality-shaped record: module identity, version effects.
+    let mut rec = Element::new("quality");
+    rec.push(Element::with_text("id", version.map(|v| v.get("id")).unwrap_or_else(|| m.id())));
+    let name = match version {
+        Some(v) if !v.get("name").is_empty() => format!("{} ({})", m.name(), v.get("name")),
+        _ => m.name(),
+    };
+    rec.push(Element::with_text("name", name));
+    rec.push(Element::with_text("karma", m.get("karma")));
+    rec.push(Element::with_text("category", "LifeModule"));
+    rec.push(Element::with_text("contributetolimit", "False"));
+    rec.push(Element::with_text("source", m.el().child_text("source").unwrap_or_else(|| "RF".into())));
+    rec.push(Element::with_text("page", m.get("page")));
+    if let Some(b) = version.and_then(|v| v.child("bonus")).or_else(|| m.el().child("bonus")) {
+        rec.push(b.clone());
+    }
+    let guid = add_quality_with_source(ch, store, Record(&rec), None, "Selected", true);
+    if let Some(q) = crate::items::find_by_guid_mut(ch.items_mut("qualities"), &guid) {
+        q.set_child_text("stage", m.get("stage"));
+    }
+    Ok(guid)
 }

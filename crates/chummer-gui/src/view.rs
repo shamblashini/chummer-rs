@@ -66,6 +66,8 @@ pub struct CharacterView {
     confirm_finish: bool,
     new_kno: (String, String, bool),
     new_contact: (String, String, i32, i32),
+    /// Life module picker: (stage, module id, version id).
+    life: (String, String, String),
 }
 
 pub const ACCENT: Color32 = Color32::from_rgb(0, 200, 170);
@@ -104,6 +106,7 @@ impl CharacterView {
             confirm_finish: false,
             new_kno: (String::new(), "Academic".into(), false),
             new_contact: (String::new(), String::new(), 1, 1),
+            life: (String::new(), String::new(), String::new()),
         };
         v.refresh_budget();
         v
@@ -165,6 +168,9 @@ impl CharacterView {
                     egui::ScrollArea::both().show(ui, |ui| {
                         if ui.button("➕ Add quality…").clicked() {
                             self.open_select("quality", engine);
+                        }
+                        if !self.ch.created && self.ch.field("buildmethod") == "LifeModule" {
+                            c |= self.life_module_picker(ui, engine, status);
                         }
                         c |= self.section(ui, &sections::QUALITIES, lang, pdfs, status);
                         ui.add_space(12.0);
@@ -842,6 +848,54 @@ impl CharacterView {
                 }
             }
         }
+    }
+
+    fn life_module_picker(&mut self, ui: &mut egui::Ui, engine: &Engine, status: &mut Status) -> bool {
+        let (stages, modules) = chargen::life_modules(&engine.store);
+        let mut added = false;
+        ui.group(|ui| {
+            ui.label(RichText::new("Life modules").strong());
+            ui.horizontal(|ui| {
+                if self.life.0.is_empty() {
+                    self.life.0 = stages.first().cloned().unwrap_or_default();
+                }
+                egui::ComboBox::from_id_salt("lm_stage").selected_text(self.life.0.clone()).show_ui(ui, |ui| {
+                    for st in &stages {
+                        if ui.selectable_label(self.life.0 == *st, st).clicked() {
+                            self.life = (st.clone(), String::new(), String::new());
+                        }
+                    }
+                });
+                let in_stage: Vec<&chargen::LifeModule> = modules.iter().filter(|m| m.stage == self.life.0).collect();
+                let cur = in_stage.iter().find(|m| m.id == self.life.1).map(|m| format!("{} ({} karma)", m.name, m.karma)).unwrap_or_else(|| "Choose a module…".into());
+                egui::ComboBox::from_id_salt("lm_module").selected_text(cur).width(320.0).show_ui(ui, |ui| {
+                    for m in &in_stage {
+                        if ui.selectable_label(self.life.1 == m.id, format!("{} ({} karma)", m.name, m.karma)).clicked() {
+                            self.life.1 = m.id.clone();
+                            self.life.2 = m.versions.first().map(|v| v.0.clone()).unwrap_or_default();
+                        }
+                    }
+                });
+                if let Some(m) = in_stage.iter().find(|m| m.id == self.life.1) {
+                    if m.versions.len() > 1 {
+                        let cur = m.versions.iter().find(|v| v.0 == self.life.2).map(|v| v.1.clone()).unwrap_or_default();
+                        egui::ComboBox::from_id_salt("lm_version").selected_text(cur).show_ui(ui, |ui| {
+                            for (id, n) in &m.versions {
+                                ui.selectable_value(&mut self.life.2, id.clone(), n);
+                            }
+                        });
+                    }
+                }
+                if ui.add_enabled(!self.life.1.is_empty(), egui::Button::new("Add")).clicked() {
+                    let v = (!self.life.2.is_empty()).then(|| self.life.2.clone());
+                    match chargen::add_life_module(&mut self.ch, &engine.store, &self.life.1, v.as_deref()) {
+                        Ok(_) => added = true,
+                        Err(e) => *status = Some((e, true)),
+                    }
+                }
+            });
+        });
+        added
     }
 
     fn contact_form(&mut self, ui: &mut egui::Ui) -> bool {
