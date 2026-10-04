@@ -1086,9 +1086,15 @@ impl CharacterView {
                 let name = rec.name();
                 let karma = rec.el().get_i32("karma").unwrap_or(0);
                 let _ = karma;
-                if self.ch.created && tag == "quality" {
+                if self.ch.created && matches!(tag, "quality" | "martialart" | "critterpower") {
                     // Career mode: karma is spent and logged (double for most qualities).
-                    return match career::add_quality(&mut self.ch, engine, rec, purchase.answer.as_deref()) {
+                    let answer = purchase.answer.as_deref();
+                    let r = match tag {
+                        "martialart" => career::learn_martial_art(&mut self.ch, engine, rec, answer),
+                        "critterpower" => career::learn_critter_power(&mut self.ch, engine, rec, purchase.rating, answer),
+                        _ => career::add_quality(&mut self.ch, engine, rec, answer),
+                    };
+                    return match r {
                         Ok(_) => {
                             *status = Some((format!("Added {name}"), false));
                             self.select = None;
@@ -1104,20 +1110,6 @@ impl CharacterView {
                     Ok(guid) => {
                         chummer_core::items::edit::settle_new_item(&mut self.ch, &guid);
                         let mut msg = format!("Added {name}");
-                        // Martial arts cost karma, not nuyen (MartialArt.Cost).
-                        if self.ch.created && tag == "martialart" {
-                            let karma = chummer_core::items::find_by_guid_mut(&mut self.ch.doc, &guid).and_then(|e| e.get_f64("cost")).unwrap_or(0.0);
-                            let rules = career::CareerRules::for_character(engine, &self.ch);
-                            let entry = career::ManualExpense { amount: karma, reason: format!("Learned martial art {name}"), ..Default::default() };
-                            if karma > 0.0 {
-                                if let Err(e) = career::karma_spent(&mut self.ch, &rules, &entry) {
-                                    self.ch.remove_item_anywhere(&guid);
-                                    *status = Some((e.to_string(), true));
-                                    return true;
-                                }
-                                msg = format!("Learned {name} for {karma} karma");
-                            }
-                        }
                         let nuyen_kind = matches!(
                             tag,
                             "gear" | "cyberware" | "bioware" | "armor" | "armormod" | "weapon" | "accessory" | "vehicle" | "mod" | "weaponmount" | "lifestyle" | "drug"
@@ -1321,6 +1313,7 @@ impl CharacterView {
                 lang.tr("Public Awareness"),
                 rep.public_awareness
             ));
+            changed |= crate::career_ui::actions_ui(ui, &mut self.ch, engine, lang);
             ui.horizontal(|ui| {
                 egui::ComboBox::from_id_salt("manual_kind").selected_text(if self.manual.0 { lang.tr("Karma") } else { lang.tr("Nuyen") }).show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.manual.0, true, lang.tr("Karma"));

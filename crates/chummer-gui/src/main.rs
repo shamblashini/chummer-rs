@@ -2,6 +2,7 @@
 //! chummer-rs desktop application.
 
 mod browser;
+mod career_ui;
 mod dice_ui;
 mod drug_ui;
 mod initiative;

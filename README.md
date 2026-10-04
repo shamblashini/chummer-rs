@@ -87,9 +87,14 @@ karma and 5,000¥.
 - Raise attributes, skills, skill groups and knowledge skills for karma at Chummer's costs.
 - Buy specializations, qualities and spells.
 - Buy off negative qualities.
-- Initiate or submerge (group, ordeal and schooling discounts).
-- Learn martial art techniques.
-- Bind foci.
+- Initiate or submerge (group, ordeal and schooling discounts). A mystic adept with the second-MAG house rule is also limited by MAGAdept.
+- Learn martial arts and their techniques.
+- Learn metamagics and echoes. The first one at a grade is free; each further one costs karma.
+- Buy critter powers.
+- Bind foci, up to MAG foci and MAG × 5 total force.
+- Fetter a spirit (Force × 3 karma) or a sprite (Force karma). A fettered spirit lowers MAG by 1.
+- Join or leave a magical group, and quicken spells.
+- Spend and regain Edge, burn a point of Edge and burn street cred.
 
 Every purchase is written to the karma/nuyen ledger. The Karma & Nuyen tab:
 - Lists the ledger with Undo.
@@ -207,10 +212,8 @@ cargo test --workspace
 
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
 - Some career-mode details:
-  - Burning Edge.
-  - The mystic adept's second-MAG limit on grades.
-  - Undo for focus binding and technique purchases.
-  - Karma for spirit fettering.
+  - AI programs, and enchantments, rituals and enhancements learned at a grade.
+  - Binding stacked foci (undo of a stacked focus binding works).
 - PDF export needs a browser's Print to PDF; no converter is bundled.
 - About 290 UI labels have no Chummer translation string and stay English.
 
