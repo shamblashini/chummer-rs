@@ -25,6 +25,7 @@ pub mod items;
 pub mod chargen;
 pub mod career;
 pub mod essence_loss;
+pub mod gm;
 pub mod print;
 pub mod export;
 pub mod roster;
