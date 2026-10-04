@@ -28,3 +28,4 @@ pub mod essence_loss;
 pub mod print;
 pub mod export;
 pub mod roster;
+pub mod calendar;
