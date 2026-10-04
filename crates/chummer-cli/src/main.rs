@@ -86,7 +86,7 @@ fn run(args: &[String]) -> Result<()> {
         "sheet" => sheet_cmd(&Engine::load()?, rest),
         "sheets" => {
             for (name, path) in print::available_sheets(rest.first().map_or("en-us", String::as_str)) {
-                println!("{name:<55} {}", path.display());
+                println!("{name}\t{}", path.display());
             }
             Ok(())
         }

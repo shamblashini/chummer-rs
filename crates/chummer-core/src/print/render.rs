@@ -217,7 +217,7 @@ pub fn html_to_pdf(html: &Path, pdf: &Path) -> Result<(), RenderError> {
     if cmd.contains("chrom") {
         let mut flag = std::ffi::OsString::from("--print-to-pdf=");
         flag.push(pdf);
-        c.arg(flag).arg(&html);
+        c.arg(flag).arg(format!("file://{}", html.display()));
     } else {
         c.arg(&html).arg(pdf);
     }
@@ -258,8 +258,14 @@ pub fn available_sheets_in(data_dir: &Path, sheets_dir: &Path, lang_code: &str) 
         if file.is_empty() || seen.contains(&file) {
             continue;
         }
+        // sheets.xml lists a few translated sheets that are not shipped
+        // (Chummer then shows "File not found"); leave those out.
+        let path = dir.join(format!("{file}.xsl"));
+        if !path.is_file() {
+            continue;
+        }
         let name = sheet.child_text("name").unwrap_or_else(|| file.clone());
-        out.push((name, dir.join(format!("{file}.xsl"))));
+        out.push((name, path));
         seen.push(file);
     }
     out

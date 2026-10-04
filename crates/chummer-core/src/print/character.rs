@@ -282,7 +282,8 @@ fn attributes(ctx: &Ctx) -> Element {
     if category == "Shapeshifter" {
         add(&mut out, "attributecategory", ctx.lang.data_name("metatypes.xml", "", &ch.field("metatype")));
     }
-    add(&mut out, "attributecategory_english", if category == "Shapeshifter" { "Shapeshifter" } else { "Standard" });
+    // Only the standard attribute set is computed, so it is the one printed.
+    add(&mut out, "attributecategory_english", "Standard");
     for a in ctx.sheet.attributes.iter().filter(|a| attribute_shown(ctx, &a.name)) {
         let saved_cat = ch.attribute(&a.name).map(|x| x.category.clone()).unwrap_or_default();
         out.push(attribute(ctx, a, &saved_cat));
@@ -344,8 +345,9 @@ fn monitors(ctx: &Ctx, out: &mut Element) {
     add(out, "stuncmfilled", ch.stun_cm_filled.to_string());
     add(out, "cmthreshold", s.cm_threshold.to_string());
     let offset = ch.improvements.val_int("CMThresholdOffset", None);
-    add(out, "physicalcmthresholdoffset", offset.min(s.physical_cm).to_string());
-    add(out, "stuncmthresholdoffset", offset.min(s.stun_cm).to_string());
+    let ignores = |kind: &str, cm: i32| if ch.improvements.has(kind) { cm } else { offset.min(cm) };
+    add(out, "physicalcmthresholdoffset", ignores("IgnoreCMPenaltyPhysical", s.physical_cm).to_string());
+    add(out, "stuncmthresholdoffset", ignores("IgnoreCMPenaltyStun", s.stun_cm).to_string());
     add(out, "cmoverflow", if ai { 0 } else { s.cm_overflow }.to_string());
     add(out, "psyche", bool_text(false));
 }

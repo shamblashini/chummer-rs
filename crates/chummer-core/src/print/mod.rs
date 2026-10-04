@@ -14,6 +14,11 @@
 //! the port does not compute yet (item cost/avail totals, weapon
 //! accuracy modifiers and similar) are taken from the saved fields.
 //!
+//! PDF: Chummer5a prints through its embedded browser. Here
+//! [`html_to_pdf`] uses chromium, google-chrome, wkhtmltopdf or
+//! weasyprint when one is installed; otherwise open the HTML in any
+//! browser (`xdg-open sheet.html`) and print it to PDF from there.
+//!
 //! Numbers are formatted with the invariant culture: a German sheet gets
 //! German labels and names but `1,000.5¥` rather than `1.000,5¥`.
 
