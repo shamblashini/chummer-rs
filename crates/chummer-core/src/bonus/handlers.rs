@@ -564,6 +564,18 @@ pub fn apply_node(ctx: &mut Ctx<'_>, node: &Element) -> bool {
                 }
             }
         }
+        // Bonus types that create objects. Each is implemented next to the
+        // object it creates; they return false until then.
+        "addgear" => return crate::items::gear::bonus_addgear(ctx, node),
+        "naturalweapon" => return crate::items::weapon::bonus_naturalweapon(ctx, node),
+        "addweapon" => return crate::items::weapon::bonus_addweapon(ctx, node),
+        "addware" => return crate::items::cyberware::bonus_addware(ctx, node),
+        "specificpower" | "selectpowers" => return crate::items::magic::bonus_power(ctx, node),
+        "critterpowers" | "optionalpowers" => return crate::items::magic::bonus_critterpowers(ctx, node),
+        "addspell" | "addcomplexform" | "addart" | "addmetamagic" | "addecho" => return crate::items::magic::bonus_add_magic(ctx, node),
+        "addspirit" | "limitspiritcategory" => return crate::items::magic::bonus_spirit(ctx, node),
+        "selectquality" => return crate::items::quality::bonus_selectquality(ctx, node),
+        "addcontact" => return crate::items::quality::bonus_addcontact(ctx, node),
         "selectrestricted" => {
             let Some(a) = ctx.answer() else { return false };
             let i = ctx.imp("Restricted", &a);
