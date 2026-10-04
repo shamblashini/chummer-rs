@@ -172,6 +172,12 @@ fn total_cost(e: &Element, parent: Option<&Element>) -> f64 {
     own_cost_pre(e, parent) * qty(e) * f64::from(multiplier) / cost_for(e) + plugins * qty(e)
 }
 
+/// `Gear.CalculatedCost`: own cost × quantity / cost-for, without children
+/// (what a parent's `Gear Cost` token sums).
+pub fn own_calculated_cost(e: &Element) -> f64 {
+    calculated_cost(e, None)
+}
+
 /// `Gear.TotalCost`: nuyen cost of a saved gear, its children and quantity.
 pub fn cost(e: &Element) -> f64 {
     total_cost(e, None)

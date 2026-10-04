@@ -231,6 +231,8 @@ pub(super) struct Veh<'a> {
     pub mounts: Vec<&'a Element>,
     rules: VehicleRules,
     depth: Cell<u32>,
+    /// The owner, to price ware in the vehicle's mods (`None`: saved costs).
+    pub pricing: Option<(&'a crate::character::Character, &'a crate::data::DataStore)>,
 }
 
 impl<'a> Veh<'a> {
@@ -244,6 +246,7 @@ impl<'a> Veh<'a> {
             mounts: kids("weaponmounts", "weaponmount"),
             rules: *rules,
             depth: Cell::new(0),
+            pricing: None,
         }
     }
 

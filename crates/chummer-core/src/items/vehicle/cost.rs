@@ -1,7 +1,11 @@
 //! Vehicle costs: `Vehicle.TotalCost`, `VehicleMod.TotalCost`,
 //! `WeaponMount.TotalCost` and `WeaponMountOption.TotalCost`.
 
+use crate::character::Character;
+use crate::data::DataStore;
 use crate::expr::{evaluate_num, needs_evaluation, parse_plain};
+use crate::items::cyberware::{self, VehicleAttributes};
+use crate::items::weapon;
 use crate::xml::Element;
 
 use super::stats::{mount_mods, ModAt, Veh, VehicleRules};
@@ -11,10 +15,23 @@ use super::stats::{mount_mods, ModAt, Veh, VehicleRules};
 /// directly under the vehicle are not counted, as in Chummer: they sit in a
 /// mount or a mod, whose cost includes them.
 pub fn cost(vehicle: &Element) -> f64 {
-    let v = Veh::new(vehicle, &VehicleRules::default());
+    total(&Veh::new(vehicle, &VehicleRules::default()))
+}
+
+/// [`cost`] with the owner known, so ware in drone arms and legs is priced
+/// with its grade and the vehicle's Body and Pilot as its attribute limits.
+pub fn cost_with(ch: &Character, store: &DataStore, vehicle: &Element) -> f64 {
+    let mut v = Veh::new(vehicle, &VehicleRules::default());
+    v.pricing = Some((ch, store));
+    total(&v)
+}
+
+/// `Vehicle.TotalCost`.
+fn total(v: &Veh<'_>) -> f64 {
+    let vehicle = v.e;
     let mods: f64 = (0..v.mods.len()).map(|i| v.mod_total_cost(ModAt::Vehicle(i))).sum();
     let mounts: f64 = (0..v.mounts.len()).map(|w| v.mount_total_cost(w)).sum();
-    let gear: f64 = children(vehicle, "gears").map(nested_cost).sum();
+    let gear: f64 = children(vehicle, "gears").map(super::super::gear::cost).sum();
     v.own_cost() + mods + mounts + gear
 }
 
@@ -23,12 +40,6 @@ pub fn own_cost(vehicle: &Element) -> f64 {
     Veh::new(vehicle, &VehicleRules::default()).own_cost()
 }
 
-/// Cost of a gear, weapon or cyberware item inside a vehicle, from its
-/// saved `<cost>`, rating, quantity and children. This stands in for the
-/// gear/weapon/cyberware cost functions until those modules provide them.
-fn nested_cost(e: &Element) -> f64 {
-    crate::chargen::item_cost(e)
-}
 
 fn children<'a>(e: &'a Element, container: &str) -> impl Iterator<Item = &'a Element> {
     e.child(container).into_iter().flat_map(|c| c.elements())
@@ -91,7 +102,19 @@ impl Veh<'_> {
     pub fn mod_total_cost(&self, at: ModAt) -> f64 {
         let Some(m) = self.mod_at(at) else { return 0.0 };
         let own = if flag(m, "included") { 0.0 } else { self.mod_own_cost(at) };
-        own + children(m, "weapons").map(nested_cost).sum::<f64>() + children(m, "cyberwares").map(nested_cost).sum::<f64>()
+        own + children(m, "weapons").map(weapon::cost).sum::<f64>() + children(m, "cyberwares").map(|c| self.ware_cost(c)).sum::<f64>()
+    }
+
+    /// `Cyberware.TotalCost` of ware in a mod. Without the owner, the saved
+    /// cost expression at the saved rating stands in.
+    fn ware_cost(&self, c: &Element) -> f64 {
+        match self.pricing {
+            Some((ch, store)) => {
+                let limits = VehicleAttributes { body: self.total_body(None), pilot: self.pilot(None), max_pilot: self.max_pilot() };
+                cyberware::cost_in_vehicle(ch, store, c, limits)
+            }
+            None => crate::chargen::item_cost(c),
+        }
     }
 
     /// `WeaponMount.OwnCost`.
@@ -135,7 +158,7 @@ impl Veh<'_> {
     /// `WeaponMount.TotalCost`.
     pub fn mount_total_cost(&self, w: usize) -> f64 {
         let Some(m) = self.mounts.get(w) else { return 0.0 };
-        let weapons: f64 = children(m, "weapons").map(nested_cost).sum();
+        let weapons: f64 = children(m, "weapons").map(weapon::cost).sum();
         let mods: f64 = (0..mount_mods(m).count()).map(|i| self.mod_total_cost(ModAt::Mount(w, i))).sum();
         if flag(m, "included") || flag(m, "freecost") {
             return weapons + mods;

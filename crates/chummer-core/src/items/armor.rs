@@ -477,24 +477,71 @@ fn rebuild_feature_mod(ch: &Character, doc: &Element, saved: &Element) -> Option
 // ---------------------------------------------------------------------------
 
 /// `OwnCost` of an armor or mod: cost at its rating, 10% off when
-/// discounted.
-fn own_cost(e: &Element) -> f64 {
-    let c = rating_value(&e.get("cost"), e.get_i32("rating").unwrap_or(0));
+/// discounted. A mod's cost may name its armor (`ArmorMod.ProcessRatingStringAsDec`:
+/// `Armor Rating`, `Armor Cost`, `Armor Weight` and their `Parent` forms).
+fn own_cost(e: &Element, armor: Option<&Element>) -> f64 {
+    let c = rating_value(&parent_tokens(&e.get("cost"), armor), saved_rating(e));
     if e.get_bool("discountedcost").unwrap_or(false) { c * 0.9 } else { c }
 }
 
-/// Saved gear cost × quantity, with its children (stand-in for
-/// `Gear.TotalCost` until `items::gear` provides one).
-pub(crate) fn gear_cost(g: &Element) -> f64 {
-    let qty = g.get_f64("qty").unwrap_or(1.0);
-    let own = rating_value(&g.get("cost"), g.get_i32("rating").unwrap_or(0));
-    let kids: f64 = g.child("children").map(|c| c.children_named("gear").map(gear_cost).sum()).unwrap_or(0.0);
-    own * qty + kids
+/// `Armor.Rating` / `ArmorMod.Rating`: the saved rating capped at
+/// `MaxRatingValue` (empty means no cap), as `Load` does.
+fn saved_rating(e: &Element) -> i32 {
+    let rating = e.get_i32("rating").unwrap_or(0);
+    rating.min(max_rating_value(e.child_text("maxrating").as_deref(), rating))
+}
+
+/// Replace the parent-armor tokens of an armor mod expression.
+fn parent_tokens(s: &str, armor: Option<&Element>) -> String {
+    let Some(a) = armor.filter(|_| s.contains("Armor ") || s.contains("Parent ")) else { return s.to_owned() };
+    let rating = saved_rating(a);
+    let values = [("Rating", f64::from(rating)), ("Cost", own_cost(a, None)), ("Weight", rating_value(&a.get("weight"), rating))];
+    let mut s = s.to_owned();
+    for (what, v) in values {
+        let v = crate::improvement::fmt_num(v);
+        for token in [format!("{{Armor {what}}}"), format!("Armor {what}"), format!("{{Parent {what}}}"), format!("Parent {what}")] {
+            s = s.replace(&token, &v);
+        }
+    }
+    s
+}
+
+/// `Gear.TotalCost` of the gear inside an armor, armor mod or weapon
+/// accessory.
+pub(crate) fn gears_cost(e: &Element) -> f64 {
+    e.child("gears").map(|c| c.children_named("gear").map(|g| super::gear::cost_in(g, e)).sum()).unwrap_or(0.0)
+}
+
+/// `ArmorMod.TotalCost`: own cost (priced off its armor) plus its gear.
+fn mod_cost(m: &Element, armor: &Element) -> f64 {
+    own_cost(m, Some(armor)) + gears_cost(m)
 }
 
 /// `Armor.TotalCost` / `ArmorMod.TotalCost`: own cost plus mods and gear.
 pub fn cost(e: &Element) -> f64 {
-    let mods: f64 = e.child("armormods").map(|c| c.children_named("armormod").map(cost).sum()).unwrap_or(0.0);
-    let gear: f64 = e.child("gears").map(|c| c.children_named("gear").map(gear_cost).sum()).unwrap_or(0.0);
-    own_cost(e) + mods + gear
+    let mods: f64 = e.child("armormods").map(|c| c.children_named("armormod").map(|m| mod_cost(m, e)).sum()).unwrap_or(0.0);
+    own_cost(e, None) + mods + gears_cost(e)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn el(src: &str) -> Element {
+        crate::xml::parse(src).unwrap()
+    }
+
+    #[test]
+    fn mod_priced_off_its_armor() {
+        let a = el("<armor><cost>2300</cost><armormods><armormod><cost>Armor Cost</cost></armormod><armormod><cost>40</cost></armormod></armormods></armor>");
+        assert_eq!(cost(&a), 2300.0 * 2.0 + 40.0);
+    }
+
+    #[test]
+    fn rating_capped_at_saved_max_rating() {
+        let capped = el("<armor><cost>4000 * Rating</cost><rating>4</rating><maxrating>0</maxrating></armor>");
+        assert_eq!(cost(&capped), 0.0);
+        let open = el("<armor><cost>4000 * Rating</cost><rating>4</rating><maxrating /></armor>");
+        assert_eq!(cost(&open), 16000.0);
+    }
 }

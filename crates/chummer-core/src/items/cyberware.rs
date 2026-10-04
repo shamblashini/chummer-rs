@@ -522,13 +522,29 @@ fn pair_count(ch: &Character, include: &[String], name: &str, extra: &str, locat
 struct WareAttributes<'a> {
     sheet: SheetAttributes<'a>,
     limb: Option<&'a Element>,
+    vehicle: Option<VehicleAttributes>,
+}
+
+/// What a vehicle supplies to ware installed in it (not in a cyberlimb):
+/// `STRMinimum` = Body, `STRMaximum` = Body × 2, `AGIMinimum` = Pilot,
+/// `AGIMaximum` = MaxPilot, each at least 1
+/// (`Cyberware.ProcessAttributesInXPath`, `ParentVehicle` branch).
+#[derive(Debug, Clone, Copy)]
+pub struct VehicleAttributes {
+    pub body: i32,
+    pub pilot: i32,
+    pub max_pilot: i32,
 }
 
 impl AttributeSource for WareAttributes<'_> {
     fn attribute_token(&self, token: &str) -> Option<i32> {
-        match (token, self.limb) {
-            ("STRMinimum", Some(l)) => Some(l.get_i32("minstrength").unwrap_or(3)),
-            ("AGIMinimum", Some(l)) => Some(l.get_i32("minagility").unwrap_or(3)),
+        match (token, self.limb, self.vehicle) {
+            ("STRMinimum", Some(l), _) => Some(l.get_i32("minstrength").unwrap_or(3)),
+            ("AGIMinimum", Some(l), _) => Some(l.get_i32("minagility").unwrap_or(3)),
+            ("STRMinimum", None, Some(v)) => Some(v.body.max(1)),
+            ("STRMaximum", None, Some(v)) => Some(v.body.saturating_mul(2).max(1)),
+            ("AGIMinimum", None, Some(v)) => Some(v.pilot.max(1)),
+            ("AGIMaximum", None, Some(v)) => Some(v.max_pilot.max(1)),
             _ => self.sheet.attribute_token(token),
         }
     }
@@ -565,7 +581,7 @@ fn is_limb(e: &Element) -> bool {
 /// a cyberlimb supplies `{AGIMinimum}`-style tokens.
 pub fn rating_range(ch: &Character, store: &DataStore, rec: Record<'_>, limb: Option<&Element>) -> (i32, i32) {
     let attrs = sheet_attributes(ch, store);
-    let src = WareAttributes { sheet: SheetAttributes(&attrs), limb: limb.filter(|l| is_limb(l)) };
+    let src = WareAttributes { sheet: SheetAttributes(&attrs), limb: limb.filter(|l| is_limb(l)), vehicle: None };
     let min = eval_rating(&rec.get("minrating"), &src);
     let max = eval_rating(&rec.get("rating"), &src);
     (min, max.max(min))
@@ -840,7 +856,7 @@ struct CostTokens {
 /// `Cyberware.ProcessCostExpression` for a saved element: FixedValues,
 /// cost tokens, `MinRating`, attributes, `Rating`, then evaluate.
 fn cost_expression(e: &Element, s: &str, t: CostTokens, attrs: &dyn AttributeSource) -> f64 {
-    let rating = e.get_i32("rating").unwrap_or(0);
+    let rating = saved_rating(e, attrs);
     let s = expr::fixed_values(s, rating);
     let s = s.trim_start_matches('+');
     if s.is_empty() {
@@ -862,12 +878,28 @@ fn cost_expression(e: &Element, s: &str, t: CostTokens, attrs: &dyn AttributeSou
     expr::evaluate_num(&s).unwrap_or(0.0)
 }
 
-/// Gear children's cost: the saved `cost` × `qty`, a stand-in until the
-/// gear module provides `Gear.TotalCost`.
+/// `Cyberware.GetRating`: the saved rating kept within the ware's
+/// `MinRating`..`MaxRating` (a cyberlimb customization saved above the
+/// character's attribute maximum is priced at that maximum).
+fn saved_rating(e: &Element, attrs: &dyn AttributeSource) -> i32 {
+    let rating = e.get_i32("rating").unwrap_or(0);
+    let max = eval_rating(&e.get("maxrating"), attrs);
+    let min = eval_rating(&e.get("minrating"), attrs);
+    rating.min(max).max(min)
+}
+
+fn gear_children(e: &Element) -> impl Iterator<Item = &Element> {
+    e.child("gears").into_iter().flat_map(|g| g.children_named("gear"))
+}
+
+/// The `Gear Cost` token: `CalculatedCost` of the ware's gear.
+fn gear_token_cost(e: &Element) -> f64 {
+    gear_children(e).map(super::gear::own_calculated_cost).sum()
+}
+
+/// `GearChildren.Sum(x => x.TotalCost)`.
 fn gear_children_cost(e: &Element) -> f64 {
-    e.child("gears")
-        .map(|g| g.children_named("gear").map(|x| x.get_f64("cost").unwrap_or(0.0) * x.get_f64("qty").unwrap_or(1.0)).sum())
-        .unwrap_or(0.0)
+    gear_children(e).map(|g| super::gear::cost_in(g, e)).sum()
 }
 
 fn children(e: &Element) -> Vec<&Element> {
@@ -878,6 +910,7 @@ struct CostCtx<'a> {
     ch: &'a Character,
     store: &'a DataStore,
     sheet: SheetAttributes<'a>,
+    vehicle: Option<VehicleAttributes>,
 }
 
 impl CostCtx<'_> {
@@ -887,8 +920,8 @@ impl CostCtx<'_> {
     fn own_pre(&self, e: &Element, grade: &str, parent_cost: f64, limb: Option<&Element>) -> f64 {
         let cost = e.get("cost");
         let kids = if cost.contains("Children Cost") { children(e).iter().map(|k| self.total(k, grade, 0.0, Some(e))).sum() } else { 0.0 };
-        let attrs = WareAttributes { sheet: SheetAttributes(self.sheet.0), limb: limb.filter(|l| is_limb(l)) };
-        cost_expression(e, &cost, CostTokens { children: kids, gear: gear_children_cost(e), parent: parent_cost }, &attrs)
+        let attrs = WareAttributes { sheet: SheetAttributes(self.sheet.0), limb: limb.filter(|l| is_limb(l)), vehicle: self.vehicle };
+        cost_expression(e, &cost, CostTokens { children: kids, gear: gear_token_cost(e), parent: parent_cost }, &attrs)
     }
 
     /// `CalculatedTotalCostWithoutModifiers` at `grade` (children are priced
@@ -937,8 +970,18 @@ impl CostCtx<'_> {
 /// multiplier, plus children (at the parent's grade) and gear, then the
 /// suite discount.
 pub fn cost(ch: &Character, store: &DataStore, e: &Element) -> f64 {
+    cost_with(ch, store, e, None)
+}
+
+/// [`cost`] for ware installed in a vehicle mod (a drone arm or leg),
+/// whose rating tokens come from the vehicle.
+pub fn cost_in_vehicle(ch: &Character, store: &DataStore, e: &Element, vehicle: VehicleAttributes) -> f64 {
+    cost_with(ch, store, e, Some(vehicle))
+}
+
+fn cost_with(ch: &Character, store: &DataStore, e: &Element, vehicle: Option<VehicleAttributes>) -> f64 {
     let attrs = sheet_attributes(ch, store);
-    let ctx = CostCtx { ch, store, sheet: SheetAttributes(&attrs) };
+    let ctx = CostCtx { ch, store, sheet: SheetAttributes(&attrs), vehicle };
     ctx.total(e, &e.get("grade"), 0.0, None)
 }
 
