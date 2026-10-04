@@ -4,6 +4,7 @@ mod browser;
 mod dice_ui;
 mod pdf_ui;
 mod select;
+mod settings_ui;
 mod view;
 mod wizard;
 
@@ -39,6 +40,8 @@ struct App {
     show_dice: bool,
     show_about: bool,
     show_sources: bool,
+    show_settings: bool,
+    settings_editor: settings_ui::SettingsEditor,
     wizard: Option<wizard::Wizard>,
     pdfs: SourcebookLibrary,
     sources_window: pdf_ui::SourcesWindow,
@@ -63,6 +66,8 @@ impl App {
         let sources_window = pdf_ui::SourcesWindow::new(&engine.store);
         let mut app = App {
             show_sources: false,
+            show_settings: false,
+            settings_editor: settings_ui::SettingsEditor::new(),
             wizard: None,
             pdfs: SourcebookLibrary::load(),
             sources_window,
@@ -203,6 +208,10 @@ impl App {
                 }
             });
             ui.menu_button("Tools", |ui| {
+                if ui.button("Character settings (house rules)…").clicked() {
+                    ui.close();
+                    self.show_settings = true;
+                }
                 if ui.button("Sourcebooks (PDFs)…").clicked() {
                     ui.close();
                     self.show_sources = true;
@@ -422,6 +431,19 @@ impl eframe::App for App {
             }
         });
         self.show_sources = open;
+        let mut open = self.show_settings;
+        let mut reload = false;
+        egui::Window::new("Character settings").open(&mut open).default_size([820.0, 680.0]).show(ctx, |ui| {
+            reload = self.settings_editor.ui(ui, &self.engine, &self.lang);
+        });
+        self.show_settings = open;
+        if reload {
+            if let Some(engine) = Arc::get_mut(&mut self.engine) {
+                if let Ok(lib) = chummer_core::settings::SettingsLibrary::load(&engine.store, chummer_core::settings::user_settings_dir().as_deref()) {
+                    engine.settings = lib;
+                }
+            }
+        }
         let mut open = self.show_about;
         egui::Window::new("About chummer-rs").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             ui.label(format!("chummer-rs {}", env!("CARGO_PKG_VERSION")));
@@ -505,6 +527,7 @@ fn main() -> anyhow::Result<()> {
             Some("browser") => app.show_browser = true,
             Some("dice") => app.show_dice = true,
             Some("new") => app.wizard = Some(wizard::Wizard::new()),
+            Some("settings") => app.show_settings = true,
             _ => {}
         }
         Ok(Box::new(app))

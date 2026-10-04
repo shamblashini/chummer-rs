@@ -208,7 +208,7 @@ impl Wizard {
                 let ok = (karma_build || prios.validate(&settings).is_ok()) && skills_ok;
                 if ui.add_enabled(ok, egui::Button::new(RichText::new("Create character").color(ACCENT))).clicked() {
                     let spec = NewCharacter {
-                        settings_id: settings.id(),
+                        settings_id: settings.key(),
                         metatype: self.metatype.clone(),
                         metavariant: (!self.metavariant.is_empty()).then(|| self.metavariant.clone()),
                         priorities: prios,

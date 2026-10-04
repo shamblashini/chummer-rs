@@ -304,7 +304,7 @@ pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String>
     put(&mut doc, "appversion", CHUMMER_APP_VERSION.into());
     put(&mut doc, "chummerrsversion", env!("CARGO_PKG_VERSION").into());
     put(&mut doc, "gameedition", "SR5".into());
-    put(&mut doc, "settings", settings.id());
+    put(&mut doc, "settings", settings.key());
     put(&mut doc, "buildmethod", settings.build_method());
     let mut sources = Element::new("sources");
     for b in settings.books() {

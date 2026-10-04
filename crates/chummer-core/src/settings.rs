@@ -19,6 +19,14 @@ impl CharacterSettings {
     pub fn id(&self) -> String {
         self.raw.get("id")
     }
+    /// What a character's `<settings>` stores: the file name for user
+    /// presets, the GUID for built-ins (`CharacterSettings.DictionaryKey`).
+    pub fn key(&self) -> String {
+        match self.file.as_deref().and_then(std::path::Path::file_name) {
+            Some(f) => f.to_string_lossy().into_owned(),
+            None => self.id(),
+        }
+    }
     pub fn name(&self) -> String {
         self.raw.get("name")
     }
