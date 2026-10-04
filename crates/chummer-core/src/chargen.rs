@@ -493,6 +493,18 @@ pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String>
             }
         }
     }
+    // Every character has an Unarmed Attack (Character.Create).
+    if let Ok(wdoc) = store.doc("weapons.xml") {
+        if let Some(rec) = data::find(&wdoc, "weapons", "weapon", "Unarmed Attack") {
+            let p = crate::items::Purchase { free: true, ..Default::default() };
+            if let Ok(g) = crate::items::add("weapon", &mut ch, store, rec, &p) {
+                if let Some(w) = crate::items::find_by_guid_mut(&mut ch.doc, &g) {
+                    w.set_child_text("included", "True");
+                    w.set_child_text("equipped", "True");
+                }
+            }
+        }
+    }
     // Free talent skills.
     let kind = if talent.grouped() { "SkillGroupBase" } else { "SkillBase" };
     for s in &spec.talent_skills {
@@ -584,6 +596,8 @@ pub struct Budget {
     pub quality_limit: i32,
     pub nuyen: (f64, f64),
     pub free_spells: (i32, i32),
+    /// Adept power points (total, used).
+    pub power_points: Option<(f64, f64)>,
 }
 
 impl Budget {
@@ -628,6 +642,11 @@ pub fn item_cost(e: &Element) -> f64 {
 }
 
 pub fn budget(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &CharacterSettings) -> Budget {
+    budget_with(ch, sheet, rules, settings, None)
+}
+
+/// As [`budget`], with game data for exact cyberware grade costs.
+pub fn budget_with(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &CharacterSettings, store: Option<&DataStore>) -> Budget {
     let mut b = Budget::default();
     let base_sum = |names: &[&str]| -> i32 { ch.attributes.iter().filter(|a| names.contains(&a.name.as_str())).map(|a| a.base).sum() };
     let std_attrs: Vec<&str> = crate::attributes::PHYSICAL.iter().chain(crate::attributes::MENTAL).copied().collect();
@@ -684,11 +703,13 @@ pub fn budget(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &Character
     b.negative_quality_karma = neg_limit;
     b.quality_limit = settings.int("qualitykarmalimit", 25);
 
-    // Spells beyond the free ones cost karma.
-    let free_spells = ch.doc.get_i32("spelllimit").unwrap_or(0);
-    let spells = ch.items("spells", "spell").iter().filter(|s| s.get("improvementsource").is_empty() || s.get("improvementsource") == "Spell").count() as i32;
-    b.free_spells = (free_spells, spells);
-    let spell_karma = (spells - free_spells).max(0) * rules.karma_spell;
+    // Spells and complex forms beyond the free ones cost karma.
+    let counts = crate::items::magic::spell_counts(ch, sheet);
+    b.free_spells = (counts.free, counts.spells + counts.rituals + counts.preparations);
+    let spell_karma = crate::items::magic::spell_karma(ch, sheet, rules) + crate::items::magic::complex_form_karma(ch, rules);
+    if ch.is_adept() {
+        b.power_points = Some(crate::items::magic::power_points(ch, sheet));
+    }
 
     let nuyen_bp = ch.doc.get_i32("nuyenbp").unwrap_or(0);
     let start = settings.int("buildpoints", 25);
@@ -699,16 +720,25 @@ pub fn budget(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &Character
     b.karma = (start, spent);
 
     let starting = ch.doc.get_f64("startingnuyen").unwrap_or(0.0) + f64::from(nuyen_bp) * f64::from(settings.int("nuyenperbpwftm", 2000));
-    let mut cost = 0.0;
-    for (c, i) in [("gears", "gear"), ("cyberwares", "cyberware"), ("armors", "armor"), ("weapons", "weapon")] {
-        cost += ch.items(c, i).into_iter().map(item_cost).sum::<f64>();
-    }
-    cost += ch.items("vehicles", "vehicle").into_iter().map(crate::items::vehicle::cost).sum::<f64>();
-    for l in ch.items("lifestyles", "lifestyle") {
-        cost += l.get_f64("cost").unwrap_or(0.0) * l.get_f64("months").unwrap_or(1.0).max(1.0);
-    }
-    b.nuyen = (starting, cost);
+    b.nuyen = (starting, nuyen_spent(ch, store));
     b
+}
+
+/// Nuyen spent on everything the character owns, with each kind's own
+/// cost rules (`CalculateNuyenCreateMode`).
+pub fn nuyen_spent(ch: &Character, store: Option<&DataStore>) -> f64 {
+    use crate::items::{armor, cyberware, drug, gear, lifestyle, vehicle, weapon};
+    let sum = |c: &str, i: &str, f: &dyn Fn(&Element) -> f64| ch.items(c, i).into_iter().map(f).sum::<f64>();
+    let ware = match store {
+        Some(st) => sum("cyberwares", "cyberware", &|e| cyberware::cost(ch, st, e)),
+        None => sum("cyberwares", "cyberware", &item_cost),
+    };
+    ware + sum("gears", "gear", &gear::cost)
+        + sum("armors", "armor", &armor::cost)
+        + sum("weapons", "weapon", &weapon::cost)
+        + sum("vehicles", "vehicle", &vehicle::cost)
+        + sum("drugs", "drug", &drug::cost)
+        + sum("lifestyles", "lifestyle", &|e| lifestyle::total_cost(ch, e))
 }
 
 /// Problems that block finishing creation (`CheckCharacterValidity`).
@@ -724,6 +754,11 @@ pub fn validity_problems(ch: &Character, b: &Budget, settings: &CharacterSetting
     check(Budget::left(b.skill_points), "Skill points");
     check(Budget::left(b.skill_group_points), "Skill group points");
     check(b.karma_left(), "Karma");
+    if let Some((total, used)) = b.power_points {
+        if used > total + 1e-9 {
+            p.push(format!("Power points overspent: {used} of {total}"));
+        }
+    }
     if b.nuyen_left() < 0.0 {
         p.push(format!("Nuyen overspent by {}", crate::format::nuyen(-b.nuyen_left())));
     }
