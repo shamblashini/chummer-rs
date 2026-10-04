@@ -710,7 +710,8 @@ pub fn budget_with(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &Char
     }
 
     let nuyen_bp = ch.doc.get_i32("nuyenbp").unwrap_or(0);
-    let start = settings.int("buildpoints", 25);
+    // Files from before 5.214 store the starting karma themselves.
+    let start = ch.doc.get_i32("buildkarma").unwrap_or_else(|| settings.int("buildpoints", 25));
     let spent = ch.doc.get_i32("metatypebp").unwrap_or(0) + pos - neg + sheet.attribute_karma_spent + sheet.skill_karma_spent
         + (contact_cost - sheet.contact_points).max(0) * rules.karma_contact
         + spell_karma
