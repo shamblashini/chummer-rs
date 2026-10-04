@@ -193,6 +193,9 @@ impl SettingsEditor {
                         }
                     });
                 });
+                egui::CollapsingHeader::new(RichText::new("Custom data (optional rules)").strong()).show(ui, |ui| {
+                    dirty |= custom_data_ui(ui, &mut el, engine);
+                });
                 egui::CollapsingHeader::new(RichText::new("Books").strong()).show(ui, |ui| {
                     let enabled: Vec<String> = el.child("books").map(|b| b.children_named("book").map(Element::text).collect()).unwrap_or_default();
                     let mut set = enabled.clone();
@@ -287,4 +290,49 @@ fn duplicate(preset: &CharacterSettings, name: &str) -> Result<std::path::PathBu
     root.set_child_text("id", chummer_core::items::new_guid());
     std::fs::write(&path, root.to_xml_string()).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+/// Toggle custom data directories for a preset. Writes Chummer's
+/// `<customdatadirectorynames>` layout (directoryname, order, enabled).
+fn custom_data_ui(ui: &mut egui::Ui, el: &mut Element, engine: &Engine) -> bool {
+    use chummer_core::custom_data;
+    let dirs = engine.custom_data_directories();
+    if dirs.is_empty() {
+        ui.weak("No custom data directories found.");
+        return false;
+    }
+    let enabled: Vec<String> = custom_data::enabled_directories(el, dirs).iter().map(|d| d.name.clone()).collect();
+    let mut set = enabled.clone();
+    for d in dirs {
+        let mut on = set.contains(&d.name);
+        let r = ui.checkbox(&mut on, &d.name);
+        let r = match d.manifest.as_ref().and_then(|m| m.description("en-us")) {
+            Some(desc) => r.on_hover_text(desc),
+            None => r,
+        };
+        if r.changed() {
+            if on {
+                set.push(d.name.clone());
+            } else {
+                set.retain(|n| *n != d.name);
+            }
+        }
+    }
+    let chosen: Vec<&custom_data::CustomDataDirectory> = dirs.iter().filter(|d| set.contains(&d.name)).collect();
+    for (dir, msg) in custom_data::check_dependencies(&chosen) {
+        ui.colored_label(ui.visuals().warn_fg_color, format!("{dir}: {msg}"));
+    }
+    if set == enabled {
+        return false;
+    }
+    let list = el.child_or_insert("customdatadirectorynames");
+    list.children.clear();
+    for (i, d) in chosen.iter().enumerate() {
+        let mut e = Element::new("customdatadirectoryname");
+        e.push(Element::with_text("directoryname", d.save_key()));
+        e.push(Element::with_text("order", i.to_string()));
+        e.push(Element::with_text("enabled", "True"));
+        list.push(e);
+    }
+    true
 }
