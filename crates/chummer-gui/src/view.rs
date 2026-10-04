@@ -306,7 +306,8 @@ impl CharacterView {
             }
             let tabs: Vec<(Tab, String)> = TABS.iter().filter(|(t, _)| self.visible(*t)).map(|(t, l)| (*t, lang.tr(l))).collect();
             crate::theme::tab_strip(ui, &mut self.tab, &tabs);
-            let page = |ui: &mut egui::Ui, f: &mut dyn FnMut(&mut egui::Ui) -> bool| egui::ScrollArea::both().id_salt("tab_page").auto_shrink(false).show(ui, |ui| f(ui)).inner;
+            let salt = self.tab as u8;
+            let page = |ui: &mut egui::Ui, f: &mut dyn FnMut(&mut egui::Ui) -> bool| egui::ScrollArea::both().id_salt(("tab_page", salt)).auto_shrink(false).show(ui, |ui| f(ui)).inner;
             changed |= match self.tab {
                 Tab::Common => self.common_tab(ui, engine, lang, pdfs, status),
                 Tab::Skills => self.skills_tab(ui, engine, lang, pdfs, status, &mut roll),
@@ -1128,7 +1129,7 @@ impl CharacterView {
         let tabs: Vec<(usize, String)> = STREET_GEAR.iter().enumerate().map(|(i, (label, _))| (i, lang.tr(label))).collect();
         crate::theme::tab_strip(ui, &mut self.gear_tab, &tabs);
         let mut changed = false;
-        egui::ScrollArea::both().id_salt("gear_page").auto_shrink(false).show(ui, |ui| {
+        egui::ScrollArea::both().id_salt(("gear_page", self.gear_tab)).auto_shrink(false).show(ui, |ui| {
             changed = match STREET_GEAR.get(self.gear_tab).and_then(|(_, s)| *s) {
                 Some(sec) => self.gear_page(ui, engine, lang, pdfs, status, sec),
                 None => {
