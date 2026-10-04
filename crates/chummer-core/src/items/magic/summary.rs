@@ -3,6 +3,7 @@
 
 use crate::calc::{Sheet, SheetAttributes};
 use crate::character::Character;
+use crate::data::DataStore;
 use crate::expr;
 
 /// Summary of a character's magic or resonance for the GUI.
@@ -81,6 +82,19 @@ fn stream(ch: &Character) -> Option<(String, String)> {
 
 /// Summary for the Magic & Resonance tab.
 pub fn magic_summary(ch: &Character, sheet: &Sheet) -> MagicSummary {
+    magic_summary_with(ch, sheet, None)
+}
+
+/// The tradition's `<drain>` from traditions.xml, for saves that only
+/// store the tradition name (5.18x).
+fn data_drain(store: &DataStore, tradition: &str) -> Option<String> {
+    let doc = store.doc("traditions.xml").ok()?;
+    crate::data::find(&doc, "traditions", "tradition", tradition).map(|r| r.get("drain"))
+}
+
+/// [`magic_summary`], looking up the drain in the data when the save has
+/// none.
+pub fn magic_summary_with(ch: &Character, sheet: &Sheet, store: Option<&DataStore>) -> MagicSummary {
     let mut m = MagicSummary {
         initiate_grade: ch.doc.get_i32("initiategrade").unwrap_or(0),
         submersion_grade: ch.doc.get_i32("submersiongrade").unwrap_or(0),
@@ -90,7 +104,10 @@ pub fn magic_summary(ch: &Character, sheet: &Sheet) -> MagicSummary {
         ..Default::default()
     };
     if ch.mag_enabled() {
-        let (name, drain) = tradition(ch).filter(|t| t.2 == "MAG").map(|t| (t.0, t.1)).unwrap_or_default();
+        let (name, mut drain) = tradition(ch).filter(|t| t.2 == "MAG").map(|t| (t.0, t.1)).unwrap_or_default();
+        if drain.trim().is_empty() {
+            drain = store.and_then(|s| data_drain(s, &name)).unwrap_or_default();
+        }
         m.tradition = name;
         // Adepts without spellcasting resist drain with BOD + WIL.
         m.drain_expression = if ch.is_adept() && !ch.is_magician() { "{BOD} + {WIL}".into() } else { braced(&drain) };

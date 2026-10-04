@@ -22,12 +22,12 @@ pub mod spirit;
 pub mod summary;
 
 pub use account::{
-    complex_form_counts, complex_form_karma, focus_binding_karma, initiation_karma, power_points, power_points_with, spell_counts, spell_karma,
-    FormCounts, SpellCounts,
+    bind_focus, complex_form_counts, complex_form_karma, complex_form_karma_cost, focus_binding_karma, initiation_karma, power_points, power_points_with,
+    spell_counts, spell_karma, spell_karma_cost, unbind_focus, FormCounts, SpellCounts,
 };
 pub use hooks::{bonus_add_magic, bonus_critterpowers, bonus_power, bonus_spirit};
-pub use mentor::{add_mentor, mentor_outcome};
-pub use summary::{magic_summary, MagicSummary};
+pub use mentor::{add_mentor, mentor_outcome, set_mentor_choices};
+pub use summary::{magic_summary, magic_summary_with, MagicSummary};
 
 use crate::bonus::{self, BonusSource, Choice, Outcome};
 use crate::character::Character;

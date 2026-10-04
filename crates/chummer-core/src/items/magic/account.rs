@@ -139,11 +139,11 @@ pub fn spell_karma_cost(ch: &Character, rules: &Rules, category: &str) -> i32 {
     standard_round(cost).max(0)
 }
 
-/// Karma the spells beyond the free ones cost at creation; in career mode
-/// the cost of learning one more spell.
+/// Karma the spells beyond the free ones cost at creation (0 in career
+/// mode, where each new spell costs [`spell_karma_cost`]).
 pub fn spell_karma(ch: &Character, sheet: &Sheet, rules: &Rules) -> i32 {
     if ch.created {
-        return spell_karma_cost(ch, rules, "Spells");
+        return 0;
     }
     let c = spell_counts(ch, sheet);
     c.over.0 * spell_karma_cost(ch, rules, "Spells") + c.over.1 * spell_karma_cost(ch, rules, "Rituals") + c.over.2 * spell_karma_cost(ch, rules, "Preparations")
@@ -176,12 +176,12 @@ pub fn complex_form_karma_cost(ch: &Character, rules: &Rules) -> i32 {
     standard_round(cost).max(0)
 }
 
-/// Karma for forms beyond the free ones at creation; in career mode the
-/// cost of learning one more.
+/// Karma for forms beyond the free ones at creation (0 in career mode,
+/// where each new form costs [`complex_form_karma_cost`]).
 pub fn complex_form_karma(ch: &Character, rules: &Rules) -> i32 {
     let per = complex_form_karma_cost(ch, rules);
     if ch.created {
-        return per;
+        return 0;
     }
     let c = complex_form_counts(ch);
     (c.forms - c.free).max(0) * per

@@ -166,6 +166,13 @@ fn summary_reads_both_tradition_layouts() {
     let m = magic::magic_summary(&ch, &sheet);
     assert_eq!((m.tradition.as_str(), m.drain_expression.as_str()), ("Cosmic", "{WIL} + {LOG}"));
     assert_eq!(m.drain_pool, sheet.attr("WIL") + sheet.attr("LOG"));
+    // 5.183 saves only name the tradition; the drain comes from the data.
+    let ch = fixture("Davis Jones.chum5");
+    let sheet = engine.sheet(&ch);
+    assert_eq!(magic::magic_summary(&ch, &sheet).drain_pool, 0);
+    let m = magic::magic_summary_with(&ch, &sheet, Some(&engine.store));
+    assert_eq!(m.drain_expression, "{WIL} + {CHA}");
+    assert_eq!(m.drain_pool, sheet.attr("WIL") + sheet.attr("CHA"));
     // Current layout, technomancer.
     let ch = fixture("Bastion.chum5");
     let sheet = engine.sheet(&ch);
