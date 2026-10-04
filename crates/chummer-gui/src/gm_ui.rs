@@ -255,7 +255,7 @@ impl PacksWindow {
             }
             match mode {
                 PacksMode::Add => changed |= self.add_ui(ui, ch, store, settings, dir.as_deref(), lang, status),
-                PacksMode::Create => self.create_ui(ui, ch, sheet, dir.as_deref(), lang),
+                PacksMode::Create => self.create_ui(ui, ch, sheet, settings, dir.as_deref(), lang),
             }
             if let Some((m, err)) = &self.message {
                 if *err {
@@ -353,7 +353,7 @@ impl PacksWindow {
         changed
     }
 
-    fn create_ui(&mut self, ui: &mut egui::Ui, ch: &Character, sheet: &Sheet, dir: Option<&std::path::Path>, lang: &Language) {
+    fn create_ui(&mut self, ui: &mut egui::Ui, ch: &Character, sheet: &Sheet, settings: Option<&CharacterSettings>, dir: Option<&std::path::Path>, lang: &Language) {
         let parts = self.parts.get_or_insert_with(KitParts::default);
         egui::Grid::new("packs_create").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label(lang.tr("Kit Name:"));
@@ -393,7 +393,7 @@ impl PacksWindow {
                 self.message = Some((lang.tr("No PACKS folder."), true));
                 return;
             };
-            let kit = packs::from_character(ch, sheet, self.kit_name.trim(), *parts);
+            let kit = packs::from_character(ch, sheet, settings, self.kit_name.trim(), *parts);
             let merged = self.doc.clone().unwrap_or_else(|| Element::new("chummer"));
             self.message = Some(match packs::save(dir, &self.file_name, &kit, &merged) {
                 Ok(p) => {

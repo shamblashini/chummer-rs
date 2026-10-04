@@ -169,7 +169,7 @@ fn kit_round_trip_through_the_packs_folder() {
     let settings = engine.settings.resolve(STANDARD);
     packs::apply(&mut source, &store, settings, packs::find_kit(&builtin, "Intro Runner Pack", "Core Packs").unwrap());
     let s = sheet(&engine, &source);
-    let kit = packs::from_character(&source, &s, "My Kit", packs::KitParts::default());
+    let kit = packs::from_character(&source, &s, settings, "My Kit", packs::KitParts::default());
     assert_eq!(kit.get("category"), "Custom");
     assert_eq!(kit.path("attributes/bod").unwrap().text(), "1", "value - (metatype minimum - 1)");
     assert!(kit.path("weapons").unwrap().elements().all(|w| w.get("name") != "Unarmed Attack"));

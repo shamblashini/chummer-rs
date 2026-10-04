@@ -209,7 +209,7 @@ pub fn apply(ch: &mut Character, store: &DataStore, settings: Option<&CharacterS
     }
     qualities(ch, &mut a, kit);
     if let Some(n) = kit.child("selectmartialart") {
-        a.report.skipped.push(format!("Select Martial Art: {} (add it from the Martial Arts tab)", n.attr("select").unwrap_or_default()));
+        select_martial_art(ch, &mut a, n.attr("select").unwrap_or_default());
     }
     martial_arts(ch, &mut a, kit);
     complex_forms(ch, &mut a, kit);
@@ -259,6 +259,19 @@ fn qualities(ch: &mut Character, a: &mut Applier<'_>, kit: &Element) {
         };
         crate::chargen::add_quality(ch, a.store, rec, q.attr("select").filter(|s| !s.is_empty()));
         a.report.added.push(format!("Quality: {name}"));
+    }
+}
+
+/// `selectmartialart`: Chummer asks with the `select` value forced, which
+/// adds that art; without one the user picks from the Martial Arts tab.
+fn select_martial_art(ch: &mut Character, a: &mut Applier<'_>, forced: &str) {
+    let rec = a.doc("martialarts.xml").and_then(|d| find_in(&d, "martialarts", "martialart", forced, &a.books).map(|r| r.el().clone()));
+    match rec.filter(|_| !forced.is_empty()) {
+        Some(rec) => {
+            items::magic::martialart::add(ch, a.store, Record(&rec), None);
+            a.report.added.push(format!("Martial Art: {forced}"));
+        }
+        None => a.report.skipped.push(format!("Select Martial Art: {forced} (add it from the Martial Arts tab)")),
     }
 }
 
@@ -637,7 +650,7 @@ fn list<'a>(e: &'a Element, container: &str, item: &'a str) -> Vec<&'a Element> 
 }
 
 /// The kit `CreatePACKSKit` writes for the character's current things.
-pub fn from_character(ch: &Character, sheet: &Sheet, name: &str, parts: KitParts) -> Element {
+pub fn from_character(ch: &Character, sheet: &Sheet, settings: Option<&CharacterSettings>, name: &str, parts: KitParts) -> Element {
     let mut pack = Element::new("pack");
     pack.push(text("name", name));
     pack.push(text("category", CUSTOM));
@@ -650,7 +663,7 @@ pub fn from_character(ch: &Character, sheet: &Sheet, name: &str, parts: KitParts
         if ch.mag_enabled() {
             attrs.push(text("mag", value("MAG").to_string()));
             let mystic = ch.is_adept() && ch.is_magician();
-            if mystic && ch.flag("mysadeptsecondmagattribute") {
+            if mystic && settings.is_some_and(|s| s.flag("mysadeptsecondmagattribute")) {
                 attrs.push(text("magadept", value("MAGAdept").to_string()));
             }
         }

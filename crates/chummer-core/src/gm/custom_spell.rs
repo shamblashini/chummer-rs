@@ -418,7 +418,6 @@ pub fn element(d: &SpellDesign, guid: &str) -> Element {
     put("page", "159".into());
     put("extra", d.restriction.clone());
     put("notes", String::new());
-    put("notesColor", "#000000".into());
     put("freebonus", bool_str(false));
     put("barehandedadept", bool_str(false));
     put("improvementsource", "Spell".into());
