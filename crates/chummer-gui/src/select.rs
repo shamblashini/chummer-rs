@@ -1,12 +1,15 @@
-//! Generic "pick a record from the game data" dialog, plus the follow-up
-//! prompt for bonus selections.
+//! Generic "pick a record from the game data" dialog for every item kind,
+//! with the purchase options (rating, quantity, grade, parent) and the
+//! follow-up prompt for bonus selections.
 
 use std::sync::Arc;
 
 use chummer_core::bonus::Choice;
 use chummer_core::calc::Sheet;
 use chummer_core::character::Character;
-use chummer_core::data::{self, DataStore};
+use chummer_core::data::{self, DataStore, Record};
+use chummer_core::expr::{self, Availability};
+use chummer_core::items::{self, Kind, Purchase};
 use chummer_core::lang::Language;
 use chummer_core::requirements::{self, Check};
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
@@ -16,26 +19,44 @@ use eframe::egui::{self, RichText};
 use crate::browser::record_fields;
 use crate::pdf_ui::{self, Status};
 
-/// What the dialog lists.
-#[derive(Debug, Clone)]
-pub struct Kind {
-    pub title: &'static str,
-    pub file: &'static str,
-    pub container: &'static str,
-    pub item: &'static str,
-    /// Extra columns shown in the list: (header, field).
-    pub columns: &'static [(&'static str, &'static str)],
+/// Extra list columns per kind: (header, data field).
+fn columns(tag: &str) -> &'static [(&'static str, &'static str)] {
+    match tag {
+        "quality" => &[("Karma", "karma"), ("Type", "category")],
+        "gear" => &[("Rating", "rating"), ("Avail", "avail"), ("Cost", "cost")],
+        "cyberware" | "bioware" => &[("Ess", "ess"), ("Avail", "avail"), ("Cost", "cost")],
+        "armor" | "armormod" => &[("Armor", "armor"), ("Avail", "avail"), ("Cost", "cost")],
+        "weapon" => &[("DV", "damage"), ("AP", "ap"), ("Avail", "avail"), ("Cost", "cost")],
+        "accessory" | "mod" => &[("Avail", "avail"), ("Cost", "cost")],
+        "vehicle" => &[("Handling", "handling"), ("Speed", "speed"), ("Avail", "avail"), ("Cost", "cost")],
+        "spell" => &[("Type", "type"), ("Range", "range"), ("DV", "dv")],
+        "power" => &[("PP", "points")],
+        "complexform" => &[("Target", "target"), ("FV", "fv")],
+        "lifestyle" => &[("Cost", "cost")],
+        _ => &[],
+    }
 }
 
-pub const QUALITY: Kind = Kind {
-    title: "Add quality",
-    file: "qualities.xml",
-    container: "qualities",
-    item: "quality",
-    columns: &[("Karma", "karma"), ("Type", "category")],
-};
+/// Kinds that must go inside another item: (parent container, parent tag).
+pub fn parent_of(tag: &str) -> Option<(&'static str, &'static str)> {
+    match tag {
+        "armormod" => Some(("armors", "armor")),
+        "accessory" => Some(("weapons", "weapon")),
+        "mod" => Some(("vehicles", "vehicle")),
+        _ => None,
+    }
+}
 
-pub enum Step {
+/// Kinds that may optionally go inside another item.
+fn optional_parent(tag: &str) -> Option<(&'static str, &'static str)> {
+    match tag {
+        "gear" => Some(("gears", "gear")),
+        "cyberware" | "bioware" => Some(("cyberwares", "cyberware")),
+        _ => None,
+    }
+}
+
+enum Step {
     Pick,
     Answer { index: usize, choices: Vec<Choice>, answer: String },
 }
@@ -44,8 +65,7 @@ pub enum Step {
 pub enum Outcome {
     None,
     Cancel,
-    /// Chosen record index and the answer to its selection, if any.
-    Done { index: usize, answer: Option<String> },
+    Done { index: usize, purchase: Purchase },
 }
 
 pub struct SelectDialog {
@@ -57,15 +77,31 @@ pub struct SelectDialog {
     selected: Option<usize>,
     step: Step,
     books: Vec<String>,
+    purchase: Purchase,
+    max_avail: i32,
+    nuyen_left: Option<f64>,
 }
 
 impl SelectDialog {
-    pub fn new(kind: Kind, store: &DataStore, books: Vec<String>) -> Option<Self> {
+    /// `nuyen_left` is shown as a budget check while creating.
+    pub fn new(tag: &str, store: &DataStore, books: Vec<String>, max_avail: i32, nuyen_left: Option<f64>) -> Option<Self> {
+        let kind = *items::kind(tag)?;
         let doc = store.doc(kind.file).ok()?;
-        Some(SelectDialog { kind, doc, search: String::new(), category: String::new(), show_unavailable: false, selected: None, step: Step::Pick, books })
+        Some(SelectDialog {
+            kind,
+            doc,
+            search: String::new(),
+            category: String::new(),
+            show_unavailable: false,
+            selected: None,
+            step: Step::Pick,
+            books,
+            purchase: Purchase { qty: 1.0, cost_multiplier: 1.0, ..Default::default() },
+            max_avail,
+            nuyen_left,
+        })
     }
 
-    /// `choices_for(index)` computes the bonus selections for a record.
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
@@ -75,65 +111,68 @@ impl SelectDialog {
         lang: &Language,
         pdfs: &SourcebookLibrary,
         status: &mut Status,
-        choices_for: &dyn Fn(&Element) -> Vec<Choice>,
+        choices_for: &dyn Fn(&Element, &Purchase) -> Vec<Choice>,
     ) -> Outcome {
         let mut result = Outcome::None;
         let mut open = true;
         let doc = self.doc.clone();
-        let recs = data::records(&doc, self.kind.container, self.kind.item);
-        egui::Window::new(self.kind.title).open(&mut open).default_size([900.0, 620.0]).collapsible(false).show(ctx, |ui| {
-            match &mut self.step {
-                Step::Answer { index, choices, answer } => {
-                    let index = *index;
-                    let c = &choices[0];
-                    ui.heading(recs[index].name());
-                    ui.label(&c.prompt);
-                    if c.options.is_empty() {
-                        ui.text_edit_singleline(answer);
-                    } else {
-                        egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                            for o in &c.options {
-                                if ui.selectable_label(answer == o, o).clicked() {
-                                    *answer = o.clone();
-                                }
+        let recs = data::records(&doc, self.kind.data_container, self.kind.data_item);
+        let title = format!("Add {}", self.kind.label.to_lowercase());
+        egui::Window::new(title).open(&mut open).default_size([960.0, 640.0]).collapsible(false).show(ctx, |ui| {
+            if let Step::Answer { index, choices, answer } = &mut self.step {
+                let index = *index;
+                let c = &choices[0];
+                ui.heading(recs[index].name());
+                ui.label(&c.prompt);
+                if c.options.is_empty() {
+                    ui.text_edit_singleline(answer);
+                } else {
+                    egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+                        for o in &c.options {
+                            if ui.selectable_label(answer == o, o).clicked() {
+                                *answer = o.clone();
                             }
-                        });
-                    }
-                    let mut back = false;
-                    ui.horizontal(|ui| {
-                        if ui.add_enabled(!answer.trim().is_empty(), egui::Button::new("Add")).clicked() {
-                            result = Outcome::Done { index, answer: Some(answer.trim().to_owned()) };
                         }
-                        back = ui.button("Back").clicked();
                     });
-                    if back {
-                        self.step = Step::Pick;
-                    }
-                    return;
                 }
-                Step::Pick => {}
+                let mut back = false;
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(!answer.trim().is_empty(), egui::Button::new("Add")).clicked() {
+                        let mut p = self.purchase.clone();
+                        p.answer = Some(answer.trim().to_owned());
+                        result = Outcome::Done { index, purchase: p };
+                    }
+                    back = ui.button("Back").clicked();
+                });
+                if back {
+                    self.step = Step::Pick;
+                }
+                return;
             }
 
             let cats = data::categories(&doc);
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search").desired_width(220.0));
-                egui::ComboBox::from_id_salt("sel_cat")
-                    .selected_text(if self.category.is_empty() { "All categories".to_owned() } else { self.category.clone() })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.category, String::new(), "All categories");
-                        for c in &cats {
-                            ui.selectable_value(&mut self.category, c.clone(), c);
-                        }
-                    });
+                if !cats.is_empty() {
+                    egui::ComboBox::from_id_salt("sel_cat")
+                        .selected_text(if self.category.is_empty() { "All categories".to_owned() } else { self.category.clone() })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.category, String::new(), "All categories");
+                            for c in &cats {
+                                ui.selectable_value(&mut self.category, c.clone(), c);
+                            }
+                        });
+                }
                 ui.checkbox(&mut self.show_unavailable, "Show unavailable");
             });
             let check = Check { ch, sheet, ignore_quality: None };
             let needle = self.search.to_lowercase();
+            let cols = columns(self.kind.tag);
             let rows: Vec<(usize, String, Vec<String>)> = recs
                 .iter()
                 .enumerate()
                 .filter(|(_, r)| !r.hidden())
-                .filter(|(_, r)| self.books.is_empty() || self.books.contains(&r.source()))
+                .filter(|(_, r)| self.books.is_empty() || r.source().is_empty() || self.books.contains(&r.source()))
                 .filter(|(_, r)| self.category.is_empty() || r.category() == self.category)
                 .filter_map(|(i, r)| {
                     let name = lang.data_name(self.kind.file, &r.id(), &r.name());
@@ -141,43 +180,51 @@ impl SelectDialog {
                         return None;
                     }
                     let mut why = requirements::unmet(r.el(), &check);
-                    if self.kind.item == "quality" && requirements::remaining_quality_slots(r.el(), ch) == Some(0) {
+                    if self.kind.tag == "quality" && requirements::remaining_quality_slots(r.el(), ch) == Some(0) {
                         why.push("already taken".into());
+                    }
+                    if !ch.created && self.max_avail > 0 {
+                        let a = Availability::parse(&r.get("avail"), rating_default(*r), 0, &expr::NoAttributes);
+                        if !a.add_to_parent && a.value > self.max_avail {
+                            why.push(format!("availability {a} is above {}", self.max_avail));
+                        }
                     }
                     (self.show_unavailable || why.is_empty()).then_some((i, name, why))
                 })
                 .collect();
             ui.weak(format!("{} shown", rows.len()));
             ui.separator();
-            ui.columns(2, |cols| {
-                egui::ScrollArea::vertical().id_salt("sel_list").auto_shrink([false; 2]).max_height(480.0).show_rows(&mut cols[0], 20.0, rows.len(), |ui, range| {
+            let mut confirm: Option<usize> = None;
+            ui.columns(2, |colsui| {
+                egui::ScrollArea::vertical().id_salt("sel_list").auto_shrink([false; 2]).max_height(470.0).show_rows(&mut colsui[0], 20.0, rows.len(), |ui, range| {
                     for (i, name, why) in &rows[range] {
                         let r = recs[*i];
-                        let extra: Vec<String> = self.kind.columns.iter().map(|(_, f)| r.get(f)).filter(|v| !v.is_empty()).collect();
+                        let extra: Vec<String> = cols.iter().map(|(_, f)| r.get(f)).filter(|v| !v.is_empty()).collect();
                         let mut text = RichText::new(format!("{name}   {}", extra.join(" · ")));
                         if !why.is_empty() {
                             text = text.weak();
                         }
                         let resp = ui.selectable_label(self.selected == Some(*i), text);
-                        if resp.clicked() {
+                        if resp.clicked() && self.selected != Some(*i) {
                             self.selected = Some(*i);
+                            self.purchase.rating = rating_default(r);
                         }
                         if resp.double_clicked() && why.is_empty() {
                             self.selected = Some(*i);
-                            result = self.confirm(*i, recs[*i].el(), choices_for);
+                            confirm = Some(*i);
                         }
                     }
                 });
-                let ui = &mut cols[1];
-                egui::ScrollArea::vertical().id_salt("sel_detail").max_height(480.0).show(ui, |ui| match self.selected {
+                let ui = &mut colsui[1];
+                egui::ScrollArea::vertical().id_salt("sel_detail").max_height(470.0).show(ui, |ui| match self.selected {
                     Some(i) => {
                         let r = recs[i];
                         ui.heading(lang.data_name(self.kind.file, &r.id(), &r.name()));
                         pdf_ui::source_link(ui, pdfs, SourceRef::of(r.el()), status);
-                        let why = requirements::unmet(r.el(), &check);
-                        for w in &why {
+                        for w in requirements::unmet(r.el(), &check) {
                             ui.colored_label(ui.visuals().warn_fg_color, w);
                         }
+                        self.purchase_options(ui, ch, r);
                         ui.separator();
                         record_fields(ui, r.el(), 0);
                     }
@@ -188,15 +235,20 @@ impl SelectDialog {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                let can = self.selected.is_some_and(|i| rows.iter().any(|(j, _, w)| *j == i && w.is_empty()));
-                if ui.add_enabled(can, egui::Button::new("Add")).clicked() {
-                    let i = self.selected.unwrap();
-                    result = self.confirm(i, recs[i].el(), choices_for);
+                let needs_parent = parent_of(self.kind.tag).is_some() && self.purchase.parent.is_none();
+                let can = !needs_parent && self.selected.is_some_and(|i| rows.iter().any(|(j, _, w)| *j == i && w.is_empty()));
+                let add = ui.add_enabled(can, egui::Button::new("Add"));
+                let add = if needs_parent { add.on_disabled_hover_text("Choose where to install it") } else { add };
+                if add.clicked() {
+                    confirm = self.selected;
                 }
                 if ui.button("Cancel").clicked() {
                     result = Outcome::Cancel;
                 }
             });
+            if let Some(i) = confirm {
+                result = self.confirm(i, recs[i].el(), choices_for);
+            }
         });
         if !open {
             return Outcome::Cancel;
@@ -204,10 +256,75 @@ impl SelectDialog {
         result
     }
 
-    fn confirm(&mut self, index: usize, rec: &Element, choices_for: &dyn Fn(&Element) -> Vec<Choice>) -> Outcome {
-        let choices = choices_for(rec);
+    /// Rating, quantity, grade and parent pickers plus a cost preview.
+    fn purchase_options(&mut self, ui: &mut egui::Ui, ch: &Character, r: Record<'_>) {
+        let max_rating = rating_max(r);
+        egui::Grid::new("purchase").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            if max_rating > 0 {
+                let min = r.el().get_i32("minrating").unwrap_or(1).clamp(0, max_rating);
+                ui.label(r.el().child_text("ratinglabel").unwrap_or_else(|| "Rating".into()));
+                self.purchase.rating = self.purchase.rating.clamp(min, max_rating);
+                ui.add(egui::DragValue::new(&mut self.purchase.rating).range(min..=max_rating));
+                ui.end_row();
+            }
+            if matches!(self.kind.tag, "gear" | "drug") {
+                ui.label("Quantity");
+                ui.add(egui::DragValue::new(&mut self.purchase.qty).range(1.0..=1000.0).max_decimals(0));
+                ui.end_row();
+            }
+            if matches!(self.kind.tag, "cyberware" | "bioware") {
+                ui.label("Grade");
+                let grades = grades(&self.doc);
+                let cur = self.purchase.grade.clone().unwrap_or_else(|| "Standard".into());
+                egui::ComboBox::from_id_salt("grade").selected_text(cur.clone()).show_ui(ui, |ui| {
+                    for (g, mult) in &grades {
+                        if ui.selectable_label(cur == *g, format!("{g} (ess ×{mult})")).clicked() {
+                            self.purchase.grade = Some(g.clone());
+                        }
+                    }
+                });
+                ui.end_row();
+            }
+            if let Some((container, tag)) = parent_of(self.kind.tag).or(optional_parent(self.kind.tag)) {
+                ui.label("Install in");
+                let parents: Vec<(String, String)> = ch.items(container, tag).iter().map(|e| (e.get("guid"), e.get("name"))).collect();
+                let cur = self.purchase.parent.as_ref().and_then(|g| parents.iter().find(|(pg, _)| pg == g)).map(|(_, n)| n.clone());
+                let required = parent_of(self.kind.tag).is_some();
+                let none_label = if required { "Choose…" } else { "Nothing (on its own)" };
+                egui::ComboBox::from_id_salt("parent").selected_text(cur.unwrap_or_else(|| none_label.into())).show_ui(ui, |ui| {
+                    if !required && ui.selectable_label(self.purchase.parent.is_none(), "Nothing (on its own)").clicked() {
+                        self.purchase.parent = None;
+                    }
+                    for (g, n) in &parents {
+                        if ui.selectable_label(self.purchase.parent.as_deref() == Some(g), n).clicked() {
+                            self.purchase.parent = Some(g.clone());
+                        }
+                    }
+                });
+                ui.end_row();
+            }
+            if !r.get("avail").is_empty() {
+                let avail = Availability::parse(&r.get("avail"), self.purchase.rating, r.el().get_i32("minrating").unwrap_or(0), &expr::NoAttributes);
+                ui.label("Availability");
+                ui.label(avail.to_string());
+                ui.end_row();
+            }
+            if let Some(cost) = preview_cost(r, &self.purchase) {
+                ui.label("Cost");
+                let text = chummer_core::format::nuyen(cost);
+                match self.nuyen_left {
+                    Some(left) if cost > left => ui.colored_label(ui.visuals().error_fg_color, format!("{text} (only {} left)", chummer_core::format::nuyen(left))),
+                    _ => ui.label(text),
+                };
+                ui.end_row();
+            }
+        });
+    }
+
+    fn confirm(&mut self, index: usize, rec: &Element, choices_for: &dyn Fn(&Element, &Purchase) -> Vec<Choice>) -> Outcome {
+        let choices = choices_for(rec, &self.purchase);
         if choices.is_empty() {
-            Outcome::Done { index, answer: None }
+            Outcome::Done { index, purchase: self.purchase.clone() }
         } else {
             let answer = if choices[0].options.len() == 1 { choices[0].options[0].clone() } else { String::new() };
             self.step = Step::Answer { index, choices, answer };
@@ -217,6 +334,43 @@ impl SelectDialog {
 
     pub fn record(&self, store: &DataStore, index: usize) -> Option<Element> {
         let doc = store.doc(self.kind.file).ok()?;
-        data::records(&doc, self.kind.container, self.kind.item).get(index).map(|r| r.el().clone())
+        data::records(&doc, self.kind.data_container, self.kind.data_item).get(index).map(|r| r.el().clone())
     }
+}
+
+/// The highest rating a record allows (`<rating>`), 0 when it has none.
+fn rating_max(r: Record<'_>) -> i32 {
+    let t = r.get("rating");
+    if t.trim().is_empty() {
+        return 0;
+    }
+    expr::parse_plain(&t).map(|v| v as i32).unwrap_or(6)
+}
+
+fn rating_default(r: Record<'_>) -> i32 {
+    let max = rating_max(r);
+    if max == 0 {
+        0
+    } else {
+        r.el().get_i32("minrating").unwrap_or(1).clamp(0, max).max(1)
+    }
+}
+
+/// `<grades>` of cyberware.xml/bioware.xml as (name, essence multiplier).
+fn grades(doc: &Element) -> Vec<(String, String)> {
+    doc.child("grades")
+        .map(|g| g.children_named("grade").filter(|e| e.child("hide").is_none() && e.get("name") != "None").map(|e| (e.get("name"), e.get("ess"))).collect())
+        .unwrap_or_default()
+}
+
+/// Cost at the chosen rating and quantity, when it is a plain expression.
+fn preview_cost(r: Record<'_>, p: &Purchase) -> Option<f64> {
+    let raw = r.get("cost");
+    if raw.trim().is_empty() || raw.contains("Variable") || raw.contains("Parent") || raw.contains("Gear") {
+        return None;
+    }
+    let min = r.el().get_i32("minrating").unwrap_or(0).to_string();
+    let s = expr::fixed_values(raw.trim(), p.rating).replace("MinRating", &min).replace("Rating", &p.rating.to_string());
+    let v = if expr::needs_evaluation(&s) { expr::evaluate_num(&s).ok()? } else { expr::parse_plain(&s)? };
+    Some(v * p.qty() * if p.cost_multiplier > 0.0 { p.cost_multiplier } else { 1.0 })
 }

@@ -40,7 +40,7 @@ const TABS: &[(Tab, &str)] = &[
     (Tab::Attributes, "Attributes"),
     (Tab::Skills, "Skills"),
     (Tab::Qualities, "Qualities & Contacts"),
-    (Tab::Magic, "Magic & Resonance"),
+    (Tab::Magic, "Magic, Resonance & Martial Arts"),
     (Tab::Equipment, "Equipment"),
     (Tab::Improvements, "Improvements"),
     (Tab::Log, "Karma & Nuyen"),
@@ -152,9 +152,6 @@ impl CharacterView {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for (t, label) in TABS {
-                    if *t == Tab::Magic && !(self.ch.mag_enabled() || self.ch.res_enabled() || !self.ch.items("critterpowers", "critterpower").is_empty()) {
-                        continue;
-                    }
                     ui.selectable_value(&mut self.tab, *t, *label);
                 }
             });
@@ -167,8 +164,7 @@ impl CharacterView {
                     let mut c = false;
                     egui::ScrollArea::both().show(ui, |ui| {
                         if ui.button("➕ Add quality…").clicked() {
-                            let books = self.settings.as_ref().map(|s| s.books()).unwrap_or_default();
-                            self.select = SelectDialog::new(select::QUALITY, &engine.store, books);
+                            self.open_select("quality", engine);
                         }
                         c |= self.section(ui, &sections::QUALITIES, lang, pdfs, status);
                         ui.add_space(12.0);
@@ -178,7 +174,7 @@ impl CharacterView {
                     c
                 }
                 Tab::Magic => self.magic_tab(ui, engine, lang, pdfs, status),
-                Tab::Equipment => self.equipment_tab(ui, lang, pdfs, status),
+                Tab::Equipment => self.equipment_tab(ui, engine, lang, pdfs, status),
                 Tab::Improvements => self.improvements_tab(ui),
                 Tab::Log => self.log_tab(ui),
                 Tab::Notes => self.notes_tab(ui),
@@ -590,12 +586,41 @@ impl CharacterView {
         ui.separator();
         if let Some(sec) = present.get(self.magic) {
             let sec = **sec;
+            self.add_buttons(ui, engine, sec.container);
             egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));
         }
         changed
     }
 
-    fn equipment_tab(&mut self, ui: &mut egui::Ui, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+    /// "Add …" buttons for the kinds that live in a section's container.
+    fn add_buttons(&mut self, ui: &mut egui::Ui, engine: &Engine, container: &str) {
+        let tags: &[&str] = match container {
+            "gears" => &["gear"],
+            "cyberwares" => &["cyberware", "bioware"],
+            "armors" => &["armor", "armormod"],
+            "weapons" => &["weapon", "accessory"],
+            "vehicles" => &["vehicle", "mod"],
+            "lifestyles" => &["lifestyle"],
+            "spells" => &["spell"],
+            "powers" => &["power"],
+            "complexforms" => &["complexform"],
+            "spirits" => &["spirit"],
+            "metamagics" => &["metamagic"],
+            "martialarts" => &["martialart"],
+            "critterpowers" => &["critterpower"],
+            _ => &[],
+        };
+        ui.horizontal(|ui| {
+            for t in tags {
+                let label = chummer_core::items::kind(t).map_or(*t, |k| k.label);
+                if ui.button(format!("➕ Add {}…", label.to_lowercase())).clicked() {
+                    self.open_select(t, engine);
+                }
+            }
+        });
+    }
+
+    fn equipment_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
             for (i, s) in sections::EQUIPMENT.iter().enumerate() {
@@ -605,6 +630,7 @@ impl CharacterView {
         });
         ui.separator();
         let sec = sections::EQUIPMENT[self.equipment];
+        self.add_buttons(ui, engine, sec.container);
         egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));
         changed
     }
@@ -771,32 +797,49 @@ impl CharacterView {
         }
     }
 
+    /// Open the add dialog for an item kind (see `items::KINDS`).
+    fn open_select(&mut self, tag: &str, engine: &Engine) {
+        let books = self.settings.as_ref().map(|s| s.books()).unwrap_or_default();
+        let max_avail = self.settings.as_ref().map_or(12, |s| s.max_availability());
+        let nuyen_left = self.budget.as_ref().map(|b| b.nuyen_left());
+        self.select = SelectDialog::new(tag, &engine.store, books, max_avail, nuyen_left);
+    }
+
     fn select_dialog(&mut self, ctx: &egui::Context, engine: &Engine, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let Some(dlg) = self.select.as_mut() else { return false };
+        let tag = dlg.kind.tag;
         let ch = &self.ch;
         let store = &engine.store;
-        let choices_for = |rec: &chummer_core::xml::Element| chummer_core::items::quality_choices(ch, store, data::Record(rec));
+        let choices_for = |rec: &chummer_core::xml::Element, p: &chummer_core::items::Purchase| chummer_core::items::choices(tag, ch, store, data::Record(rec), p);
         match dlg.show(ctx, ch, &self.sheet, lang, pdfs, status, &choices_for) {
             select::Outcome::None => false,
             select::Outcome::Cancel => {
                 self.select = None;
                 false
             }
-            select::Outcome::Done { index, answer } => {
+            select::Outcome::Done { index, purchase } => {
                 let Some(rec) = dlg.record(store, index) else { return false };
                 let rec = data::Record(&rec);
+                let name = rec.name();
                 let karma = rec.el().get_i32("karma").unwrap_or(0);
-                chargen::add_quality(&mut self.ch, store, rec, answer.as_deref());
-                if self.ch.created && karma > 0 {
-                    // Career mode: positive qualities cost double karma.
-                    let cost = if rec.el().get_bool("doublecareer").unwrap_or(true) { karma * 2 } else { karma };
-                    self.ch.karma -= cost;
-                    *status = Some((format!("Added {} for {cost} karma", rec.name()), false));
-                } else {
-                    *status = Some((format!("Added {}", rec.name()), false));
+                match chummer_core::items::add(tag, &mut self.ch, store, rec, &purchase) {
+                    Ok(_) => {
+                        if tag == "quality" && self.ch.created && karma > 0 {
+                            // Career mode: positive qualities cost double karma.
+                            let cost = if rec.el().get_bool("doublecareer").unwrap_or(true) { karma * 2 } else { karma };
+                            self.ch.karma -= cost;
+                            *status = Some((format!("Added {name} for {cost} karma"), false));
+                        } else {
+                            *status = Some((format!("Added {name}"), false));
+                        }
+                        self.select = None;
+                        true
+                    }
+                    Err(e) => {
+                        *status = Some((format!("Could not add {name}: {e}"), true));
+                        false
+                    }
                 }
-                self.select = None;
-                true
             }
         }
     }
