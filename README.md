@@ -1,15 +1,34 @@
 # chummer-rs
 
 A Rust rewrite of [Chummer5a](https://github.com/chummer5a/chummer5a), the
-Shadowrun 5th Edition character manager. It runs natively on Linux: no
-Wine, no .NET, no Internet Explorer.
+Shadowrun 5th Edition character manager. It runs natively on Linux and
+Windows: no Wine, no .NET, no Internet Explorer.
+
+> **Derived from Chummer5a.** chummer-rs is an independent port of
+> [chummer5a/chummer5a](https://github.com/chummer5a/chummer5a)
+> (GPL-3.0). The rules logic was ported from Chummer5a's C# source. The
+> game data, translations, custom data, character sheets and export
+> templates in `resources/` are copied from Chummer5a unchanged. Its test
+> characters are used as test fixtures. All credit for the original
+> program and its data goes to the Chummer5a authors. chummer-rs is not
+> affiliated with or endorsed by the Chummer5a project.
 
 chummer-rs reads and writes the same `.chum5` files and uses Chummer5a's own
 game data, custom data and character sheets. Characters move between the
 two programs: files created by chummer-rs load in Chummer5a 5.226 without
 warnings (see [docs/interop.md](docs/interop.md)).
 
-## Install
+## Download
+
+Prebuilt packages for Linux and Windows are on the
+[Releases](../../releases) page. Unpack and run `chummer-rs` (`chummer-rs.exe`
+on Windows). Keep the `resources` folder next to the program.
+
+Character sheets need `xsltproc`:
+- Linux: it is in the `libxslt` package.
+- Windows: put `xsltproc.exe` on your PATH.
+
+## Build from source
 
 You need a Rust toolchain (1.85 or newer) and, for character sheets,
 `xsltproc` (package `libxslt`).
@@ -214,9 +233,17 @@ cargo test --workspace
 | `tools/gen_bonus_table.py` | Generates simple bonus handlers from Chummer5a's C# |
 | `resources/` | Data, translations, custom data, sheets and export templates from Chummer5a |
 
+## Releases
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a version tag is pushed:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
 ## License
 
-GPL-3.0-or-later, the same as Chummer5a. The game data and translations in
+GPL-3.0-or-later, the same as Chummer5a. As a derivative work of Chummer5a, chummer-rs is distributed under the same license; see `LICENSE`. The game data and translations in
 `resources/` come from Chummer5a; see `resources/xml_license.txt`.
 Shadowrun is a trademark of The Topps Company, Inc. This project is not
 affiliated with it or with Catalyst Game Labs.
