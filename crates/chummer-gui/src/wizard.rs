@@ -6,7 +6,7 @@ use chummer_core::chargen::{self, HeritageOption, NewCharacter, Priorities, Tale
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
 use chummer_core::settings::CharacterSettings;
-use eframe::egui::{self, RichText};
+use eframe::egui;
 
 
 pub struct Wizard {

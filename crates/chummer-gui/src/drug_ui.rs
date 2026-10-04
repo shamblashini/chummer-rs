@@ -231,7 +231,7 @@ impl DrugBuilder {
 }
 
 /// The character's drugs (no other tab lists them), with removal.
-fn existing_drugs(ui: &mut egui::Ui, ch: &mut Character, lang: &Language) -> bool {
+pub(crate) fn existing_drugs(ui: &mut egui::Ui, ch: &mut Character, lang: &Language) -> bool {
     let drugs: Vec<Element> = ch.items("drugs", "drug").into_iter().cloned().collect();
     if drugs.is_empty() {
         return false;

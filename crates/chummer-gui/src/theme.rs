@@ -144,8 +144,8 @@ impl Theme {
             item_spacing: egui::vec2(6.0, 4.0),
             button_padding: egui::vec2(6.0, 2.0),
             stroke_width: 1.0,
-            body_size: 12.5,
-            heading_size: 15.0,
+            body_size: 12.0,
+            heading_size: 14.0,
         }
     }
 
@@ -388,7 +388,7 @@ pub fn tab(ui: &mut egui::Ui, selected: bool, label: &str, close: bool) -> (egui
     let classic = t.kind == ThemeKind::Classic;
     let font = TextStyle::Button.resolve(ui.style());
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER);
-    let pad = if classic { egui::vec2(6.0, 3.0) } else { egui::vec2(10.0, 6.0) };
+    let pad = if classic { egui::vec2(6.0, 3.0) } else { egui::vec2(9.0, 6.0) };
     let close_w = if close { font.size + 4.0 } else { 0.0 };
     let size = egui::vec2(galley.size().x + 2.0 * pad.x + close_w, galley.size().y + 2.0 * pad.y);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
@@ -398,8 +398,7 @@ pub fn tab(ui: &mut egui::Ui, selected: bool, label: &str, close: bool) -> (egui
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let hovered = resp.hovered();
-        let text_color;
-        if classic {
+        let text_color = if classic {
             // Selected tab: lighter and 2px taller, open towards the page.
             let r = if selected { rect } else { rect.shrink2(egui::vec2(0.0, 1.0)).translate(egui::vec2(0.0, 1.0)) };
             let fill = if selected { p.field } else if hovered { p.surface_hover } else { p.panel };
@@ -408,7 +407,7 @@ pub fn tab(ui: &mut egui::Ui, selected: bool, label: &str, close: bool) -> (egui
             painter.line_segment([r.left_bottom(), r.left_top()], s);
             painter.line_segment([r.left_top(), r.right_top()], s);
             painter.line_segment([r.right_top(), r.right_bottom()], s);
-            text_color = p.text;
+            p.text
         } else {
             if hovered && !selected {
                 painter.rect_filled(rect, CornerRadius::same(t.widget_radius), p.surface);
@@ -417,8 +416,8 @@ pub fn tab(ui: &mut egui::Ui, selected: bool, label: &str, close: bool) -> (egui
                 let y = rect.bottom() - 1.0;
                 painter.line_segment([egui::pos2(rect.left() + 4.0, y), egui::pos2(rect.right() - 4.0, y)], Stroke::new(2.0_f32, p.accent));
             }
-            text_color = if selected || hovered { p.text } else { p.weak };
-        }
+            if selected || hovered { p.text } else { p.weak }
+        };
         painter.galley(rect.min + pad, galley, text_color);
         if close {
             let c = if over_close { p.bad } else { p.weak };

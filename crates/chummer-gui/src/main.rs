@@ -40,6 +40,21 @@ const LANG_KEY: &str = "language";
 const MAX_RECENT: usize = 10;
 const ROSTER_KEY: &str = "roster_folders";
 
+/// The non-character MDI tabs (Chummer's "Master Index" and "Character
+/// Roster").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Home {
+    MasterIndex,
+    Roster,
+}
+
+/// What the MDI tab strip selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mdi {
+    Home(Home),
+    Character(usize),
+}
+
 enum Pending {
     CloseTab(usize),
     Quit,
@@ -52,7 +67,8 @@ struct App {
     languages: Vec<(String, String)>,
     views: Vec<CharacterView>,
     active: usize,
-    show_browser: bool,
+    /// A home tab in front of the characters, if one is selected.
+    home: Option<Home>,
     show_dice: bool,
     show_about: bool,
     show_sources: bool,
@@ -115,7 +131,7 @@ impl App {
             lang_dir,
             views: Vec::new(),
             active: 0,
-            show_browser: false,
+            home: None,
             show_dice: false,
             show_about: false,
             browser: Default::default(),
@@ -153,12 +169,14 @@ impl App {
     fn open(&mut self, path: &Path) {
         if let Some(i) = self.views.iter().position(|v| v.path().as_deref() == Some(path)) {
             self.active = i;
+            self.home = None;
             return;
         }
         match Character::load(path) {
             Ok(ch) => {
                 self.views.push(CharacterView::new(ch, &self.engine));
                 self.active = self.views.len() - 1;
+                self.home = None;
                 self.remember(path);
                 self.status = Some((format!("Opened {}", path.display()), false));
             }
@@ -214,9 +232,37 @@ impl App {
         if self.active >= self.views.len() {
             self.active = self.views.len().saturating_sub(1);
         }
+        if self.views.is_empty() {
+            self.home = Some(Home::Roster);
+        }
     }
 
+    /// The character in front, if any.
+    fn current(&self) -> Option<usize> {
+        (self.home.is_none() && self.active < self.views.len()).then_some(self.active)
+    }
+
+    fn mdi(&self) -> Mdi {
+        match (self.home, self.current()) {
+            (None, Some(i)) => Mdi::Character(i),
+            (Some(h), _) => Mdi::Home(h),
+            (None, None) => Mdi::Home(Home::Roster),
+        }
+    }
+
+    fn select(&mut self, m: Mdi) {
+        match m {
+            Mdi::Home(h) => self.home = Some(h),
+            Mdi::Character(i) => {
+                self.active = i;
+                self.home = None;
+            }
+        }
+    }
+
+    /// Chummer's main menu: File, Tools, Special, View, Window, Help.
     fn menu(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        let has = self.current().is_some();
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button(self.lang.tr("File"), |ui| {
                 if ui.add(egui::Button::new(self.lang.tr("New Character…")).shortcut_text("Ctrl+N")).clicked() {
@@ -244,15 +290,6 @@ impl App {
                     }
                 });
                 ui.separator();
-                let has = !self.views.is_empty();
-                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Print…")).shortcut_text("Ctrl+P")).clicked() {
-                    ui.close();
-                    self.show_print = true;
-                }
-                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Export…"))).clicked() {
-                    ui.close();
-                    self.show_export = true;
-                }
                 if ui.add_enabled(has, egui::Button::new(self.lang.tr("Save")).shortcut_text("Ctrl+S")).clicked() {
                     ui.close();
                     self.save(self.active, false);
@@ -260,6 +297,14 @@ impl App {
                 if ui.add_enabled(has, egui::Button::new(self.lang.tr("Save As…"))).clicked() {
                     ui.close();
                     self.save(self.active, true);
+                }
+                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Print…")).shortcut_text("Ctrl+P")).clicked() {
+                    ui.close();
+                    self.show_print = true;
+                }
+                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Export…"))).clicked() {
+                    ui.close();
+                    self.show_export = true;
                 }
                 if ui.add_enabled(has, egui::Button::new(self.lang.tr("Close")).shortcut_text("Ctrl+W")).clicked() {
                     ui.close();
@@ -272,6 +317,23 @@ impl App {
                 }
             });
             ui.menu_button(self.lang.tr("Tools"), |ui| {
+                if ui.button(self.lang.tr("Dice Roller")).clicked() {
+                    ui.close();
+                    self.show_dice = true;
+                }
+                if ui.button(self.lang.tr("Master Index")).clicked() {
+                    ui.close();
+                    self.home = Some(Home::MasterIndex);
+                }
+                if ui.button(self.lang.tr("Character Roster")).clicked() {
+                    ui.close();
+                    self.home = Some(Home::Roster);
+                }
+                if ui.button(self.lang.tr("Initiative tracker")).clicked() {
+                    ui.close();
+                    self.show_initiative = true;
+                }
+                ui.separator();
                 if ui.button(self.lang.tr("Character Settings…")).clicked() {
                     ui.close();
                     self.show_settings = true;
@@ -280,20 +342,9 @@ impl App {
                     ui.close();
                     self.show_sources = true;
                 }
-                if ui.button(self.lang.tr("Data browser")).clicked() {
-                    ui.close();
-                    self.show_browser = true;
-                }
-                if ui.button(self.lang.tr("Dice Roller")).clicked() {
-                    ui.close();
-                    self.show_dice = true;
-                }
-                if ui.button(self.lang.tr("Initiative tracker")).clicked() {
-                    ui.close();
-                    self.show_initiative = true;
-                }
-                ui.separator();
-                let creating = self.views.get(self.active).is_some_and(|v| !v.ch.created);
+            });
+            ui.menu_button(self.lang.tr("Special"), |ui| {
+                let creating = self.current().is_some_and(|i| !self.views[i].ch.created);
                 for (label, mode) in [("Add PACKS Kit…", gm_ui::PacksMode::Add), ("Create PACKS Kit…", gm_ui::PacksMode::Create)] {
                     if ui.add_enabled(creating, egui::Button::new(self.lang.tr(label))).clicked() {
                         ui.close();
@@ -310,13 +361,27 @@ impl App {
                         }
                     }
                 });
-            });
-            ui.menu_button(self.lang.tr("Language"), |ui| {
-                for (code, name) in self.languages.clone() {
-                    if crate::combo::selectable_label(ui, self.lang.code == code, name).clicked() {
-                        ui.close();
-                        self.lang = Language::load(&self.lang_dir, &code);
+                ui.menu_button(self.lang.tr("Language"), |ui| {
+                    for (code, name) in self.languages.clone() {
+                        if crate::combo::selectable_label(ui, self.lang.code == code, name).clicked() {
+                            ui.close();
+                            self.lang = Language::load(&self.lang_dir, &code);
+                        }
                     }
+                });
+            });
+            ui.menu_button(self.lang.tr("Window"), |ui| {
+                let current = self.mdi();
+                for (m, label) in self.mdi_tabs() {
+                    if crate::combo::selectable_label(ui, current == m, label).clicked() {
+                        ui.close();
+                        self.select(m);
+                    }
+                }
+                ui.separator();
+                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Close"))).clicked() {
+                    ui.close();
+                    self.close_tab(self.active, false);
                 }
             });
             ui.menu_button(self.lang.tr("Help"), |ui| {
@@ -328,8 +393,60 @@ impl App {
         });
     }
 
+    /// The MDI tabs: Master Index, Character Roster, then one per character.
+    fn mdi_tabs(&self) -> Vec<(Mdi, String)> {
+        let mut tabs = vec![(Mdi::Home(Home::MasterIndex), self.lang.tr("Master Index")), (Mdi::Home(Home::Roster), self.lang.tr("Character Roster"))];
+        tabs.extend(self.views.iter().enumerate().map(|(i, v)| (Mdi::Character(i), v.title())));
+        tabs
+    }
+
+    /// Toolbar (New, Open, Save, Print) and the MDI tab strip.
+    fn toolbar(&mut self, ui: &mut egui::Ui) {
+        let has = self.current().is_some();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if ui.add(egui::Button::new(RichText::new("✨").size(16.0)).frame(false)).on_hover_text(self.lang.tr("New Character…")).clicked() {
+                self.wizard = Some(wizard::Wizard::new());
+            }
+            if ui.add(egui::Button::new(RichText::new("📂").size(16.0)).frame(false)).on_hover_text(self.lang.tr("Open…")).clicked() {
+                self.open_dialog();
+            }
+            if ui.add_enabled(has, egui::Button::new(RichText::new("💾").size(16.0)).frame(false)).on_hover_text(self.lang.tr("Save")).clicked() {
+                self.save(self.active, false);
+            }
+            if ui.add_enabled(has, egui::Button::new(RichText::new("🖶").size(16.0)).frame(false)).on_hover_text(self.lang.tr("Print…")).clicked() {
+                self.show_print = true;
+            }
+            ui.separator();
+            if ui.add(egui::Button::new(RichText::new("🎲").size(16.0)).frame(false)).on_hover_text(self.lang.tr("Dice Roller")).clicked() {
+                self.show_dice = true;
+            }
+        });
+        let current = self.mdi();
+        let mut pick = None;
+        let mut close = None;
+        theme::strip_frame(ui, |ui| {
+            for (m, label) in self.mdi_tabs() {
+                let (r, closed) = theme::tab(ui, current == m, &label, matches!(m, Mdi::Character(_)));
+                if closed {
+                    if let Mdi::Character(i) = m {
+                        close = Some(i);
+                    }
+                } else if r.clicked() {
+                    pick = Some(m);
+                }
+            }
+        });
+        if let Some(m) = pick {
+            self.select(m);
+        }
+        if let Some(i) = close {
+            self.close_tab(i, false);
+        }
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) && !self.views.is_empty() {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) && self.current().is_some() {
             self.show_print = true;
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::N)) {
@@ -346,10 +463,10 @@ impl App {
         if open {
             self.open_dialog();
         }
-        if save && !self.views.is_empty() {
+        if save && self.current().is_some() {
             self.save(self.active, false);
         }
-        if close && !self.views.is_empty() {
+        if close && self.current().is_some() {
             self.close_tab(self.active, false);
         }
         if quit {
@@ -361,32 +478,24 @@ impl App {
         }
     }
 
+    /// The Character Roster tab: Chummer's list of recent and roster
+    /// characters on the left, getting started on the right.
     fn welcome(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() * 0.2);
-                ui.label(RichText::new("chummer-rs").size(40.0).color(crate::theme::accent(ui)).strong());
-                ui.label(self.lang.tr("Shadowrun 5th Edition character manager"));
-                ui.add_space(20.0);
-                if ui.button(RichText::new(format!("✨  {}", self.lang.tr("Create New Character…"))).size(18.0)).clicked() {
-                    self.wizard = Some(wizard::Wizard::new());
+        let mut open_path = None;
+        egui::SidePanel::left("roster_panel").resizable(true).default_width(460.0).show(ctx, |ui| {
+            egui::ScrollArea::vertical().id_salt("roster").auto_shrink(false).show(ui, |ui| {
+                ui.label(crate::theme::strong(ui, self.lang.tr("Recent Characters")));
+                if self.recent.is_empty() {
+                    ui.weak(self.lang.tr("No recent files"));
                 }
-                if ui.button(RichText::new(format!("📂  {}", self.lang.tr("Open Character…"))).size(18.0)).clicked() {
-                    self.open_dialog();
-                }
-                ui.weak(self.lang.tr("or drop .chum5 files onto this window"));
-                ui.add_space(16.0);
-                if !self.recent.is_empty() {
-                    ui.label(RichText::new(self.lang.tr("Recent Characters")).strong());
-                    for p in self.recent.clone() {
-                        let label = p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-                        if ui.link(label).on_hover_text(p.display().to_string()).clicked() {
-                            self.open(&p);
-                        }
+                for p in &self.recent {
+                    let label = p.file_stem().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                    if ui.link(label).on_hover_text(p.display().to_string()).clicked() {
+                        open_path = Some(p.clone());
                     }
                 }
-                ui.add_space(16.0);
-                ui.label(RichText::new(self.lang.tr("Character Roster")).strong());
+                ui.add_space(12.0);
+                ui.label(crate::theme::strong(ui, self.lang.tr("Character Roster")));
                 ui.horizontal(|ui| {
                     if ui.button(self.lang.tr("Add folder…")).clicked() {
                         if let Some(d) = rfd::FileDialog::new().pick_folder() {
@@ -402,35 +511,47 @@ impl App {
                         self.roster.clear();
                     }
                 });
-                let mut open_path = None;
-                egui::ScrollArea::vertical().id_salt("roster").max_height(260.0).show(ui, |ui| {
-                    egui::Grid::new("roster_grid").striped(true).num_columns(4).show(ui, |ui| {
-                        for e in &self.roster {
-                            if ui.link(e.display_name()).on_hover_text(e.path.display().to_string()).clicked() {
-                                open_path = Some(e.path.clone());
-                            }
-                            ui.label(&e.metatype);
-                            ui.weak(if e.career { self.lang.tr("Career Mode") } else { self.lang.tr("Create Mode") });
-                            ui.weak(e.error.clone().unwrap_or_else(|| format!("{} {}", self.lang.tr("Karma"), e.karma)));
-                            ui.end_row();
+                egui::Grid::new("roster_grid").striped(true).num_columns(4).show(ui, |ui| {
+                    for e in &self.roster {
+                        if ui.link(e.display_name()).on_hover_text(e.path.display().to_string()).clicked() {
+                            open_path = Some(e.path.clone());
                         }
-                    });
+                        ui.label(&e.metatype);
+                        ui.weak(if e.career { self.lang.tr("Career Mode") } else { self.lang.tr("Create Mode") });
+                        ui.weak(e.error.clone().unwrap_or_else(|| format!("{} {}", self.lang.tr("Karma"), e.karma)));
+                        ui.end_row();
+                    }
                 });
-                if let Some(p) = open_path {
-                    self.open(&p);
+            });
+        });
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(ui.available_height() * 0.2);
+                ui.label(RichText::new("chummer-rs").size(40.0).color(crate::theme::accent(ui)).strong());
+                ui.label(self.lang.tr("Shadowrun 5th Edition character manager"));
+                ui.add_space(20.0);
+                if ui.add(crate::theme::primary_button(ui, format!("✨  {}", self.lang.tr("Create New Character…")))).clicked() {
+                    self.wizard = Some(wizard::Wizard::new());
                 }
+                if ui.button(format!("📂  {}", self.lang.tr("Open Character…"))).clicked() {
+                    self.open_dialog();
+                }
+                ui.weak(self.lang.tr("or drop .chum5 files onto this window"));
                 ui.add_space(16.0);
                 if self.pdfs.linked_count() == 0 && ui.button(format!("📖 {}", self.lang.tr("Link your sourcebook PDFs…"))).clicked() {
                     self.show_sources = true;
                 }
-                if ui.button(self.lang.tr("Data browser")).clicked() {
-                    self.show_browser = true;
+                if ui.button(self.lang.tr("Master Index")).clicked() {
+                    self.home = Some(Home::MasterIndex);
                 }
                 if ui.button(self.lang.tr("Dice Roller")).clicked() {
                     self.show_dice = true;
                 }
             });
         });
+        if let Some(p) = open_path {
+            self.open(&p);
+        }
     }
 
     fn export_ui(&mut self, ui: &mut egui::Ui) {
@@ -562,52 +683,48 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             self.menu(ctx, ui);
-            if !self.views.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    let mut close = None;
-                    for (i, v) in self.views.iter().enumerate() {
-                        crate::combo::selectable_value(ui, &mut self.active, i, v.title());
-                        if ui.small_button("×").on_hover_text(self.lang.tr("Close")).clicked() {
-                            close = Some(i);
-                        }
-                        ui.separator();
-                    }
-                    if let Some(i) = close {
-                        self.close_tab(i, false);
-                    }
-                });
-            }
+            self.toolbar(ui);
         });
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.horizontal(|ui| match &self.status {
-                Some((msg, true)) => {
-                    ui.colored_label(ui.visuals().error_fg_color, msg);
+            ui.horizontal(|ui| {
+                // Chummer's status strip: the character's karma, essence, nuyen.
+                if let Some(i) = self.current() {
+                    for (label, value) in self.views[i].status_items(&self.lang) {
+                        ui.label(label);
+                        ui.strong(value);
+                        ui.separator();
+                    }
                 }
-                Some((msg, false)) => {
-                    ui.weak(msg);
-                }
-                None => {
-                    ui.weak(self.lang.tr("Ready"));
+                match &self.status {
+                    Some((msg, true)) => {
+                        ui.colored_label(ui.visuals().error_fg_color, msg);
+                    }
+                    Some((msg, false)) => {
+                        ui.weak(msg);
+                    }
+                    None => {
+                        ui.weak(self.lang.tr("Ready"));
+                    }
                 }
             });
         });
 
-        if self.views.is_empty() {
-            self.welcome(ctx);
-        } else {
-            let engine = self.engine.clone();
-            let idx = self.active.min(self.views.len() - 1);
-            if let Some(pool) = self.views[idx].ui(ctx, &engine, &self.lang, &self.pdfs, &mut self.status) {
-                self.dice.set_pool(pool);
-                self.show_dice = true;
+        match self.mdi() {
+            Mdi::Home(Home::Roster) => self.welcome(ctx),
+            Mdi::Home(Home::MasterIndex) => {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    self.browser.ui(ui, &self.engine.store, &self.lang, &self.pdfs, &mut self.status);
+                });
+            }
+            Mdi::Character(idx) => {
+                let engine = self.engine.clone();
+                if let Some(pool) = self.views[idx].ui(ctx, &engine, &self.lang, &self.pdfs, &mut self.status) {
+                    self.dice.set_pool(pool);
+                    self.show_dice = true;
+                }
             }
         }
 
-        let mut open = self.show_browser;
-        egui::Window::new(self.lang.tr("Data browser")).id(egui::Id::new("data_browser")).open(&mut open).default_size([900.0, 600.0]).show(ctx, |ui| {
-            self.browser.ui(ui, &self.engine.store, &self.lang, &self.pdfs, &mut self.status);
-        });
-        self.show_browser = open;
         let mut open = self.show_dice;
         egui::Window::new(self.lang.tr("Dice Roller")).id(egui::Id::new("dice_roller")).open(&mut open).default_width(360.0).show(ctx, |ui| self.dice.ui(ui, &self.lang));
         self.show_dice = open;
@@ -666,9 +783,10 @@ impl eframe::App for App {
                 wizard::WizardResult::Cancel => self.wizard = None,
                 wizard::WizardResult::Created(ch) => {
                     let mut v = CharacterView::new(*ch, &self.engine);
-                    v.set_tab(view::Tab::Attributes);
+                    v.set_tab(view::Tab::Common);
                     self.views.push(v);
                     self.active = self.views.len() - 1;
+                    self.home = None;
                     self.wizard = None;
                     self.status = Some(("New character created. Spend your points, then Finish creation.".into(), false));
                 }
@@ -681,6 +799,7 @@ impl eframe::App for App {
                 gm_ui::CritterResult::Created(ch) => {
                     self.views.push(CharacterView::new(*ch, &self.engine));
                     self.active = self.views.len() - 1;
+                    self.home = None;
                     self.critter = None;
                     self.status = Some(("New critter created.".into(), false));
                 }
@@ -711,7 +830,7 @@ fn main() -> anyhow::Result<()> {
             "--theme" => theme_arg = args.next().and_then(|t| theme::ThemeKind::parse(&t)),
             "--new" => window = Some("new".into()),
             "-h" | "--help" => {
-                println!("usage: chummer-rs [--tab <info|attributes|skills|qualities|magic|equipment|improvements|karma|notes>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5 ...]");
+                println!("usage: chummer-rs [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5 ...]");
                 return Ok(());
             }
             _ => files.push(PathBuf::from(a)),
@@ -737,7 +856,7 @@ fn main() -> anyhow::Result<()> {
         let mut app = App::new(cc, engine, files, tab, theme_arg);
         match window.as_deref() {
             Some("sources") => app.show_sources = true,
-            Some("browser") => app.show_browser = true,
+            Some("browser") => app.home = Some(Home::MasterIndex),
             Some("dice") => app.show_dice = true,
             Some("new") => app.wizard = Some(wizard::Wizard::new()),
             Some("settings") => app.show_settings = true,
