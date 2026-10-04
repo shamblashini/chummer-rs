@@ -175,6 +175,30 @@ impl CharacterView {
         self.ch.file.clone()
     }
 
+    /// Re-resolve the character's preset, e.g. after the settings library
+    /// was reloaded.
+    pub fn refresh_settings(&mut self, engine: &Engine) {
+        self.rules = engine.rules_for(&self.ch);
+        self.store = engine.store_for_character(&self.ch);
+        self.settings = engine.settings.resolve(&self.ch.field("settings")).cloned();
+        self.recompute(engine);
+    }
+
+    /// Chummer's "Change Settings File": use another preset.
+    fn switch_settings(&mut self, key: &str, engine: &Engine, status: &mut Status) -> bool {
+        let Some(preset) = engine.settings.find(key).cloned() else { return false };
+        match chummer_core::settings::switch_character(&mut self.ch, &preset) {
+            Ok(()) => {
+                self.refresh_settings(engine);
+                true
+            }
+            Err(e) => {
+                *status = Some((e, true));
+                false
+            }
+        }
+    }
+
     fn recompute(&mut self, engine: &Engine) {
         if !self.ch.created {
             // Essence loss in creation follows the ware installed now.
@@ -194,6 +218,9 @@ impl CharacterView {
         });
         changed |= self.item_editor_panel(ctx, engine, lang, status);
         egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some(key) = crate::ruleset_ui::banner(ui, &self.ch, engine, lang, self.tab == Tab::Info) {
+                changed |= self.switch_settings(&key, engine, status);
+            }
             ui.horizontal_wrapped(|ui| {
                 for (t, label) in TABS {
                     ui.selectable_value(&mut self.tab, *t, lang.tr(label));

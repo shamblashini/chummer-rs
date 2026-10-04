@@ -145,6 +145,8 @@ Item requirements (`<required>`/`<forbidden>`) are checked.
 - **Custom data:**
   - All of Chummer5a's optional rule packs can be applied through house-rule presets.
   - Tools → Character settings duplicates and edits presets: build method, budgets, books, karma costs, options and custom data.
+  - Share house rules: Export saves a preset as a Chummer settings file (Chummer5a reads it too); Import installs one, and asks before it replaces a different file of the same name.
+  - A character whose settings file is not installed shows a warning with an Import button; its budgets use Standard, and its `<settings>` stays as it was until you pick another file with "Change Settings File" (Info tab).
 - **Tools:**
   - A data browser that searches every item, quality and spell.
   - A dice roller (click any skill pool) and an initiative tracker.
@@ -163,6 +165,7 @@ chummer-cli sheet character.chum5 -o sheet.html [--sheet NAME] [--lang de-de]
 chummer-cli export character.chum5 JSON -o character.json
 chummer-cli roster ~/characters/
 chummer-cli search "ares" gear
+chummer-cli settings list | export "House rules" -o house.xml | import house.xml
 chummer-cli sources import-wine | scan <dir> | detect | open SR5 143
 ```
 
@@ -212,6 +215,9 @@ cargo test --workspace
   - Undo for focus binding and technique purchases.
   - Karma for spirit fettering.
 - PDF export needs a browser's Print to PDF; no converter is bundled.
+- Settings files:
+  - "Change Settings File" in creation mode only offers presets with the same build method. Chummer re-runs metatype and priority selection to switch build methods.
+  - Chummer also finds a missing settings file by its `<settingshashcode>`; chummer-rs does not compute that hash.
 - About 290 UI labels have no Chummer translation string and stay English.
 
 ## Layout

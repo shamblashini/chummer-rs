@@ -146,7 +146,7 @@ impl SettingsLibrary {
         let file_name = if file_name.to_ascii_lowercase().ends_with(".xml") { file_name } else { format!("{file_name}.xml") };
         let target = user_dir.join(&file_name);
         let file_clash = match std::fs::read_to_string(&target) {
-            Ok(existing) if existing == export_string(&root) || existing == text => Some(FileClash::Identical),
+            Ok(existing) if parse_settings_file(&existing).is_ok_and(|e| same_rules(&e, &root)) => Some(FileClash::Identical),
             Ok(_) => Some(FileClash::Different),
             Err(_) => None,
         };
@@ -180,6 +180,18 @@ pub fn parse_settings_file(text: &str) -> Result<Element, String> {
     }
     found.name = "settings".into();
     Ok(found)
+}
+
+/// Whether two presets hold the same rules, ignoring `<id>` and `<name>`
+/// (an import may have renamed the installed copy).
+fn same_rules(a: &Element, b: &Element) -> bool {
+    let strip = |e: &Element| {
+        let mut e = e.clone();
+        e.remove_children("id");
+        e.remove_children("name");
+        e.to_xml_string()
+    };
+    strip(a) == strip(b)
 }
 
 /// A preset as a standalone settings file, in the layout Chummer5a keeps in
@@ -254,15 +266,28 @@ pub enum ImportMode {
     KeepBoth,
 }
 
-/// Install a planned settings file into `user_dir` and return its path.
+/// A preset installed by [`import`].
+#[derive(Debug, Clone)]
+pub struct Imported {
+    pub path: PathBuf,
+    /// What characters store in `<settings>` for it: the file name.
+    pub key: String,
+    /// Its display name, after any renaming.
+    pub name: String,
+}
+
+/// Install a planned settings file into `user_dir`.
 /// Its `<id>` is cleared (see [`EMPTY_GUID`]); a clashing display name gets
 /// a number appended unless the file replaces the one holding that name.
-pub fn import(plan: &ImportPlan, lib: &SettingsLibrary, user_dir: &Path, mode: &ImportMode) -> Result<PathBuf, String> {
+pub fn import(plan: &ImportPlan, lib: &SettingsLibrary, user_dir: &Path, mode: &ImportMode) -> Result<Imported, String> {
     std::fs::create_dir_all(user_dir).map_err(|e| e.to_string())?;
     let mut root = plan.root.clone();
     let mut target = user_dir.join(&plan.file_name);
     match (plan.file_clash, mode) {
-        (Some(FileClash::Identical), ImportMode::New | ImportMode::Overwrite) => return Ok(target),
+        (Some(FileClash::Identical), ImportMode::New | ImportMode::Overwrite) => {
+            let name = std::fs::read_to_string(&target).ok().and_then(|t| parse_settings_file(&t).ok()).map_or_else(|| plan.name(), |e| e.get("name"));
+            return Ok(Imported { key: plan.file_name.clone(), path: target, name });
+        }
         (Some(FileClash::Different), ImportMode::New) => {
             return Err(format!("{} already exists with different content", target.display()));
         }
@@ -280,7 +305,7 @@ pub fn import(plan: &ImportPlan, lib: &SettingsLibrary, user_dir: &Path, mode: &
         root.set_child_text("name", free);
     }
     std::fs::write(&target, export_string(&root)).map_err(|e| e.to_string())?;
-    Ok(target)
+    Ok(Imported { path: target, key: target_name, name: root.get("name") })
 }
 
 /// Switch a character to another preset, as Chummer5a's "Change Settings

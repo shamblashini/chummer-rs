@@ -1,6 +1,7 @@
 //! Character settings (house rules) editor: duplicate a preset, change its
 //! build method, budgets, books, karma costs and options, and save it as a
-//! settings file in the user settings directory.
+//! settings file in the user settings directory. Presets can be exported
+//! as standalone Chummer settings files and imported from them.
 
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
@@ -64,11 +65,37 @@ pub struct SettingsEditor {
     draft: Option<Element>,
     new_name: String,
     message: Option<String>,
+    import: crate::ruleset_ui::ImportFlow,
+    /// Key of a preset to select once the reloaded library has it.
+    select_key: Option<String>,
 }
 
 impl SettingsEditor {
     pub fn new() -> Self {
-        SettingsEditor { selected: 0, draft: None, new_name: String::new(), message: None }
+        SettingsEditor { selected: 0, draft: None, new_name: String::new(), message: None, import: Default::default(), select_key: None }
+    }
+
+    /// Start importing a settings file (from a character's missing-preset
+    /// warning). Returns true when the library must be reloaded.
+    pub fn start_import(&mut self, engine: &Engine, lang: &Language) -> bool {
+        let done = self.import.start(engine);
+        self.finish_import(done, lang)
+    }
+
+    fn finish_import(&mut self, done: Option<Result<settings::Imported, String>>, lang: &Language) -> bool {
+        match done {
+            Some(Ok(i)) => {
+                self.message = Some(lang.tr_fmt("Imported {0} as {1}", &[&i.name, &i.path.display()]));
+                self.select_key = Some(i.key);
+                self.draft = None;
+                true
+            }
+            Some(Err(e)) => {
+                self.message = Some(e);
+                false
+            }
+            None => false,
+        }
     }
 
     /// Returns true when a preset was saved (the library must be reloaded).
@@ -78,6 +105,10 @@ impl SettingsEditor {
         if presets.is_empty() {
             ui.label(lang.tr("No settings found."));
             return false;
+        }
+        if let Some(i) = self.select_key.as_ref().and_then(|k| presets.iter().position(|p| p.key() == *k)) {
+            self.selected = i;
+            self.select_key = None;
         }
         self.selected = self.selected.min(presets.len() - 1);
         ui.horizontal(|ui| {
@@ -99,7 +130,7 @@ impl SettingsEditor {
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut self.new_name).hint_text(lang.tr("Name for a copy")).desired_width(220.0));
             if ui.add_enabled(!self.new_name.trim().is_empty(), egui::Button::new(lang.tr("Duplicate"))).clicked() {
-                match duplicate(preset, self.new_name.trim()) {
+                match settings::user_settings_dir().ok_or_else(|| "no settings directory".to_owned()).and_then(|d| settings::duplicate(preset, self.new_name.trim(), &d)) {
                     Ok(path) => {
                         self.message = Some(format!("Saved {}", path.display()));
                         self.new_name.clear();
@@ -108,7 +139,23 @@ impl SettingsEditor {
                     Err(e) => self.message = Some(e),
                 }
             }
+            ui.separator();
+            if ui.button(lang.tr("Export")).on_hover_text(lang.tr("Save this preset as a settings file to share, e.g. with your players. Chummer5a reads it too.")).clicked() {
+                let file = if preset.file.is_some() { preset.key() } else { format!("{}.xml", settings::file_stem_for(&preset.name())) };
+                if let Some(out) = rfd::FileDialog::new().add_filter("Chummer settings", &["xml"]).set_file_name(file).save_file() {
+                    self.message = Some(match settings::export(preset, &out) {
+                        Ok(()) => format!("Saved {}", out.display()),
+                        Err(e) => format!("Could not save: {e}"),
+                    });
+                }
+            }
+            if ui.button(lang.tr("Import settings file…")).on_hover_text(lang.tr("Install a settings file someone shared, e.g. your GM's house rules.")).clicked() {
+                let done = self.import.start(engine);
+                saved |= self.finish_import(done, lang);
+            }
         });
+        let done = self.import.ui(ui, engine, lang);
+        saved |= self.finish_import(done, lang);
         if !editable {
             ui.weak(lang.tr("Built-in presets cannot be changed. Duplicate one to make your own house rules."));
         }
@@ -232,9 +279,7 @@ impl SettingsEditor {
             ui.separator();
             if ui.button(RichText::new(lang.tr("Save house rules")).strong()).clicked() {
                 if let (Some(path), Some(d)) = (preset.file.clone(), self.draft.clone()) {
-                    let mut root = d;
-                    root.name = "settings".into();
-                    match std::fs::write(&path, root.to_xml_string()) {
+                    match std::fs::write(&path, settings::export_string(&d)) {
                         Ok(()) => {
                             self.message = Some(format!("Saved {}", path.display()));
                             saved = true;
@@ -273,23 +318,6 @@ fn label(tag: &str, lang: &Language) -> String {
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
-}
-
-/// Copy a preset into the user settings directory under a new name.
-fn duplicate(preset: &CharacterSettings, name: &str) -> Result<std::path::PathBuf, String> {
-    let dir = settings::user_settings_dir().ok_or("no settings directory")?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let file: String = name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
-    let path = dir.join(format!("{file}.xml"));
-    if path.exists() {
-        return Err(format!("{} already exists", path.display()));
-    }
-    let mut root = preset.raw.clone();
-    root.name = "settings".into();
-    root.set_child_text("name", name);
-    root.set_child_text("id", chummer_core::items::new_guid());
-    std::fs::write(&path, root.to_xml_string()).map_err(|e| e.to_string())?;
-    Ok(path)
 }
 
 /// Toggle custom data directories for a preset. Writes Chummer's

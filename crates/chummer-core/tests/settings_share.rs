@@ -52,7 +52,9 @@ fn export_import_round_trip() {
     assert_eq!(plan.file_clash, None);
     assert!(!plan.name_clash);
     let installed = settings::import(&plan, &player, &player_dir, &ImportMode::New).unwrap();
-    assert_eq!(installed, player_dir.join("Seattle_Nights.xml"));
+    assert_eq!(installed.path, player_dir.join("Seattle_Nights.xml"));
+    assert_eq!(installed.key, "Seattle_Nights.xml");
+    assert_eq!(installed.name, "Seattle Nights");
 
     let player = SettingsLibrary::load(&store, Some(&player_dir)).unwrap();
     assert_eq!(player.missing_preset("Seattle_Nights.xml"), None);
@@ -98,7 +100,8 @@ fn import_clash_keeps_both_or_overwrites() {
     assert!(settings::import(&plan, &lib, &dir, &ImportMode::New).is_err());
 
     let kept = settings::import(&plan, &lib, &dir, &ImportMode::KeepBoth).unwrap();
-    assert_eq!(kept, dir.join("House_2.xml"));
+    assert_eq!(kept.path, dir.join("House_2.xml"));
+    assert_eq!(kept.name, "House (2)");
     let lib = SettingsLibrary::load(&store, Some(&dir)).unwrap();
     assert_eq!(lib.find("House.xml").unwrap().int("buildpoints", 0), standard.int("buildpoints", 0));
     assert_eq!(lib.find("House_2.xml").unwrap().name(), "House (2)");
@@ -118,6 +121,10 @@ fn import_clash_keeps_both_or_overwrites() {
     assert!(plan.name_clash);
     settings::import(&plan, &lib, &dir, &ImportMode::New).unwrap();
     let lib = SettingsLibrary::load(&store, Some(&dir)).unwrap();
+    // Importing it again matches the renamed copy: nothing to ask.
+    let again = lib.plan_import(&exported, &dir).unwrap();
+    assert_eq!(again.file_clash, Some(FileClash::Identical));
+    assert_eq!(settings::import(&again, &lib, &dir, &ImportMode::New).unwrap().name, "Standard (2)");
     let mine = lib.find("MyStandard.xml").unwrap();
     assert_eq!(mine.name(), "Standard (2)");
     assert_eq!(mine.id(), EMPTY_GUID);
