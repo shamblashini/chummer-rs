@@ -161,8 +161,8 @@ were saved (they date from Chummer 5.18x-5.202).
 | Attribute totals and essence | 475 / 475 |
 | Bonuses replayed into improvements | 653 / 656 |
 | Items rebuilt from game data | ~2,300 of ~3,100 saved items |
-| Nuyen left after creation | see `tests/nuyen_oracle.rs` |
-| Karma left after creation | see `tests/karma_oracle.rs` |
+| Nuyen left after creation | 8 / 27; all 27 with the old 5.202 lifestyle price formula |
+| Karma left after creation | 17 / 27; 26 / 27 with the house rules the fixtures were made with |
 | Character sheets rendered | every fixture × every sheet × 6 languages |
 
 The items row breaks down by kind:
@@ -193,7 +193,7 @@ cargo test --workspace
   - Undo for focus binding and technique purchases.
   - Karma for spirit fettering.
 - PDF export needs a browser's Print to PDF; no converter is bundled.
-- Some UI text stays English when a Chummer translation string does not exist for it.
+- About 290 UI labels have no Chummer translation string and stay English.
 
 ## Layout
 
