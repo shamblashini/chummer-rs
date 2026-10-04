@@ -392,13 +392,29 @@ fn sources_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
         }
         Some("scan") => {
             let Some(dir) = rest.get(1) else { bail!("expected a folder") };
-            let found = sources::scan_folder(Path::new(dir), &books);
-            for (code, path) in &found {
-                println!("  {code:<8} {:<40} {}", name_of(code), path.display());
-                let e = lib.books.entry(code.clone()).or_default();
-                e.path = Some(path.clone());
+            let res = sources::scan(Path::new(dir), &books, sources::pdf_pages);
+            for f in &res.found {
+                let how = if f.by_text { " (by text)" } else { "" };
+                println!("  {:<8} {:<40} {}{how}", f.code, name_of(&f.code), f.path.display());
+                let e = lib.books.entry(f.code.clone()).or_default();
+                e.path = Some(f.path.clone());
+                if let Some(off) = f.offset {
+                    e.offset = off;
+                }
             }
-            println!("{} books matched", found.len());
+            println!("{} books matched", res.found.len());
+            if !res.unmatched.is_empty() {
+                println!("Not linked:");
+                for (path, why) in &res.unmatched {
+                    let why = match why {
+                        sources::Unmatched::OtherEdition => "another edition".to_owned(),
+                        sources::Unmatched::Errata => "errata or FAQ with no book of its own".to_owned(),
+                        sources::Unmatched::Duplicate(c) => format!("another file is already linked to {c}"),
+                        sources::Unmatched::NoBook => "no book in Chummer's data".to_owned(),
+                    };
+                    println!("  {}  ({why})", path.file_name().unwrap_or_default().to_string_lossy());
+                }
+            }
             lib.save()?;
         }
         Some("detect") => {

@@ -337,13 +337,58 @@ pub fn find_wine_prefixes() -> Vec<PathBuf> {
 }
 
 fn normalize(s: &str) -> String {
-    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+    s.replace('&', "and").chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// One book found by [`scan`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Found {
+    pub code: String,
+    pub path: PathBuf,
+    /// Page offset, when the book was recognised by its text.
+    pub offset: Option<i32>,
+    /// Recognised by its text rather than its file name.
+    pub by_text: bool,
+}
+
+/// Why [`scan`] linked no book to a PDF.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Unmatched {
+    /// The name says another edition (3e, 4e, 6e, Anarchy) and its text
+    /// matched no book.
+    OtherEdition,
+    /// Errata or FAQ without a book of its own in the data.
+    Errata,
+    /// Another file was already linked to the same book.
+    Duplicate(String),
+    /// No book in the data has this title or text.
+    NoBook,
+}
+
+#[derive(Debug, Default)]
+pub struct ScanResult {
+    pub found: Vec<Found>,
+    pub unmatched: Vec<(PathBuf, Unmatched)>,
 }
 
 /// Match PDF files in a folder to books by title. Returns `(code, path)`.
-/// A file matches the book with the longest title contained in its name;
-/// the core rulebook also matches "core rulebook"/"core rules".
 pub fn scan_folder(dir: &Path, books: &[BookInfo]) -> Vec<(String, PathBuf)> {
+    scan(dir, books, |_, _| None).found.into_iter().map(|f| (f.code, f.path)).collect()
+}
+
+/// Match the PDF files in a folder (and three levels below) to books.
+///
+/// A file matches the book with the longest title contained in its name
+/// (the core rulebook also matches "core rulebook"/"core rules"). Books
+/// still unlinked after that are looked for by content: `pages(file, n)`
+/// returns the text of a file's first `n` pages (see [`pdf_pages`]), and a
+/// book whose known text (`match_text`) is on a page near its printed page
+/// is linked, with the page offset. That finds books whose file name
+/// doesn't carry the title, such as errata (`SG-Errata.pdf`) and books
+/// printed in another book's PDF (Data Trails' Dissonant Echoes).
+/// Files named for other editions are only linked by content. A short
+/// known text only counts when the file name also has the book's title.
+pub fn scan(dir: &Path, books: &[BookInfo], mut pages: impl FnMut(&Path, usize) -> Option<Vec<String>>) -> ScanResult {
     let mut files = Vec::new();
     collect_pdfs(dir, 0, &mut files);
     let titles: Vec<(String, &BookInfo)> = books
@@ -351,12 +396,18 @@ pub fn scan_folder(dir: &Path, books: &[BookInfo]) -> Vec<(String, PathBuf)> {
         .map(|b| (normalize(b.name.trim_start_matches("The ").trim_start_matches("Shadowrun 5th Edition")), b))
         .filter(|(t, _)| t.len() >= 4)
         .collect();
-    let mut out: Vec<(String, PathBuf)> = Vec::new();
-    for f in files {
+    let mut res = ScanResult::default();
+    let mut pending: Vec<(PathBuf, Unmatched)> = Vec::new();
+    for f in &files {
         let stem = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-        // Skip other editions; data codes are all SR5.
         let lower = stem.to_lowercase();
-        if ["3e", "4e", "6e", "sr6", "sr4", "anarchy", "errata"].iter().any(|e| lower.contains(e)) {
+        // Data codes are all SR5.
+        if ["3e", "4e", "6e", "sr6", "sr4", "anarchy"].iter().any(|e| lower.contains(e)) {
+            pending.push((f.clone(), Unmatched::OtherEdition));
+            continue;
+        }
+        if ["errata", "faq"].iter().any(|e| lower.contains(e)) {
+            pending.push((f.clone(), Unmatched::Errata));
             continue;
         }
         let n = normalize(&stem);
@@ -365,13 +416,75 @@ pub fn scan_folder(dir: &Path, books: &[BookInfo]) -> Vec<(String, PathBuf)> {
         } else {
             titles.iter().filter(|(t, _)| n.contains(t.as_str())).max_by_key(|(t, _)| t.len()).map(|(_, b)| *b)
         };
-        if let Some(b) = hit {
-            if !out.iter().any(|(c, _)| *c == b.code) {
-                out.push((b.code.clone(), f));
+        match hit {
+            Some(b) if res.found.iter().any(|x| x.code == b.code) => pending.push((f.clone(), Unmatched::Duplicate(b.code.clone()))),
+            Some(b) => res.found.push(Found { code: b.code.clone(), path: f.clone(), offset: None, by_text: false }),
+            None => pending.push((f.clone(), Unmatched::NoBook)),
+        }
+    }
+
+    // Content pass: unlinked books with known text, in files not yet linked
+    // first, then in linked files (a PDF can hold more than one book).
+    let wanted: Vec<(&BookInfo, i32, String)> = books
+        .iter()
+        .filter(|b| !res.found.iter().any(|f| f.code == b.code))
+        .filter_map(|b| {
+            let (page, text) = b.match_text.as_ref()?;
+            let needle = normalize(text);
+            (needle.len() >= 4).then_some((b, *page, needle))
+        })
+        .collect();
+    let title_in_name = |path: &Path, b: &BookInfo| {
+        let t = normalize(b.name.trim_start_matches("The "));
+        t.len() >= 4 && path.file_stem().is_some_and(|s| normalize(&s.to_string_lossy()).contains(&t))
+    };
+    if !wanted.is_empty() {
+        let depth = wanted.iter().map(|w| w.1).max().unwrap_or(0).max(0) as usize + TEXT_SLACK as usize;
+        let linked: Vec<PathBuf> = res.found.iter().map(|f| f.path.clone()).collect();
+        let order: Vec<PathBuf> = pending.iter().map(|(p, _)| p.clone()).chain(linked).collect();
+        for path in order {
+            if wanted.iter().all(|(b, ..)| res.found.iter().any(|f| f.code == b.code)) {
+                break;
+            }
+            let Some(text) = pages(&path, depth) else { continue };
+            let text: Vec<String> = text.iter().map(|t| normalize(t)).collect();
+            for (b, page, needle) in &wanted {
+                // A short text ("KRIME!!!") only counts with the title in the name.
+                if res.found.iter().any(|f| f.code == b.code) || (needle.len() < 8 && !title_in_name(&path, b)) {
+                    continue;
+                }
+                if let Some(off) = find_text(&text, *page, needle) {
+                    res.found.push(Found { code: b.code.clone(), path: path.clone(), offset: Some(off), by_text: true });
+                }
             }
         }
     }
-    out
+    res.unmatched = pending.into_iter().filter(|(p, _)| !res.found.iter().any(|f| f.path == *p)).collect();
+    res
+}
+
+/// How far from its printed page a book's known text is looked for.
+const TEXT_SLACK: i32 = 12;
+
+/// Offset of the page (1-based in `pages`) near `page` that holds `needle`.
+fn find_text(pages: &[String], page: i32, needle: &str) -> Option<i32> {
+    let mut tries: Vec<i32> = (0..=TEXT_SLACK).flat_map(|d| [d, -d]).collect();
+    tries.dedup();
+    tries.into_iter().find(|off| {
+        let p = page + off;
+        p >= 1 && pages.get(p as usize - 1).is_some_and(|t| t.contains(needle))
+    })
+}
+
+/// Text of a PDF's first `n` pages, one string per page, via `pdftotext`.
+/// `None` when `pdftotext` is missing or fails.
+pub fn pdf_pages(pdf: &Path, n: usize) -> Option<Vec<String>> {
+    which("pdftotext")?;
+    let out = Command::new("pdftotext").args(["-q", "-f", "1", "-l", &n.to_string()]).arg(pdf).arg("-").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).split('\x0c').map(str::to_owned).collect())
 }
 
 fn collect_pdfs(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
@@ -470,21 +583,78 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[test]
-    fn folder_scan_matches_titles() {
-        let dir = std::env::temp_dir().join(format!("chummer-scan-{}", std::process::id()));
+    fn scan_dir(files: &[&str]) -> PathBuf {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("chummer-scan-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        for f in ["Shadowrun 5e - Chrome Flesh.pdf", "Shadowrun 5e - Core Rulebook (2nd Printing).pdf", "Shadowrun 4e - Vice.pdf", "notes.txt"] {
+        for f in files {
             std::fs::write(dir.join(f), b"").unwrap();
         }
+        dir
+    }
+
+    fn book(code: &str, name: &str, text: Option<(i32, &str)>) -> BookInfo {
+        BookInfo { code: code.into(), name: name.into(), match_text: text.map(|(p, t)| (p, t.to_owned())) }
+    }
+
+    #[test]
+    fn folder_scan_matches_titles() {
+        let dir = scan_dir(&["Shadowrun 5e - Chrome Flesh.pdf", "Shadowrun 5e - Core Rulebook (2nd Printing).pdf", "Shadowrun 4e - Vice.pdf", "Shadowrun 5e - Run & Gun.pdf", "notes.txt"]);
         let books = vec![
-            BookInfo { code: "SR5".into(), name: "Shadowrun 5th Edition".into(), match_text: None },
-            BookInfo { code: "CF".into(), name: "Chrome Flesh".into(), match_text: None },
-            BookInfo { code: "V".into(), name: "Vice".into(), match_text: None },
+            book("SR5", "Shadowrun 5th Edition", None),
+            book("CF", "Chrome Flesh", None),
+            book("V", "Vice", None),
+            book("RG", "Run and Gun", None),
         ];
         let mut got: Vec<String> = scan_folder(&dir, &books).into_iter().map(|(c, _)| c).collect();
         got.sort();
-        assert_eq!(got, vec!["CF", "SR5"]);
+        assert_eq!(got, vec!["CF", "RG", "SR5"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn folder_scan_by_text() {
+        let dir = scan_dir(&[
+            "Shadowrun 5e - Data Trails.pdf",
+            "E-CAT27003E_SG-Errata.pdf",
+            "Shadowrun 6e - Krime Katalog.pdf",
+            "Shadowrun 4e - Krime Katalog.pdf",
+            "Shadowrun 5e - Coyotes.pdf",
+            "Zz Data Trails.pdf",
+        ]);
+        let books = vec![
+            book("DT", "Data Trails", None),
+            book("DTD", "Data Trails (Dissonant Echoes)", Some((3, "The Matrix is the vast, wild"))),
+            book("SGE", "Street Grimoire Errata", Some((2, "PROTECT VEHICLE SUB-HEADER"))),
+            book("KK", "Krime Katalog", Some((2, "KRIME!!!!!!!"))),
+            book("X", "Short Text", Some((1, "KRIME"))),
+        ];
+        // Page texts per file; Data Trails has Dissonant Echoes two pages late.
+        let pages = |p: &Path, _n: usize| -> Option<Vec<String>> {
+            let name = p.file_name()?.to_string_lossy().to_string();
+            let v = |pages: &[&str]| Some(pages.iter().map(|s| s.to_string()).collect());
+            match name.as_str() {
+                "Shadowrun 5e - Data Trails.pdf" => v(&["cover", "credits", "intro", "", "The Matrix is the vast, wild, and wooly frontier"]),
+                "E-CAT27003E_SG-Errata.pdf" => v(&["errata", "PROTECT VEHICLE SUB-HEADER"]),
+                "Shadowrun 6e - Krime Katalog.pdf" => v(&["", "KRIME!!!!!!!"]),
+                // "Short Text"'s text, but the name doesn't carry the title.
+                "Shadowrun 5e - Coyotes.pdf" => v(&["KRIME"]),
+                _ => v(&["nothing to see"]),
+            }
+        };
+        let res = scan(&dir, &books, pages);
+        let got = |code: &str| res.found.iter().find(|f| f.code == code).cloned();
+        assert!(!got("DT").unwrap().by_text);
+        let dtd = got("DTD").unwrap();
+        assert!(dtd.by_text && dtd.offset == Some(2) && dtd.path.ends_with("Shadowrun 5e - Data Trails.pdf"));
+        assert_eq!(got("SGE").unwrap().offset, Some(0));
+        assert!(got("KK").unwrap().path.ends_with("Shadowrun 6e - Krime Katalog.pdf"));
+        assert!(got("X").is_none(), "short text without the title in the name");
+        let why = |f: &str| res.unmatched.iter().find(|(p, _)| p.ends_with(f)).map(|(_, w)| w.clone());
+        assert_eq!(why("Shadowrun 4e - Krime Katalog.pdf"), Some(Unmatched::OtherEdition));
+        assert_eq!(why("Shadowrun 5e - Coyotes.pdf"), Some(Unmatched::NoBook));
+        assert_eq!(why("Zz Data Trails.pdf"), Some(Unmatched::Duplicate("DT".into())));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
