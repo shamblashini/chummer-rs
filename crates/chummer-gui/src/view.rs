@@ -50,6 +50,8 @@ const TABS: &[(Tab, &str)] = &[
 
 pub struct CharacterView {
     pub ch: Character,
+    /// Game data with the character's custom data applied.
+    store: Arc<chummer_core::data::DataStore>,
     pub sheet: Sheet,
     pub rules: Rules,
     tab: Tab,
@@ -106,9 +108,11 @@ impl CharacterView {
 
     pub fn new(ch: Character, engine: &Engine) -> Self {
         let rules = engine.rules_for(&ch);
-        let sheet = calc::compute(&ch, &rules, Some(&engine.store), Some(&engine.catalog));
+        let store = engine.store_for_character(&ch);
+        let sheet = calc::compute(&ch, &rules, Some(&store), Some(&engine.catalog));
         let settings = engine.settings.resolve(&ch.field("settings")).cloned();
         let mut v = CharacterView {
+            store,
             ch,
             sheet,
             rules,
@@ -137,7 +141,7 @@ impl CharacterView {
     fn refresh_budget(&mut self) {
         match (&self.settings, self.ch.created) {
             (Some(st), false) => {
-                let b = chargen::budget(&self.ch, &self.sheet, &self.rules, st);
+                let b = chargen::budget_with(&self.ch, &self.sheet, &self.rules, st, Some(&self.store));
                 self.problems = chargen::validity_problems(&self.ch, &b, st);
                 self.budget = Some(b);
             }
@@ -162,7 +166,11 @@ impl CharacterView {
     }
 
     fn recompute(&mut self, engine: &Engine) {
-        self.sheet = calc::compute(&self.ch, &self.rules, Some(&engine.store), Some(&engine.catalog));
+        if !self.ch.created {
+            // Essence loss in creation follows the ware installed now.
+            chummer_core::essence_loss::refresh(&mut self.ch, &self.store, &self.rules);
+        }
+        self.sheet = calc::compute(&self.ch, &self.rules, Some(&self.store), Some(&engine.catalog));
         self.refresh_budget();
     }
 
@@ -635,7 +643,7 @@ impl CharacterView {
                 ui.label("Tradition");
                 let mut pick: Option<String> = None;
                 egui::ComboBox::from_id_salt("tradition").selected_text(if current.is_empty() { "Choose…".to_owned() } else { current.clone() }).width(240.0).show_ui(ui, |ui| {
-                    if let Ok(doc) = engine.store.doc("traditions.xml") {
+                    if let Ok(doc) = self.store.doc("traditions.xml") {
                         for r in data::records(&doc, "traditions", "tradition") {
                             if ui.selectable_label(current == r.name(), r.name()).clicked() {
                                 pick = Some(r.name());
@@ -644,7 +652,7 @@ impl CharacterView {
                     }
                 });
                 if let Some(p) = pick {
-                    if let Err(e) = chargen::set_tradition(&mut self.ch, &engine.store, &p) {
+                    if let Err(e) = chargen::set_tradition(&mut self.ch, &self.store, &p) {
                         *status = Some((e, true));
                     }
                     changed = true;
@@ -658,10 +666,23 @@ impl CharacterView {
                 ui.selectable_value(&mut self.magic, i, format!("{} ({n})", s.label));
             }
         });
-        let tradition = self.ch.doc.child("tradition").map(|t| t.get("name")).unwrap_or_default();
-        if !tradition.is_empty() {
-            ui.label(format!("Tradition: {tradition} · drain {}", self.ch.doc.child("tradition").map(|t| t.get("drain")).unwrap_or_default()));
-        }
+        let m = chummer_core::items::magic::magic_summary_with(&self.ch, &self.sheet, Some(&self.store));
+        ui.horizontal_wrapped(|ui| {
+            if !m.tradition.is_empty() {
+                ui.label(format!("Tradition: {}", m.tradition));
+                ui.label(format!("Drain {} = {} dice", m.drain_expression.replace(['{', '}'], ""), m.drain_pool));
+            }
+            if !m.stream.is_empty() {
+                ui.label(format!("Stream: {} · Fading {} = {} dice", m.stream, m.fading_expression.replace(['{', '}'], ""), m.fading_pool));
+            }
+            if let Some((total, used)) = m.power_points {
+                let t = RichText::new(format!("Power points {used} / {total}"));
+                ui.label(if used > total { t.color(ui.visuals().error_fg_color) } else { t });
+            }
+            if self.ch.mag_enabled() {
+                ui.label(format!("Astral {} + {}d6, limit {}", m.astral_initiative, m.astral_initiative_dice, m.astral_limit));
+            }
+        });
         let techno = self.ch.res_enabled() && !self.ch.mag_enabled();
         let grade = self.ch.doc.get_i32(if techno { "submersiongrade" } else { "initiategrade" }).unwrap_or(0);
         ui.horizontal(|ui| {
@@ -686,6 +707,71 @@ impl CharacterView {
             egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));
         }
         changed
+    }
+
+    /// Final weapon stats (damage with STR, AP, accuracy, dice pool, ranges).
+    fn weapon_summary(&self, ui: &mut egui::Ui) {
+        let weapons = self.ch.items("weapons", "weapon");
+        if weapons.is_empty() {
+            return;
+        }
+        let rules = self.settings.as_ref().map(chummer_core::items::weapon::WeaponRules::from_settings).unwrap_or_default();
+        egui::CollapsingHeader::new(RichText::new("Combat stats").strong()).default_open(true).show(ui, |ui| {
+            egui::Grid::new("weapon_stats").striped(true).num_columns(8).spacing([14.0, 3.0]).show(ui, |ui| {
+                for h in ["Weapon", "Pool", "DV", "AP", "Acc", "RC", "Reach", "Ranges"] {
+                    ui.strong(h);
+                }
+                ui.end_row();
+                for w in weapons {
+                    let st = chummer_core::items::weapon::stats_with(&self.ch, &self.sheet, Some(&self.store), w, &rules);
+                    ui.label(w.get("name"));
+                    ui.strong(st.dice_pool.to_string()).on_hover_text(&st.skill);
+                    ui.label(&st.damage);
+                    ui.label(&st.ap);
+                    ui.label(st.accuracy.to_string());
+                    ui.label(&st.rc);
+                    ui.label(if st.reach != 0 { st.reach.to_string() } else { String::new() });
+                    let r = &st.ranges;
+                    let bands: Vec<&str> = [&r.short, &r.medium, &r.long, &r.extreme].into_iter().map(String::as_str).filter(|b| !b.is_empty()).collect();
+                    ui.label(bands.join(" / "));
+                    ui.end_row();
+                }
+            });
+        });
+    }
+
+    /// Vehicle totals after mods.
+    fn vehicle_summary(&self, ui: &mut egui::Ui) {
+        let vehicles = self.ch.items("vehicles", "vehicle");
+        if vehicles.is_empty() {
+            return;
+        }
+        egui::CollapsingHeader::new(RichText::new("Vehicle stats").strong()).default_open(true).show(ui, |ui| {
+            egui::Grid::new("vehicle_stats").striped(true).num_columns(10).spacing([14.0, 3.0]).show(ui, |ui| {
+                for h in ["Vehicle", "Handling", "Speed", "Accel", "Body", "Armor", "Pilot", "Sensor", "Seats", "Slots"] {
+                    ui.strong(h);
+                }
+                ui.end_row();
+                for v in vehicles {
+                    let st = chummer_core::items::vehicle::stats(v);
+                    ui.label(v.get("name"));
+                    ui.label(&st.handling_text);
+                    ui.label(&st.speed_text);
+                    ui.label(&st.accel_text);
+                    ui.label(st.body.to_string());
+                    ui.label(st.armor.to_string());
+                    ui.label(st.pilot.to_string());
+                    ui.label(st.sensor.to_string());
+                    ui.label(st.seats.to_string());
+                    if st.is_drone {
+                        ui.label(format!("{}/{}", st.drone_mod_slots_used, st.drone_mod_slots));
+                    } else {
+                        ui.label(format!("{}/{}", st.slots_used, st.slots));
+                    }
+                    ui.end_row();
+                }
+            });
+        });
     }
 
     /// "Add …" buttons for the kinds that live in a section's container.
@@ -727,6 +813,11 @@ impl CharacterView {
         ui.separator();
         let sec = sections::EQUIPMENT[self.equipment];
         self.add_buttons(ui, engine, sec.container);
+        match sec.container {
+            "weapons" => self.weapon_summary(ui),
+            "vehicles" => self.vehicle_summary(ui),
+            _ => {}
+        }
         egui::ScrollArea::both().show(ui, |ui| changed |= self.section(ui, &sec, lang, pdfs, status));
         changed
     }
@@ -794,6 +885,8 @@ impl CharacterView {
                     }
                     chargen::remove_quality(&mut self.ch, &guid);
                     true
+                } else if yes && container == "cyberwares" {
+                    chummer_core::items::cyberware::remove(&mut self.ch, &guid)
                 } else {
                     yes && self.ch.remove_item(&container, &guid)
                 }
@@ -899,18 +992,19 @@ impl CharacterView {
     }
 
     /// Open the add dialog for an item kind (see `items::KINDS`).
-    fn open_select(&mut self, tag: &str, engine: &Engine) {
+    fn open_select(&mut self, tag: &str, _engine: &Engine) {
         let books = self.settings.as_ref().map(|s| s.books()).unwrap_or_default();
         let max_avail = self.settings.as_ref().map_or(12, |s| s.max_availability());
         let nuyen_left = self.budget.as_ref().map(|b| b.nuyen_left());
-        self.select = SelectDialog::new(tag, &engine.store, books, max_avail, nuyen_left);
+        self.select = SelectDialog::new(tag, &self.store, books, max_avail, nuyen_left);
     }
 
     fn select_dialog(&mut self, ctx: &egui::Context, engine: &Engine, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let Some(dlg) = self.select.as_mut() else { return false };
         let tag = dlg.kind.tag;
         let ch = &self.ch;
-        let store = &engine.store;
+        let store_arc = self.store.clone();
+        let store = &*store_arc;
         let choices_for = |rec: &chummer_core::xml::Element, p: &chummer_core::items::Purchase| chummer_core::items::choices(tag, ch, store, data::Record(rec), p);
         match dlg.show(ctx, ch, &self.sheet, lang, pdfs, status, &choices_for) {
             select::Outcome::None => false,
@@ -970,8 +1064,8 @@ impl CharacterView {
         }
     }
 
-    fn life_module_picker(&mut self, ui: &mut egui::Ui, engine: &Engine, status: &mut Status) -> bool {
-        let (stages, modules) = chargen::life_modules(&engine.store);
+    fn life_module_picker(&mut self, ui: &mut egui::Ui, _engine: &Engine, status: &mut Status) -> bool {
+        let (stages, modules) = chargen::life_modules(&self.store);
         let mut added = false;
         ui.group(|ui| {
             ui.label(RichText::new("Life modules").strong());
@@ -1008,7 +1102,7 @@ impl CharacterView {
                 }
                 if ui.add_enabled(!self.life.1.is_empty(), egui::Button::new("Add")).clicked() {
                     let v = (!self.life.2.is_empty()).then(|| self.life.2.clone());
-                    match chargen::add_life_module(&mut self.ch, &engine.store, &self.life.1, v.as_deref()) {
+                    match chargen::add_life_module(&mut self.ch, &self.store, &self.life.1, v.as_deref()) {
                         Ok(_) => added = true,
                         Err(e) => *status = Some((e, true)),
                     }
