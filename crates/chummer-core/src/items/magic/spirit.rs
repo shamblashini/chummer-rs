@@ -67,14 +67,79 @@ pub fn add(ch: &mut Character, rec: Record<'_>, force: i32, services: i32, bound
     guid
 }
 
-/// Change a spirit's force, services, bound or fettered state.
+/// Change a spirit's force, services, bound or fettered state. A
+/// fettering that [`check_fetter`] refuses is left as it was.
 pub fn set_state(ch: &mut Character, guid: &str, force: i32, services: i32, bound: bool, fettered: bool) -> bool {
     let Some(s) = super::super::find_by_guid_mut(ch.items_mut("spirits"), guid) else { return false };
     s.set_child_text("force", force.max(1).to_string());
     s.set_child_text("services", services.max(0).to_string());
     s.set_child_text("bound", crate::improvement::bool_str(bound));
-    s.set_child_text("fettered", crate::improvement::bool_str(fettered));
+    let was = s.get_bool("fettered").unwrap_or(false);
+    let s = s.clone();
+    if fettered != was && (!fettered || check_fetter(ch, &s).is_ok()) {
+        let _ = set_fettered(ch, guid, fettered);
+    }
     true
+}
+
+/// `ImprovementSource` of the MAG penalty a fettered spirit costs.
+pub const FETTERING_SOURCE: &str = "SpiritFettering";
+
+/// Whether the character may fetter this spirit (`Spirit.Fettered`
+/// setter): only one spirit or sprite at a time, and sprites only with
+/// an `AllowSpriteFettering` improvement (the Sprite Pet complex form).
+pub fn check_fetter(ch: &Character, spirit: &Element) -> Result<(), String> {
+    if spirit.get("type") == "Sprite" && !ch.improvements.has("AllowSpriteFettering") {
+        return Err("sprites can only be fettered with the Sprite Pet complex form".into());
+    }
+    if ch.items("spirits", "spirit").iter().any(|s| s.get_bool("fettered").unwrap_or(false)) {
+        return Err("only one spirit or sprite can be fettered".into());
+    }
+    Ok(())
+}
+
+/// Whether a fettered spirit may be released in career mode: an unbound
+/// one that still owes services would become a second unbound spirit
+/// with services, which is not allowed.
+pub fn check_release(ch: &Character, spirit: &Element) -> Result<(), String> {
+    let kind = spirit.get("type");
+    let owes = |s: &Element| s.get_i32("services").unwrap_or(0) > 0;
+    let flag = |s: &Element, k: &str| s.get_bool(k).unwrap_or(false);
+    if ch.created && !flag(spirit, "bound") && owes(spirit) {
+        let other = ch.items("spirits", "spirit").into_iter().any(|x| {
+            !x.get("guid").eq_ignore_ascii_case(&spirit.get("guid")) && x.get("type") == kind && owes(x) && !flag(x, "bound") && !flag(x, "fettered")
+        });
+        if other {
+            return Err(if kind == "Sprite" { "only one unregistered sprite with tasks is allowed".into() } else { "only one unbound spirit with services is allowed".into() });
+        }
+    }
+    Ok(())
+}
+
+/// Set `<fettered>` and the MAG −1 augment a fettered spirit (not a
+/// sprite) costs, as an `Attribute` improvement from `SpiritFettering`.
+/// Releasing removes every `SpiritFettering` improvement.
+pub fn set_fettered(ch: &mut Character, guid: &str, fettered: bool) -> Result<(), String> {
+    let s = super::super::find_by_guid_mut(ch.items_mut("spirits"), guid).ok_or_else(|| format!("spirit {guid} not found"))?;
+    s.set_child_text("fettered", crate::improvement::bool_str(fettered));
+    let sprite = s.get("type") == "Sprite";
+    if fettered {
+        if !sprite {
+            ch.improvements.list.push(crate::improvement::Improvement {
+                improved_name: "MAG".into(),
+                kind: "Attribute".into(),
+                source: FETTERING_SOURCE.into(),
+                aug: -1.0,
+                rating: 1,
+                enabled: true,
+                ..Default::default()
+            });
+        }
+    } else {
+        ch.improvements.list.retain(|i| i.source != FETTERING_SOURCE);
+    }
+    ch.dirty = true;
+    Ok(())
 }
 
 /// Oracle: rebuild a saved `<spirit>`: the name must exist in the data;
