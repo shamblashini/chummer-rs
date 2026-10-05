@@ -543,6 +543,37 @@ impl Sheet {
     }
 }
 
+/// Spell defense pools in the order of Chummer's Spell Defense tab, keyed
+/// by the en-us string of each row (`Label_SpellDefense*`), as
+/// `Character.SpellDefense*` computes them. Counterspelling dice are not
+/// included; Chummer adds them to each pool for display.
+pub fn spell_defense(ch: &Character, s: &Sheet) -> Vec<(&'static str, i32)> {
+    let imps = &ch.improvements;
+    let at = |a: &str| s.attr(a);
+    // SpellResistance counts for every test except the dodge.
+    let v = |t: &str| standard_round(imps.val("SpellResistance", None) + imps.val(t, None));
+    vec![
+        // SpellDefenseIndirectDodge => Dodge.
+        ("Label_SpellDefenseIndirectDodge", at("REA") + at("INT") + imps.val_int("Dodge", None) + s.wound_modifier),
+        ("Label_SpellDefenseIndirect", at("BOD") + s.armor + v("DamageResistance")),
+        ("Label_SpellDefenseDirectSoakMana", at("WIL") + v("DirectManaSpellResist")),
+        ("Label_SpellDefenseDirectSoakPhysical", at("BOD") + v("DirectPhysicalSpellResist")),
+        ("Label_SpellDefenseDetection", at("LOG") + at("WIL") + v("DetectionSpellResist")),
+        ("Label_SpellDefenseDecAttBOD", at("BOD") + at("WIL") + v("DecreaseBODResist")),
+        ("Label_SpellDefenseDecAttAGI", at("AGI") + at("WIL") + v("DecreaseAGIResist")),
+        ("Label_SpellDefenseDecAttREA", at("REA") + at("WIL") + v("DecreaseREAResist")),
+        ("Label_SpellDefenseDecAttSTR", at("STR") + at("WIL") + v("DecreaseSTRResist")),
+        ("Label_SpellDefenseDecAttCHA", at("CHA") + at("WIL") + v("DecreaseCHAResist")),
+        ("Label_SpellDefenseDecAttINT", at("INT") + at("WIL") + v("DecreaseINTResist")),
+        ("Label_SpellDefenseDecAttLOG", at("LOG") + at("WIL") + v("DecreaseLOGResist")),
+        ("Label_SpellDefenseDecAttWIL", at("WIL") + at("WIL") + v("DecreaseWILResist")),
+        ("Label_SpellDefenseIllusionMana", at("LOG") + at("WIL") + v("ManaIllusionResist")),
+        ("Label_SpellDefenseIllusionPhysical", at("LOG") + at("INT") + v("PhysicalIllusionResist")),
+        ("Label_SpellDefenseManipMental", at("LOG") + at("WIL") + v("MentalManipulationResist")),
+        ("Label_SpellDefenseManipPhysical", at("BOD") + at("STR") + v("PhysicalManipulationResist")),
+    ]
+}
+
 /// Attribute tokens for expressions (`{STR}`, `{AGIUnaug}`, ...).
 pub struct SheetAttributes<'a>(pub &'a [AttributeValues]);
 

@@ -423,25 +423,34 @@ fn resistances(ctx: &Ctx, out: &mut Element) {
         ("psychologicaladdictionresistalreadyaddicted", at("LOG") + at("WIL") + imps.val_int("PsychologicalAddictionAlreadyAddicted", None)),
         ("physicalcmnaturalrecovery", at("BOD") * 2 + imps.val_int("PhysicalCMRecovery", None)),
         ("stuncmnaturalrecovery", bw + imps.val_int("StunCMRecovery", None)),
-        ("indirectdefenseresist", at("REA") + at("INT") + imps.val_int("SpellDefenseIndirectDodge", None)),
-        ("directmanaresist", at("WIL") + imps.val_int("SpellDefenseDirectSoakMana", None)),
-        ("directphysicalresist", at("BOD") + imps.val_int("SpellDefenseDirectSoakPhysical", None)),
-        ("detectionspellresist", at("LOG") + at("WIL") + imps.val_int("SpellDefenseDetection", None)),
-        ("decreasebodresist", at("BOD") + at("WIL")),
-        ("decreaseagiresist", at("AGI") + at("WIL")),
-        ("decreaserearesist", at("REA") + at("WIL")),
-        ("decreasestrresist", at("STR") + at("WIL")),
-        ("decreasecharesist", at("CHA") + at("WIL")),
-        ("decreaseintresist", at("INT") + at("WIL")),
-        ("decreaselogresist", at("LOG") + at("WIL")),
-        ("decreasewilresist", at("WIL") * 2),
-        ("illusionmanaresist", at("LOG") + at("WIL") + imps.val_int("SpellDefenseIllusionMana", None)),
-        ("illusionphysicalresist", at("LOG") + at("INT") + imps.val_int("SpellDefenseIllusionPhysical", None)),
-        ("manipulationmentalresist", at("LOG") + at("WIL") + imps.val_int("SpellDefenseManipulationMental", None)),
-        ("manipulationphysicalresist", at("STR") + at("BOD") + imps.val_int("SpellDefenseManipulationPhysical", None)),
     ];
     for (k, v) in list {
         add(out, k, v.to_string());
+    }
+    // Spell resistances, in Character.GetPrintXml order.
+    const KEYS: [&str; 17] = [
+        "indirectdefenseresist",
+        "",
+        "directmanaresist",
+        "directphysicalresist",
+        "detectionspellresist",
+        "decreasebodresist",
+        "decreaseagiresist",
+        "decreaserearesist",
+        "decreasestrresist",
+        "decreasecharesist",
+        "decreaseintresist",
+        "decreaselogresist",
+        "decreasewilresist",
+        "illusionmanaresist",
+        "illusionphysicalresist",
+        "manipulationmentalresist",
+        "manipulationphysicalresist",
+    ];
+    for (k, (_, v)) in KEYS.iter().zip(crate::calc::spell_defense(ctx.ch, s)) {
+        if !k.is_empty() {
+            add(out, k, v.to_string());
+        }
     }
 }
 

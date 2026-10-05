@@ -287,10 +287,8 @@ cargo test --workspace
   - "Select Martial Art" entries and A.I. programs in kits are skipped.
   - Chummer reads custom kits from its own `packs` folder. To use a kit in both programs, copy the file.
 - Critters: A.I. programs that come with a critter are not added.
-- Layout differences from Chummer5a: no Spell Defense or Advanced
-  Programs tabs and no Pets & Cohorts sub-tab; lists are tables, not
-  trees; Improvements shows in creation mode too, and Condition Monitor
-  is a right-hand tab in creation mode too.
+- Layout differences from Chummer5a: no Advanced Programs tab and no
+  Pets & Cohorts sub-tab; lists are tables, not trees.
 - About 290 UI labels have no Chummer translation string and stay English.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute

@@ -75,6 +75,7 @@ enum SideTab {
     Summary,
     OtherInfo,
     Condition,
+    Defense,
 }
 
 /// Street Gear sub-tabs: Gear, Clothing & Armor, Weapons, Drugs, Lifestyles.
@@ -122,6 +123,9 @@ pub struct CharacterView {
     /// Item detail pane: (selected item guid, editor).
     item_editor: Option<(String, crate::item_editor::ItemEditor)>,
     side_tab: SideTab,
+    /// Counterspelling dice added to the spell defense pools; not saved
+    /// (Chummer's `CurrentCounterspellingDice`).
+    counterspelling: i32,
     /// Street Gear sub-tab, an index into `STREET_GEAR`.
     gear_tab: usize,
     /// Character Info sub-tab: the text field shown.
@@ -204,6 +208,7 @@ impl CharacterView {
             spell_designer: Default::default(),
             item_editor: None,
             side_tab: SideTab::Summary,
+            counterspelling: 0,
             gear_tab: 0,
             info_text: "description",
         };
@@ -286,6 +291,7 @@ impl CharacterView {
             Tab::Initiation => ch.mag_enabled() || ch.res_enabled() || has(&sections::METAMAGICS),
             Tab::Karma => ch.created || !career::entries(ch).is_empty(),
             Tab::Calendar | Tab::Notes => ch.created,
+            Tab::Improvements => ch.created || !chummer_core::custom_improvement::listed(ch).is_empty(),
             _ => true,
         }
     }
@@ -370,10 +376,13 @@ impl CharacterView {
     /// Chummer's right-hand tabs: Karma Summary (creation), Condition
     /// Monitor and Other Info.
     fn side_panel(&mut self, ui: &mut egui::Ui, lang: &Language, roll: &mut Option<u32>) -> bool {
-        let mut tabs = vec![(SideTab::Condition, lang.tr("Condition Monitor")), (SideTab::OtherInfo, lang.tr("Other Info"))];
+        // Creation: Karma Summary, Other Info, Spell Defense; career puts
+        // the Condition Monitor first instead.
+        let mut tabs = vec![(SideTab::OtherInfo, lang.tr("Other Info")), (SideTab::Defense, lang.s("String_SpellDefense"))];
         if self.budget.is_some() {
             tabs.insert(0, (SideTab::Summary, lang.tr("Karma Summary")));
-            tabs.swap(1, 2);
+        } else {
+            tabs.insert(0, (SideTab::Condition, lang.tr("Condition Monitor")));
         }
         if !tabs.iter().any(|(t, _)| *t == self.side_tab) {
             self.side_tab = tabs[0].0;
@@ -385,6 +394,7 @@ impl CharacterView {
                 SideTab::Summary => self.budget_panel(ui, lang),
                 SideTab::OtherInfo => self.other_info(ui, lang, roll),
                 SideTab::Condition => self.condition_monitor(ui, lang),
+                SideTab::Defense => self.spell_defense(ui, lang),
             };
         });
         changed
@@ -442,6 +452,23 @@ impl CharacterView {
 
     /// Damage tracks side by side, the wound penalty and Edge (Chummer's
     /// "Condition Monitor").
+    /// Chummer's Spell Defense tab: each pool with the counterspelling dice
+    /// added in parentheses.
+    fn spell_defense(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
+        egui::Grid::new("spell_defense").num_columns(2).striped(true).spacing([12.0, 4.0]).show(ui, |ui| {
+            ui.label(lang.s("Label_CounterspellingDice"));
+            ui.add(egui::DragValue::new(&mut self.counterspelling).range(0..=100));
+            ui.end_row();
+            for (key, pool) in chummer_core::calc::spell_defense(&self.ch, &self.sheet) {
+                ui.label(lang.s(key));
+                let text = if self.counterspelling == 0 { pool.to_string() } else { format!("{pool} ({})", pool + self.counterspelling) };
+                ui.label(RichText::new(text).monospace());
+                ui.end_row();
+            }
+        });
+        false
+    }
+
     fn condition_monitor(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
         let mut changed = false;
         let s = &self.sheet;
