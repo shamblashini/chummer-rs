@@ -297,6 +297,8 @@ pub fn section_tree<'a>(doc: &'a Element, sec: &Section) -> Vec<ItemNode<'a>> {
         "critterpowers" => grouped(sec, items, &["Critter Powers", "Weaknesses"], |p| Some(usize::from(p.get("category").eq_ignore_ascii_case("Weakness")))),
         "martialarts" => grouped(sec, items, &["Martial Arts", "Selected Qualities"], |m| Some(usize::from(m.get_bool("isquality").unwrap_or(false)))),
         "lifestyles" => grouped(sec, items, &["Selected Lifestyles"], |_| Some(0)),
+        // RefreshComplexForms puts every form under this root.
+        "complexforms" => grouped(sec, items, &["Selected Advanced Complex Forms"], |_| Some(0)),
         // Chummer keeps contacts and enemies on separate tabs.
         "contacts" => grouped(sec, items, &["Contacts", "Enemies", "Pets"], |c| match c.get("type").as_str() {
             "Enemy" => Some(1),
