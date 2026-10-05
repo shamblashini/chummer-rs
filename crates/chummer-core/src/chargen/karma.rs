@@ -67,11 +67,15 @@ fn contact_loyalty(ch: &Character, c: &Element) -> i32 {
     }
 }
 
-/// `Contact.Connection`, capped by `ConnectionMaximum` (6 at creation,
-/// 12 with Friends in High Places).
+/// `Contact.Connection`, capped by [`connection_maximum`].
 fn contact_connection(ch: &Character, c: &Element) -> i32 {
-    let max = if ch.created || friends_in_high_places(ch) { 12 } else { 6 };
-    c.get_i32("connection").unwrap_or(1).min(max)
+    c.get_i32("connection").unwrap_or(1).min(connection_maximum(ch))
+}
+
+/// `Contact.ConnectionMaximum`: 6 at creation, 12 in career mode or with
+/// Friends in High Places.
+pub fn connection_maximum(ch: &Character) -> i32 {
+    if ch.created || friends_in_high_places(ch) { 12 } else { 6 }
 }
 
 /// `Character.FriendsInHighPlaces`.
@@ -99,8 +103,7 @@ pub fn contact_points(ch: &Character, c: &Element) -> i32 {
 
 /// `Contact.EntityType == ContactType.Contact`.
 fn is_contact(c: &Element) -> bool {
-    let t = c.get("type");
-    t.is_empty() || t == "Contact"
+    crate::contacts::ContactType::of(c) == crate::contacts::ContactType::Contact
 }
 
 /// `Character.ContactPoints`. Files from before 5.214 have a gameplay
@@ -150,7 +153,7 @@ fn enemy_karma(ch: &Character, settings: &CharacterSettings) -> i32 {
     let sum: i32 = ch
         .items("contacts", "contact")
         .iter()
-        .filter(|c| c.get("type") == "Enemy" && !contact_free(ch, c))
+        .filter(|c| crate::contacts::ContactType::of(c) == crate::contacts::ContactType::Enemy && !contact_free(ch, c))
         .map(|c| c.get_i32("connection").unwrap_or(0) + c.get_i32("loyalty").unwrap_or(0))
         .sum();
     sum * per

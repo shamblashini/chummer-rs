@@ -511,6 +511,7 @@ dependencies = [
  "chummer-core",
  "eframe",
  "egui_extras",
+ "image",
  "rfd",
 ]
 
@@ -1392,6 +1393,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

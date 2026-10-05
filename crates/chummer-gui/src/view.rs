@@ -106,7 +106,7 @@ pub struct CharacterView {
     select: Option<SelectDialog>,
     confirm_finish: bool,
     new_kno: (String, String, bool),
-    new_contact: (String, String, i32, i32),
+    relationships: crate::relationships_ui::RelationshipsPanel,
     /// Life module picker: (stage, module id, version id).
     life: (String, String, String),
     action: Option<CareerAction>,
@@ -196,7 +196,7 @@ impl CharacterView {
             select: None,
             confirm_finish: false,
             new_kno: (String::new(), "Academic".into(), false),
-            new_contact: (String::new(), String::new(), 1, 1),
+            relationships: Default::default(),
             life: (String::new(), String::new(), String::new()),
             action: None,
             manual: (true, 0.0, String::new()),
@@ -331,10 +331,7 @@ impl CharacterView {
                 Tab::Calendar => page(ui, &mut |ui| self.calendar_ui(ui, lang)),
                 Tab::Notes => self.notes_tab(ui, lang),
                 Tab::Improvements => self.improvements_tab(ui, lang),
-                Tab::Relationships => page(ui, &mut |ui| {
-                    let c = self.contact_form(ui, lang);
-                    c | self.section(ui, &sections::CONTACTS, lang, pdfs, status)
-                }),
+                Tab::Relationships => self.relationships.ui(ui, &mut self.ch, &self.store, lang, status),
             };
         });
         changed |= self.confirm_dialog(ctx, lang);
@@ -1502,26 +1499,6 @@ impl CharacterView {
             });
         });
         added
-    }
-
-    fn contact_form(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
-        let mut changed = false;
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.new_contact.0).hint_text(lang.tr("Contact name")).desired_width(160.0));
-            ui.add(egui::TextEdit::singleline(&mut self.new_contact.1).hint_text(lang.tr("Role")).desired_width(120.0));
-            ui.label(lang.tr("Connection"));
-            ui.add(egui::DragValue::new(&mut self.new_contact.2).range(1..=12));
-            ui.label(lang.tr("Loyalty"));
-            ui.add(egui::DragValue::new(&mut self.new_contact.3).range(1..=6));
-            if ui.add_enabled(!self.new_contact.0.trim().is_empty(), egui::Button::new(format!("➕ {}", lang.tr("Add Contact")))).clicked() {
-                let (n, r, c, l) = self.new_contact.clone();
-                chargen::add_contact(&mut self.ch, n.trim(), r.trim(), c, l);
-                self.new_contact.0.clear();
-                self.new_contact.1.clear();
-                changed = true;
-            }
-        });
-        changed
     }
 
     fn improvements_tab(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {

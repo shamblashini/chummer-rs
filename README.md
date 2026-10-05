@@ -160,6 +160,20 @@ Chummer5a's format (`<custom>`, `<customname>`, `<customgroup>`,
 
 Item requirements (`<required>`/`<forbidden>`) are checked.
 
+**Relationships.** The Relationships tab has Chummer's Contacts, Enemies
+and Pets & Cohorts sub-tabs. Contacts and enemies have name, location,
+archetype, connection, loyalty, the Free/Group/Blackmail/Family flags and
+an expandable stat block (type, metatype, gender, age, personal life,
+preferred payment, hobbies/vice) with `contacts.xml`'s lists; pets have a
+name and a `critters.xml` metatype. Contacts can also be added from a
+Chummer contacts XML file (Add from File). Any entry can be linked to
+another `.chum5` (Attach Character): its name, metatype, gender, age and
+mugshot then come from that file, and Open Character opens it in a new
+tab. The link is saved as Chummer saves it (`<file>` as picked,
+`<relative>` from the program directory); a link made on Windows also
+works when the linked file sits next to the character's own save. A
+missing linked file shows a warning and nothing else.
+
 ### More
 
 - **Sourcebook PDFs.**
@@ -301,13 +315,16 @@ cargo test --workspace
   - "Select Martial Art" entries and A.I. programs in kits are skipped.
   - Chummer reads custom kits from its own `packs` folder. To use a kit in both programs, copy the file.
 - Critters: A.I. programs that come with a critter are not added.
-- Layout differences from Chummer5a: no Advanced Programs tab and no
-  Pets & Cohorts sub-tab. Tree differences: multi-level qualities are one
-  row per level, not one merged node; the one gear item whose data says
-  `startcollapsed` starts open; vehicle mods are always grouped by
-  category (Chummer's default; the option to turn it off is not read);
-  Chummer's "Initiate Grade" nodes are plain "Grade N" groups; contacts
-  are grouped Contacts / Enemies / Pets on one tab.
+- Layout differences from Chummer5a: no Advanced Programs tab. Tree
+  differences: multi-level qualities are one row per level, not one
+  merged node; the one gear item whose data says `startcollapsed` starts
+  open; vehicle mods are always grouped by category (Chummer's default;
+  the option to turn it off is not read); Chummer's "Initiate Grade"
+  nodes are plain "Grade N" groups.
+- Relationships: no Swap Ordering, no drag and drop of contacts, no
+  contact colours, and notes are edited inline (no notes colour). Linked
+  `.chum5lz` (compressed) saves cannot be read. Character sheets print
+  the contact's own name and metatype, not the linked character's.
 - About 290 UI labels have no Chummer translation string and stay English.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute

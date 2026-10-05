@@ -16,6 +16,7 @@ pub mod sections;
 pub mod tree;
 pub mod attributes;
 pub mod character;
+pub mod contacts;
 pub mod skills;
 pub mod calc;
 pub mod engine;
