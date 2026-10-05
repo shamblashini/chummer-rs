@@ -271,6 +271,14 @@ impl Character {
     pub fn is_technomancer(&self) -> bool {
         self.flag("technomancer")
     }
+    /// `Character.IsAI`: Depth is enabled and the metatype has no Body.
+    pub fn is_ai(&self) -> bool {
+        self.dep_enabled() && self.attribute("BOD").is_some_and(|b| b.metatype_max == 0)
+    }
+    /// `Character.AdvancedProgramsEnabled`, saved as `<ai>`.
+    pub fn advanced_programs_enabled(&self) -> bool {
+        self.flag("ai")
+    }
 
     pub fn attribute(&self, abbrev: &str) -> Option<&Attribute> {
         // Shapeshifters save both a Standard and a Shapeshifter set; the

@@ -249,3 +249,59 @@ pub fn set_active(ch: &mut Character, guid: &str, on: bool) -> bool {
     true
 }
 
+
+/// `Character.HomeNode`: the device saved with `<homenode>True` (the last
+/// one, as each load overrides the one before). Any character can have
+/// one saved; only an A.I.'s home node changes its values.
+pub fn home_node(ch: &Character) -> Option<&Element> {
+    fn walk<'a>(e: &'a Element, out: &mut Option<&'a Element>) {
+        for c in e.elements().filter(|c| c.name != "improvements") {
+            if DEVICE_TAGS.contains(&c.name.as_str()) && c.get_bool("homenode").unwrap_or(false) {
+                *out = Some(c);
+            }
+            walk(c, out);
+        }
+    }
+    let mut out = None;
+    walk(&ch.doc, &mut out);
+    out
+}
+
+/// The A.I.'s home node when it is a vehicle or drone.
+pub fn home_node_vehicle(ch: &Character) -> Option<&Element> {
+    home_node(ch).filter(|e| e.name == "vehicle")
+}
+
+/// Whether the "Home Node" checkbox is enabled for a device
+/// (`chkGearHomeNode` in `CharacterCareer.cs`): it must be a commlink
+/// with a Program Limit of at least 1, or 2 when the A.I.'s Depth is
+/// above the device's rating.
+pub fn can_be_home_node(e: &Element, depth: i32) -> bool {
+    let dr = total(e, "Device Rating");
+    is_commlink(e) && total(e, "Program Limit") >= if depth > dr { 2 } else { 1 }
+}
+
+/// `SetHomeNode`: make `guid` the home node, or clear it. Only one device
+/// is the home node at a time.
+pub fn set_home_node(ch: &mut Character, guid: &str, on: bool) -> bool {
+    let Some(e) = super::find(&ch.doc, guid) else { return false };
+    if !DEVICE_TAGS.contains(&e.name.as_str()) || e.get_bool("homenode").unwrap_or(false) == on {
+        return false;
+    }
+    fn clear(e: &mut Element) {
+        for c in e.elements_mut().filter(|c| c.name != "improvements") {
+            if DEVICE_TAGS.contains(&c.name.as_str()) && c.get_bool("homenode").unwrap_or(false) {
+                c.set_child_text("homenode", "False");
+            }
+            clear(c);
+        }
+    }
+    if on {
+        clear(&mut ch.doc);
+    }
+    if let Some(e) = super::find_mut(&mut ch.doc, guid) {
+        e.set_child_text("homenode", crate::improvement::bool_str(on));
+    }
+    ch.dirty = true;
+    true
+}

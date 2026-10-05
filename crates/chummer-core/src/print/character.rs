@@ -326,18 +326,20 @@ fn defenses(ctx: &Ctx, out: &mut Element) {
 fn monitors(ctx: &Ctx, out: &mut Element) {
     let s = &ctx.sheet;
     let ch = ctx.ch;
-    let ai = ch.flag("ai");
+    let ai = ch.is_ai();
+    let core = ai && crate::play::matrix::home_node_vehicle(ch).is_none();
     add(out, "physicalcm", s.physical_cm.to_string());
-    add(out, "physicalcmiscorecm", bool_text(ai));
+    add(out, "physicalcmiscorecm", bool_text(core));
     add(out, "stuncm", s.stun_cm.to_string());
     add(out, "stuncmismatrixcm", bool_text(ai));
-    add(out, "physicalcmfilled", ch.physical_cm_filled.to_string());
-    add(out, "stuncmfilled", ch.stun_cm_filled.to_string());
+    add(out, "physicalcmfilled", crate::play::ai::physical_filled(ch).to_string());
+    add(out, "stuncmfilled", crate::play::ai::stun_filled(ch).to_string());
     add(out, "cmthreshold", s.cm_threshold.to_string());
     let offset = ch.improvements.val_int("CMThresholdOffset", None);
     let ignores = |kind: &str, cm: i32| if ch.improvements.has(kind) { cm } else { offset.min(cm) };
     add(out, "physicalcmthresholdoffset", ignores("IgnoreCMPenaltyPhysical", s.physical_cm).to_string());
-    add(out, "stuncmthresholdoffset", ignores("IgnoreCMPenaltyStun", s.stun_cm).to_string());
+    // A.I.s take no wound penalty from Matrix damage.
+    add(out, "stuncmthresholdoffset", if ai { s.stun_cm } else { ignores("IgnoreCMPenaltyStun", s.stun_cm) }.to_string());
     add(out, "cmoverflow", if ai { 0 } else { s.cm_overflow }.to_string());
     add(out, "psyche", bool_text(false));
 }

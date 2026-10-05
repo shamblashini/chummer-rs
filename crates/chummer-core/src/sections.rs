@@ -90,6 +90,15 @@ pub const CRITTER_POWERS: Section = Section {
     data_file: "critterpowers.xml",
 };
 
+pub const AI_PROGRAMS: Section = Section {
+    label: "Advanced Programs",
+    container: "aiprograms",
+    item: "aiprogram",
+    columns: &[c("Name", "name"), c("Extra", "extra"), c("Source", "source"), c("Page", "page")],
+    child_containers: &[],
+    data_file: "programs.xml",
+};
+
 pub const METAMAGICS: Section = Section {
     label: "Metamagic & Echoes",
     container: "metamagics",

@@ -324,6 +324,7 @@ pub fn choice_for(ch: &Character, store: &DataStore, node: &Element, src: &Bonus
             let [skill] = skills.as_slice() else { return None };
             mk(format!("Choose an expertise in {skill} for {}", src.name), expertise_options(store, node, skill))
         }
+        "selectaiprogram" => mk(format!("Choose a program for {}", src.name), names_of(store, "programs.xml", "programs", "program")),
         "selectinherentaiprogram" => mk(
             "Choose an inherent program".into(),
             names_where(store, "programs.xml", "programs", "program", |r| matches!(r.category().as_str(), "Common Programs" | "Hacking Programs")),

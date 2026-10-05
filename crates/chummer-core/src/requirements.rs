@@ -109,6 +109,8 @@ fn holds(n: &Element, c: &Check<'_>) -> Option<bool> {
         "critterpower" => has_named(ch, "critterpowers", "critterpower", t),
         "metamagic" => has_named(ch, "metamagics", "metamagic", t),
         "martialart" => has_named(ch, "martialarts", "martialart", t),
+        // `MatchesNameOrSourceId` over the A.I.'s programs.
+        "program" => ch.items("aiprograms", "aiprogram").iter().any(|p| p.get("name") == t || p.get("sourceid").eq_ignore_ascii_case(t)),
         "bioware" | "cyberware" => has_named(ch, "cyberwares", "cyberware", t),
         "cyberwarecontains" | "biowarecontains" => {
             let mut all = Vec::new();

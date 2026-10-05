@@ -353,7 +353,7 @@ fn special_flag(i: &Improvement) -> Option<&'static str> {
         ("SpecialTab", "enabletab", "Magician") => Some("magician"),
         ("SpecialTab", "enabletab", "Adept") => Some("adept"),
         ("SpecialTab", "enabletab", "Technomancer") => Some("technomancer"),
-        ("SpecialTab", "enabletab", "Advanced Programs") => Some("ainode"),
+        ("SpecialTab", "enabletab", "Advanced Programs") => Some("ai"),
         ("SpecialTab", "enabletab", "Critter") => Some("critter"),
         _ => None,
     }

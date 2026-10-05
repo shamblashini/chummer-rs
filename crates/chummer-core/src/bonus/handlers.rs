@@ -154,7 +154,7 @@ pub fn apply_node(ctx: &mut Ctx<'_>, node: &Element) -> bool {
                     ("enabletab", "MAGICIAN") => ("Magician", "magician"),
                     ("enabletab", "ADEPT") => ("Adept", "adept"),
                     ("enabletab", "TECHNOMANCER") => ("Technomancer", "technomancer"),
-                    ("enabletab", "ADVANCED PROGRAMS") => ("Advanced Programs", "ainode"),
+                    ("enabletab", "ADVANCED PROGRAMS") => ("Advanced Programs", "ai"),
                     ("enabletab", "CRITTER") => ("Critter", "critter"),
                     ("disabletab", "CYBERWARE") => ("Cyberware", "cyberwaredisabled"),
                     ("disabletab", "INITIATION") => ("Initiation", "initiationdisabled"),
@@ -659,6 +659,19 @@ pub fn apply_node(ctx: &mut Ctx<'_>, node: &Element) -> bool {
         "nuyenamt" => nuyen_amt(ctx, node),
         "skillwire" | "skillsoftaccess" => skillwire(ctx, node),
         "availability" | "newspellkarmacost" => text_value_with_condition(ctx, node),
+        "newaiprogramkarmacost" | "newaiadvancedprogramkarmacost" | "newaiprogramkarmacostmultiplier" | "newaiadvancedprogramkarmacostmultiplier" => {
+            // Unnamed, with the `condition` attribute (`newaiprogramkarmacost` & co.).
+            let kind = match name {
+                "newaiprogramkarmacost" => "NewAIProgramKarmaCost",
+                "newaiadvancedprogramkarmacost" => "NewAIAdvancedProgramKarmaCost",
+                "newaiprogramkarmacostmultiplier" => "NewAIProgramKarmaCostMultiplier",
+                _ => "NewAIAdvancedProgramKarmaCostMultiplier",
+            };
+            let mut i = ctx.imp(kind, "");
+            i.val = ctx.dec(&node.text());
+            i.condition = node.attr("condition").unwrap_or("").to_owned();
+            ctx.push(i);
+        }
         "knowledgeskillpoints" => knowledge_skill_points(ctx, node),
         "penaltyfreesustain" => penalty_free_sustain(ctx, node),
         "metamagiclimit" => metamagic_limit(ctx, node),
@@ -693,7 +706,7 @@ pub fn apply_node(ctx: &mut Ctx<'_>, node: &Element) -> bool {
         "skillsoft" => return skillsoft(ctx, node),
         "addskillspecialization" => add_skill_specialization(ctx, node),
         "selectexpertise" => return select_expertise(ctx, node),
-        "selectinherentaiprogram" => return select_ai_program(ctx),
+        "selectaiprogram" | "selectinherentaiprogram" => return select_ai_program(ctx),
         "weaponspecificdice" => return weapon_specific_dice(ctx, node),
         "martialart" => return martial_art(ctx, node),
         "selectspell" => return select_spell(ctx, node),
@@ -1154,33 +1167,19 @@ fn select_expertise(ctx: &mut Ctx<'_>, node: &Element) -> bool {
     true
 }
 
-/// `selectinherentaiprogram`: an AI program (`AIProgram.Create` with
-/// `blnCanDelete = false`). A program with `<selecttext>` takes its text
-/// as "Name (Text)".
+/// `selectaiprogram` and `selectinherentaiprogram`: an AI program
+/// (`AIProgram.Create` with `blnCanDelete = false`). The two differ only
+/// in which categories Chummer's picker offers. A program with
+/// `<selecttext>` takes its text as "Name (Text)".
 fn select_ai_program(ctx: &mut Ctx<'_>) -> bool {
     let Some(a) = ctx.answer() else { return false };
     let Ok(doc) = ctx.store.doc("programs.xml") else { return false };
     let Some((rec, extra)) = record_and_extra(&doc, "programs", "program", &a) else { return false };
     let guid = new_guid();
     let own = own_bonus(ctx, "AIProgram", &guid, rec, Some(&extra));
-    let e = rec.el();
-    let mut p = Element::new("aiprogram");
-    for (k, v) in [
-        ("sourceid", rec.id()),
-        ("guid", guid),
-        ("name", rec.name()),
-        ("candelete", "False".into()),
-        ("isadvancedprogram", crate::improvement::bool_str(rec.category() == "Advanced Programs")),
-        ("requiresprogram", e.get("require")),
-        ("extra", extra.clone()),
-        ("source", rec.source()),
-        ("page", rec.page()),
-        ("notes", e.get("notes")),
-    ] {
-        p.push(Element::with_text(k, v));
-    }
+    let extra = own.selected.clone().filter(|s| !s.is_empty()).unwrap_or(extra);
     ctx.selected = Some(if extra.is_empty() { rec.name() } else { format!("{} ({extra})", rec.name()) });
-    absorb(ctx, "aiprograms", p, own, "AIProgram");
+    absorb(ctx, "aiprograms", crate::items::aiprogram::element(rec, &guid, &extra, false), own, "AIProgram");
     true
 }
 

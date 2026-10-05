@@ -355,8 +355,8 @@ pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String>
     put(&mut doc, "contactpoints", "0".into());
     put(&mut doc, "spelllimit", talent.int("spells").to_string());
     put(&mut doc, "cfplimit", talent.int("cfp").to_string());
-    put(&mut doc, "ainormalprogramlimit", "0".into());
-    put(&mut doc, "aiadvancedprogramlimit", "0".into());
+    put(&mut doc, "ainormalprogramlimit", talent.int("ainormalprogramlimit").to_string());
+    put(&mut doc, "aiadvancedprogramlimit", talent.int("aiadvancedprogramlimit").to_string());
     for k in ["streetcred", "notoriety", "publicawareness", "burntstreetcred"] {
         put(&mut doc, k, "0".into());
     }

@@ -1,8 +1,8 @@
 //! Creation karma spent, by category (`CharacterCreate.CalculateBP`).
 //!
 //! Not ported (no creation fixture exercises them): quality `<costdiscount>`
-//! nodes, Mastery qualities bought with spell points, stacked foci, AI
-//! programs and the `CompensateSkillGroupKarmaDifference` house rule.
+//! nodes, Mastery qualities bought with spell points, stacked foci and the
+//! `CompensateSkillGroupKarmaDifference` house rule.
 
 use crate::calc::{Rules, Sheet};
 use crate::character::Character;
@@ -30,6 +30,7 @@ pub fn karma_breakdown(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &
         ("foci", foci_karma(ch, settings)),
         ("spirits", spirit_karma(ch, settings)),
         ("forms", crate::items::magic::complex_form_karma(ch, rules)),
+        ("programs", crate::items::aiprogram::creation_karma(ch, rules)),
         ("initiation", initiation_karma(ch, rules, settings)),
         ("critter powers", ch.items("critterpowers", "critterpower").iter().map(|p| p.get_i32("karma").unwrap_or(0)).sum()),
     ]

@@ -213,11 +213,7 @@ pub fn apply(ch: &mut Character, store: &DataStore, settings: Option<&CharacterS
     }
     martial_arts(ch, &mut a, kit);
     complex_forms(ch, &mut a, kit);
-    if let Some(p) = kit.child("programs") {
-        for e in p.elements() {
-            a.report.skipped.push(format!("Program: {} (A.I. programs are not supported)", name_select(e).0));
-        }
-    }
+    programs(ch, &mut a, kit);
     spells(ch, &mut a, kit);
     spirits(ch, &mut a, kit);
     lifestyles(ch, &mut a, kit);
@@ -303,6 +299,21 @@ fn complex_forms(ch: &mut Character, a: &mut Applier<'_>, kit: &Element) {
         };
         items::magic::complexform::add(ch, a.store, rec, select.as_deref());
         a.report.added.push(format!("Complex Form: {name}"));
+    }
+}
+
+/// `<programs><program><name>`: A.I. programs, bought like the player's
+/// own (`candelete` True, no selection forced).
+fn programs(ch: &mut Character, a: &mut Applier<'_>, kit: &Element) {
+    let Some(doc) = a.doc("programs.xml") else { return };
+    for p in kit.child("programs").into_iter().flat_map(|k| k.children_named("program")) {
+        let (name, _) = name_select(p);
+        let Some(rec) = find_in(&doc, "programs", "program", &name, &a.books) else {
+            a.missing("Program", &name);
+            continue;
+        };
+        items::aiprogram::add(ch, a.store, rec, None, true);
+        a.report.added.push(format!("Program: {name}"));
     }
 }
 

@@ -27,6 +27,7 @@ const BASELINES: &[(&str, usize)] = &[
     ("metamagic", 2),
     ("martialart", 5),
     ("critterpower", 0),
+    ("aiprogram", 0),
     ("mentorspirit", 4),
     ("gear", 1236),
     ("lifestyle", 24),
@@ -45,7 +46,7 @@ const COMMON_IGNORE: &[&str] = &[
 /// Saved element tags the oracle visits, mapped to `items` kind tags.
 const TAGS: &[&str] = &[
     "quality", "gear", "cyberware", "armor", "armormod", "weapon", "accessory", "vehicle", "mod", "weaponmount", "lifestyle", "drug", "spell", "power",
-    "complexform", "spirit", "metamagic", "martialart", "critterpower", "mentorspirit",
+    "complexform", "spirit", "metamagic", "martialart", "critterpower", "mentorspirit", "aiprogram",
 ];
 
 fn walk<'a>(e: &'a Element, out: &mut Vec<&'a Element>) {

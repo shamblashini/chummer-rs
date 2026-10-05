@@ -665,6 +665,47 @@ pub fn learn_complex_form(ch: &mut Character, engine: &Engine, rec: Record<'_>, 
     })
 }
 
+/// `Character.AIProgramKarmaCost` or `AIAdvancedProgramKarmaCost`.
+pub fn ai_program_karma_cost(engine: &Engine, ch: &Character, advanced: bool) -> i32 {
+    let cr = CareerRules::for_character(engine, ch);
+    ai_program_cost(ch, &cr, advanced)
+}
+
+fn ai_program_cost(ch: &Character, cr: &CareerRules, advanced: bool) -> i32 {
+    use crate::items::aiprogram;
+    if advanced { aiprogram::advanced_program_karma_cost(ch, &cr.rules) } else { aiprogram::program_karma_cost(ch, &cr.rules) }
+}
+
+/// Pay karma for a program already on the character
+/// (`cmdAddAIProgram_Click`). Returns the expense guid.
+pub fn pay_for_ai_program(ch: &mut Character, engine: &Engine, program_guid: &str) -> Result<String, CareerError> {
+    require_career(ch)?;
+    let cr = CareerRules::for_character(engine, ch);
+    let p = find_item(ch, "aiprograms", "aiprogram", program_guid).ok_or_else(|| CareerError::NotFound(format!("program {program_guid}")))?;
+    let advanced = crate::items::aiprogram::is_advanced(p);
+    let cost = ai_program_cost(ch, &cr, advanced);
+    let reason = format!("Learned AI Program {}", display_name(p));
+    require_karma(ch, cost)?;
+    let kind = if advanced { KarmaExpenseType::AddAIAdvancedProgram } else { KarmaExpenseType::AddAIProgram };
+    Ok(book_karma(ch, -cost, reason, ExpenseUndo::karma(kind, program_guid)))
+}
+
+/// `AIProgram.DisplayNameShort`: "Name (Extra)".
+fn display_name(p: &Element) -> String {
+    match p.get("extra") {
+        e if e.is_empty() => p.get("name"),
+        e => format!("{} ({e})", p.get("name")),
+    }
+}
+
+/// Add a program from data and pay for it. Returns its guid.
+pub fn learn_ai_program(ch: &mut Character, engine: &Engine, rec: Record<'_>, purchase: &Purchase) -> Result<String, CareerError> {
+    let advanced = rec.category() == crate::items::aiprogram::ADVANCED;
+    learn_item(ch, engine, "aiprogram", "aiprograms", rec, purchase, |ch, cr| ai_program_cost(ch, cr, advanced), |ch, g| {
+        pay_for_ai_program(ch, engine, g).map(|_| ())
+    })
+}
+
 /// Check the cost first, add the item through [`items::add`], then pay;
 /// a failed payment removes the item again.
 #[allow(clippy::too_many_arguments)]
