@@ -10,6 +10,7 @@ use chummer_core::engine::Engine;
 use chummer_core::format;
 use chummer_core::lang::Language;
 use chummer_core::sections::{self, Section};
+use chummer_core::tree::Entry;
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
 
 use chummer_core::career;
@@ -1190,42 +1191,32 @@ impl CharacterView {
         changed
     }
 
-    /// A table of items. Returns true if the character changed.
+    /// A section's items as a tree table (`tree_table`), grouped and nested
+    /// like Chummer's tree view. Returns true if the character changed.
     fn section(&mut self, ui: &mut egui::Ui, sec: &Section, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
-        let items: Vec<Element> = self.ch.items(sec.container, sec.item).into_iter().cloned().collect();
-        ui.heading(format!("{} ({})", lang.tr(sec.label), items.len()));
-        if items.is_empty() {
+        let count = self.ch.doc.child(sec.container).map_or(0, |c| c.children_named(sec.item).count());
+        ui.heading(format!("{} ({count})", lang.tr(sec.label)));
+        if count == 0 {
             ui.weak(lang.tr("None."));
             return false;
         }
-        egui::Grid::new(sec.container).striped(true).num_columns(sec.columns.len() + 1).spacing([14.0, 4.0]).show(ui, |ui| {
-            for c in sec.columns {
-                ui.strong(lang.tr(c.header));
-            }
-            ui.label("");
-            ui.end_row();
-            let mut clicked: Option<String> = None;
-            for it in &items {
-                clicked = item_rows(ui, sec, it, lang, 0).or(clicked);
-                ui.horizontal(|ui| {
-                    pdf_ui::source_icon(ui, pdfs, SourceRef::of(it), status);
-                    if ui.small_button("🗑").on_hover_text(lang.tr("Remove (also removes its improvements)")).clicked() {
-                        self.confirm_remove = Some((sec.container.to_owned(), it.get("guid"), display_name(sec, it, lang)));
-                    }
-                });
-                ui.end_row();
-                for (container, item) in sec.child_containers {
-                    if let Some(c) = it.child(container) {
-                        for child in c.children_named(item) {
-                            clicked = child_rows(ui, sec, child, lang, 1, pdfs, status).or(clicked);
-                        }
-                    }
-                }
-            }
-            if let Some(g) = clicked {
-                self.item_editor = Some((g, crate::item_editor::ItemEditor::default()));
+        let tree = chummer_core::tree::section_tree(&self.ch.doc, sec);
+        let headers: Vec<String> = sec.columns.iter().map(|c| lang.tr(c.header)).collect();
+        let selected = self.item_editor.as_ref().map(|(g, _)| g.as_str());
+        let mut remove = None;
+        let out = crate::tree_table::TreeTable::new(sec.container, &headers).selected(selected).show(ui, &tree, |n| tree_row(sec, n, lang), |ui, n| {
+            let Entry::Item { el, top } = n.value else { return };
+            pdf_ui::source_icon(ui, pdfs, SourceRef::of(el), status);
+            if top && ui.small_button("🗑").on_hover_text(lang.tr("Remove (also removes its improvements)")).clicked() {
+                remove = Some((sec.container.to_owned(), el.get("guid"), display_name(sec, el, lang)));
             }
         });
+        if remove.is_some() {
+            self.confirm_remove = remove;
+        }
+        if let Some(g) = out.clicked {
+            self.item_editor = Some((g, crate::item_editor::ItemEditor::default()));
+        }
         false
     }
 
@@ -1775,48 +1766,25 @@ fn cell(it: &Element, field: &str) -> String {
     }
 }
 
-/// One table row. Returns the item's guid when its name was clicked.
-fn item_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, depth: usize) -> Option<String> {
-    let mut clicked = None;
-    for (i, c) in sec.columns.iter().enumerate() {
-        if i == 0 {
-            let indent = "    ".repeat(depth);
-            let mut text = RichText::new(format!("{indent}{}", display_name(sec, it, lang)));
-            if depth == 0 {
-                text = text.strong();
-            }
-            let editable = chummer_core::items::edit::is_item(it);
-            let r = ui.add(egui::Label::new(text).sense(if editable { egui::Sense::click() } else { egui::Sense::hover() }));
-            if r.clicked() {
-                clicked = Some(it.get("guid"));
-            }
-            let notes = it.get("notes");
-            let r = if editable { r.on_hover_cursor(egui::CursorIcon::PointingHand) } else { r };
-            if !notes.trim().is_empty() {
-                r.on_hover_text(notes);
-            }
-        } else {
-            ui.label(cell(it, c.field));
+/// A tree-table row for a section node: a group's label, or an item's
+/// name and column cells.
+fn tree_row(sec: &Section, n: &chummer_core::tree::ItemNode, lang: &Language) -> crate::tree_table::RowView {
+    use chummer_core::tree::Label;
+    match &n.value {
+        Entry::Group(label) => {
+            let text = match label {
+                Label::Ui(s) => lang.tr(s),
+                Label::Text(s) => s.clone(),
+                Label::Grade(g) => format!("{} {g}", lang.tr("Grade")),
+            };
+            crate::tree_table::RowView { cells: vec![text], group: true, ..Default::default() }
+        }
+        Entry::Item { el, .. } => {
+            let mut cells = vec![display_name(sec, el, lang)];
+            cells.extend(sec.columns.iter().skip(1).map(|c| cell(el, c.field)));
+            crate::tree_table::RowView { cells, group: false, clickable: chummer_core::items::edit::is_item(el), hover: el.get("notes") }
         }
     }
-    clicked
-}
-
-fn child_rows(ui: &mut egui::Ui, sec: &Section, it: &Element, lang: &Language, depth: usize, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<String> {
-    if depth > 6 {
-        return None;
-    }
-    let mut clicked = item_rows(ui, sec, it, lang, depth);
-    pdf_ui::source_icon(ui, pdfs, SourceRef::of(it), status);
-    ui.end_row();
-    for (container, item) in sec.child_containers {
-        if let Some(c) = it.child(container) {
-            for child in c.children_named(item) {
-                clicked = child_rows(ui, sec, child, lang, depth + 1, pdfs, status).or(clicked);
-            }
-        }
-    }
-    clicked
 }
 
 /// Clickable condition-monitor boxes. Clicking box N sets damage to N, or

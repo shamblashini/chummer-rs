@@ -13,6 +13,7 @@ pub mod dice;
 pub mod improvement;
 pub mod custom_improvement;
 pub mod sections;
+pub mod tree;
 pub mod attributes;
 pub mod character;
 pub mod skills;

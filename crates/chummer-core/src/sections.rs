@@ -150,7 +150,8 @@ pub const GEAR: Section = Section {
     label: "Gear",
     container: "gears",
     item: "gear",
-    columns: &[c("Name", "name"), c("Category", "category"), c("Rating", "rating"), c("Qty", "qty"), c("Avail", "avail"), c("Cost", "cost"), c("Location", "location")],
+    // Gear locations are tree groups (`tree::section_tree`), not a column.
+    columns: &[c("Name", "name"), c("Category", "category"), c("Rating", "rating"), c("Qty", "qty"), c("Avail", "avail"), c("Cost", "cost")],
     child_containers: &[("children", "gear")],
     data_file: "gear.xml",
 };

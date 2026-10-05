@@ -18,6 +18,7 @@ mod ruleset_ui;
 mod select;
 mod settings_ui;
 mod theme;
+mod tree_table;
 mod view;
 mod wizard;
 #[cfg(test)]
