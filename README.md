@@ -199,6 +199,20 @@ character has them. The right-hand panel has Karma Summary (creation),
 Condition Monitor and Other Info; the status bar shows karma, essence and
 nuyen.
 
+Item lists are tree tables, grouped and nested the way Chummer5a's tree
+views are: gear, armor, weapons and vehicles under "Selected Gear" (etc.)
+and their locations; ware in cyberlimbs; mods and gear in armor;
+underbarrel weapons and accessories on weapons; locations, mods by
+category, weapon mounts, weapons and gear in vehicles; qualities under
+Positive / Negative Qualities; spells by category; metamagics by grade;
+critter powers and weaknesses; martial arts and their techniques. The
+columns stay aligned at every depth. Click ▸ / ▾ (or press Left / Right
+on the selected row) to close or open a node; the window remembers it.
+Skills and attributes stay flat tables.
+
+![Classic theme, gear tree](docs/screenshots/chummer-rs-classic-gear-tree.png)
+![Graphite theme, cyberware tree](docs/screenshots/chummer-rs-graphite-cyberware-tree.png)
+
 View → Theme selects one of two themes. The choice is saved in
 `~/.config/chummer-rs/gui.ini`; `--theme classic|graphite` overrides it.
 
@@ -288,7 +302,12 @@ cargo test --workspace
   - Chummer reads custom kits from its own `packs` folder. To use a kit in both programs, copy the file.
 - Critters: A.I. programs that come with a critter are not added.
 - Layout differences from Chummer5a: no Advanced Programs tab and no
-  Pets & Cohorts sub-tab; lists are tables, not trees.
+  Pets & Cohorts sub-tab. Tree differences: multi-level qualities are one
+  row per level, not one merged node; the one gear item whose data says
+  `startcollapsed` starts open; vehicle mods are always grouped by
+  category (Chummer's default; the option to turn it off is not read);
+  Chummer's "Initiate Grade" nodes are plain "Grade N" groups; contacts
+  are grouped Contacts / Enemies / Pets on one tab.
 - About 290 UI labels have no Chummer translation string and stay English.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute
@@ -310,6 +329,7 @@ cargo test --workspace
 | `chargen.rs`, `career/`, `essence_loss.rs` | Creation, career ledger, essence loss |
 | `gm/` | Critters, PACKS kits, custom spells |
 | `print.rs`, `export.rs`, `roster.rs`, `calendar.rs` | Sheets, export, roster, calendar |
+| `tree.rs` | Item lists as Chummer's trees (root nodes, locations, nesting) |
 | `crates/chummer-gui` | egui desktop application |
 | `crates/chummer-cli` | Command-line tool |
 | `tools/gen_bonus_table.py` | Generates simple bonus handlers from Chummer5a's C# |
