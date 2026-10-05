@@ -99,8 +99,7 @@ pub fn contact_points(ch: &Character, c: &Element) -> i32 {
 
 /// `Contact.EntityType == ContactType.Contact`.
 fn is_contact(c: &Element) -> bool {
-    let t = c.get("type");
-    t.is_empty() || t == "Contact"
+    crate::contacts::ContactType::of(c) == crate::contacts::ContactType::Contact
 }
 
 /// `Character.ContactPoints`. Files from before 5.214 have a gameplay
@@ -150,7 +149,7 @@ fn enemy_karma(ch: &Character, settings: &CharacterSettings) -> i32 {
     let sum: i32 = ch
         .items("contacts", "contact")
         .iter()
-        .filter(|c| c.get("type") == "Enemy" && !contact_free(ch, c))
+        .filter(|c| crate::contacts::ContactType::of(c) == crate::contacts::ContactType::Enemy && !contact_free(ch, c))
         .map(|c| c.get_i32("connection").unwrap_or(0) + c.get_i32("loyalty").unwrap_or(0))
         .sum();
     sum * per

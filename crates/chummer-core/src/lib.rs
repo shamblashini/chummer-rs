@@ -15,6 +15,7 @@ pub mod custom_improvement;
 pub mod sections;
 pub mod attributes;
 pub mod character;
+pub mod contacts;
 pub mod skills;
 pub mod calc;
 pub mod engine;

@@ -902,28 +902,7 @@ pub fn remove_knowledge_skill(ch: &mut Character, guid: &str) {
 
 /// Add a contact with a connection and loyalty rating.
 pub fn add_contact(ch: &mut Character, name: &str, role: &str, connection: i32, loyalty: i32) {
-    let mut c = Element::new("contact");
-    let mut put = |k: &str, v: &str| c.push(Element::with_text(k, v));
-    put("name", name);
-    put("role", role);
-    put("location", "");
-    put("connection", &connection.to_string());
-    put("loyalty", &loyalty.to_string());
-    for k in ["metatype", "gender", "age", "contacttype", "preferredpayment", "hobbiesvice", "personallife"] {
-        put(k, "");
-    }
-    put("type", "Contact");
-    for k in ["file", "relative", "notes", "groupname"] {
-        put(k, "");
-    }
-    put("colour", "-986896");
-    for k in ["group", "family", "blackmail", "free"] {
-        put(k, "False");
-    }
-    put("groupenabled", "True");
-    put("guid", &new_guid());
-    put("mainmugshotindex", "-1");
-    c.push(Element::new("mugshots"));
+    let c = crate::contacts::new_element(crate::contacts::ContactType::Contact, name, role, connection, loyalty);
     ch.items_mut("contacts").push(c);
 }
 
