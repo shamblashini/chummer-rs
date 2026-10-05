@@ -14,4 +14,5 @@ chummer-core.workspace = true
 anyhow.workspace = true
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "persistence"] }
 egui_extras = "0.33"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }

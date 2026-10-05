@@ -148,3 +148,16 @@ fn choice_lists_from_data() {
     let critters = contacts::metatype_choices(&store, "critters.xml");
     assert!(critters.iter().any(|(v, _, _)| v == "Great Cat"), "{}", critters.len());
 }
+
+#[test]
+fn add_contacts_from_file() {
+    let mut ch = Character::load(&fixture("Barrett.chum5")).unwrap();
+    let before = ch.items("contacts", "contact").len();
+    let src = "<chummer><contacts><contact><name>Mr. Johnson</name><role>Fixer</role><connection>4</connection><loyalty>2</loyalty><type>Contact</type></contact><contact><name>Rex</name><type>Pet</type></contact></contacts></chummer>";
+    assert_eq!(contacts::import(&mut ch, src), Ok(2));
+    assert_eq!(ch.items("contacts", "contact").len(), before + 2);
+    let rex = contacts::of_type(&ch, ContactType::Pet)[0];
+    assert_eq!(rex.get("name"), "Rex");
+    assert!(!rex.get("guid").is_empty());
+    assert!(contacts::import(&mut ch, "<character/>").is_err());
+}

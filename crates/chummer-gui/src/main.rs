@@ -13,6 +13,7 @@ mod lifestyle_ui;
 mod magic_ui;
 mod item_editor;
 mod pdf_ui;
+mod relationships_ui;
 mod play_ui;
 mod ruleset_ui;
 mod select;
@@ -721,6 +722,9 @@ impl eframe::App for App {
                 if let Some(pool) = self.views[idx].ui(ctx, &engine, &self.lang, &self.pdfs, &mut self.status) {
                     self.dice.set_pool(pool);
                     self.show_dice = true;
+                }
+                if let Some(p) = relationships_ui::take_open_request(ctx) {
+                    self.open(&p);
                 }
             }
         }

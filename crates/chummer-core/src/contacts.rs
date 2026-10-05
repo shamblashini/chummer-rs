@@ -112,6 +112,25 @@ pub fn remove(ch: &mut Character, guid: &str) -> bool {
     ch.remove_item("contacts", guid)
 }
 
+/// "Add from File" (`AddContactsFromFile`): every
+/// `/chummer/contacts/contact` of an XML file joins the character. Returns
+/// how many were added.
+pub fn import(ch: &mut Character, src: &str) -> Result<usize, String> {
+    let doc = crate::xml::parse(src).map_err(|e| e.to_string())?;
+    if doc.name != "chummer" {
+        return Err(format!("not a Chummer contacts file (root element <{}>)", doc.name));
+    }
+    let list: Vec<Element> = doc.child("contacts").map(|c| c.children_named("contact").cloned().collect()).unwrap_or_default();
+    let n = list.len();
+    for mut c in list {
+        if c.get("guid").is_empty() {
+            c.set_child_text("guid", new_guid());
+        }
+        ch.items_mut("contacts").push(c);
+    }
+    Ok(n)
+}
+
 /// The drop-down lists of `ContactControl` from `contacts.xml`, by saved
 /// field: role (`contacts/contact`), gender, age, personal life, type,
 /// preferred payment and hobbies/vice. Values are the English names.
