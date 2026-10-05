@@ -211,6 +211,10 @@ impl<'a> TreeTable<'a> {
                     row.col(|ui| {
                         if !v.group {
                             ui.spacing_mut().item_spacing.x = 4.0;
+                            if selected {
+                                // Frameless icons (📖) must stay visible on the selection.
+                                ui.visuals_mut().override_text_color = Some(p.selection_text);
+                            }
                             actions(ui, r.node);
                         }
                     });

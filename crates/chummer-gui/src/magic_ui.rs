@@ -239,12 +239,16 @@ pub struct MagicEditor {
 }
 
 impl MagicEditor {
-    /// The editor for the selected sub-section (`container`) plus the
-    /// mentor spirit and foci. Returns true if the character changed.
+    /// The mentor spirit and foci, shown once per page.
+    pub fn shared_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+        let changed = self.mentor_ui(ui, ch, cx, status);
+        changed | foci_ui(ui, ch, cx, status)
+    }
+
+    /// The editor for one sub-section (`container`). Returns true if the
+    /// character changed.
     pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, container: &str, status: &mut Status) -> bool {
         let mut changed = false;
-        changed |= self.mentor_ui(ui, ch, cx, status);
-        changed |= foci_ui(ui, ch, cx, status);
         changed |= match container {
             "spells" => self.spells_ui(ui, ch, cx, status),
             "powers" => powers_ui(ui, ch, cx, status),

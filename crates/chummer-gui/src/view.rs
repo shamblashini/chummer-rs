@@ -1040,6 +1040,10 @@ impl CharacterView {
             Tab::Initiation => vec![sections::METAMAGICS],
             _ => Vec::new(),
         };
+        if matches!(tab, Tab::Magician | Tab::Adept) {
+            let cx = crate::magic_ui::Ctx { store: &self.store, engine, sheet: &self.sheet, settings: self.settings.as_ref(), lang, pdfs };
+            changed |= self.magic_editor.shared_ui(ui, &mut self.ch, &cx, status);
+        }
         for (i, sec) in secs.into_iter().enumerate() {
             if i > 0 {
                 ui.add_space(10.0);

@@ -38,11 +38,13 @@ pub struct ItemEditor {
     confirm_remove: bool,
     /// Ammunition, matrix and damage tracking (`play_ui`).
     play: crate::play_ui::PlayPanel,
+    /// Name typed for a new location.
+    new_location: String,
 }
 
 impl Default for ItemEditor {
     fn default() -> Self {
-        ItemEditor { sell_percent: 50.0, mount_size: String::new(), confirm_remove: false, play: Default::default() }
+        ItemEditor { sell_percent: 50.0, mount_size: String::new(), confirm_remove: false, play: Default::default(), new_location: String::new() }
     }
 }
 
@@ -128,10 +130,33 @@ impl ItemEditor {
             }
             if edit::has_location(ch, guid) {
                 ui.label(lang.tr("Location"));
-                let mut v = e.get("location");
-                if ui.add(egui::TextEdit::singleline(&mut v).desired_width(180.0)).changed() {
-                    res.changed |= edit::set_text(ch, guid, "location", &v);
-                }
+                // `<location>` holds the location's guid (older files: its name).
+                let cur = e.get("location");
+                let locations = edit::locations(ch, guid);
+                let none = lang.tr("None");
+                let shown = locations.iter().find(|(g, n)| g.eq_ignore_ascii_case(&cur) || *n == cur).map_or_else(|| if cur.is_empty() { none.clone() } else { cur.clone() }, |(_, n)| n.clone());
+                ui.horizontal(|ui| {
+                    let mut pick = None;
+                    crate::combo::Combo::from_id_salt(("location", guid)).selected_text(shown).width(180.0).show_ui(ui, |ui| {
+                        if crate::combo::selectable_label(ui, cur.is_empty(), &none).clicked() {
+                            pick = Some(String::new());
+                        }
+                        for (g, n) in &locations {
+                            if crate::combo::selectable_label(ui, *g == cur, n).clicked() {
+                                pick = Some(g.clone());
+                            }
+                        }
+                    });
+                    ui.add(egui::TextEdit::singleline(&mut self.new_location).hint_text(lang.tr("New location")).desired_width(90.0));
+                    let name = self.new_location.trim().to_owned();
+                    if ui.add_enabled(!name.is_empty(), egui::Button::new(lang.tr("Add"))).clicked() {
+                        pick = edit::add_location(ch, guid, &name);
+                        self.new_location.clear();
+                    }
+                    if let Some(g) = pick {
+                        res.changed |= edit::set_text(ch, guid, "location", &g);
+                    }
+                });
                 ui.end_row();
             }
             if tag.ends_with("ware") && !e.get("location").is_empty() {

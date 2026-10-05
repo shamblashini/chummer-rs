@@ -471,6 +471,39 @@ pub fn has_location(ch: &Character, guid: &str) -> bool {
     find(ch, guid).is_some_and(|e| matches!(e.name.as_str(), "gear" | "armor" | "weapon" | "vehicle") && e.child("location").is_some()) && parent(ch, guid).is_none()
 }
 
+/// The locations container for a top-level item kind (`gear` → `gearlocations`).
+fn locations_container(tag: &str) -> Option<&'static str> {
+    Some(match tag {
+        "gear" => "gearlocations",
+        "armor" => "armorlocations",
+        "weapon" => "weaponlocations",
+        "vehicle" => "vehiclelocations",
+        _ => return None,
+    })
+}
+
+/// `(guid, name)` of the locations an item can be put in.
+pub fn locations(ch: &Character, guid: &str) -> Vec<(String, String)> {
+    let Some(c) = find(ch, guid).and_then(|e| locations_container(&e.name)) else { return Vec::new() };
+    ch.doc.child(c).map(|c| c.children_named("location").map(|l| (l.get("guid"), l.get("name"))).collect()).unwrap_or_default()
+}
+
+/// Add a location for the item's kind, as `Location.Save` writes it, and
+/// return its guid.
+pub fn add_location(ch: &mut Character, guid: &str, name: &str) -> Option<String> {
+    let c = find(ch, guid).and_then(|e| locations_container(&e.name))?;
+    let id = super::new_guid();
+    let list = ch.doc.child_or_insert(c);
+    let order = list.children_named("location").count();
+    let mut l = Element::new("location");
+    for (k, v) in [("guid", id.as_str()), ("name", name), ("notes", ""), ("notesColor", "Chocolate"), ("sortorder", &order.to_string())] {
+        l.push(Element::with_text(k, v));
+    }
+    list.push(l);
+    ch.dirty = true;
+    Some(id)
+}
+
 /// Set a plain text field of an item (custom name, location, notes).
 pub fn set_text(ch: &mut Character, guid: &str, field: &str, value: &str) -> bool {
     let Some(e) = find_mut(ch, guid) else { return false };
