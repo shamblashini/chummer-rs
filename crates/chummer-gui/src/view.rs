@@ -501,7 +501,7 @@ impl CharacterView {
             }
             cols[1].label(RichText::new(slabel).strong());
             let mut sf = chummer_core::play::ai::stun_filled(&self.ch);
-            if cm_track(&mut cols[1], "scm", scm, thr, &mut sf, pal_s) {
+            if cm_track(&mut cols[1], "scm", scm, if self.ch.is_ai() { 0 } else { thr }, &mut sf, pal_s) {
                 changed |= chummer_core::play::ai::set_stun_filled(&mut self.ch, sf);
             }
         });
