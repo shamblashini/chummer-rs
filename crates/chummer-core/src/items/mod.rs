@@ -15,6 +15,7 @@
 //!
 //! [`quality`] is the worked example.
 
+pub mod aiprogram;
 pub mod armor;
 pub mod cyberware;
 pub mod drug;
@@ -93,6 +94,7 @@ pub const KINDS: &[Kind] = &[
     Kind { tag: "metamagic", container: "metamagics", file: "metamagic.xml", data_container: "metamagics", data_item: "metamagic", label: "Metamagic" },
     Kind { tag: "martialart", container: "martialarts", file: "martialarts.xml", data_container: "martialarts", data_item: "martialart", label: "Martial art" },
     Kind { tag: "critterpower", container: "critterpowers", file: "critterpowers.xml", data_container: "powers", data_item: "power", label: "Critter power" },
+    Kind { tag: "aiprogram", container: "aiprograms", file: "programs.xml", data_container: "programs", data_item: "program", label: "Program" },
 ];
 
 pub fn kind(tag: &str) -> Option<&'static Kind> {
@@ -111,6 +113,7 @@ pub fn rebuild(tag: &str, ch: &Character, store: &DataStore, saved: &Element) ->
         "weapon" | "accessory" => weapon::rebuild(tag, ch, store, saved),
         "vehicle" | "mod" | "weaponmount" => vehicle::rebuild(tag, ch, store, saved),
         "spell" | "power" | "complexform" | "spirit" | "metamagic" | "martialart" | "critterpower" | "mentorspirit" => magic::rebuild(tag, ch, store, saved),
+        "aiprogram" => aiprogram::rebuild(store, saved),
         _ => None,
     }
 }
@@ -126,6 +129,7 @@ pub fn ignored(tag: &str) -> &'static [&'static str] {
         "armor" | "armormod" => armor::IGNORE,
         "weapon" | "accessory" => weapon::IGNORE,
         "vehicle" | "mod" | "weaponmount" => vehicle::IGNORE,
+        "aiprogram" => aiprogram::IGNORE,
         _ => magic::IGNORE,
     }
 }
@@ -141,6 +145,7 @@ pub fn choices(tag: &str, ch: &Character, store: &DataStore, rec: Record<'_>, p:
         "armor" | "armormod" => armor::choices(tag, ch, store, rec, p),
         "weapon" | "accessory" => weapon::choices(tag, ch, store, rec, p),
         "vehicle" | "mod" | "weaponmount" => vehicle::choices(tag, ch, store, rec, p),
+        "aiprogram" => aiprogram::choices(ch, store, rec, p),
         _ => magic::choices(tag, ch, store, rec, p),
     }
 }
@@ -156,6 +161,7 @@ pub fn add(tag: &str, ch: &mut Character, store: &DataStore, rec: Record<'_>, p:
         "armor" | "armormod" => armor::add(tag, ch, store, rec, p),
         "weapon" | "accessory" => weapon::add(tag, ch, store, rec, p),
         "vehicle" | "mod" | "weaponmount" => vehicle::add(tag, ch, store, rec, p),
+        "aiprogram" => aiprogram::add_purchase(ch, store, rec, p),
         _ => magic::add(tag, ch, store, rec, p),
     }
 }

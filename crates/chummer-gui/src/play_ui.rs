@@ -266,6 +266,15 @@ fn device_ui(ui: &mut egui::Ui, ch: &mut Character, lang: &Language, e: &Element
             changed |= matrix::set_active(ch, &guid, on);
         }
     }
+    // `chkGearHomeNode` & co.: only A.I.s have a home node.
+    if ch.is_ai() {
+        let mut on = e.get_bool("homenode").unwrap_or(false);
+        let depth = chummer_core::calc::attribute_values(ch, "DEP", &Default::default()).total;
+        let can = on || matrix::can_be_home_node(e, depth);
+        if ui.add_enabled(can, egui::Checkbox::new(&mut on, lang.tr("Home Node"))).changed() {
+            changed |= matrix::set_home_node(ch, &guid, on);
+        }
+    }
     ui.label(RichText::new(lang.tr("Matrix Condition Monitor")).strong());
     let mut filled = matrix::filled(e);
     if cm_track(ui, &format!("mcm{guid}"), matrix::condition_monitor(e), 0, &mut filled, crate::theme::palette(ui).matrix) {

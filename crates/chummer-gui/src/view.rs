@@ -36,6 +36,7 @@ pub enum Tab {
     Magician,
     Adept,
     Technomancer,
+    AdvancedPrograms,
     Critter,
     Initiation,
     Cyberware,
@@ -57,6 +58,7 @@ pub(crate) const TABS: &[(Tab, &str)] = &[
     (Tab::Magician, "Spells & Spirits"),
     (Tab::Adept, "Adept Powers"),
     (Tab::Technomancer, "Complex Forms & Sprites"),
+    (Tab::AdvancedPrograms, "Advanced Programs"),
     (Tab::Critter, "Critter Powers"),
     (Tab::Initiation, "Initiation"),
     (Tab::Cyberware, "Cyberware & Bioware"),
@@ -288,6 +290,7 @@ impl CharacterView {
             Tab::Magician => (ch.mag_enabled() && ch.is_magician()) || has(&sections::SPELLS) || (has(&sections::SPIRITS) && !ch.res_enabled()),
             Tab::Adept => (ch.mag_enabled() && ch.is_adept()) || has(&sections::POWERS),
             Tab::Technomancer => ch.res_enabled() || has(&sections::COMPLEX_FORMS),
+            Tab::AdvancedPrograms => ch.advanced_programs_enabled() || has(&sections::AI_PROGRAMS),
             Tab::Critter => ch.flag("critter") || has(&sections::CRITTER_POWERS),
             Tab::Initiation => ch.mag_enabled() || ch.res_enabled() || has(&sections::METAMAGICS),
             Tab::Karma => ch.created || !career::entries(ch).is_empty(),
@@ -323,6 +326,10 @@ impl CharacterView {
                     let tab = self.tab;
                     page(ui, &mut |ui| self.magic_page(ui, engine, lang, pdfs, status, tab))
                 }
+                Tab::AdvancedPrograms => page(ui, &mut |ui| {
+                    self.add_buttons(ui, engine, lang, "aiprograms");
+                    crate::ai_ui::tab(ui, &mut self.ch, engine, lang, status)
+                }),
                 Tab::Cyberware => page(ui, &mut |ui| self.gear_page(ui, engine, lang, pdfs, status, sections::CYBERWARE)),
                 Tab::StreetGear => self.street_gear_tab(ui, engine, lang, pdfs, status),
                 Tab::Vehicles => page(ui, &mut |ui| self.gear_page(ui, engine, lang, pdfs, status, sections::VEHICLES)),
@@ -483,11 +490,18 @@ impl CharacterView {
         let (pcm, scm, thr) = (s.physical_cm, s.stun_cm, s.cm_threshold);
         let overflow = s.cm_overflow;
         let (pal_p, pal_s) = (crate::theme::palette(ui).physical, crate::theme::palette(ui).stun);
+        let (plabel, slabel) = crate::ai_ui::cm_labels(&self.ch, lang);
         ui.columns(2, |cols| {
-            cols[0].label(RichText::new(lang.tr("Physical")).strong());
-            changed |= cm_track(&mut cols[0], "pcm", pcm, thr, &mut self.ch.physical_cm_filled, pal_p);
-            cols[1].label(RichText::new(lang.tr("Stun")).strong());
-            changed |= cm_track(&mut cols[1], "scm", scm, thr, &mut self.ch.stun_cm_filled, pal_s);
+            cols[0].label(RichText::new(plabel).strong());
+            let mut pf = chummer_core::play::ai::physical_filled(&self.ch);
+            if cm_track(&mut cols[0], "pcm", pcm, thr, &mut pf, pal_p) {
+                changed |= chummer_core::play::ai::set_physical_filled(&mut self.ch, pf);
+            }
+            cols[1].label(RichText::new(slabel).strong());
+            let mut sf = chummer_core::play::ai::stun_filled(&self.ch);
+            if cm_track(&mut cols[1], "scm", scm, if self.ch.is_ai() { 0 } else { thr }, &mut sf, pal_s) {
+                changed |= chummer_core::play::ai::set_stun_filled(&mut self.ch, sf);
+            }
         });
         ui.weak(lang.tr_fmt("Overflow {0} · −1 die per {1} boxes", &[&overflow, &thr]));
         ui.separator();
@@ -1141,6 +1155,7 @@ impl CharacterView {
             "metamagics" => &[], // magic_ui: one per grade, echoes for technomancers
             "martialarts" => &["martialart"],
             "critterpowers" => &["critterpower"],
+            "aiprograms" => &["aiprogram"],
             _ => &[],
         };
         ui.horizontal(|ui| {
@@ -1400,12 +1415,13 @@ impl CharacterView {
                 let name = rec.name();
                 let karma = rec.el().get_i32("karma").unwrap_or(0);
                 let _ = karma;
-                if self.ch.created && matches!(tag, "quality" | "martialart" | "critterpower") {
+                if self.ch.created && matches!(tag, "quality" | "martialart" | "critterpower" | "aiprogram") {
                     // Career mode: karma is spent and logged (double for most qualities).
                     let answer = purchase.answer.as_deref();
                     let r = match tag {
                         "martialart" => career::learn_martial_art(&mut self.ch, engine, rec, answer),
                         "critterpower" => career::learn_critter_power(&mut self.ch, engine, rec, purchase.rating, answer),
+                        "aiprogram" => career::learn_ai_program(&mut self.ch, engine, rec, &purchase),
                         _ => career::add_quality(&mut self.ch, engine, rec, answer),
                     };
                     return match r {

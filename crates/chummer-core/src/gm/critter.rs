@@ -183,6 +183,7 @@ pub fn create_with(store: &DataStore, settings: &CharacterSettings, spec: &NewCr
     add_skills(&mut ch, store, node, force);
     add_complex_forms(&mut ch, store, node);
     add_ware(&mut ch, store, node, force);
+    add_programs(&mut ch, store, node);
     add_gear(&mut ch, store, node, force);
 
     // Sprites can never have physical attributes.
@@ -543,6 +544,22 @@ fn add_ware(ch: &mut Character, store: &DataStore, node: &Element, force: i32) {
                 ch.improvements.list.push(metatype_imp("FreeWare", &guid, 0.0));
             }
         }
+    }
+}
+
+/// Programs the critter comes with (`programs/program`, typically for
+/// A.I.s), which cannot be deleted on their own. The `select` attribute
+/// answers a `<selecttext>`. (`Character.Create` passes the critter's
+/// own node to `AIProgram.Create` instead of the data record, which
+/// would create a nameless program; no data has such programs. This
+/// follows the evident intent.)
+fn add_programs(ch: &mut Character, store: &DataStore, node: &Element) {
+    let Ok(doc) = store.doc("programs.xml") else { return };
+    for p in node.child("programs").into_iter().flat_map(|c| c.children_named("program")) {
+        let Some(rec) = data::find(&doc, "programs", "program", p.text().trim()) else { continue };
+        let extra = p.attr("select").filter(|s| !s.trim().is_empty());
+        let guid = items::aiprogram::add(ch, store, rec, extra, false);
+        ch.improvements.list.push(metatype_imp("AIProgram", &guid, 0.0));
     }
 }
 

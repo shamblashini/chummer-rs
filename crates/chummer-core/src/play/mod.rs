@@ -3,6 +3,7 @@
 //! Everything is stored in the `.chum5` under Chummer5a's own
 //! element names.
 
+pub mod ai;
 pub mod ammo;
 pub mod matrix;
 pub mod vehicle;

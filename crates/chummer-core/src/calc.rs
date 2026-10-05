@@ -61,6 +61,8 @@ pub struct Rules {
     pub karma_spell: i32,
     pub karma_contact: i32,
     pub karma_new_complex_form: i32,
+    pub karma_new_ai_program: i32,
+    pub karma_new_ai_advanced_program: i32,
     pub karma_initiation: i32,
     pub karma_initiation_flat: i32,
     pub karma_metamagic: i32,
@@ -102,6 +104,8 @@ impl Default for Rules {
             karma_spell: 5,
             karma_contact: 1,
             karma_new_complex_form: 4,
+            karma_new_ai_program: 5,
+            karma_new_ai_advanced_program: 8,
             karma_initiation: 3,
             karma_initiation_flat: 10,
             karma_metamagic: 15,
@@ -144,6 +148,8 @@ impl Rules {
             karma_spell: s.karma("karmaspell", d.karma_spell),
             karma_contact: s.karma("karmacontact", d.karma_contact),
             karma_new_complex_form: s.karma("karmanewcomplexform", d.karma_new_complex_form),
+            karma_new_ai_program: s.karma("karmanewaiprogram", d.karma_new_ai_program),
+            karma_new_ai_advanced_program: s.karma("karmanewaiadvancedprogram", d.karma_new_ai_advanced_program),
             karma_initiation: s.karma("karmainitiation", d.karma_initiation),
             karma_initiation_flat: s.karma("karmainitiationflat", d.karma_initiation_flat),
             karma_metamagic: s.karma("karmametamagic", d.karma_metamagic),
@@ -305,6 +311,10 @@ pub fn attribute_values_with(ch: &Character, name: &str, rules: &Rules, store: O
     if name == "ESS" {
         metatype_max += imps.val_int("EssenceMax", None);
     }
+    // An A.I.'s Edge maximum is its Depth (`CharacterAttrib.MetatypeMaximum`).
+    if name == "EDG" && ch.is_ai() && ch.attribute("DEP").is_some() {
+        metatype_max = attribute_values_with(ch, "DEP", rules, store).total;
+    }
 
     let min_mods = sum(&list_x, |i| i.min) + sum(&list_base, |i| i.min);
     let max_mods = sum(&list_x, |i| i.max) + sum(&list_base, |i| i.max);
@@ -349,8 +359,7 @@ pub fn attribute_values_with(ch: &Character, name: &str, rules: &Rules, store: O
     }
     let mut total = total.min(total_aug_max);
     if total < 1 {
-        let is_ai = ch.dep_enabled() && ch.attribute("BOD").is_some_and(|b| b.metatype_max == 0);
-        total = if is_critter || metatype_max == 0 || matches!(name, "EDG" | "RES" | "MAG" | "MAGAdept") || (name == "DEP" && !is_ai) {
+        total = if is_critter || metatype_max == 0 || matches!(name, "EDG" | "RES" | "MAG" | "MAGAdept") || (name == "DEP" && !ch.is_ai()) {
             0
         } else {
             1
@@ -549,7 +558,13 @@ impl Sheet {
 /// included; Chummer adds them to each pool for display.
 pub fn spell_defense(ch: &Character, s: &Sheet) -> Vec<(&'static str, i32)> {
     let imps = &ch.improvements;
-    let at = |a: &str| s.attr(a);
+    // An A.I. resists with its vehicle home node's Body (or nothing) in
+    // place of BOD and STR.
+    let ai_body = ch.is_ai().then(|| soak_body(ch, s));
+    let at = |a: &str| match (a, ai_body) {
+        ("BOD" | "STR", Some(b)) => b,
+        _ => s.attr(a),
+    };
     // SpellResistance counts for every test except the dodge.
     let v = |t: &str| standard_round(imps.val("SpellResistance", None) + imps.val(t, None));
     vec![
@@ -572,6 +587,15 @@ pub fn spell_defense(ch: &Character, s: &Sheet) -> Vec<(&'static str, i32)> {
         ("Label_SpellDefenseManipMental", at("LOG") + at("WIL") + v("MentalManipulationResist")),
         ("Label_SpellDefenseManipPhysical", at("BOD") + at("STR") + v("PhysicalManipulationResist")),
     ]
+}
+
+/// The Body an A.I. soaks damage with (`DamageResistancePool`): its
+/// vehicle home node's `TotalBody`, else 0. BOD for everyone else.
+pub fn soak_body(ch: &Character, s: &Sheet) -> i32 {
+    if !ch.is_ai() {
+        return s.attr("BOD");
+    }
+    crate::play::ai::home_node(ch).and_then(|h| h.vehicle).map_or(0, |v| v.body)
 }
 
 /// Attribute tokens for expressions (`{STR}`, `{AGIUnaug}`, ...).
@@ -700,16 +724,25 @@ pub fn compute(ch: &Character, rules: &Rules, store: Option<&DataStore>, catalog
         f64::from(ess_max) + imps.val("EssencePenalty", None) + imps.val("EssencePenaltyT100", None) / 100.0 - cyber - bio
     };
 
-    // Condition monitors and wound modifier
-    let physical_cm = 8 + div_away_from_zero(at("BOD"), 2) + imps.val_int("PhysicalCM", None);
-    let stun_cm = 8 + div_away_from_zero(at("WIL"), 2) + imps.val_int("StunCM", None);
+    // Condition monitors and wound modifier. An A.I. uses a Core track
+    // (Depth) or its vehicle's track, and its home node's Matrix track for
+    // Stun, which gives no wound penalty.
+    let ai = ch.is_ai();
+    let home = crate::play::ai::home_node(ch);
+    let home_vehicle = home.and_then(|h| h.vehicle);
+    let physical_cm = match (ai, home_vehicle) {
+        (true, Some(v)) => v.physical_cm,
+        (true, None) => 8 + div_away_from_zero(at("DEP"), 2) + imps.val_int("PhysicalCM", None),
+        _ => 8 + div_away_from_zero(at("BOD"), 2) + imps.val_int("PhysicalCM", None),
+    };
+    let stun_cm = if ai { home.map_or(0, |h| h.matrix_cm) } else { 8 + div_away_from_zero(at("WIL"), 2) + imps.val_int("StunCM", None) };
     let cm_threshold = 3 + imps.val_int("CMThreshold", None);
-    let offset = imps.val_int("CMThresholdOffset", None);
-    let ignore_stun = imps.has("IgnoreCMPenaltyStun");
+    let offset = imps.val_int("CMThresholdOffset", None) + if ai { imps.val_int("CMSharedThresholdOffset", None) } else { 0 };
+    let ignore_stun = ai || imps.has("IgnoreCMPenaltyStun");
     let ignore_phys = imps.has("IgnoreCMPenaltyPhysical");
     let pen = |filled: i32, cm: i32| -> i32 { (offset - filled.min(cm)).min(0) / cm_threshold };
-    let wound = if ignore_phys { 0 } else { pen(ch.physical_cm_filled, physical_cm) }
-        + if ignore_stun { 0 } else { pen(ch.stun_cm_filled, stun_cm) };
+    let wound = if ignore_phys { 0 } else { pen(crate::play::ai::physical_filled(ch), physical_cm) }
+        + if ignore_stun { 0 } else { pen(crate::play::ai::stun_filled(ch), stun_cm) };
 
     // Initiative
     let init_dice_base = ch.doc.get_i32("initiativedice").unwrap_or(rules.min_initiative_dice);
@@ -722,9 +755,21 @@ pub fn compute(ch: &Character, rules: &Rules, store: Option<&DataStore>, catalog
 
     // Limits
     let ess_round = standard_round(essence);
-    let limit_physical = div_away_from_zero(2 * at("STR") + at("BOD") + at("REA"), 3) + imps.val_int("PhysicalLimit", None);
-    let limit_mental = div_away_from_zero(2 * at("LOG") + at("INT") + at("WIL"), 3) + imps.val_int("MentalLimit", None);
-    let limit_social = div_away_from_zero(2 * at("CHA") + at("WIL") + ess_round, 3) + imps.val_int("SocialLimit", None);
+    // `LimitPhysical`: an A.I. uses its vehicle's Handling (or 0), with no
+    // improvements; its home node can raise the Mental limit to its Sensor
+    // or Data Processing and replaces one CHA in the Social limit.
+    let limit_physical = if ai {
+        home_vehicle.map_or(0, |v| v.handling)
+    } else {
+        div_away_from_zero(2 * at("STR") + at("BOD") + at("REA"), 3) + imps.val_int("PhysicalLimit", None)
+    };
+    let mut mental_base = div_away_from_zero(2 * at("LOG") + at("INT") + at("WIL"), 3);
+    if let Some(h) = home {
+        mental_base = mental_base.max(home_vehicle.map_or(0, |v| v.sensor)).max(h.data_processing);
+    }
+    let limit_mental = mental_base + imps.val_int("MentalLimit", None);
+    let social_cha = home.map_or(2 * at("CHA"), |h| at("CHA") + h.dp_or_pilot);
+    let limit_social = div_away_from_zero(social_cha + at("WIL") + ess_round, 3) + imps.val_int("SocialLimit", None);
 
     // Knowledge and contact points
     let knowledge_points = standard_round(expr::evaluate_num(&expr::substitute_attributes(&rules.knowledge_points_expression, &src)).unwrap_or(0.0))
@@ -743,13 +788,22 @@ pub fn compute(ch: &Character, rules: &Rules, store: Option<&DataStore>, catalog
     s.initiative_dice = initiative_dice;
     s.astral_initiative = at("INT") * 2 + wound;
     s.astral_initiative_dice = rules.min_astral_initiative_dice.min(rules.max_astral_initiative_dice);
-    s.matrix_cold_initiative = at("INT") + commlink_dp + wound + matrix_init;
-    s.matrix_cold_dice = (rules.min_coldsim_dice + matrix_dice).min(rules.max_coldsim_dice);
+    if ai {
+        // `MatrixInitiativeValue` / `MatrixInitiativeDice` for A.I.s: the
+        // home node's Data Processing (or Pilot), always hot-sim dice.
+        s.matrix_cold_initiative = at("INT") + wound + home.map_or(0, |h| h.dp_or_pilot);
+        s.matrix_cold_dice = (rules.min_hotsim_dice + matrix_dice + imps.val_int("MatrixInitiativeDiceAdd", None)).min(rules.max_initiative_dice);
+        s.matrix_hot_dice = s.matrix_cold_dice;
+    } else {
+        s.matrix_cold_initiative = at("INT") + commlink_dp + wound + matrix_init;
+        s.matrix_cold_dice = (rules.min_coldsim_dice + matrix_dice).min(rules.max_coldsim_dice);
+        s.matrix_hot_dice = (rules.min_hotsim_dice + matrix_dice).min(rules.max_hotsim_dice);
+    }
     s.matrix_hot_initiative = s.matrix_cold_initiative;
-    s.matrix_hot_dice = (rules.min_hotsim_dice + matrix_dice).min(rules.max_hotsim_dice);
     s.physical_cm = physical_cm;
     s.stun_cm = stun_cm;
-    s.cm_overflow = at("BOD") + imps.val_int("CMOverflow", None) + 1;
+    // A.I.s have no overflow track.
+    s.cm_overflow = if ai { 0 } else { at("BOD") + imps.val_int("CMOverflow", None) + 1 };
     s.cm_threshold = cm_threshold;
     s.limit_physical = limit_physical;
     s.limit_mental = limit_mental;

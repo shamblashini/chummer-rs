@@ -1,6 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 //! chummer-rs desktop application.
 
+mod ai_ui;
 mod browser;
 mod career_ui;
 mod combo;

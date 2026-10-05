@@ -32,6 +32,7 @@ fn columns(tag: &str) -> &'static [(&'static str, &'static str)] {
         "spell" => &[("Type", "type"), ("Range", "range"), ("DV", "dv")],
         "power" => &[("PP", "points")],
         "complexform" => &[("Target", "target"), ("FV", "fv")],
+        "aiprogram" => &[("Category", "category")],
         "lifestyle" => &[("Cost", "cost")],
         _ => &[],
     }
