@@ -130,7 +130,7 @@ impl RelationshipsPanel {
 
     /// Load the linked files of `entries` whose link is new or changed.
     fn refresh_linked(&mut self, ctx: &egui::Context, owner: Option<&Path>, entries: &[Element]) {
-        let startup = contacts::startup_dir();
+        let mut startup = None;
         for c in entries {
             let guid = c.get("guid");
             let key = (c.get("file"), c.get("relative"));
@@ -141,7 +141,8 @@ impl RelationshipsPanel {
             if self.linked.get(&guid).is_some_and(|l| l.key == key) {
                 continue;
             }
-            let state = match contacts::resolve(c, &startup, owner) {
+            let startup = startup.get_or_insert_with(contacts::startup_dir);
+            let state = match contacts::resolve(c, startup, owner) {
                 Some(LinkedPath::Found(p)) => LinkedCharacter::load(&p),
                 Some(LinkedPath::Unsupported(p)) => Err(format!("{}: compressed .chum5lz saves are not supported", p.display())),
                 Some(LinkedPath::Missing(f)) => Err(missing(&f)),
@@ -180,7 +181,8 @@ impl RelationshipsPanel {
             ui.label(lang.tr("Archetype:"));
             changed |= combo_field(ui, ch, &guid, c, "role", &lists.fields["role"], "contacts.xml", lang, 120.0, true);
             ui.label(lang.tr("Connection:"));
-            changed |= int_field(ui, ch, &guid, c, "connection", 1..=12, !read_only);
+            let max = chummer_core::chargen::connection_maximum(ch);
+            changed |= int_field(ui, ch, &guid, c, "connection", 1..=max, !read_only);
             ui.label(lang.tr("Loyalty:"));
             let group = c.get_bool("group").unwrap_or(false);
             changed |= int_field(ui, ch, &guid, c, "loyalty", 1..=6, !read_only && !group);

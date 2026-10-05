@@ -16,7 +16,7 @@ use crate::settings::CharacterSettings;
 use crate::xml::Element;
 
 mod karma;
-pub use karma::karma_breakdown;
+pub use karma::{connection_maximum, karma_breakdown};
 
 /// Version written as `<appversion>`. Chummer5a uses it to choose load
 /// fix-ups, so it must be a real Chummer version, not ours.

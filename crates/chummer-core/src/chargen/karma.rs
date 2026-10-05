@@ -67,11 +67,15 @@ fn contact_loyalty(ch: &Character, c: &Element) -> i32 {
     }
 }
 
-/// `Contact.Connection`, capped by `ConnectionMaximum` (6 at creation,
-/// 12 with Friends in High Places).
+/// `Contact.Connection`, capped by [`connection_maximum`].
 fn contact_connection(ch: &Character, c: &Element) -> i32 {
-    let max = if ch.created || friends_in_high_places(ch) { 12 } else { 6 };
-    c.get_i32("connection").unwrap_or(1).min(max)
+    c.get_i32("connection").unwrap_or(1).min(connection_maximum(ch))
+}
+
+/// `Contact.ConnectionMaximum`: 6 at creation, 12 in career mode or with
+/// Friends in High Places.
+pub fn connection_maximum(ch: &Character) -> i32 {
+    if ch.created || friends_in_high_places(ch) { 12 } else { 6 }
 }
 
 /// `Character.FriendsInHighPlaces`.
