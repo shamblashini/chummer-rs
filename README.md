@@ -91,6 +91,7 @@ karma and 5,000¥.
 - Learn martial arts and their techniques.
 - Learn metamagics and echoes. The first one at a grade is free; each further one costs karma.
 - Buy critter powers.
+- Buy A.I. programs and Advanced Programs (undo refunds the karma and keeps the program, as in Chummer).
 - Bind foci, up to MAG foci and MAG × 5 total force.
 - Fetter a spirit (Force × 3 karma) or a sprite (Force karma). A fettered spirit lowers MAG by 1.
 - Join or leave a magical group, and quicken spells.
@@ -112,7 +113,8 @@ The calendar tracks in-game weeks.
   Weapons with charges reload to their capacity.
 - Devices (commlinks, decks, cyberware, vehicles) show their matrix
   attributes and a matrix condition monitor, and one can be the active
-  commlink, which sets matrix initiative.
+  commlink, which sets matrix initiative. An A.I. can make a device its
+  home node (Program Limit 2 when Depth is above the device rating).
 - Vehicles and drones have a damage track.
 
 **Rules.** The following are computed:
@@ -143,6 +145,7 @@ Supported kinds:
 - Custom drugs.
 - Spells (limited, extended, alchemical), adept powers, complex forms, spirits and sprites.
 - Metamagics and echoes, mentor spirits with their choices, martial arts and techniques, and critter powers.
+- A.I.s: programs and Advanced Programs (creation karma with the free program slots, requirements), Edge maximum equal to Depth, a Core or vehicle track and the home node's Matrix track, limits, matrix initiative and spell defense from the home node.
 
 Click an item to edit its rating, quantity, equipped and wireless state,
 custom name, location and notes, add things inside it, or sell it.
@@ -180,7 +183,7 @@ Item requirements (`<required>`/`<forbidden>`) are checked.
   - A character roster (the Character Roster tab).
 - **GM tools:**
   - File → New Critter… builds a critter or NPC from `critters.xml`, as Chummer does. Spirits, sprites and other Force creatures are built at a chosen Force: attributes, skills and powers follow from it. Spirits get their optional powers and Materialization (or Possession or Inhabitation). Critters open in career mode with rules ignored.
-  - Special → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, martial arts, spells, complex forms, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen.
+  - Special → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, martial arts, complex forms, A.I. programs, spells, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen.
   - Special → Create PACKS Kit… saves the character's things as a Custom kit in `~/.local/share/chummer-rs/packs/custom_*_packs.xml`. Custom kits can also be deleted there.
   - Spells & Spirits tab → Create Spell… designs a custom spell (Street Grimoire). Chummer's rules compute its drain value and descriptors. In career mode it costs spell karma.
 - **Languages:** English, German, French, Japanese, Portuguese and Chinese data names and sheets.
@@ -191,10 +194,10 @@ The main window uses Chummer5a's layout: the File, Tools, Special, View,
 Window and Help menus, a toolbar, and one tab per open character next to
 the Master Index and Character Roster tabs. A character has Chummer's
 tabs in Chummer's order (Common, Skills, Limits, Martial Arts, Spells &
-Spirits, Adept Powers, Complex Forms & Sprites, Critter Powers,
+Spirits, Adept Powers, Complex Forms & Sprites, Advanced Programs, Critter Powers,
 Initiation, Cyberware & Bioware, Street Gear, Vehicles & Drones,
 Character Info, Karma & Nuyen, Calendar, Game Notes, Improvements,
-Relationships). The magic, resonance and critter tabs show only when the
+Relationships). The magic, resonance, Advanced Programs and critter tabs show only when the
 character has them. The right-hand panel has Karma Summary (creation),
 Condition Monitor and Other Info; the status bar shows karma, essence and
 nuyen.
@@ -275,20 +278,19 @@ cargo test --workspace
 
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
 - Some career-mode details:
-  - AI programs, and enchantments, rituals and enhancements learned at a grade.
+  - Enchantments, rituals and enhancements learned at a grade.
   - Binding stacked foci (undo of a stacked focus binding works).
-  - Home nodes for A.I.s and the Living Persona's matrix bonuses.
+  - The Living Persona's matrix bonuses.
 - PDF export needs a browser's Print to PDF; no converter is bundled.
 - Settings files:
   - "Change Settings File" in creation mode only offers presets with the same build method. Chummer re-runs metatype and priority selection to switch build methods.
   - Chummer also finds a missing settings file by its `<settingshashcode>`; chummer-rs does not compute that hash.
 - PACKS kits:
   - Kit attributes and skills are listed but not applied. Chummer 5.226 does not apply them either.
-  - "Select Martial Art" entries and A.I. programs in kits are skipped.
+  - "Select Martial Art" entries in kits are skipped.
   - Chummer reads custom kits from its own `packs` folder. To use a kit in both programs, copy the file.
-- Critters: A.I. programs that come with a critter are not added.
-- Layout differences from Chummer5a: no Advanced Programs tab and no
-  Pets & Cohorts sub-tab; lists are tables, not trees.
+- Layout differences from Chummer5a: no Pets & Cohorts sub-tab; lists
+  are tables, not trees.
 - About 290 UI labels have no Chummer translation string and stay English.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute
