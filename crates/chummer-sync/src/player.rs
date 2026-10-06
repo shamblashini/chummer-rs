@@ -69,6 +69,12 @@ struct Inner {
     mailbox: tokio::sync::Mutex<Option<MailboxClient>>,
     blob_limit: Mutex<usize>,
     events: mpsc::UnboundedSender<Event>,
+    /// Wakes the task that sends edits made with [`PlayerSession::edit_now`].
+    flush: tokio::sync::Notify,
+    /// Wakes [`PlayerSession::keep_synced`] early.
+    wake: tokio::sync::Notify,
+    last_mode: Mutex<Option<SyncMode>>,
+    closed: std::sync::atomic::AtomicBool,
 }
 
 /// A player's session. Cheap to clone.
@@ -97,6 +103,12 @@ impl PlayerSession {
     }
 
     pub fn with_replica(endpoint: Endpoint, secret: SecretKey, engine: Arc<Engine>, cfg: PlayerConfig, replica: Replica) -> PlayerSession {
+        let s = PlayerSession::make(endpoint, secret, engine, cfg, replica);
+        s.start_sender();
+        s
+    }
+
+    fn make(endpoint: Endpoint, secret: SecretKey, engine: Arc<Engine>, cfg: PlayerConfig, replica: Replica) -> PlayerSession {
         let (tx, rx) = mpsc::unbounded_channel();
         PlayerSession {
             inner: Arc::new(Inner {
@@ -110,9 +122,125 @@ impl PlayerSession {
                 mailbox: tokio::sync::Mutex::new(None),
                 blob_limit: Mutex::new(DEFAULT_BLOB_LIMIT),
                 events: tx,
+                flush: tokio::sync::Notify::new(),
+                wake: tokio::sync::Notify::new(),
+                last_mode: Mutex::new(None),
+                closed: std::sync::atomic::AtomicBool::new(false),
             }),
             events: Arc::new(tokio::sync::Mutex::new(rx)),
         }
+    }
+
+    fn from_weak(inner: &std::sync::Weak<Inner>, events: &std::sync::Weak<tokio::sync::Mutex<mpsc::UnboundedReceiver<Event>>>) -> Option<PlayerSession> {
+        let s = PlayerSession { inner: inner.upgrade()?, events: events.upgrade()? };
+        (!s.is_closed()).then_some(s)
+    }
+
+    /// The link this session joins with.
+    pub fn link(&self) -> &InviteLink {
+        &self.inner.cfg.link
+    }
+
+    pub fn name(&self) -> &str {
+        &self.inner.cfg.name
+    }
+
+    /// How the last [`PlayerSession::sync`] went (`None` before the first).
+    pub fn last_mode(&self) -> Option<SyncMode> {
+        if self.is_online() {
+            return Some(SyncMode::Online);
+        }
+        *self.inner.last_mode.lock().expect("poisoned")
+    }
+
+    /// Ends [`PlayerSession::keep_synced`] and the send task, and hangs up.
+    pub fn close(&self) {
+        self.inner.closed.store(true, std::sync::atomic::Ordering::Release);
+        self.inner.wake.notify_waiters();
+        self.inner.flush.notify_waiters();
+        self.disconnect();
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Asks [`PlayerSession::keep_synced`] to sync now.
+    pub fn sync_soon(&self) {
+        self.inner.wake.notify_one();
+    }
+
+    /// Syncs on start and then every `every` (sooner after
+    /// [`PlayerSession::sync_soon`], and as soon as a live connection
+    /// drops), until [`PlayerSession::close`]. Holds the session weakly, so
+    /// dropping every other handle ends it too.
+    pub async fn keep_synced(self, every: Duration) {
+        let (inner, events) = (Arc::downgrade(&self.inner), Arc::downgrade(&self.events));
+        drop(self);
+        loop {
+            let Some(s) = PlayerSession::from_weak(&inner, &events) else { return };
+            let mode = s.sync().await;
+            let wake = s.inner.clone();
+            drop(s);
+            let wait = async {
+                if mode == SyncMode::Online {
+                    // Until the connection ends (or `every`, to be safe).
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        match inner.upgrade() {
+                            Some(i) if i.client.lock().expect("poisoned").is_some() && !i.closed.load(std::sync::atomic::Ordering::Acquire) => {}
+                            _ => break,
+                        }
+                    }
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
+            tokio::select! {
+                _ = wait => {}
+                _ = tokio::time::sleep(every) => {}
+                _ = wake.wake.notified() => {}
+            }
+        }
+    }
+
+    /// As [`PlayerSession::edit`], without waiting: applied to the local
+    /// copy and saved at once (for a UI thread); sent by a background task
+    /// when online, else kept for the next [`PlayerSession::sync`]. Must be
+    /// called after the session was made inside a tokio runtime.
+    pub fn edit_now(&self, id: &CharacterId, cmd: Command) -> Result<Report, Rejected> {
+        let report = self.replica().edit(&self.inner.engine, id, cmd)?;
+        self.save_logged();
+        if report.changed {
+            self.inner.flush.notify_one();
+        }
+        Ok(report)
+    }
+
+    /// Takes the refused commands out of the list (the player saw them).
+    pub fn dismiss_refused(&self) -> Vec<crate::replica::Refused> {
+        let r = self.replica().dismiss_refused();
+        self.save_logged();
+        r
+    }
+
+    fn start_sender(&self) {
+        let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
+        let (inner, events) = (Arc::downgrade(&self.inner), Arc::downgrade(&self.events));
+        rt.spawn(async move {
+            loop {
+                let Some(i) = inner.upgrade() else { return };
+                let notified = async move { i.flush.notified().await };
+                notified.await;
+                let Some(s) = PlayerSession::from_weak(&inner, &events) else { return };
+                if let Some(c) = s.client() {
+                    if let Err(e) = s.flush_live(&c).await {
+                        tracing::info!("could not send the change, kept for later: {e}");
+                        s.drop_client(&c);
+                    }
+                }
+            }
+        });
     }
 
     /// The local copies, locked. Do not hold across an `.await`.
@@ -367,6 +495,12 @@ impl PlayerSession {
     /// Connects when the GM is reachable and sends the outbox; otherwise
     /// mails the outbox and collects mail.
     pub async fn sync(&self) -> SyncMode {
+        let mode = self.sync_inner().await;
+        *self.inner.last_mode.lock().expect("poisoned") = Some(mode);
+        mode
+    }
+
+    async fn sync_inner(&self) -> SyncMode {
         if let Some(c) = self.client() {
             match self.flush_live(&c).await {
                 Ok(()) => return SyncMode::Online,

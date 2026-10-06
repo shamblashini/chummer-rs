@@ -213,6 +213,17 @@ impl InviteStore {
         token
     }
 
+    /// Adds an invite made elsewhere (a token written to the campaign's
+    /// invites file by `chummer-authority invite`). Returns false when the
+    /// token was already known.
+    pub fn insert(&mut self, token: InviteToken, invite: Invite) -> bool {
+        if self.invites.contains_key(&token) {
+            return false;
+        }
+        self.invites.insert(token, invite);
+        true
+    }
+
     /// The role `token` grants, if it is valid.
     pub fn redeem(&self, token: &InviteToken) -> Option<Role> {
         self.invites.get(token).map(|i| i.role)

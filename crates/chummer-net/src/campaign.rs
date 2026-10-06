@@ -148,6 +148,15 @@ impl<H: CampaignHandler> CampaignHost<H> {
         s.iter().map(|(id, s)| (*id, s.role)).collect()
     }
 
+    /// Hangs up on every connected peer (the host stops serving; they fall
+    /// back to the mailbox).
+    pub fn close_all(&self) {
+        let sessions: Vec<Session> = self.sessions.lock().expect("poisoned").drain().map(|(_, s)| s).collect();
+        for s in sessions {
+            s.conn.close(3u32.into(), b"the host stopped serving this campaign");
+        }
+    }
+
     /// Sends `payload` to `peer`. Fails if the peer is not connected; the
     /// caller then falls back to the mailbox.
     pub async fn push(&self, peer: EndpointId, payload: Vec<u8>) -> Result<(), NetError> {

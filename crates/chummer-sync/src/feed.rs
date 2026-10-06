@@ -79,3 +79,25 @@ pub(crate) fn push(feed: &mut std::collections::VecDeque<FeedEntry>, entry: Feed
         feed.pop_front();
     }
 }
+
+/// A feed line as the character's owner reads it: GM awards say "GM gave
+/// you 100 karma: note" (or "GM took 5 karma from you"), anything else is
+/// "<author>: <text>".
+pub fn for_owner(e: &FeedEntry) -> String {
+    if e.author_role == Role::Gm && e.rejected.is_none() {
+        for (verb, form) in [("Gained ", "gave you"), ("Spent ", "took")] {
+            if let Some(rest) = e.text.strip_prefix(verb) {
+                let (amount, note) = match rest.split_once(": ") {
+                    Some((a, n)) => (a, Some(n)),
+                    None => (rest, None),
+                };
+                let line = if form == "took" { format!("{} took {amount} from you", e.author_name) } else { format!("{} gave you {amount}", e.author_name) };
+                return match note {
+                    Some(n) => format!("{line}: {n}"),
+                    None => line,
+                };
+            }
+        }
+    }
+    e.to_string()
+}

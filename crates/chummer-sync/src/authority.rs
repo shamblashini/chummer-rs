@@ -210,6 +210,8 @@ pub struct LocalApplied {
 /// The campaign authority. See the module documentation.
 pub struct Authority {
     campaign: CampaignId,
+    /// The campaign's name, shown to members.
+    name: String,
     /// The GM running this authority.
     me: EndpointId,
     origin: [u8; 16],
@@ -245,6 +247,7 @@ impl Authority {
         members.insert(gm, Member { role: Role::Gm, name: gm_name.into() });
         Authority {
             campaign,
+            name: String::new(),
             me: gm,
             origin: chummer_net::invite::random_id(),
             next_seq: 0,
@@ -274,6 +277,18 @@ impl Authority {
 
     pub fn gm(&self) -> EndpointId {
         self.me
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Renames the campaign (members are told with the next membership).
+    pub fn set_name(&mut self, name: &str) {
+        if self.name != name {
+            self.name = name.to_owned();
+            self.membership_rev += 1;
+        }
     }
 
     // ----- members and invites -----
@@ -340,7 +355,7 @@ impl Authority {
             .filter(|(_, c)| self.sees(peer, role, c))
             .map(|(id, c)| CharacterInfo { id: id.clone(), name: c.name.clone(), owner: c.owner, version: c.version })
             .collect();
-        Some(Membership { you: *peer, role, members: self.member_infos(), characters })
+        Some(Membership { campaign_name: self.name.clone(), you: *peer, role, members: self.member_infos(), characters })
     }
 
     fn sees(&self, peer: &EndpointId, role: Role, c: &CharState) -> bool {
@@ -773,6 +788,7 @@ impl Authority {
         }
         let file = AuthorityFile {
             campaign: self.campaign,
+            name: self.name.clone(),
             me: self.me,
             origin: self.origin,
             next_seq: self.next_seq,
@@ -836,6 +852,7 @@ impl Authority {
         }
         Ok(Authority {
             campaign: f.campaign,
+            name: f.name,
             me: f.me,
             origin: f.origin,
             next_seq: f.next_seq,
@@ -877,6 +894,7 @@ const FORMAT: u16 = 2;
 #[derive(Serialize, Deserialize)]
 struct AuthorityFile {
     campaign: CampaignId,
+    name: String,
     me: EndpointId,
     origin: [u8; 16],
     next_seq: u64,

@@ -67,6 +67,16 @@ async fn endpoint(relay: &RelayNode, key: SecretKey, alpns: Vec<Vec<u8>>) -> Res
     Ok(ep)
 }
 
+async fn until(what: impl Fn() -> bool) -> Result<()> {
+    tokio::time::timeout(WAIT, async {
+        while !what() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await?;
+    Ok(())
+}
+
 async fn wait_for(s: &PlayerSession, what: impl Fn(&Event) -> bool) -> Result<Event> {
     tokio::time::timeout(WAIT, async {
         loop {
@@ -251,5 +261,117 @@ async fn play_by_post_through_the_mailbox() -> Result<()> {
     for ep in [gm_ep, p_ep, s_ep] {
         ep.close().await;
     }
+    relay.shutdown().await
+}
+
+/// The glue end to end: a campaign file hosted by the GM's node, a player
+/// joining with the invite, edits both ways, the host going away (the
+/// player's edits go to the mailbox), the GM's app restarting from its
+/// files and taking the mail in, a revert, and the file written back.
+#[tokio::test(flavor = "multi_thread")]
+async fn hosted_campaign_file_with_offline_player_edits() -> Result<()> {
+    use chummer_core::campaign::{Campaign, Member, MemberKind};
+    use chummer_sync::{hosted, HostedCampaign, Node};
+
+    let relay = relay("hosted", |_| {}).await?;
+    let engine = engine();
+    let dir = tmp("hosted-gm");
+    std::fs::create_dir_all(&dir)?;
+    let file = dir.join("Seattle.chummercampaign");
+    let mut campaign = Campaign::new("Seattle");
+    let pc = campaign.add(Member::embedded(MemberKind::Player, &munin(10)));
+    let npc = campaign.add(Member::embedded(MemberKind::Npc, &munin(0)));
+    campaign.save(&file)?;
+    assert!(!hosted::is_online(&file));
+
+    // The GM hosts it.
+    let gm_key = SecretKey::generate();
+    let gm = Node::start(gm_key.clone(), relay.client_config()).await?;
+    let (h, rec) = HostedCampaign::open(&campaign, &file, engine.clone(), gm_key.clone(), "GM", |_| None)?;
+    assert_eq!(rec.added, [pc, npc]);
+    assert!(hosted::is_online(&file));
+    gm.serve(&h.host);
+    assert!(gm.serving());
+    gm.sync_mail(&h.host).await?;
+    let link: InviteLink = h.invite(Role::Player, "group", Some(&gm)).to_string().parse()?;
+
+    // The player joins and is given the player character.
+    let p_key = SecretKey::generate();
+    let p_node = Node::start(p_key.clone(), relay.client_config()).await?;
+    let p_file = tmp("hosted-p").join("campaign.replica");
+    let mut cfg = PlayerConfig::new("Alice", link);
+    cfg.mailbox = p_node.mailbox_id();
+    cfg.path = Some(p_file);
+    cfg.connect_timeout = Duration::from_secs(5);
+    let player = PlayerSession::new(p_node.endpoint().clone(), p_key.clone(), engine.clone(), cfg)?;
+    assert_eq!(player.sync().await, SyncMode::Online);
+    assert_eq!(player.replica().characters().count(), 0);
+    assert_eq!(player.replica().membership().unwrap().campaign_name, "Seattle");
+    campaign.member_mut(pc).unwrap().owner = Some(p_node.id().to_string());
+    h.reconcile(&campaign, |_| None);
+    let c = hosted::character_id(pc);
+    wait_for(&player, |e| *e == Event::Updated(c.clone())).await?;
+    assert_eq!(player.replica().characters().collect::<Vec<_>>(), [&c], "the NPC stays the GM's");
+
+    // Edits both ways.
+    player.edit_now(&c, Command::SetField { key: "alias".into(), value: "Raven".into() })?;
+    tokio::time::timeout(WAIT, async {
+        while h.host.authority().character(&c).unwrap().field("alias") != "Raven" {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await?;
+    h.host.gm_edit(&c, gain(100.0, "Good run"))?;
+    until(|| player.replica().character(&c).unwrap().karma == 110).await?;
+    let line = player.replica().feed().back().unwrap().clone();
+    assert_eq!(chummer_sync::feed::for_owner(&line), "GM gave you 100 karma: Good run");
+
+    // The GM stops hosting: the player is hung up on and falls back to
+    // the mailbox for an offline edit.
+    gm.stop_serving();
+    tokio::time::timeout(WAIT, async {
+        while player.is_online() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await?;
+    player.edit_now(&c, gain(5.0, "Side job"))?;
+    assert_eq!(player.replica().outbox(&c).len(), 1);
+    assert_eq!(player.sync().await, SyncMode::Mailbox);
+    assert!(player.replica().outbox(&c).iter().all(|p| p.mailed));
+
+    // The GM's app restarts from its files and comes back online.
+    h.host.save()?;
+    drop(h);
+    let campaign = Campaign::load(&file)?;
+    let (h, rec) = HostedCampaign::open(&campaign, &file, engine.clone(), gm_key.clone(), "GM", |_| None)?;
+    assert!(rec.added.is_empty(), "{rec:?}");
+    gm.serve(&h.host);
+    let r = gm.sync_mail(&h.host).await?;
+    assert_eq!(r.handled, 1, "{r:?}");
+    let feed: Vec<String> = h.host.authority().feed().iter().map(|f| f.to_string()).collect();
+    assert_eq!(h.host.authority().character(&c).unwrap().karma, 115, "{feed:?} {:?}", player.replica().outbox(&c));
+    assert_eq!(player.sync().await, SyncMode::Online);
+    assert!(player.replica().outbox(&c).is_empty());
+    assert_eq!(player.replica().confirmed_hash(&c), h.host.authority().hash(&c));
+
+    // The GM reverts the side job; the player gets it live.
+    let v = h.host.authority().feed().iter().rev().find(|f| f.text.contains("Side job")).and_then(|f| f.version).unwrap();
+    player.events();
+    h.host.gm_revert(&c, v).map_err(anyhow::Error::msg)?;
+    until(|| player.replica().character(&c).unwrap().karma == 110).await?;
+    assert_eq!(player.replica().confirmed_hash(&c), h.host.authority().hash(&c));
+
+    // Saving writes the authority's characters into the campaign file.
+    let mut campaign = campaign;
+    h.write_back(&mut campaign).map_err(anyhow::Error::msg)?;
+    campaign.save(&file)?;
+    let back = Campaign::load(&file)?;
+    let ch = back.member(pc).unwrap().load_character(None)?;
+    assert_eq!((ch.karma, ch.field("alias")), (110, "Raven".to_string()));
+
+    player.close();
+    p_node.shutdown().await;
+    gm.shutdown().await;
     relay.shutdown().await
 }

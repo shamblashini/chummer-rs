@@ -208,6 +208,8 @@ pub struct MemberInfo {
 /// a player their own, the GM all of them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Membership {
+    /// The campaign's name, as the GM calls it.
+    pub campaign_name: String,
     pub you: EndpointId,
     pub role: Role,
     pub members: Vec<MemberInfo>,

@@ -17,18 +17,28 @@
 //!   protocol handler, live pushes, mailbox rounds).
 //! - [`player`]: [`PlayerSession`], a player's connection with mailbox
 //!   fallback.
+//! - [`node`]: [`Node`], an app's one endpoint: dials out for player
+//!   sessions and serves the hosted campaign.
+//! - [`hosted`]: [`HostedCampaign`], a GM's `.chummercampaign` file with
+//!   its authority sidecar (the glue the GUI and `chummer-authority` share).
+//! - [`joined`]: the campaigns a player has joined, as the app lists them.
 
 pub mod authority;
 pub mod feed;
 pub mod host;
+pub mod hosted;
+pub mod joined;
 pub mod mail;
 pub mod msg;
+pub mod node;
 pub mod persist;
 pub mod player;
 pub mod replica;
 
 pub use authority::{Authority, LocalApplied, Member, Reverted, Submitted};
 pub use host::{AuthorityHost, HostEvent, MailReport};
+pub use hosted::HostedCampaign;
+pub use node::Node;
 pub use msg::{CharacterId, FeedEntry};
 pub use player::{PlayerConfig, PlayerSession, SyncMode};
 pub use replica::{Event, Refused, Replica};
