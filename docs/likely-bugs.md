@@ -7,7 +7,8 @@ on its own.
 
 Each entry has an id. Entries with a code site have a matching
 `// LIKELY-BUG(<id>)` comment there (LB-26 has none, because the A.I.
-merge is changing that code). Rules references are to the printed page numbers
+merge is changing that code). Entries marked "(b) — fixed" have a
+"chummer-rs deviates from Chummer" comment at the code site instead. Rules references are to the printed page numbers
 (book code as in `books.xml`). The rules text is paraphrased.
 
 Classes:
@@ -61,7 +62,7 @@ judgement call).
 | LB-30 | Career: which grade a new metamagic goes to | The player selects an initiation grade node in the tree; the metamagic goes there, free if that grade has no metamagic yet. | Fixed: the Metamagics section has a Grade dropdown (career mode) showing each grade's cost; the lowest grade without one, else the top grade, is preselected (`career::default_metamagic_grade`). | SR5 p. 325: each initiation grade gives one metamagic. | (b) — fixed | fixed |
 | LB-31 | Cyberware Device Rating by grade | `Grade` reads `<devicerating>` from the grade record and falls back to a name table. | Uses only the name table. Bioware grades (data: 0) get 2–6; custom grades with their own value are ignored. | SR5 p. 234: basic cyberware 2, alphaware 3, betaware 4, deltaware 5. Bioware is not an electronic device. | (c) | fix (read the data field) |
 | LB-32 | Fettered spirits | Fettering does not add the Banishing Resistance power. | Fixed: a fettered spirit (not a sprite) has Banishing Resistance, derived from `<fettered>` (nothing extra saved). The GUI shows it next to the Fettered box; the print lists the spirit's powers (critter data plus Banishing Resistance) for a fettered spirit. Spirits that are not fettered print no powers, as in Chummer (which prints them only for a linked spirit file). | SG p. 192: a fettered spirit gains Banishing Resistance. KC p. 91: a sprite pet gains no power. | (b) — fixed | fixed |
-| LB-33 | Essence loss in career mode (RAW) | Burns karma levels and power points step by step as essence drops. | Fixed (ported): career-mode RAW essence loss writes `EssenceLoss` MAG/MAGAdept/RES/DEP improvements for the loss since creation and burns karma levels (and a mystic adept's power points) once a minimum cannot drop further, as Chummer does. The GUI refreshes it when Essence or the essence at special start changes. | SR5 p. 95: any fraction of Essence lost lowers Magic/Resonance by 1. | (b) — fixed | fixed |
+| LB-33 | Essence loss in career mode (RAW) | Burns karma levels and power points step by step as essence drops. | Fixed (ported): career-mode RAW essence loss writes `EssenceLoss` MAG/MAGAdept/RES/DEP improvements for the loss since creation and burns karma levels (and a mystic adept's power points) once a minimum cannot drop further, as Chummer does (karma levels stop at 0; Chummer does not clamp). The GUI refreshes it when Essence or the essence at special start changes. | SR5 p. 95: any fraction of Essence lost lowers Magic/Resonance by 1. | (b) — fixed | fixed |
 
 ## Checked, not bugs
 
