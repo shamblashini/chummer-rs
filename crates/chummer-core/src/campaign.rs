@@ -514,7 +514,9 @@ fn strip_number(name: &str) -> &str {
 /// A copy of a character with new GUIDs for all its items, skills,
 /// contacts and ledger entries. Every text that equals an old GUID is
 /// replaced (parent links, improvement sources, active clips), so the copy
-/// is consistent; data ids (`<sourceid>`, `<suid>`, `<id>`) stay. The copy
+/// is consistent, e.g. a clip's `<id>` of the loaded ammunition. Data ids
+/// (`<sourceid>`, `<suid>`, a record's `<id>`) never equal an item's GUID
+/// and stay. The copy
 /// has no file and is marked modified.
 pub fn fresh_copy(ch: &Character) -> Character {
     let mut doc = ch.to_document();
@@ -539,7 +541,7 @@ fn collect_ids(e: &Element, guids: &mut Vec<String>, data: &mut std::collections
         if !t.is_empty() {
             match c.name.as_str() {
                 "guid" if !guids.contains(&t) => guids.push(t),
-                "sourceid" | "suid" | "id" => {
+                "sourceid" | "suid" => {
                     data.insert(t);
                 }
                 _ => {}

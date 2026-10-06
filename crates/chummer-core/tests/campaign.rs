@@ -123,6 +123,46 @@ fn copies_get_fresh_guids() {
 }
 
 #[test]
+fn copies_keep_loaded_ammunition_linked() {
+    use chummer_core::play::ammo;
+    let Ok(engine) = Engine::load() else { return };
+    // A career character with a weapon and ammunition for it: load it.
+    let mut found = None;
+    for name in ["Munin_Career", "Soma (Career)", "Barrett", "Gangerbean", "Blindfire", "Draught"] {
+        let ch = load(name);
+        let store = engine.store_for_character(&ch);
+        for w in ch.items("weapons", "weapon") {
+            let g = w.get("guid");
+            if let Some((ammo, _, _)) = ammo::reloadable(&ch, Some(&store), &g).into_iter().next() {
+                found = Some((ch.clone(), g, ammo));
+                break;
+            }
+        }
+        if found.is_some() {
+            break;
+        }
+    }
+    let Some((ch, weapon, ammo_guid)) = found else { panic!("no fixture with reloadable ammunition") };
+    let mut s = Session::with_seed(ch, 1);
+    s.apply(&engine, Command::Reload { weapon: weapon.clone(), ammo: Some(ammo_guid.clone()), count: 1 }).unwrap();
+    let loaded = s.ch().clone();
+    let w = chummer_core::items::edit::find(&loaded, &weapon).expect("weapon");
+    assert!(ammo::loaded(&loaded, w).is_some(), "the weapon is loaded");
+    let copy = campaign::fresh_copy(&loaded);
+    let orig: HashSet<String> = values(&loaded, "guid").into_iter().collect();
+    for g in values(&copy, "guid") {
+        assert!(!orig.contains(&g), "guid {g} shared with the original");
+    }
+    for id in values(&copy, "id") {
+        assert!(!orig.contains(&id.to_ascii_lowercase()), "clip id {id} still points at the original's ammunition");
+    }
+    let at = loaded.items("weapons", "weapon").iter().position(|x| x.get("guid") == weapon).expect("top-level weapon");
+    let new_weapon = copy.items("weapons", "weapon")[at];
+    let ammo_name = ammo::loaded(&loaded, w).unwrap().get("name");
+    assert_eq!(ammo::loaded(&copy, new_weapon).map(|g| g.get("name")), Some(ammo_name), "the copy's weapon is loaded with the copy's ammunition");
+}
+
+#[test]
 fn gm_awards_reach_the_feed() {
     let Ok(engine) = Engine::load() else { return };
     let ch = load("Munin_Career");
