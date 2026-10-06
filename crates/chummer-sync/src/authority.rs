@@ -1,0 +1,782 @@
+//! The campaign authority: the GM's copy of every character, which decides
+//! the order of all changes.
+//!
+//! [`Authority`] is plain data and synchronous: no networking, no clock
+//! except the one it is given, so it can be tested directly and driven by
+//! any transport ([`crate::host::AuthorityHost`] over chummer-net, or the
+//! mailbox).
+//!
+//! Per character it keeps the live [`Character`], its version (commands
+//! applied), the hash of its canonical form, a window of the last
+//! [`LOG_WINDOW`] log entries (with the hash after each, so a client's base
+//! can be checked and short pushes sent) and the outcome of the last
+//! [`SEEN_LIMIT`] operation ids (so a resubmitted or replayed command runs
+//! once and gets the same answer). The window is the compaction: older
+//! entries are dropped, and a client further behind gets a snapshot.
+//!
+//! Submitting ([`Authority::submit`]): each command runs on the current
+//! state. When the client's base is the current version this is a plain
+//! apply; otherwise it is the rebase of the design (commands are intents:
+//! "raise Pistols" still works after the GM gave karma). A command the
+//! engine refuses (not enough karma any more) is rejected with the reason.
+//! Nothing is refused for being "not allowed": the only access rule is
+//! that a player submits for their own characters.
+
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::Path;
+
+use chummer_core::character::Character;
+use chummer_core::command::{self, Command, Envelope, Rejected};
+use chummer_core::dice::Rng;
+use chummer_core::engine::Engine;
+use chummer_net::invite::{CampaignId, InviteStore, InviteToken, Role};
+use chummer_net::EndpointId;
+use serde::{Deserialize, Serialize};
+
+use crate::feed;
+use crate::mail::Inbox;
+use crate::msg::{
+    Accepted, Ack, CharacterId, CharacterInfo, Entry, FeedEntry, Hash, Have, MemberInfo, Membership, Op, OpId, Push, PushBody, RejectedOp, ResyncRequest, ServerMessage,
+    SubmitBatch,
+};
+use crate::persist::{self, PersistError};
+
+/// Log entries kept per character for incremental pushes.
+pub const LOG_WINDOW: usize = 256;
+
+/// Operation ids remembered per character for de-duplication.
+pub const SEEN_LIMIT: usize = 20_000;
+
+/// Entries carried in a snapshot push for the feed.
+const RECENT_IN_SNAPSHOT: usize = 20;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// A member of the campaign.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Member {
+    pub role: Role,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum Outcome {
+    Accepted(Accepted),
+    Rejected(RejectedOp),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LogItem {
+    entry: Entry,
+    /// The hash after this entry.
+    hash: Hash,
+}
+
+#[derive(Debug, Clone, Default)]
+struct Seen {
+    order: VecDeque<OpId>,
+    map: HashMap<OpId, Outcome>,
+}
+
+impl Seen {
+    fn get(&self, id: &OpId) -> Option<&Outcome> {
+        self.map.get(id)
+    }
+
+    fn insert(&mut self, id: OpId, o: Outcome) {
+        if self.map.insert(id, o).is_none() {
+            self.order.push_back(id);
+        }
+        while self.order.len() > SEEN_LIMIT {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+    }
+}
+
+struct CharState {
+    name: String,
+    owner: Option<EndpointId>,
+    ch: Character,
+    version: u64,
+    hash: Hash,
+    log: VecDeque<LogItem>,
+    /// The hash at `version - log.len()`.
+    base_hash: Hash,
+    seen: Seen,
+    /// The last snapshot made, and its version (compressing is slow).
+    snapshot: Option<(u64, Vec<u8>)>,
+}
+
+impl CharState {
+    fn new(name: String, owner: Option<EndpointId>, ch: Character) -> CharState {
+        let hash = command::state_hash(&ch);
+        CharState { name, owner, ch, version: 0, hash, log: VecDeque::new(), base_hash: hash, seen: Seen::default(), snapshot: None }
+    }
+
+    fn window_base(&self) -> u64 {
+        self.version - self.log.len() as u64
+    }
+
+    fn hash_at(&self, v: u64) -> Option<Hash> {
+        let base = self.window_base();
+        if v == base {
+            Some(self.base_hash)
+        } else if v > base && v <= self.version {
+            Some(self.log[(v - base - 1) as usize].hash)
+        } else {
+            None
+        }
+    }
+
+    fn snapshot(&mut self) -> Vec<u8> {
+        match &self.snapshot {
+            Some((v, b)) if *v == self.version => b.clone(),
+            _ => {
+                let b = command::snapshot(&self.ch);
+                self.snapshot = Some((self.version, b.clone()));
+                b
+            }
+        }
+    }
+
+    fn push_log(&mut self, item: LogItem) {
+        self.log.push_back(item);
+        while self.log.len() > LOG_WINDOW {
+            let old = self.log.pop_front().expect("not empty");
+            self.base_hash = old.hash;
+        }
+    }
+
+    /// From `from` (with hash `from_hash`, when known) to now: the entries
+    /// when the window reaches back that far, else a snapshot.
+    fn push_from(&mut self, id: &CharacterId, from: u64, from_hash: Option<Hash>, force_snapshot: bool) -> Push {
+        let fits = !force_snapshot && self.hash_at(from).is_some_and(|h| from_hash.is_none_or(|f| f == h));
+        let body = if fits {
+            let base = self.window_base();
+            PushBody::Entries(self.log.iter().skip((from - base) as usize).map(|i| i.entry.clone()).collect())
+        } else {
+            let recent = self.log.iter().rev().take(RECENT_IN_SNAPSHOT).rev().map(|i| i.entry.clone()).collect();
+            PushBody::Snapshot { bytes: self.snapshot(), recent }
+        };
+        Push { character: id.clone(), name: self.name.clone(), from_version: if fits { from } else { self.version }, body, version: self.version, hash: self.hash }
+    }
+}
+
+/// What a submission did, for the transport to deliver.
+#[derive(Debug, Clone)]
+pub struct Submitted {
+    pub ack: Ack,
+    /// Other members who see this character and should get a push
+    /// ([`Authority::push_for`]).
+    pub notify: Vec<EndpointId>,
+}
+
+/// A GM edit made at the authority.
+#[derive(Debug, Clone)]
+pub struct LocalApplied {
+    pub accepted: Accepted,
+    pub notify: Vec<EndpointId>,
+}
+
+/// The campaign authority. See the module documentation.
+pub struct Authority {
+    campaign: CampaignId,
+    /// The GM running this authority.
+    me: EndpointId,
+    origin: [u8; 16],
+    next_seq: u64,
+    seeds: Rng,
+    clock: fn() -> i64,
+    members: BTreeMap<EndpointId, Member>,
+    invites: InviteStore,
+    chars: BTreeMap<CharacterId, CharState>,
+    /// The version of each character each member has been sent.
+    delivered: BTreeMap<(EndpointId, CharacterId), u64>,
+    /// Counts membership changes; `membership_sent` is what each member
+    /// has been told.
+    membership_rev: u64,
+    membership_sent: BTreeMap<EndpointId, u64>,
+    feed: VecDeque<FeedEntry>,
+    /// Chunks of mailed messages being put together.
+    pub inbox: Inbox,
+    /// Answers to mailed submissions, waiting to be mailed back.
+    mail_out: Vec<(EndpointId, ServerMessage)>,
+}
+
+impl std::fmt::Debug for Authority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Authority").field("campaign", &self.campaign).field("me", &self.me).field("members", &self.members).field("characters", &self.chars.keys().collect::<Vec<_>>()).finish()
+    }
+}
+
+impl Authority {
+    /// A new campaign hosted by `gm` (this machine's node id).
+    pub fn new(campaign: CampaignId, gm: EndpointId, gm_name: impl Into<String>) -> Authority {
+        let mut members = BTreeMap::new();
+        members.insert(gm, Member { role: Role::Gm, name: gm_name.into() });
+        Authority {
+            campaign,
+            me: gm,
+            origin: chummer_net::invite::random_id(),
+            next_seq: 0,
+            seeds: Rng::from_time(),
+            clock: now_ms,
+            members,
+            invites: InviteStore::default(),
+            chars: BTreeMap::new(),
+            delivered: BTreeMap::new(),
+            membership_rev: 0,
+            membership_sent: BTreeMap::new(),
+            feed: VecDeque::new(),
+            inbox: Inbox::default(),
+            mail_out: Vec::new(),
+        }
+    }
+
+    /// Use another clock (Unix milliseconds) for the GM's own commands.
+    pub fn with_clock(mut self, clock: fn() -> i64) -> Authority {
+        self.clock = clock;
+        self
+    }
+
+    pub fn campaign(&self) -> CampaignId {
+        self.campaign
+    }
+
+    pub fn gm(&self) -> EndpointId {
+        self.me
+    }
+
+    // ----- members and invites -----
+
+    pub fn invites(&self) -> &InviteStore {
+        &self.invites
+    }
+
+    pub fn invites_mut(&mut self) -> &mut InviteStore {
+        &mut self.invites
+    }
+
+    pub fn members(&self) -> &BTreeMap<EndpointId, Member> {
+        &self.members
+    }
+
+    pub fn role(&self, peer: &EndpointId) -> Option<Role> {
+        self.members.get(peer).map(|m| m.role)
+    }
+
+    /// Adds a member directly (the GM adding a known player).
+    pub fn add_member(&mut self, peer: EndpointId, role: Role, name: impl Into<String>) {
+        self.members.insert(peer, Member { role, name: name.into() });
+        self.membership_rev += 1;
+    }
+
+    pub fn remove_member(&mut self, peer: &EndpointId) -> bool {
+        if *peer == self.me {
+            return false;
+        }
+        let gone = self.members.remove(peer).is_some();
+        if gone {
+            self.delivered.retain(|(p, _), _| p != peer);
+            self.membership_sent.remove(peer);
+            self.membership_rev += 1;
+        }
+        gone
+    }
+
+    /// Lets `peer` in: a known member, or a holder of a valid invite (who
+    /// becomes a member). Returns the role.
+    pub fn admit(&mut self, peer: EndpointId, campaign: CampaignId, invite: Option<&InviteToken>) -> Result<Role, String> {
+        if campaign != self.campaign {
+            return Err("no such campaign".into());
+        }
+        if let Some(m) = self.members.get(&peer) {
+            return Ok(m.role);
+        }
+        let role = invite.and_then(|t| self.invites.redeem(t)).ok_or("not invited")?;
+        self.add_member(peer, role, String::new());
+        Ok(role)
+    }
+
+    fn member_infos(&self) -> Vec<MemberInfo> {
+        self.members.iter().map(|(id, m)| MemberInfo { id: *id, role: m.role, name: if m.name.is_empty() { feed::short_name(id) } else { m.name.clone() } }).collect()
+    }
+
+    /// What `peer` is told about the campaign.
+    pub fn membership(&self, peer: &EndpointId) -> Option<Membership> {
+        let role = self.role(peer)?;
+        let characters = self
+            .chars
+            .iter()
+            .filter(|(_, c)| self.sees(peer, role, c))
+            .map(|(id, c)| CharacterInfo { id: id.clone(), name: c.name.clone(), owner: c.owner, version: c.version })
+            .collect();
+        Some(Membership { you: *peer, role, members: self.member_infos(), characters })
+    }
+
+    fn sees(&self, peer: &EndpointId, role: Role, c: &CharState) -> bool {
+        role == Role::Gm || c.owner.as_ref() == Some(peer)
+    }
+
+    /// Whether `peer` may see and edit `id`.
+    pub fn can_see(&self, peer: &EndpointId, id: &CharacterId) -> bool {
+        match (self.role(peer), self.chars.get(id)) {
+            (Some(role), Some(c)) => self.sees(peer, role, c),
+            _ => false,
+        }
+    }
+
+    /// The characters `peer` sees.
+    pub fn visible(&self, peer: &EndpointId) -> Vec<CharacterId> {
+        let Some(role) = self.role(peer) else { return Vec::new() };
+        self.chars.iter().filter(|(_, c)| self.sees(peer, role, c)).map(|(id, _)| id.clone()).collect()
+    }
+
+    /// Members other than this authority's GM who see `id`: its owner and
+    /// any other GMs.
+    pub fn interested(&self, id: &CharacterId) -> Vec<EndpointId> {
+        let Some(c) = self.chars.get(id) else { return Vec::new() };
+        self.members.iter().filter(|(p, m)| **p != self.me && (m.role == Role::Gm || c.owner.as_ref() == Some(*p))).map(|(p, _)| *p).collect()
+    }
+
+    // ----- characters -----
+
+    /// Adds a character to the campaign, owned by `owner` (`None`: the
+    /// GM's own). It is normalised through its canonical form first, so it
+    /// is exactly what a client restores from a snapshot. Returns the
+    /// members to send it to.
+    pub fn add_character(&mut self, id: CharacterId, owner: Option<EndpointId>, ch: Character) -> Result<Vec<EndpointId>, command::RestoreError> {
+        let ch = command::restore(&command::snapshot(&ch))?;
+        let name = ch.display_name();
+        self.chars.insert(id.clone(), CharState::new(name, owner, ch));
+        self.delivered.retain(|(_, c), _| *c != id);
+        self.membership_rev += 1;
+        Ok(self.interested(&id))
+    }
+
+    /// Gives a character to another player (or to the GM with `None`).
+    pub fn set_owner(&mut self, id: &CharacterId, owner: Option<EndpointId>) -> bool {
+        let Some(c) = self.chars.get_mut(id) else { return false };
+        if let Some(old) = c.owner {
+            self.delivered.remove(&(old, id.clone()));
+        }
+        c.owner = owner;
+        self.membership_rev += 1;
+        true
+    }
+
+    pub fn remove_character(&mut self, id: &CharacterId) -> Option<Character> {
+        let c = self.chars.remove(id)?;
+        self.delivered.retain(|(_, k), _| k != id);
+        self.membership_rev += 1;
+        Some(c.ch)
+    }
+
+    pub fn characters(&self) -> impl Iterator<Item = &CharacterId> {
+        self.chars.keys()
+    }
+
+    pub fn character(&self, id: &CharacterId) -> Option<&Character> {
+        self.chars.get(id).map(|c| &c.ch)
+    }
+
+    pub fn owner(&self, id: &CharacterId) -> Option<EndpointId> {
+        self.chars.get(id).and_then(|c| c.owner)
+    }
+
+    pub fn version(&self, id: &CharacterId) -> Option<u64> {
+        self.chars.get(id).map(|c| c.version)
+    }
+
+    pub fn hash(&self, id: &CharacterId) -> Option<Hash> {
+        self.chars.get(id).map(|c| c.hash)
+    }
+
+    /// The log window of a character, oldest first.
+    pub fn log(&self, id: &CharacterId) -> Vec<Entry> {
+        self.chars.get(id).map(|c| c.log.iter().map(|i| i.entry.clone()).collect()).unwrap_or_default()
+    }
+
+    /// The activity feed, oldest first: every applied and refused command.
+    pub fn feed(&self) -> &VecDeque<FeedEntry> {
+        &self.feed
+    }
+
+    // ----- applying -----
+
+    fn run_op(&mut self, engine: &Engine, id: &CharacterId, author: EndpointId, op: &Op, rebased: bool) -> Outcome {
+        let members = self.member_infos();
+        let c = self.chars.get_mut(id).expect("checked by the caller");
+        if let Some(o) = c.seen.get(&op.id) {
+            return o.clone();
+        }
+        let mut env = op.env.clone();
+        env.author = author.to_string();
+        let (author_name, author_role) = feed::member_label(&members, &author);
+        let outcome = match command::apply(&mut c.ch, engine, &env) {
+            Ok(applied) if applied.changed => {
+                c.version += 1;
+                c.hash = command::state_hash(&c.ch);
+                let entry = Entry { version: c.version, op: op.id, env, author, description: applied.description.clone() };
+                feed::push(&mut self.feed, feed::from_entry(&members, id, &c.name, &entry));
+                c.push_log(LogItem { entry, hash: c.hash });
+                if let Some(name) = Some(c.ch.display_name()).filter(|n| *n != c.name) {
+                    c.name = name;
+                    self.membership_rev += 1;
+                }
+                Outcome::Accepted(Accepted { op: op.id, version: c.version, hash: c.hash, changed: true, rebased, description: applied.description })
+            }
+            Ok(_) => Outcome::Accepted(Accepted { op: op.id, version: c.version, hash: c.hash, changed: false, rebased, description: String::new() }),
+            Err(Rejected { reason, confirm }) => {
+                feed::push(
+                    &mut self.feed,
+                    FeedEntry {
+                        at: env.at,
+                        character: id.clone(),
+                        character_name: c.name.clone(),
+                        author,
+                        author_name,
+                        author_role,
+                        text: describe_intent(&env),
+                        version: None,
+                        rejected: Some(reason.clone()),
+                    },
+                );
+                Outcome::Rejected(RejectedOp { op: op.id, reason, confirm })
+            }
+        };
+        c.seen.insert(op.id, outcome.clone());
+        outcome
+    }
+
+    fn check_access(&self, peer: &EndpointId, id: &CharacterId) -> Result<(), String> {
+        if self.role(peer).is_none() {
+            return Err("not a member of this campaign".into());
+        }
+        if !self.chars.contains_key(id) {
+            return Err(format!("no character {id} in this campaign"));
+        }
+        if !self.can_see(peer, id) {
+            return Err(format!("character {id} is not yours"));
+        }
+        Ok(())
+    }
+
+    /// Runs a member's batch. `Err` means the batch could not be handled
+    /// at all (not a member, not their character); rejections of single
+    /// commands are in the [`Ack`].
+    pub fn submit(&mut self, engine: &Engine, peer: EndpointId, batch: SubmitBatch) -> Result<Submitted, String> {
+        self.check_access(&peer, &batch.character)?;
+        let id = batch.character.clone();
+        let (start, diverged) = {
+            let c = &self.chars[&id];
+            (c.version, c.hash_at(batch.base_version).is_none_or(|h| h != batch.base_hash))
+        };
+        let rebased = start != batch.base_version || diverged;
+        let (mut accepted, mut rejected) = (Vec::new(), Vec::new());
+        for op in &batch.ops {
+            match self.run_op(engine, &id, peer, op, rebased) {
+                Outcome::Accepted(a) => accepted.push(a),
+                Outcome::Rejected(r) => rejected.push(r),
+            }
+        }
+        let c = self.chars.get_mut(&id).expect("checked");
+        let changed = c.version != start;
+        let update = c.push_from(&id, batch.base_version, Some(batch.base_hash), diverged);
+        let version = c.version;
+        self.mark_delivered(peer, &id, version);
+        let notify = if changed { self.interested(&id).into_iter().filter(|p| *p != peer).collect() } else { Vec::new() };
+        Ok(Submitted { ack: Ack { character: id, accepted, rejected, update }, notify })
+    }
+
+    /// A GM edit made at this authority: applied at once and logged with
+    /// the GM as author.
+    pub fn apply_local(&mut self, engine: &Engine, id: &CharacterId, cmd: Command) -> Result<LocalApplied, Rejected> {
+        let env = Envelope::new(cmd, self.seeds.next_u64(), (self.clock)(), self.me.to_string());
+        self.apply_local_envelope(engine, id, env)
+    }
+
+    /// As [`Authority::apply_local`], with an envelope made by the caller.
+    pub fn apply_local_envelope(&mut self, engine: &Engine, id: &CharacterId, env: Envelope) -> Result<LocalApplied, Rejected> {
+        if !self.chars.contains_key(id) {
+            return Err(Rejected::new(format!("no character {id} in this campaign")));
+        }
+        self.next_seq += 1;
+        let op = Op { id: OpId { origin: self.origin, seq: self.next_seq }, env };
+        match self.run_op(engine, id, self.me, &op, false) {
+            Outcome::Accepted(accepted) => {
+                let notify = if accepted.changed { self.interested(id) } else { Vec::new() };
+                Ok(LocalApplied { accepted, notify })
+            }
+            Outcome::Rejected(r) => Err(Rejected { reason: r.reason, confirm: r.confirm }),
+        }
+    }
+
+    // ----- what members are sent -----
+
+    /// A member joined (or rejoined) with what they have. Returns the
+    /// membership and a push for every visible character they are behind
+    /// on, and counts both as delivered.
+    pub fn join(&mut self, peer: EndpointId, name: &str, have: &[Have]) -> Result<(Membership, Vec<Push>), String> {
+        if !name.trim().is_empty() && peer != self.me {
+            if let Some(m) = self.members.get_mut(&peer) {
+                if m.name != name.trim() {
+                    m.name = name.trim().to_owned();
+                    self.membership_rev += 1;
+                }
+            }
+        }
+        let membership = self.membership(&peer).ok_or("not a member of this campaign")?;
+        self.membership_sent.insert(peer, self.membership_rev);
+        let mut pushes = Vec::new();
+        for id in self.visible(&peer) {
+            let c = self.chars.get_mut(&id).expect("visible");
+            let push = match have.iter().find(|h| h.character == id) {
+                Some(h) if h.version == c.version && h.hash == c.hash => None,
+                Some(h) => Some(c.push_from(&id, h.version, Some(h.hash), false)),
+                None => Some(c.push_from(&id, 0, None, true)),
+            };
+            let v = c.version;
+            if let Some(p) = push {
+                pushes.push(p);
+            }
+            self.mark_delivered(peer, &id, v);
+        }
+        Ok((membership, pushes))
+    }
+
+    /// A snapshot for a client whose copy drifted.
+    pub fn resync(&mut self, peer: EndpointId, req: &ResyncRequest) -> Result<Push, String> {
+        self.check_access(&peer, &req.character)?;
+        let c = self.chars.get_mut(&req.character).expect("checked");
+        let push = c.push_from(&req.character, req.have_version, None, true);
+        let v = c.version;
+        self.mark_delivered(peer, &req.character, v);
+        Ok(push)
+    }
+
+    /// The push that brings `peer` up to date on `id` from what it was
+    /// last sent, if it is behind. Call [`Authority::mark_delivered`] once
+    /// it was sent.
+    pub fn push_for(&mut self, peer: &EndpointId, id: &CharacterId) -> Option<Push> {
+        if !self.can_see(peer, id) {
+            return None;
+        }
+        let have = self.delivered.get(&(*peer, id.clone())).copied();
+        let c = self.chars.get_mut(id)?;
+        match have {
+            Some(v) if v >= c.version => None,
+            Some(v) => Some(c.push_from(id, v, None, false)),
+            None => Some(c.push_from(id, 0, None, true)),
+        }
+    }
+
+    pub fn mark_delivered(&mut self, peer: EndpointId, id: &CharacterId, version: u64) {
+        let e = self.delivered.entry((peer, id.clone())).or_insert(0);
+        *e = (*e).max(version);
+    }
+
+    /// Whether `peer` has not been told the latest membership.
+    pub fn membership_stale(&self, peer: &EndpointId) -> bool {
+        self.membership_sent.get(peer).is_none_or(|v| *v < self.membership_rev)
+    }
+
+    pub fn mark_membership_sent(&mut self, peer: EndpointId) {
+        self.membership_sent.insert(peer, self.membership_rev);
+    }
+
+    /// Everything `peer` has not been sent yet: the membership when it
+    /// changed, answers to their mailed requests (taken out of the queue),
+    /// and pushes. Call [`Authority::mark_sent`] for each message that was
+    /// delivered and [`Authority::requeue`] for each that was not.
+    pub fn outgoing_for(&mut self, peer: &EndpointId) -> Vec<ServerMessage> {
+        let mut out = Vec::new();
+        if self.role(peer).is_none() || *peer == self.me {
+            return out;
+        }
+        if self.membership_stale(peer) {
+            if let Some(m) = self.membership(peer) {
+                out.push(ServerMessage::Membership(m));
+            }
+        }
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.mail_out).into_iter().partition(|(p, _)| p == peer);
+        self.mail_out = rest;
+        out.extend(mine.into_iter().map(|(_, m)| m));
+        for id in self.visible(peer) {
+            if let Some(p) = self.push_for(peer, &id) {
+                out.push(ServerMessage::Push(p));
+            }
+        }
+        out
+    }
+
+    /// Whether [`Authority::outgoing_for`] would return anything.
+    pub fn has_outgoing(&self, peer: &EndpointId) -> bool {
+        if self.role(peer).is_none() || *peer == self.me {
+            return false;
+        }
+        self.membership_stale(peer)
+            || self.mail_out.iter().any(|(p, _)| p == peer)
+            || self.visible(peer).iter().any(|id| self.delivered.get(&(*peer, id.clone())).is_none_or(|v| *v < self.chars[id].version))
+    }
+
+    /// `msg` reached `peer` (live or by mail): count what it carried as
+    /// delivered.
+    pub fn mark_sent(&mut self, peer: EndpointId, msg: &ServerMessage) {
+        match msg {
+            ServerMessage::Membership(_) | ServerMessage::Joined { .. } => self.mark_membership_sent(peer),
+            ServerMessage::Push(p) => self.mark_delivered(peer, &p.character, p.version),
+            ServerMessage::Ack(a) => self.mark_delivered(peer, &a.character, a.update.version),
+            ServerMessage::Error(_) => {}
+        }
+    }
+
+    /// `msg` from [`Authority::outgoing_for`] could not be delivered.
+    /// Answers go back in the queue; pushes and memberships are made
+    /// again next time anyway.
+    pub fn requeue(&mut self, peer: EndpointId, msg: ServerMessage) {
+        if matches!(msg, ServerMessage::Ack(_) | ServerMessage::Error(_)) {
+            self.mail_out.push((peer, msg));
+        }
+    }
+
+    /// Queues an answer to a mailed request for the mailbox.
+    pub fn queue_mail(&mut self, peer: EndpointId, msg: ServerMessage) {
+        self.mail_out.push((peer, msg));
+    }
+
+    /// Forget what `peer` was sent of `id`, so the next push is a
+    /// snapshot (a mailed resync request).
+    pub fn forget_delivered(&mut self, peer: &EndpointId, id: &CharacterId) {
+        self.delivered.remove(&(*peer, id.clone()));
+    }
+
+    /// Members (other than this GM) with something not yet sent.
+    pub fn members_behind(&self) -> Vec<EndpointId> {
+        self.members.keys().copied().filter(|p| self.has_outgoing(p)).collect()
+    }
+
+    // ----- persistence -----
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let file = AuthorityFile {
+            campaign: self.campaign,
+            me: self.me,
+            origin: self.origin,
+            next_seq: self.next_seq,
+            members: self.members.iter().map(|(k, v)| (*k, v.clone())).collect(),
+            invites: self.invites.clone(),
+            characters: self
+                .chars
+                .iter()
+                .map(|(id, c)| StoredCharacter {
+                    id: id.clone(),
+                    name: c.name.clone(),
+                    owner: c.owner,
+                    snapshot: match &c.snapshot {
+                        Some((v, b)) if *v == c.version => b.clone(),
+                        _ => command::snapshot(&c.ch),
+                    },
+                    version: c.version,
+                    hash: c.hash,
+                    base_hash: c.base_hash,
+                    log: c.log.iter().cloned().collect(),
+                    seen: c.seen.order.iter().filter_map(|id| c.seen.map.get(id).map(|o| (*id, o.clone()))).collect(),
+                })
+                .collect(),
+            delivered: self.delivered.iter().map(|((p, c), v)| (*p, c.clone(), *v)).collect(),
+            membership_rev: self.membership_rev,
+            membership_sent: self.membership_sent.iter().map(|(k, v)| (*k, *v)).collect(),
+            feed: self.feed.iter().cloned().collect(),
+            inbox: self.inbox.clone(),
+            mail_out: self.mail_out.clone(),
+        };
+        persist::to_bytes(MAGIC, FORMAT, &file)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Authority, PersistError> {
+        let f: AuthorityFile = persist::from_bytes(MAGIC, "campaign authority", FORMAT, bytes)?;
+        let mut chars = BTreeMap::new();
+        for s in f.characters {
+            let ch = command::restore(&s.snapshot)?;
+            let mut seen = Seen::default();
+            for (id, o) in s.seen {
+                seen.insert(id, o);
+            }
+            chars.insert(
+                s.id,
+                CharState { name: s.name, owner: s.owner, ch, version: s.version, hash: s.hash, log: s.log.into(), base_hash: s.base_hash, seen, snapshot: Some((s.version, s.snapshot)) },
+            );
+        }
+        Ok(Authority {
+            campaign: f.campaign,
+            me: f.me,
+            origin: f.origin,
+            next_seq: f.next_seq,
+            seeds: Rng::from_time(),
+            clock: now_ms,
+            members: f.members.into_iter().collect(),
+            invites: f.invites,
+            chars,
+            delivered: f.delivered.into_iter().map(|(p, c, v)| ((p, c), v)).collect(),
+            membership_rev: f.membership_rev,
+            membership_sent: f.membership_sent.into_iter().collect(),
+            feed: f.feed.into(),
+            inbox: f.inbox,
+            mail_out: f.mail_out,
+        })
+    }
+
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        persist::write_atomic(path, &self.to_bytes())
+    }
+
+    pub fn load(path: &Path) -> Result<Authority, PersistError> {
+        Authority::from_bytes(&std::fs::read(path)?)
+    }
+}
+
+/// What a refused command tried to do, for the feed.
+pub(crate) fn describe_intent(env: &Envelope) -> String {
+    let dbg = format!("{:?}", env.cmd);
+    let name = dbg.split([' ', '{', '(']).next().unwrap_or_default();
+    feed::text(env, name)
+}
+
+const MAGIC: &[u8; 4] = b"CRSA";
+const FORMAT: u16 = 1;
+
+/// The authority file: everything above, characters as snapshots.
+#[derive(Serialize, Deserialize)]
+struct AuthorityFile {
+    campaign: CampaignId,
+    me: EndpointId,
+    origin: [u8; 16],
+    next_seq: u64,
+    members: Vec<(EndpointId, Member)>,
+    invites: InviteStore,
+    characters: Vec<StoredCharacter>,
+    delivered: Vec<(EndpointId, CharacterId, u64)>,
+    membership_rev: u64,
+    membership_sent: Vec<(EndpointId, u64)>,
+    feed: Vec<FeedEntry>,
+    inbox: Inbox,
+    mail_out: Vec<(EndpointId, ServerMessage)>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredCharacter {
+    id: CharacterId,
+    name: String,
+    owner: Option<EndpointId>,
+    snapshot: Vec<u8>,
+    version: u64,
+    hash: Hash,
+    base_hash: Hash,
+    log: Vec<LogItem>,
+    seen: Vec<(OpId, Outcome)>,
+}

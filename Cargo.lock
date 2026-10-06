@@ -857,6 +857,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "chummer-sync"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chummer-core",
+ "chummer-net",
+ "chummer-relay",
+ "iroh",
+ "postcard",
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

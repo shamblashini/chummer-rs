@@ -1,0 +1,22 @@
+[package]
+name = "chummer-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Online campaign sync for chummer-rs: the GM's authority, player replicas, offline outbox and relay mailbox"
+
+[dependencies]
+chummer-core.workspace = true
+chummer-net.workspace = true
+iroh.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+serde.workspace = true
+postcard.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+chummer-relay = { path = "../chummer-relay" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+anyhow.workspace = true

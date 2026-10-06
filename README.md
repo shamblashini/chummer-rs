@@ -292,6 +292,9 @@ Chummer 5.225.
   - The campaign protocol (hello and invite check, submit and ack, push from the GM, ping) and `chummer-rs://join/...` invite links.
   - A relay mailbox for offline peers: messages are sealed to the recipient and signed by the sender, with size, count, daily and expiry limits.
   - `chummer-relay` runs the relay and the mailbox, with Docker and systemd files in `packaging/relay/`.
+  - The sync layer, `chummer-sync`: the GM's app is the authority. It applies players' commands in one order, rebases commands made on an older version (both the GM's and the player's edits apply; a command that no longer passes, such as a raise without enough karma, is refused with the reason), runs a command delivered twice only once, and logs every change with its author ("GM: Gained 100 karma: Good run"). Players see and edit only their own characters; the GM sees all.
+  - Players keep local copies with an outbox, so they can edit offline; the copies and the outbox survive a restart. A copy that drifts (hash mismatch) reloads the GM's snapshot.
+  - Play-by-post: when the GM's app is not reachable, the outbox goes to the relay mailbox, sealed to the GM; the GM's app applies it when it next collects mail and mails the results back. Large snapshots are cut to the relay's size limit.
 
 ### Layout and themes
 
@@ -409,10 +412,11 @@ cargo test --workspace
   features, omissions, file differences) is in
   [docs/deviations.md](docs/deviations.md).
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
-- Online campaigns: only the networking layer exists. The command sync
-  (versions, rebasing, snapshots), the outbox, "Host campaign" and "Join"
-  in the GUI, and the headless authority are not done. The project's
-  public relay is not running yet; its URL and mailbox id in
+- Online campaigns: networking and sync exist as libraries; "Host
+  campaign" and "Join" in the GUI and the headless `chummer-authority`
+  binary are not done. The GM cannot revert a log entry yet, and undo
+  in a campaign does not take a command back out of the outbox. The
+  project's public relay is not running yet; its URL and mailbox id in
   `chummer_net::config` are placeholders.
 - Some career-mode details:
   - Enchantments, rituals and enhancements learned at a grade.
@@ -441,8 +445,6 @@ cargo test --workspace
 - Undo/redo and the history are for the open session only. They are not
   saved; closing the character clears them. History descriptions are in
   English.
-- No GM/player sync yet: commands, versions, hashes and snapshots exist,
-  networking does not (see [docs/online-design.md](docs/online-design.md)).
 - Creation issues not checked yet: metagenic quality balance, the
   Prototype Transhuman bioware limit, vehicle and drone mod slots, cyberware
   grades whose requirements are not met, and Friends in High Places
@@ -473,6 +475,7 @@ cargo test --workspace
 | `crates/chummer-gui` | egui desktop application |
 | `crates/chummer-cli` | Command-line tool |
 | `crates/chummer-net` | Online campaigns: iroh endpoints, campaign protocol, invites, mailbox client, sealing |
+| `crates/chummer-sync` | Online campaigns: the GM's authority, player replicas with an outbox, mailbox play-by-post |
 | `crates/chummer-relay` | Relay server and mailbox (`packaging/relay/`, [docs/relay.md](docs/relay.md)) |
 | `tools/gen_bonus_table.py` | Generates simple bonus handlers from Chummer5a's C# |
 | `resources/` | Data, translations, custom data, sheets and export templates from Chummer5a |

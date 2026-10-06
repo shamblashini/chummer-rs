@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/chummer-core", "crates/chummer-gui", "crates/chummer-cli", "crates/chummer-net", "crates/chummer-relay"]
+members = ["crates/chummer-core", "crates/chummer-gui", "crates/chummer-cli", "crates/chummer-net", "crates/chummer-relay", "crates/chummer-sync"]
 
 [workspace.package]
 version = "0.2.0"
@@ -16,6 +16,7 @@ anyhow = "1"
 lzma-rust2 = { version = "0.21", default-features = false, features = ["std", "encoder"] }
 # Online campaigns (chummer-net, chummer-relay)
 chummer-net = { path = "crates/chummer-net" }
+chummer-sync = { path = "crates/chummer-sync" }
 iroh = "1.3"
 iroh-relay = "1.3"
 tokio = "1"

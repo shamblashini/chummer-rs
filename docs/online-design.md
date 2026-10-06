@@ -164,6 +164,53 @@ Implemented (local part):
   live session's log (with undos and merged edits) onto the original
   file and get the same hash.
 
+### 8. Sync (implemented: `chummer-sync`)
+
+Work-order steps 5 and 7 and the messages for step 6.
+
+- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`),
+  then postcard. `ClientMessage` (Join with the versions the client has,
+  Submit, Resync) travels as chummer-net's `Request::Submit` payload and
+  `ServerMessage` (Joined, Ack, Push, Membership, Error) as its answer
+  or as a server push. In the mailbox they are wrapped in `MailMessage`.
+- Every command travels as an `Op { id: OpId, env: Envelope }`. `OpId`
+  is a random per-replica origin plus a counter; the authority remembers
+  the outcome of the last 20000 per character, so a resubmitted outbox
+  or a replayed mail runs once and gets the same answer. The envelope's
+  `author` is replaced by the proven sender's node id.
+- `Authority`: per character the live state, version, hash, the last
+  256 log entries with the hash after each (the compaction: a client
+  further behind gets a snapshot) and the op-id outcomes. A submit
+  applies each command to the current state (this is the rebase);
+  engine refusals are rejected with the reason; a player may only
+  submit for characters they own. The `Ack` carries the authority's
+  log from the batch's base (or a snapshot when the base is too old or
+  its hash does not match), so the client never orders an ack against
+  pushes. GM edits (`apply_local`) are logged with the GM as author and
+  pushed to the owner. The activity feed holds every applied and refused
+  command ("<author>: <text>").
+- `Replica`: per character the confirmed state, version and hash, and
+  the outbox. What the user sees is the confirmed state with the outbox
+  applied. Every Ack or Push moves the confirmed state forward by the
+  authority's entries, drops answered commands from the outbox, applies
+  the rest again and compares hashes; a mismatch asks for a snapshot.
+  Refused commands are kept for the UI until dismissed.
+- Mailbox: outboxes are split into batches that fit one blob, every
+  message is cut into chunks under the relay's blob limit (lowered when
+  the relay answers `TooLarge`) and sealed to the recipient. The
+  receiver checks the signer (a campaign member for the authority, the
+  GM for a player) and reassembles chunks in a saved `Inbox`. The
+  authority mails offline members everything they were not sent (the
+  membership, answers to mailed submits, pushes since the version last
+  sent).
+- Files: `Authority::save` and `Replica::save` write a 4-byte magic
+  (`CRSA`, `CRSR`), a u16 format version and postcard; characters are
+  stored as snapshots. Written through a temporary file and a rename.
+- Transport: `AuthorityHost` (a chummer-net `CampaignHandler`: invite
+  check, joins, submits, live pushes, mailbox rounds, periodic saves)
+  and `PlayerSession` (connects, falls back to the mailbox, saves the
+  replica after every change).
+
 ## Work order
 
 1. Persistent creation warnings and guided creation.
@@ -171,7 +218,8 @@ Implemented (local part):
 3. The command layer, with undo/redo (done).
 4. Local GM screen and campaign file (players, NPCs, critters,
    initiative, damage), using commands.
-5. Sync between two local instances: rebasing, hashes, snapshots.
+5. Sync between two local instances: rebasing, hashes, snapshots (done:
+   `chummer-sync`).
 6. iroh connections, the relay, invite links.
-7. Outbox and mailbox.
+7. Outbox and mailbox (done: `chummer-sync`).
 8. The optional headless authority.

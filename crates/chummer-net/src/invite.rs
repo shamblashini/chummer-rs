@@ -20,6 +20,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// URL scheme of invite links.
 pub const SCHEME: &str = "chummer-rs";
 
+/// 128 bits from the OS random source (for ids that must not collide
+/// between machines, such as the sync layer's operation ids).
+pub fn random_id() -> [u8; 16] {
+    random16()
+}
+
 fn random16() -> [u8; 16] {
     use crypto_box::aead::rand_core::RngCore;
     let mut b = [0u8; 16];
