@@ -2,8 +2,7 @@
 //! blocks and enhancers at chosen levels, with the combined effects and
 //! cost previewed before the drug is added.
 
-use chummer_core::career;
-use chummer_core::character::Character;
+use chummer_core::command::Command;
 use chummer_core::data::{self, DataStore, Record};
 use chummer_core::format;
 use chummer_core::items::{self, drug};
@@ -11,6 +10,7 @@ use chummer_core::lang::Language;
 use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
+use crate::doc::Doc;
 use crate::pdf_ui::Status;
 
 const FILE: &str = "drugcomponents.xml";
@@ -36,7 +36,7 @@ impl Default for DrugBuilder {
 impl DrugBuilder {
     /// Draw the builder window when open. Returns true if a drug was added
     /// or removed.
-    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Character, store: &DataStore, lang: &Language, status: &mut Status) -> bool {
+    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Doc, store: &DataStore, lang: &Language, status: &mut Status) -> bool {
         if !self.open {
             return false;
         }
@@ -202,27 +202,14 @@ impl DrugBuilder {
         drug::custom_drug(store, name, &self.grade, &comps, &items::new_guid())
     }
 
-    fn add(&mut self, ch: &mut Character, store: &DataStore, status: &mut Status) -> bool {
-        let d = match self.build(store) {
-            Ok(d) => d,
-            Err(e) => {
-                *status = Some((e, true));
-                return false;
-            }
-        };
-        let guid = d.get("guid");
-        let name = d.get("name");
-        let cost = drug::cost_with(Some(store), &d);
-        drug::add_element(ch, d);
-        if ch.created && cost > 0.0 {
-            if let Err(e) = career::pay_for_item(ch, "drug", None, &guid, cost) {
-                ch.improvements.remove_from_source(&guid);
-                ch.remove_item("drugs", &guid);
-                *status = Some((e.to_string(), true));
-                return true;
-            }
+    fn add(&mut self, ch: &mut Doc, store: &DataStore, status: &mut Status) -> bool {
+        if let Err(e) = self.build(store) {
+            *status = Some((e, true));
+            return false;
         }
-        *status = Some((format!("Added {name} ({} per dose)", format::nuyen(cost)), false));
+        let cmd = Command::AddCustomDrug { name: self.name.clone(), grade: self.grade.clone(), components: self.chosen.clone() };
+        let Some(r) = ch.run(cmd, status) else { return false };
+        *status = r.message.map(|m| (m, false));
         self.chosen.clear();
         self.name.clear();
         self.pick = None;
@@ -231,7 +218,7 @@ impl DrugBuilder {
 }
 
 /// The character's drugs (no other tab lists them), with removal.
-pub(crate) fn existing_drugs(ui: &mut egui::Ui, ch: &mut Character, lang: &Language) -> bool {
+pub(crate) fn existing_drugs(ui: &mut egui::Ui, ch: &mut Doc, lang: &Language) -> bool {
     let drugs: Vec<Element> = ch.items("drugs", "drug").into_iter().cloned().collect();
     if drugs.is_empty() {
         return false;
@@ -245,9 +232,7 @@ pub(crate) fn existing_drugs(ui: &mut egui::Ui, ch: &mut Character, lang: &Langu
                 ui.weak(d.get("grade"));
                 ui.label(format!("×{}", d.get("quantity")));
                 if ui.small_button("🗑").on_hover_text(lang.tr("Remove (no refund)")).clicked() {
-                    let g = d.get("guid");
-                    ch.improvements.remove_from_source(&g);
-                    changed |= ch.remove_item("drugs", &g);
+                    changed |= ch.set(Command::RemoveItem { container: "drugs".into(), guid: d.get("guid") });
                 }
                 ui.end_row();
             }

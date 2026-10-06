@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use chummer_core::character::Character;
+use chummer_core::command::Command;
 use chummer_core::contacts::{self, ContactType, LinkedCharacter, LinkedPath};
 use chummer_core::data::DataStore;
 use chummer_core::lang::Language;
@@ -17,6 +17,7 @@ use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
 use crate::combo::{self, Combo};
+use crate::doc::Doc;
 use crate::pdf_ui::Status;
 
 const OPEN_REQUEST: &str = "relationships_open_request";
@@ -95,7 +96,7 @@ impl RelationshipsPanel {
     }
 
     /// The tab's contents; true when the character changed.
-    pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, lang: &Language, status: &mut Status) -> bool {
+    pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, status: &mut Status) -> bool {
         if self.lists.is_none() {
             self.lists = Some(std::rc::Rc::new(Lists {
                 fields: contacts::CHOICE_LISTS.iter().map(|(f, _, _)| (*f, contacts::choices(store, f))).collect(),
@@ -114,8 +115,7 @@ impl RelationshipsPanel {
                 ContactType::Pet => "Add Pet",
             };
             if ui.button(format!("➕ {}", lang.tr(add))).clicked() {
-                contacts::add(ch, kind);
-                changed = true;
+                changed |= ch.set(Command::AddContact { kind });
             }
             if kind == ContactType::Contact {
                 if ui.button(lang.tr("Add from File")).clicked() {
@@ -205,7 +205,7 @@ impl RelationshipsPanel {
 
     /// One `ContactControl`: name, location, role, connection, loyalty and
     /// the flags; the stat block below when expanded.
-    fn contact_row(&mut self, ui: &mut egui::Ui, ch: &mut Character, c: &Element, kind: ContactType, lang: &Language, status: &mut Status) -> bool {
+    fn contact_row(&mut self, ui: &mut egui::Ui, ch: &mut Doc, c: &Element, kind: ContactType, lang: &Language, status: &mut Status) -> bool {
         let guid = c.get("guid");
         let linked = self.linked_of(&guid).cloned();
         let read_only = c.child("readonly").is_some();
@@ -273,7 +273,7 @@ impl RelationshipsPanel {
 
     /// One `PetControl`: name, metatype (from `critters.xml`), link,
     /// notes and delete.
-    fn pet_row(&mut self, ui: &mut egui::Ui, ch: &mut Character, c: &Element, lang: &Language, status: &mut Status) -> bool {
+    fn pet_row(&mut self, ui: &mut egui::Ui, ch: &mut Doc, c: &Element, lang: &Language, status: &mut Status) -> bool {
         let guid = c.get("guid");
         let linked = self.linked_of(&guid).cloned();
         let mut changed = false;
@@ -296,7 +296,7 @@ impl RelationshipsPanel {
 
     /// The drag handle (Chummer drags the whole `ContactControl`) and Move
     /// Up / Move Down buttons.
-    fn order_handle(&mut self, ui: &mut egui::Ui, ch: &mut Character, guid: &str, index: usize, count: usize, lang: &Language) -> bool {
+    fn order_handle(&mut self, ui: &mut egui::Ui, ch: &mut Doc, guid: &str, index: usize, count: usize, lang: &Language) -> bool {
         let mut changed = false;
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -307,10 +307,10 @@ impl RelationshipsPanel {
             .response
             .on_hover_text(lang.tr("Drag to reorder"));
             if ui.add_enabled(index > 0, egui::Button::new("⏶").small().frame(false)).on_hover_text(lang.tr("Move Up")).clicked() {
-                changed |= contacts::move_step(ch, guid, true);
+                changed |= ch.set(Command::MoveContactStep { contact: guid.to_owned(), up: true });
             }
             if ui.add_enabled(index + 1 < count, egui::Button::new("⏷").small().frame(false)).on_hover_text(lang.tr("Move Down")).clicked() {
-                changed |= contacts::move_step(ch, guid, false);
+                changed |= ch.set(Command::MoveContactStep { contact: guid.to_owned(), up: false });
             }
         });
         changed
@@ -332,7 +332,7 @@ impl RelationshipsPanel {
 
     /// Link, notes and delete buttons (`cmdLink`, `cmdNotes`, `cmdDelete`).
     #[allow(clippy::too_many_arguments)]
-    fn buttons(&mut self, ui: &mut egui::Ui, ch: &mut Character, c: &Element, kind: ContactType, lang: &Language, status: &mut Status, read_only: bool) -> bool {
+    fn buttons(&mut self, ui: &mut egui::Ui, ch: &mut Doc, c: &Element, kind: ContactType, lang: &Language, status: &mut Status, read_only: bool) -> bool {
         let guid = c.get("guid");
         let mut changed = false;
         let tip = match (kind, contacts::is_linked(c)) {
@@ -364,7 +364,8 @@ impl RelationshipsPanel {
                     dlg = dlg.set_directory(dir);
                 }
                 if let Some(f) = dlg.pick_file() {
-                    changed |= contacts::link(ch, &guid, &f, &contacts::startup_dir());
+                    let startup = contacts::startup_dir();
+                    changed |= ch.set(Command::LinkContact { contact: guid.clone(), file: f.to_string_lossy().into_owned(), startup: startup.to_string_lossy().into_owned() });
                 }
             }
         })
@@ -387,7 +388,7 @@ impl RelationshipsPanel {
 
     /// `EditNotes`: the notes text, shown in the notes colour, and "Select
     /// Colour" (only while there are notes). OK saves both.
-    fn notes_dialog(&mut self, ctx: &egui::Context, ch: &mut Character, lang: &Language) -> bool {
+    fn notes_dialog(&mut self, ctx: &egui::Context, ch: &mut Doc, lang: &Language) -> bool {
         let Some(edit) = &mut self.notes_edit else { return false };
         let mut choice = None;
         let title = if edit.kind == ContactType::Enemy { lang.tr("Edit Enemy Notes.") } else { lang.tr("Edit Contact Notes.") };
@@ -430,11 +431,11 @@ impl RelationshipsPanel {
         }
         let stored = ch.items("contacts", "contact").into_iter().find(|c| c.get("guid") == edit.guid).map(|c| c.get("notes")).unwrap_or_default();
         // Keep the file's line endings when the text did not change.
-        let text_changed = stored.replace("\r\n", "\n") != edit.text && contacts::set_field(ch, &edit.guid, "notes", &edit.text);
-        text_changed | contacts::set_notes_color(ch, &edit.guid, edit.color)
+        let notes = (stored.replace("\r\n", "\n") != edit.text).then_some(edit.text);
+        ch.set(Command::SetContactNotes { contact: edit.guid, notes, color: edit.color })
     }
 
-    fn confirm_dialog(&mut self, ctx: &egui::Context, ch: &mut Character, lang: &Language) -> bool {
+    fn confirm_dialog(&mut self, ctx: &egui::Context, ch: &mut Doc, lang: &Language) -> bool {
         let Some(confirm) = &self.confirm else { return false };
         let (title, text, ok) = match confirm {
             Confirm::Delete(_, ContactType::Enemy) => (lang.tr("Delete"), lang.tr("Are you sure you want to delete this Enemy?"), lang.tr("Delete")),
@@ -467,11 +468,11 @@ impl RelationshipsPanel {
         match confirm {
             Some(Confirm::Delete(guid, _)) => {
                 self.linked.remove(&guid);
-                contacts::remove(ch, &guid)
+                ch.set(Command::RemoveContact { contact: guid })
             }
             Some(Confirm::Unlink(guid)) => {
                 self.linked.remove(&guid);
-                contacts::unlink(ch, &guid)
+                ch.set(Command::UnlinkContact { contact: guid })
             }
             None => false,
         }
@@ -481,7 +482,7 @@ impl RelationshipsPanel {
 /// Drag and drop onto a row: a line shows where the dragged entry goes
 /// (above the row when the pointer is in its upper half, else below);
 /// releasing moves it there.
-fn drop_target(ui: &mut egui::Ui, ch: &mut Character, row: &egui::Response, guid: &str) -> bool {
+fn drop_target(ui: &mut egui::Ui, ch: &mut Doc, row: &egui::Response, guid: &str) -> bool {
     let Some(dragged) = row.dnd_hover_payload::<DragContact>() else { return false };
     if dragged.0 == guid {
         return false;
@@ -492,7 +493,7 @@ fn drop_target(ui: &mut egui::Ui, ch: &mut Character, row: &egui::Response, guid
     let stroke = egui::Stroke::new(2.0_f32, crate::theme::accent(ui));
     ui.painter().hline(row.rect.x_range(), y, stroke);
     match row.dnd_release_payload::<DragContact>() {
-        Some(p) => contacts::move_contact(ch, &p.0, guid, after),
+        Some(p) => ch.set(Command::MoveContact { contact: p.0.clone(), target: guid.to_owned(), after }),
         None => false,
     }
 }
@@ -511,10 +512,11 @@ fn texture(ctx: &egui::Context, guid: &str, b64: &str) -> Option<egui::TextureHa
 }
 
 /// "Add from File": contacts from a Chummer contacts XML file.
-fn add_from_file(ch: &mut Character, status: &mut Status) -> bool {
+fn add_from_file(ch: &mut Doc, status: &mut Status) -> bool {
     let Some(f) = rfd::FileDialog::new().add_filter("XML", &["xml"]).add_filter("All files", &["*"]).pick_file() else { return false };
-    match std::fs::read_to_string(&f).map_err(|e| e.to_string()).and_then(|s| contacts::import(ch, &s)) {
-        Ok(n) => {
+    match std::fs::read_to_string(&f).map_err(|e| e.to_string()).and_then(|xml| ch.apply(Command::ImportContacts { xml }).map_err(|e| e.reason)) {
+        Ok(r) => {
+            let n = r.count.unwrap_or(0);
             *status = Some((format!("Added {n} contacts from {}", f.display()), false));
             n > 0
         }
@@ -526,7 +528,7 @@ fn add_from_file(ch: &mut Character, status: &mut Status) -> bool {
 }
 
 /// The name box; the linked character's name, read-only, when linked.
-fn name_field(ui: &mut egui::Ui, ch: &mut Character, c: &Element, linked: Option<&LinkedCharacter>, lang: &Language, width: f32) -> bool {
+fn name_field(ui: &mut egui::Ui, ch: &mut Doc, c: &Element, linked: Option<&LinkedCharacter>, lang: &Language, width: f32) -> bool {
     match linked {
         Some(l) => {
             ui.add_enabled(false, egui::TextEdit::singleline(&mut l.name.clone()).desired_width(width)).on_disabled_hover_text(l.path.display().to_string());
@@ -535,31 +537,35 @@ fn name_field(ui: &mut egui::Ui, ch: &mut Character, c: &Element, linked: Option
         None => {
             let mut v = c.get("name");
             let r = ui.add(egui::TextEdit::singleline(&mut v).hint_text(lang.tr("Name")).desired_width(width));
-            r.changed() && contacts::set_field(ch, &c.get("guid"), "name", &v)
+            r.changed() && set_field(ch, &c.get("guid"), "name", v)
         }
     }
 }
 
-fn text_field(ui: &mut egui::Ui, ch: &mut Character, guid: &str, c: &Element, key: &str, width: f32, enabled: bool) -> bool {
+fn set_field(ch: &mut Doc, guid: &str, key: &str, value: String) -> bool {
+    ch.set(Command::SetContactField { contact: guid.to_owned(), key: key.to_owned(), value })
+}
+
+fn text_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &str, width: f32, enabled: bool) -> bool {
     let mut v = c.get(key);
     let r = ui.add_enabled(enabled, egui::TextEdit::singleline(&mut v).desired_width(width));
-    r.changed() && contacts::set_field(ch, guid, key, &v)
+    r.changed() && set_field(ch, guid, key, v)
 }
 
-fn int_field(ui: &mut egui::Ui, ch: &mut Character, guid: &str, c: &Element, key: &str, range: std::ops::RangeInclusive<i32>, enabled: bool) -> bool {
+fn int_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &str, range: std::ops::RangeInclusive<i32>, enabled: bool) -> bool {
     let mut v = c.get_i32(key).unwrap_or(1);
-    ui.add_enabled(enabled, egui::DragValue::new(&mut v).range(range)).changed() && contacts::set_field(ch, guid, key, &v.to_string())
+    ui.add_enabled(enabled, egui::DragValue::new(&mut v).range(range)).changed() && set_field(ch, guid, key, v.to_string())
 }
 
-fn flag_field(ui: &mut egui::Ui, ch: &mut Character, guid: &str, c: &Element, key: &str, label: &str, enabled: bool) -> bool {
+fn flag_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &str, label: &str, enabled: bool) -> bool {
     let mut v = c.get_bool(key).unwrap_or(false);
-    ui.add_enabled(enabled, egui::Checkbox::new(&mut v, label)).changed() && contacts::set_field(ch, guid, key, if v { "True" } else { "False" })
+    ui.add_enabled(enabled, egui::Checkbox::new(&mut v, label)).changed() && set_field(ch, guid, key, if v { "True" } else { "False" }.to_owned())
 }
 
 /// An editable drop-down (Chummer's combo boxes accept free text): a text
 /// box with a list button of `choices` beside it.
 #[allow(clippy::too_many_arguments)]
-fn combo_field(ui: &mut egui::Ui, ch: &mut Character, guid: &str, c: &Element, key: &str, choices: &[String], data_file: &str, lang: &Language, width: f32, enabled: bool) -> bool {
+fn combo_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &str, choices: &[String], data_file: &str, lang: &Language, width: f32, enabled: bool) -> bool {
     let mut changed = text_field(ui, ch, guid, c, key, width, enabled);
     let cur = c.get(key);
     let mut pick = None;
@@ -571,13 +577,13 @@ fn combo_field(ui: &mut egui::Ui, ch: &mut Character, guid: &str, c: &Element, k
         }
     });
     if let Some(v) = pick {
-        changed |= contacts::set_field(ch, guid, key, &v);
+        changed |= set_field(ch, guid, key, v);
     }
     changed
 }
 
 #[allow(clippy::too_many_arguments)]
-fn linked_or_combo(ui: &mut egui::Ui, ch: &mut Character, guid: &str, c: &Element, key: &str, linked: Option<String>, choices: &[String], lang: &Language) -> bool {
+fn linked_or_combo(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &str, linked: Option<String>, choices: &[String], lang: &Language) -> bool {
     match linked {
         Some(mut v) => {
             ui.add_enabled(false, egui::TextEdit::singleline(&mut v).desired_width(140.0));
@@ -588,7 +594,7 @@ fn linked_or_combo(ui: &mut egui::Ui, ch: &mut Character, guid: &str, c: &Elemen
 }
 
 /// The metatype box: free text or a metatype / "Metatype (Metavariant)".
-fn metatype_field(ui: &mut egui::Ui, ch: &mut Character, guid: &str, c: &Element, choices: &[(String, String, String)], lang: &Language, width: f32) -> bool {
+fn metatype_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, choices: &[(String, String, String)], lang: &Language, width: f32) -> bool {
     let mut changed = text_field(ui, ch, guid, c, "metatype", width, true);
     let cur = c.get("metatype");
     let mut pick = None;
@@ -602,7 +608,7 @@ fn metatype_field(ui: &mut egui::Ui, ch: &mut Character, guid: &str, c: &Element
         }
     });
     if let Some(v) = pick {
-        changed |= contacts::set_field(ch, guid, "metatype", &v);
+        changed |= set_field(ch, guid, "metatype", v);
     }
     changed
 }

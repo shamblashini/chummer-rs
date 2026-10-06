@@ -72,18 +72,18 @@ impl CharacterView {
             self.guide = None;
             return;
         }
-        if self.guide.is_some() || self.ch.created {
+        if self.guide.is_some() || self.doc.created {
             return;
         }
-        let steps = guide::steps_for(&self.build_method(), &self.ch);
-        let remembered = self.ch.file.as_deref().and_then(load_step).and_then(|s| steps.iter().position(|x| *x == s));
+        let steps = guide::steps_for(&self.build_method(), &self.doc);
+        let remembered = self.doc.file.as_deref().and_then(load_step).and_then(|s| steps.iter().position(|x| *x == s));
         let current = remembered.unwrap_or_else(|| guide::suggested(&steps, &self.issues));
         self.guide = Some(Guide { steps, current, reached: current });
         self.go_to_step(current);
     }
 
     fn build_method(&self) -> String {
-        match self.ch.field("buildmethod") {
+        match self.doc.field("buildmethod") {
             b if b.is_empty() => "Priority".into(),
             b => b,
         }
@@ -100,7 +100,7 @@ impl CharacterView {
     fn refresh_steps(&mut self) {
         let method = self.build_method();
         let Some(g) = self.guide.as_mut() else { return };
-        let steps = guide::steps_for(&method, &self.ch);
+        let steps = guide::steps_for(&method, &self.doc);
         if steps != g.steps {
             let cur = g.steps.get(g.current).copied();
             let reached = g.steps.get(g.reached).copied();
@@ -122,7 +122,7 @@ impl CharacterView {
         if step == Step::KnowledgeSkills || step == Step::ActiveSkills {
             self.skill_filter.clear();
         }
-        if let Some(f) = self.ch.file.as_deref() {
+        if let Some(f) = self.doc.file.as_deref() {
             save_step(f, step);
         }
     }

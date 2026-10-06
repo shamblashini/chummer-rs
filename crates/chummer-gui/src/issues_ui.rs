@@ -145,7 +145,7 @@ impl CharacterView {
             }
             Area::Contacts => self.relationships.show_contact(&guid),
             // Items the detail pane edits; others only get their tab.
-            _ if chummer_core::items::edit::find(&self.ch, &guid).is_some_and(chummer_core::items::edit::is_item) => self.item_editor = Some((guid, crate::item_editor::ItemEditor::default())),
+            _ if chummer_core::items::edit::find(&self.doc, &guid).is_some_and(chummer_core::items::edit::is_item) => self.item_editor = Some((guid, crate::item_editor::ItemEditor::default())),
             _ => {}
         }
     }

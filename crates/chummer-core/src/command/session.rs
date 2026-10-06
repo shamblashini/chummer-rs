@@ -22,8 +22,33 @@ pub struct LogEntry {
     pub description: String,
 }
 
+/// A character kept as its differences from a neighbouring state: the
+/// typed fields in full, and only the top-level document children that
+/// differ (the mugshots, often most of a file, are shared). The base is
+/// the state the step is undone or redone from, which a stack always has
+/// at hand.
+struct Delta {
+    rest: Character,
+    children: Vec<Option<crate::xml::Node>>,
+}
+
+impl Delta {
+    fn new(mut target: Character, base: &Character) -> Delta {
+        let kids = std::mem::take(&mut target.doc.children);
+        let children = kids.into_iter().enumerate().map(|(i, n)| if base.doc.children.get(i) == Some(&n) { None } else { Some(n) }).collect();
+        Delta { rest: target, children }
+    }
+
+    fn rebuild(self, base: &Character) -> Character {
+        let mut c = self.rest;
+        c.doc.children = self.children.into_iter().enumerate().map(|(i, n)| n.unwrap_or_else(|| base.doc.children[i].clone())).collect();
+        c
+    }
+}
+
 struct UndoStep {
-    before: Character,
+    /// The state before the step, relative to the state after it.
+    before: Delta,
     /// A later edit may not merge into this step (it was undone to, or
     /// redone).
     sealed: bool,
@@ -31,7 +56,8 @@ struct UndoStep {
 
 struct RedoStep {
     entry: LogEntry,
-    after: Character,
+    /// The state after the step, relative to the state before it.
+    after: Delta,
 }
 
 /// What [`Session::apply`] reports back.
@@ -163,12 +189,16 @@ impl Session {
             && self.log.last().is_some_and(|l| l.envelope.cmd.coalesce_key() == key && env.at - l.envelope.at <= COALESCE_MS && l.envelope.author == env.author);
         if merge {
             // The newer value replaces the older; the step still undoes
-            // to the state before the first edit.
+            // to the state before the first edit. `before` is the state
+            // that step's delta was taken against.
             *self.log.last_mut().expect("checked") = LogEntry { envelope: env, description };
+            let step = self.undo.pop().expect("checked");
+            let first = step.before.rebuild(&before);
+            self.undo.push(UndoStep { before: Delta::new(first, &self.ch), sealed: false });
             return;
         }
         self.log.push(LogEntry { envelope: env, description });
-        self.undo.push(UndoStep { before, sealed: false });
+        self.undo.push(UndoStep { before: Delta::new(before, &self.ch), sealed: false });
         if self.undo.len() > self.limit {
             self.undo.remove(0);
         }
@@ -195,20 +225,22 @@ impl Session {
     pub fn undo(&mut self) -> Option<String> {
         let step = self.undo.pop()?;
         let entry = self.log.pop().expect("an undo step has a log entry");
-        let after = self.swap_in(step.before);
+        let before = step.before.rebuild(&self.ch);
+        let after = self.swap_in(before);
         if let Some(u) = self.undo.last_mut() {
             u.sealed = true;
         }
         let label = entry.description.clone();
-        self.redo.push(RedoStep { entry, after });
+        self.redo.push(RedoStep { entry, after: Delta::new(after, &self.ch) });
         Some(label)
     }
 
     /// Put back the last undone command. Returns its description.
     pub fn redo(&mut self) -> Option<String> {
         let RedoStep { entry, after } = self.redo.pop()?;
+        let after = after.rebuild(&self.ch);
         let before = self.swap_in(after);
-        self.undo.push(UndoStep { before, sealed: true });
+        self.undo.push(UndoStep { before: Delta::new(before, &self.ch), sealed: true });
         let label = entry.description.clone();
         self.log.push(entry);
         Some(label)

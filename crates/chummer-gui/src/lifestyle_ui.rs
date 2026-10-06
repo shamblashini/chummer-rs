@@ -3,9 +3,9 @@
 //! percentage paid, bought area/comforts/security points, and lifestyle
 //! qualities, with the monthly cost shown live.
 
-use chummer_core::career::{self, NuyenExpenseType};
 use chummer_core::character::Character;
-use chummer_core::data::{self, Record};
+use chummer_core::command::Command;
+use chummer_core::data::Record;
 use chummer_core::format;
 use chummer_core::items::lifestyle::{self, Options};
 use chummer_core::lang::Language;
@@ -13,6 +13,7 @@ use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
 use crate::magic_ui::{Ctx, Pick, Picker};
+use crate::doc::Doc;
 use crate::pdf_ui::Status;
 
 const STYLES: &[&str] = &["Standard", "Advanced", "BoltHole", "Safehouse"];
@@ -28,7 +29,7 @@ pub struct LifestyleEditor {
 
 impl LifestyleEditor {
     /// Returns true if the character changed.
-    pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+    pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
         let lifestyles: Vec<Element> = ch.items("lifestyles", "lifestyle").into_iter().cloned().collect();
         if lifestyles.is_empty() {
             return false;
@@ -57,7 +58,7 @@ impl LifestyleEditor {
         changed
     }
 
-    fn options_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, l: &Element, lang: &Language, status: &mut Status) -> bool {
+    fn options_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, l: &Element, lang: &Language, status: &mut Status) -> bool {
         let guid = l.get("guid");
         let before = Options::from_saved(l);
         let mut o = before.clone();
@@ -136,22 +137,19 @@ impl LifestyleEditor {
         });
         let mut changed = false;
         if pay_month {
-            let cost = lifestyle::monthly_cost(ch, l);
-            match career::spend_nuyen(ch, cost, &format!("Lifestyle {}", l.get("name")), NuyenExpenseType::IncreaseLifestyle, &guid, 0.0) {
-                Ok(_) => {
-                    o.months += 1;
-                    *status = Some((format!("Paid {} for {}", format::nuyen(cost), l.get("name")), false));
-                }
-                Err(e) => *status = Some((e.to_string(), true)),
+            if let Some(r) = ch.run(Command::PayLifestyleMonth { guid: guid.clone() }, status) {
+                o.months += 1;
+                *status = r.message.map(|m| (m, false));
+                changed = true;
             }
         }
         if !same(&o, &before) {
-            changed |= lifestyle::update(ch, &guid, &o);
+            changed |= ch.set(Command::UpdateLifestyle { guid: guid.clone(), options: o });
         }
         changed
     }
 
-    fn qualities_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, l: &Element, status: &mut Status) -> bool {
+    fn qualities_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, l: &Element, status: &mut Status) -> bool {
         let guid = l.get("guid");
         let mut changed = false;
         let lang = cx.lang;
@@ -188,7 +186,7 @@ impl LifestyleEditor {
                     if builtin {
                         ui.weak(lang.tr("built in"));
                     } else if ui.small_button("🗑").on_hover_text(lang.tr("Remove")).clicked() {
-                        changed |= lifestyle::remove_quality(ch, &guid, &q.get("guid"));
+                        changed |= ch.set(Command::RemoveLifestyleQuality { lifestyle: guid.clone(), quality: q.get("guid") });
                     }
                     ui.end_row();
                 }
@@ -218,17 +216,10 @@ impl LifestyleEditor {
                 Pick::None => {}
                 Pick::Cancel => self.picker = None,
                 Pick::Done(name, answer) => {
-                    let lguid = lguid.clone();
-                    let r = store.doc("lifestyles.xml").map_err(|e| e.to_string()).and_then(|doc| {
-                        let rec = data::find(&doc, "qualities", "quality", &name).ok_or_else(|| format!("unknown quality {name}"))?;
-                        lifestyle::add_quality(ch, store, &lguid, rec, answer.as_deref(), self.free_quality)
-                    });
-                    match r {
-                        Ok(_) => {
-                            *status = Some((format!("Added {name}"), false));
-                            changed = true;
-                        }
-                        Err(e) => *status = Some((e, true)),
+                    let cmd = Command::AddLifestyleQuality { lifestyle: lguid.clone(), quality: name.clone(), answer, free: self.free_quality };
+                    if ch.run(cmd, status).is_some() {
+                        *status = Some((format!("Added {name}"), false));
+                        changed = true;
                     }
                     self.picker = None;
                 }

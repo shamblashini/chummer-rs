@@ -4,6 +4,7 @@
 
 use chummer_core::calc::Sheet;
 use chummer_core::character::Character;
+use chummer_core::command::Command;
 use chummer_core::chargen;
 use chummer_core::data::{self, DataStore};
 use chummer_core::engine::Engine;
@@ -15,6 +16,7 @@ use chummer_core::settings::CharacterSettings;
 use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
+use crate::doc::Doc;
 use crate::pdf_ui::Status;
 
 // ---------------------------------------------------------------------------
@@ -238,7 +240,7 @@ impl PacksWindow {
 
     /// Draw the window when open. Returns true if the character changed.
     #[allow(clippy::too_many_arguments)]
-    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Character, store: &DataStore, settings: Option<&CharacterSettings>, sheet: &Sheet, lang: &Language, status: &mut Status) -> bool {
+    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Doc, store: &DataStore, settings: Option<&CharacterSettings>, sheet: &Sheet, lang: &Language, status: &mut Status) -> bool {
         let Some(mode) = self.mode else { return false };
         let dir = packs::packs_dir();
         if self.doc.is_none() {
@@ -253,7 +255,7 @@ impl PacksWindow {
                 return;
             }
             match mode {
-                PacksMode::Add => changed |= self.add_ui(ui, ch, store, settings, dir.as_deref(), lang, status),
+                PacksMode::Add => changed |= self.add_ui(ui, ch, dir.as_deref(), lang, status),
                 PacksMode::Create => self.create_ui(ui, ch, sheet, settings, dir.as_deref(), lang),
             }
             if let Some((m, err)) = &self.message {
@@ -271,7 +273,7 @@ impl PacksWindow {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, settings: Option<&CharacterSettings>, dir: Option<&std::path::Path>, lang: &Language, status: &mut Status) -> bool {
+    fn add_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, dir: Option<&std::path::Path>, lang: &Language, status: &mut Status) -> bool {
         let Some(doc) = self.doc.clone() else { return false };
         let kits = packs::kits(&doc);
         let cats: Vec<String> = packs::categories(&doc).into_iter().filter(|c| kits.iter().any(|(_, k)| k == c)).collect();
@@ -318,11 +320,15 @@ impl PacksWindow {
             });
             ui.horizontal(|ui| {
                 if ui.add(crate::theme::primary_button(ui, lang.tr("Add Kit"))).clicked() {
-                    let report = packs::apply(ch, store, settings, kit);
-                    changed = true;
-                    let msg = lang.tr_fmt("Added {0}: {1} items", &[&name, &report.added.len()]);
-                    self.message = Some(if report.skipped.is_empty() { (msg.clone(), false) } else { (format!("{msg}\n{}", report.skipped.join("\n")), true) });
-                    *status = Some((msg, false));
+                    if let Some(report) = ch.run(Command::ApplyKit { kit: kit.to_xml_string() }, status) {
+                        changed = true;
+                        let msg = lang.tr_fmt("Added {0}: {1} items", &[&name, &report.count.unwrap_or(0)]);
+                        self.message = Some(match report.message {
+                            None => (msg.clone(), false),
+                            Some(skipped) => (format!("{msg}\n{skipped}"), true),
+                        });
+                        *status = Some((msg, false));
+                    }
                 }
                 if cat == packs::CUSTOM {
                     if !self.confirm_delete {
@@ -419,7 +425,7 @@ pub struct SpellDesigner {
 impl SpellDesigner {
     /// Draw the designer when open. Returns true if a spell was added.
     #[allow(clippy::too_many_arguments)]
-    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Character, engine: &Engine, store: &DataStore, sheet: &Sheet, lang: &Language, status: &mut Status) -> bool {
+    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Doc, engine: &Engine, store: &DataStore, lang: &Language, status: &mut Status) -> bool {
         if !self.open {
             return false;
         }
@@ -518,11 +524,7 @@ impl SpellDesigner {
             return false;
         }
         let d = self.design.clone().unwrap_or_default();
-        if !ch.created && custom_spell::creation_limit_reached(ch, sheet) {
-            self.message = Some(lang.tr("You cannot have more spells, rituals or alchemical preparations than twice your MAG score. Ref: Page 69, SR5 Core."));
-            return false;
-        }
-        match custom_spell::add(ch, engine, &d) {
+        match ch.apply(Command::AddCustomSpell { design: d.clone() }) {
             Ok(_) => {
                 *status = Some((lang.tr_fmt("Created {0}", &[&d.name]), false));
                 self.design = None;
@@ -531,7 +533,7 @@ impl SpellDesigner {
                 true
             }
             Err(e) => {
-                self.message = Some(e.to_string());
+                self.message = Some(lang.tr(&e.reason));
                 false
             }
         }

@@ -6,8 +6,10 @@ mod browser;
 mod career_ui;
 mod combo;
 mod dice_ui;
+mod doc;
 mod drug_ui;
 mod gm_ui;
+mod history_ui;
 mod improvement_ui;
 mod initiative;
 mod lifestyle_ui;
@@ -225,12 +227,12 @@ impl App {
                 rfd::FileDialog::new()
                     .add_filter(first.0, &[first.1])
                     .add_filter(second.0, &[second.1])
-                    .set_file_name(format!("{}.{}", v.ch.display_name(), first.1))
+                    .set_file_name(format!("{}.{}", v.ch().display_name(), first.1))
                     .save_file()
             }
         };
         let Some(path) = path else { return false };
-        match self.engine.save(&mut v.ch, &path) {
+        match v.save(&path) {
             Ok(()) => {
                 self.status = Some((format!("Saved {}", path.display()), false));
                 self.remember(&path);
@@ -247,7 +249,7 @@ impl App {
         if idx >= self.views.len() {
             return;
         }
-        if self.views[idx].ch.dirty && !force {
+        if self.views[idx].ch().dirty && !force {
             self.pending = Some(Pending::CloseTab(idx));
             return;
         }
@@ -283,7 +285,24 @@ impl App {
         }
     }
 
-    /// Chummer's main menu: File, Tools, Special, View, Window, Help.
+    /// Edit → Undo on the open character.
+    fn undo(&mut self) {
+        let engine = self.engine.clone();
+        let Some(i) = self.current() else { return };
+        if let Some(what) = self.views[i].undo(&engine) {
+            self.status = Some((self.lang.tr_fmt("Undone: {0}", &[&what]), false));
+        }
+    }
+
+    fn redo(&mut self) {
+        let engine = self.engine.clone();
+        let Some(i) = self.current() else { return };
+        if let Some(what) = self.views[i].redo(&engine) {
+            self.status = Some((self.lang.tr_fmt("Redone: {0}", &[&what]), false));
+        }
+    }
+
+    /// Chummer's main menu: File, Edit, Tools, Special, View, Window, Help.
     fn menu(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let has = self.current().is_some();
         egui::MenuBar::new().ui(ui, |ui| {
@@ -339,6 +358,21 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
+            ui.menu_button(self.lang.tr("Edit"), |ui| {
+                let session = self.current().map(|i| self.views[i].doc().session());
+                let undo = session.and_then(|s| s.undo_label()).map(str::to_owned);
+                let redo = session.and_then(|s| s.redo_label()).map(str::to_owned);
+                let undo_text = undo.as_ref().map_or_else(|| self.lang.tr("Undo"), |w| self.lang.tr_fmt("Undo: {0}", &[w]));
+                let redo_text = redo.as_ref().map_or_else(|| self.lang.tr("Redo"), |w| self.lang.tr_fmt("Redo: {0}", &[w]));
+                if ui.add_enabled(undo.is_some(), egui::Button::new(undo_text).shortcut_text("Ctrl+Z")).clicked() {
+                    ui.close();
+                    self.undo();
+                }
+                if ui.add_enabled(redo.is_some(), egui::Button::new(redo_text).shortcut_text("Ctrl+Y")).clicked() {
+                    ui.close();
+                    self.redo();
+                }
+            });
             ui.menu_button(self.lang.tr("Tools"), |ui| {
                 if ui.button(self.lang.tr("Dice Roller")).clicked() {
                     ui.close();
@@ -367,7 +401,7 @@ impl App {
                 }
             });
             ui.menu_button(self.lang.tr("Special"), |ui| {
-                let creating = self.current().is_some_and(|i| !self.views[i].ch.created);
+                let creating = self.current().is_some_and(|i| !self.views[i].ch().created);
                 for (label, mode) in [("Add PACKS Kit…", gm_ui::PacksMode::Add), ("Create PACKS Kit…", gm_ui::PacksMode::Create)] {
                     if ui.add_enabled(creating, egui::Button::new(self.lang.tr(label))).clicked() {
                         ui.close();
@@ -376,6 +410,10 @@ impl App {
                 }
             });
             ui.menu_button(self.lang.tr("View"), |ui| {
+                if ui.add_enabled(has, egui::Button::new(self.lang.tr("History"))).on_hover_text(self.lang.tr("This session's changes to the character")).clicked() {
+                    ui.close();
+                    self.views[self.active].show_history();
+                }
                 let mut guided = view::guided_preference();
                 if ui.checkbox(&mut guided, self.lang.tr("Guided creation")).on_hover_text(self.lang.tr("Walk through character creation one step at a time")).changed() {
                     self.set_guided(guided);
@@ -499,6 +537,21 @@ impl App {
         if quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        // Undo/redo, unless a text box has the keyboard (it has its own).
+        if self.current().is_some() && !ctx.wants_keyboard_input() {
+            let (redo_shift, redo_y, undo) = ctx.input_mut(|i| {
+                (
+                    i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::Z),
+                    i.consume_key(egui::Modifiers::COMMAND, egui::Key::Y),
+                    i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z),
+                )
+            });
+            if redo_shift || redo_y {
+                self.redo();
+            } else if undo {
+                self.undo();
+            }
+        }
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
         for p in dropped {
             self.open(&p);
@@ -599,8 +652,8 @@ impl App {
                 "XML" => "xml",
                 _ => "txt",
             };
-            if let Some(out) = rfd::FileDialog::new().set_file_name(format!("{}.{ext}", v.ch.display_name())).save_file() {
-                self.status = Some(match chummer_core::export::export(&v.ch, &self.engine, &self.lang, &self.export_format, &out) {
+            if let Some(out) = rfd::FileDialog::new().set_file_name(format!("{}.{ext}", v.ch().display_name())).save_file() {
+                self.status = Some(match chummer_core::export::export(v.ch(), &self.engine, &self.lang, &self.export_format, &out) {
                     Ok(()) => (format!("Exported to {}", out.display()), false),
                     Err(e) => (e.to_string(), true),
                 });
@@ -631,8 +684,8 @@ impl App {
                 return;
             };
             let opts = chummer_core::print::PrintOptions { notes: self.print_notes, ..Default::default() };
-            let xml = chummer_core::print::print_xml_with(&v.ch, &self.engine, &self.lang, opts);
-            let name: String = v.ch.display_name().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+            let xml = chummer_core::print::print_xml_with(v.ch(), &self.engine, &self.lang, opts);
+            let name: String = v.ch().display_name().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
             let out = std::env::temp_dir().join(format!("chummer-rs-{name}.html"));
             match chummer_core::print::render(&xml, path, &out) {
                 Ok(()) => {
@@ -650,7 +703,7 @@ impl App {
     fn dialogs(&mut self, ctx: &egui::Context) {
         let Some(p) = &self.pending else { return };
         let (idx, what) = match p {
-            Pending::CloseTab(i) => (Some(*i), self.views.get(*i).map(|v| v.ch.display_name()).unwrap_or_default()),
+            Pending::CloseTab(i) => (Some(*i), self.views.get(*i).map(|v| v.ch().display_name()).unwrap_or_default()),
             Pending::Quit => (None, "your characters".to_owned()),
         };
         let mut choice = None;
@@ -682,7 +735,7 @@ impl App {
                 self.pending = None;
             }
             (Some(0), None) => {
-                let dirty: Vec<usize> = (0..self.views.len()).filter(|&i| self.views[i].ch.dirty).collect();
+                let dirty: Vec<usize> = (0..self.views.len()).filter(|&i| self.views[i].ch().dirty).collect();
                 if dirty.into_iter().all(|i| self.save(i, false)) {
                     self.allow_close = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -702,7 +755,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.views.iter().any(|v| v.ch.dirty) {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.views.iter().any(|v| v.ch().dirty) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(Pending::Quit);
         }
@@ -777,7 +830,7 @@ impl eframe::App for App {
         egui::Window::new(self.lang.tr("Character Sheet")).id(egui::Id::new("character_sheet")).open(&mut open).default_width(460.0).show(ctx, |ui| self.print_ui(ui));
         self.show_print = open;
         let mut open = self.show_initiative;
-        let chars: Vec<(String, i32, u32)> = self.views.iter().map(|v| (v.ch.display_name(), v.sheet.initiative, v.sheet.initiative_dice.max(1) as u32)).collect();
+        let chars: Vec<(String, i32, u32)> = self.views.iter().map(|v| (v.ch().display_name(), v.sheet.initiative, v.sheet.initiative_dice.max(1) as u32)).collect();
         egui::Window::new(self.lang.tr("Initiative tracker")).id(egui::Id::new("initiative_tracker")).open(&mut open).default_width(480.0).show(ctx, |ui| self.initiative.ui(ui, &self.lang, &chars));
         self.show_initiative = open;
         let mut open = self.show_settings;

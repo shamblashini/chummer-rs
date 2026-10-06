@@ -241,6 +241,19 @@ impl Command {
         })
     }
 
+    /// False for edits of plain text (names, notes, descriptions), which
+    /// cannot change any rule: [`apply`] skips the essence-loss refresh
+    /// for them, which keeps typing fast.
+    pub fn affects_rules(&self) -> bool {
+        use Command::*;
+        match self {
+            SetField { key, .. } => !crate::character::INFO_FIELDS.iter().chain(crate::character::TEXT_FIELDS).any(|(k, _)| k == key) || matches!(key.as_str(), "metatype" | "metavariant"),
+            SetItemText { field, .. } => field == "location",
+            SetContactField { .. } | SetContactNotes { .. } | SetWeekNotes { .. } | SetImprovementNotes { .. } => false,
+            _ => true,
+        }
+    }
+
     /// Examples of every variant, for round-trip tests.
     pub fn examples() -> Vec<Command> {
         use Command::*;
@@ -390,6 +403,19 @@ impl Envelope {
     }
 }
 
+/// A command log as JSON: an array of [`Envelope`]s, or of bare
+/// [`Command`]s (given seed = their index and time `at`, for hand-written
+/// scripts).
+pub fn parse_log(json: &str, at: i64) -> Result<Vec<Envelope>, serde_json::Error> {
+    match serde_json::from_str::<Vec<Envelope>>(json) {
+        Ok(v) => Ok(v),
+        Err(_) => {
+            let cmds: Vec<Command> = serde_json::from_str(json)?;
+            Ok(cmds.into_iter().enumerate().map(|(i, c)| Envelope::new(c, i as u64, at, "")).collect())
+        }
+    }
+}
+
 /// A command that ran.
 #[derive(Debug, Clone)]
 pub struct Applied {
@@ -438,14 +464,17 @@ impl std::error::Error for Rejected {}
 pub fn apply(ch: &mut Character, engine: &Engine, env: &Envelope) -> Result<Applied, Rejected> {
     let before = ch.clone();
     let _scope = crate::dice::deterministic(env.seed, env.at_iso());
-    let essence_before = essence_key(ch, engine);
+    let rules_matter = env.cmd.affects_rules();
+    let essence_before = if rules_matter { Some(essence_key(ch, engine)) } else { None };
     match run::run(ch, engine, &env.cmd) {
         Ok(run::Done::Unchanged) => {
             *ch = before.clone();
             Ok(Applied { description: String::new(), message: None, count: None, changed: false, before: Box::new(before) })
         }
         Ok(run::Done::Changed { message, count }) => {
-            refresh_derived(ch, engine, essence_before);
+            if let Some(key) = essence_before {
+                refresh_derived(ch, engine, key, matches!(env.cmd, Command::FinishCreation));
+            }
             ch.dirty = true;
             let description = describe::describe(&env.cmd, &before, ch, engine);
             Ok(Applied { description, message, count, changed: true, before: Box::new(before) })
@@ -474,10 +503,14 @@ fn essence_key(ch: &Character, engine: &Engine) -> (f64, Option<f64>) {
 /// What the GUI did after every change: creation mode regenerates the
 /// essence-loss improvements; career mode does when the essence key moved
 /// (it may burn karma levels, so not on every change).
-fn refresh_derived(ch: &mut Character, engine: &Engine, essence_before: (f64, Option<f64>)) {
+///
+/// Finishing creation always refreshes: the GUI compared against the key
+/// from when the character was opened, and a repeated career-mode refresh
+/// burns nothing.
+fn refresh_derived(ch: &mut Character, engine: &Engine, essence_before: (f64, Option<f64>), always: bool) {
     let store = engine.store_for_character(ch);
     let rules = engine.rules_for(ch);
-    if !ch.created || essence_key(ch, engine) != essence_before {
+    if always || !ch.created || essence_key(ch, engine) != essence_before {
         crate::essence_loss::refresh(ch, &store, &rules);
     }
 }

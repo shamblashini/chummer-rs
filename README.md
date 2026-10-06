@@ -244,6 +244,24 @@ Chummer 5.225.
 
 ### More
 
+- **Undo and redo.** Edit → Undo (Ctrl+Z) and Redo (Ctrl+Shift+Z or
+  Ctrl+Y) work on every change to a character, in creation and career
+  mode. The menu names the change ("Undo: Raised Pistols to 5 (10
+  karma)"). Each open character keeps 100 steps. Typing in one text box
+  or dragging one spinner is one step. Undo puts the character back
+  exactly as it was, and takes back the karma and nuyen too. This is
+  not the Undo button on Karma & Nuyen entries: that one refunds an
+  expense by Chummer's rules, and is itself a step you can undo.
+  While a text box has the keyboard, Ctrl+Z undoes typing in the box.
+- **History.** The History tab in the right-hand panel (or View →
+  History) lists this session's changes, newest first, with the time
+  and the karma or nuyen they cost. Undone changes stay greyed out until
+  a new change replaces them.
+- **Commands.** Every change, in the GUI and in `chummer-cli apply`, is a
+  command that `chummer_core::command::apply` runs. The same command on
+  the same character gives the same file on every machine (new GUIDs and
+  dates come from the command). This is the base for GM/player sync
+  ([docs/online-design.md](docs/online-design.md)).
 - **Sourcebook PDFs.**
   - 📖 links on items, skills and data entries open your PDF at the rule's page, in evince, zathura, okular or another viewer.
   - Tools → Sourcebooks can import your Chummer5a links from a Wine or Proton prefix, scan a folder, and detect page offsets with `pdftotext`.
@@ -269,7 +287,7 @@ Chummer 5.225.
 
 ### Layout and themes
 
-The main window uses Chummer5a's layout: the File, Tools, Special, View,
+The main window uses Chummer5a's layout: the File, Edit, Tools, Special, View,
 Window and Help menus, a toolbar, and one tab per open character next to
 the Master Index and Character Roster tabs. A character has Chummer's
 tabs in Chummer's order (Common, Skills, Limits, Martial Arts, Spells &
@@ -278,7 +296,7 @@ Initiation, Cyberware & Bioware, Street Gear, Vehicles & Drones,
 Character Info, Karma & Nuyen, Calendar, Game Notes, Improvements,
 Relationships). The magic, resonance, Advanced Programs and critter tabs show only when the
 character has them. The right-hand panel has Karma Summary (creation),
-Condition Monitor and Other Info; the status bar shows karma, essence and
+Condition Monitor, Other Info, Spell Defense and History; the status bar shows karma, essence and
 nuyen.
 
 Item lists are tree tables, grouped and nested the way Chummer5a's tree
@@ -328,7 +346,14 @@ chummer-cli roster ~/characters/
 chummer-cli search "ares" gear
 chummer-cli settings list | export "House rules" -o house.xml | import house.xml
 chummer-cli sources import-wine | scan <dir> | detect | open SR5 143
+chummer-cli hash character.chum5          # state hash (BLAKE3 of the saved XML)
+chummer-cli commands                      # every command as JSON, for scripts
+chummer-cli apply character.chum5 log.json -o out.chum5   # run commands
 ```
+
+`apply` reads a JSON array of commands (as `chummer-cli commands`
+prints them) or of envelopes (command, seed, time, author). It prints
+what each command did and the final version and hash.
 
 Settings are stored in `~/.config/chummer-rs/`.
 
@@ -400,6 +425,11 @@ cargo test --workspace
     it but cannot change it either.
   - Locations and items have no notes colour editor.
 - About 290 UI labels have no Chummer translation string and stay English.
+- Undo/redo and the history are for the open session only. They are not
+  saved; closing the character clears them. History descriptions are in
+  English.
+- No GM/player sync yet: commands, versions, hashes and snapshots exist,
+  networking does not (see [docs/online-design.md](docs/online-design.md)).
 - Creation issues not checked yet: metagenic quality balance, the
   Prototype Transhuman bioware limit, vehicle and drone mod slots, cyberware
   grades whose requirements are not met, and Friends in High Places
@@ -423,6 +453,7 @@ cargo test --workspace
 | `character.rs`, `attributes.rs`, `skills.rs`, `calc.rs` | The character and its rules math |
 | `items/` | One module per item kind: build, add, cost, edit |
 | `chargen.rs`, `career/`, `essence_loss.rs` | Creation, career ledger, essence loss |
+| `command.rs`, `command/` | Commands: the one way a character changes; sessions with undo/redo and the log |
 | `gm/` | Critters, PACKS kits, custom spells |
 | `print.rs`, `export.rs`, `roster.rs`, `calendar.rs` | Sheets, export, roster, calendar |
 | `tree.rs` | Item lists as Chummer's trees (root nodes, locations, nesting) |

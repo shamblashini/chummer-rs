@@ -3,12 +3,15 @@
 //! notes. The engine side is `chummer_core::custom_improvement`.
 
 use chummer_core::character::Character;
+use chummer_core::command::{Command, ImprovementRef};
 use chummer_core::custom_improvement::{self as custom, Field, Form, ImprovementType};
 use chummer_core::data::DataStore;
 use chummer_core::improvement::Improvement;
 use chummer_core::lang::Language;
 use chummer_core::settings::CharacterSettings;
 use eframe::egui::{self, RichText};
+
+use crate::doc::Doc;
 
 #[derive(Default)]
 pub struct ImprovementsPanel {
@@ -76,7 +79,7 @@ fn summary(lang: &Language, i: &Improvement) -> String {
 
 impl ImprovementsPanel {
     /// The custom improvements part of the tab. Returns true on a change.
-    pub fn tab(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, lang: &Language) -> bool {
+    pub fn tab(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language) -> bool {
         let mut changed = false;
         let groups = custom::groups(ch);
         ui.horizontal(|ui| {
@@ -84,7 +87,7 @@ impl ImprovementsPanel {
                 self.dialog = Some(Dialog::new(store, lang, ""));
             }
             ui.add(egui::TextEdit::singleline(&mut self.new_group).hint_text(lang.tr("Group")).desired_width(160.0));
-            if ui.add_enabled(!self.new_group.trim().is_empty(), egui::Button::new(lang.tr("Add Group"))).clicked() && custom::add_group(ch, &self.new_group) {
+            if ui.add_enabled(!self.new_group.trim().is_empty(), egui::Button::new(lang.tr("Add Group"))).clicked() && ch.set(Command::AddImprovementGroup { name: self.new_group.clone() }) {
                 self.new_group.clear();
                 changed = true;
             }
@@ -124,8 +127,7 @@ impl ImprovementsPanel {
                                 ui.label(lang.tr("Notes:"));
                                 let mut text = ch.improvements.list[n].notes.clone();
                                 if ui.add(egui::TextEdit::multiline(&mut text).desired_rows(2).desired_width(480.0)).changed() {
-                                    custom::set_notes(ch, n, &text);
-                                    changed = true;
+                                    changed |= ch.set(Command::SetImprovementNotes { at: at(ch, n), notes: text });
                                 }
                                 if ui.small_button("✔").clicked() {
                                     self.notes = None;
@@ -140,17 +142,17 @@ impl ImprovementsPanel {
     }
 
     /// Buttons for one group: add into it, enable/disable all, rename, delete.
-    fn group_bar(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, lang: &Language, g: &str) -> bool {
+    fn group_bar(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, g: &str) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
             if !g.is_empty() && ui.small_button(format!("➕ {}", lang.tr("Add Improvement"))).clicked() {
                 self.dialog = Some(Dialog::new(store, lang, g));
             }
             if ui.small_button(lang.tr("Enable All")).clicked() {
-                changed |= custom::set_group_enabled(ch, g, true) > 0;
+                changed |= ch.set(Command::SetImprovementGroupEnabled { group: g.to_owned(), on: true });
             }
             if ui.small_button(lang.tr("Disable All")).clicked() {
-                changed |= custom::set_group_enabled(ch, g, false) > 0;
+                changed |= ch.set(Command::SetImprovementGroupEnabled { group: g.to_owned(), on: false });
             }
             if g.is_empty() {
                 return;
@@ -160,7 +162,7 @@ impl ImprovementsPanel {
                     ui.add(egui::TextEdit::singleline(new).desired_width(140.0));
                     if ui.small_button("✔").clicked() {
                         let (old, new) = (old.clone(), new.clone());
-                        changed |= custom::rename_group(ch, &old, &new);
+                        changed |= ch.set(Command::RenameImprovementGroup { old, new });
                         self.renaming = None;
                     }
                     if ui.small_button("✖").clicked() {
@@ -180,12 +182,12 @@ impl ImprovementsPanel {
         changed
     }
 
-    fn row(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, lang: &Language, n: usize, groups: &[String]) -> bool {
+    fn row(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, n: usize, groups: &[String]) -> bool {
         let mut changed = false;
         let i = ch.improvements.list[n].clone();
         let mut on = i.enabled;
         if ui.checkbox(&mut on, "").on_hover_text(lang.tr("Active")).changed() {
-            changed |= custom::set_enabled(ch, n, on);
+            changed |= ch.set(Command::SetImprovementEnabled { at: at(ch, n), on });
         }
         let name = display_name(&i);
         let label = if i.enabled { RichText::new(&name) } else { RichText::new(&name).weak() };
@@ -216,8 +218,7 @@ impl ImprovementsPanel {
                     for g in std::iter::once(String::new()).chain(groups.iter().cloned()) {
                         let label = if g.is_empty() { lang.tr("Selected Improvements") } else { g.clone() };
                         if crate::combo::selectable_label(ui, i.custom_group == g, label).clicked() {
-                            custom::set_group(ch, n, &g);
-                            changed = true;
+                            changed |= ch.set(Command::SetImprovementGroup { at: at(ch, n), group: g.clone() });
                             ui.close();
                         }
                     }
@@ -234,7 +235,7 @@ impl ImprovementsPanel {
     }
 
     /// The Create Improvement dialog and delete confirmations.
-    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Character, store: &DataStore, settings: Option<&CharacterSettings>, lang: &Language) -> bool {
+    pub fn window(&mut self, ctx: &egui::Context, ch: &mut Doc, store: &DataStore, settings: Option<&CharacterSettings>, lang: &Language) -> bool {
         let mut changed = self.confirm_window(ctx, ch, lang);
         let Some(d) = &mut self.dialog else { return changed };
         let mut open = true;
@@ -324,12 +325,12 @@ impl ImprovementsPanel {
             ui.separator();
             ui.horizontal(|ui| {
                 if ui.add_enabled(d.pick.is_some(), egui::Button::new(lang.tr("OK"))).clicked() {
-                    match custom::create(ch, store, &d.form, &d.group, d.edit.as_deref()) {
+                    match ch.apply(Command::CreateImprovement { form: d.form.clone(), group: d.group.clone(), edit: d.edit.clone() }) {
                         Ok(_) => {
                             changed = true;
                             done = true;
                         }
-                        Err(e) => d.error = Some(lang.tr(&e.to_string())),
+                        Err(e) => d.error = Some(lang.tr(&e.reason)),
                     }
                 }
                 if ui.button(lang.tr("Cancel")).clicked() {
@@ -343,7 +344,7 @@ impl ImprovementsPanel {
         changed
     }
 
-    fn confirm_window(&mut self, ctx: &egui::Context, ch: &mut Character, lang: &Language) -> bool {
+    fn confirm_window(&mut self, ctx: &egui::Context, ch: &mut Doc, lang: &Language) -> bool {
         let Some(c) = &self.confirm else { return false };
         let text = match c {
             Confirm::Improvement(_, name) => format!("{}\n{name}", lang.tr("Are you sure you want to delete this Improvement?")),
@@ -367,8 +368,8 @@ impl ImprovementsPanel {
         match answer {
             Some(true) => {
                 let changed = match self.confirm.take() {
-                    Some(Confirm::Improvement(src, _)) => custom::remove(ch, &src),
-                    Some(Confirm::Group(g)) => custom::remove_group(ch, &g),
+                    Some(Confirm::Improvement(src, _)) => ch.set(Command::RemoveImprovement { source: src }),
+                    Some(Confirm::Group(g)) => ch.set(Command::RemoveImprovementGroup { name: g }),
                     None => false,
                 };
                 self.notes = None;
@@ -392,6 +393,11 @@ fn display_name(i: &Improvement) -> String {
     } else {
         format!("{} {}", i.kind, i.improved_name)
     }
+}
+
+/// The improvement at `n`, for a command.
+fn at(ch: &Character, n: usize) -> ImprovementRef {
+    ImprovementRef { index: n as u32, source: ch.improvements.list[n].source_name.clone() }
 }
 
 /// The first improvement of its source: it carries the notes and the edit

@@ -242,3 +242,41 @@ fn saving_does_not_change_the_state() {
     assert_eq!(reloaded.field("alias"), "Saved");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+#[ignore = "timing; run with --release --ignored --nocapture"]
+fn apply_latency() {
+    let engine = Engine::load().unwrap();
+    for name in ["Ghile Mear", "Munin_Career", "Munin"] {
+        let mut session = Session::new(load(name));
+        let t = std::time::Instant::now();
+        for i in 0..20 {
+            session.apply(&engine, Command::SetField { key: s("notes"), value: format!("n{i}") }).unwrap();
+        }
+        println!("{name}: {:?} per SetField", t.elapsed() / 20);
+    }
+}
+
+#[test]
+fn undo_steps_share_unchanged_sections() {
+    // Ghile Mear's mugshots are most of the file; a hundred undo steps must
+    // not keep a hundred copies of them. Checked indirectly: undo across
+    // many steps still restores exact states (deltas rebuild correctly).
+    let engine = Engine::load().unwrap();
+    let base = load("Ghile Mear");
+    let mut session = Session::with_seed(base.clone(), 9);
+    let mut hashes = vec![session.state_hash()];
+    for i in 0..12 {
+        let cmd = if i % 2 == 0 { Command::AddContact { kind: ContactType::Contact } } else { Command::SetField { key: format!("notes{i}"), value: s("x") } };
+        session.apply(&engine, cmd).unwrap();
+        hashes.push(session.state_hash());
+    }
+    for i in (0..12).rev() {
+        session.undo().unwrap();
+        assert_eq!(session.state_hash(), hashes[i]);
+    }
+    for h in hashes.iter().skip(1) {
+        session.redo().unwrap();
+        assert_eq!(session.state_hash(), *h);
+    }
+}
