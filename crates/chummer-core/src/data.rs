@@ -165,6 +165,8 @@ pub fn resource_dir(name: &str) -> Option<PathBuf> {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("resources").join(name));
             candidates.push(dir.join("../share/chummer-rs").join(name));
+            // macOS app bundle: Contents/MacOS/chummer-rs, Contents/Resources/resources.
+            candidates.push(dir.join("../Resources/resources").join(name));
         }
     }
     candidates.push(PathBuf::from("/usr/share/chummer-rs").join(name));

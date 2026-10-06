@@ -1,9 +1,11 @@
 name: Release
-# Push a tag like v0.2.0 to build Linux and Windows packages and publish
-# them as a GitHub release.
+# Push a tag like v0.2.0 to build Linux, Windows and macOS packages and
+# publish them as a GitHub release.
 on:
   push:
     tags: ["v*"]
+  # Manual runs build the packages (as artifacts) without publishing.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -59,8 +61,55 @@ jobs:
           name: ${{ matrix.name }}
           path: ${{ env.ASSET }}
 
+  macos:
+    # One universal (Apple Silicon + Intel) binary in a .app bundle.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: |
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked -p chummer-gui -p chummer-cli --target $t
+          done
+      - name: Package
+        run: |
+          set -e
+          ver="${GITHUB_REF_NAME#v}"
+          dir="chummer-rs-${GITHUB_REF_NAME}-macos-universal"
+          app="$dir/chummer-rs.app/Contents"
+          mkdir -p "$app/MacOS" "$app/Resources/resources"
+          for b in chummer-rs chummer-cli; do
+            lipo -create -output "$app/MacOS/$b" \
+              "target/aarch64-apple-darwin/release/$b" "target/x86_64-apple-darwin/release/$b"
+          done
+          sed "s/@VERSION@/$ver/g" packaging/Info.plist > "$app/Info.plist"
+          cp -r resources/data resources/lang resources/sheets resources/customdata resources/export resources/xml_license.txt "$app/Resources/resources/"
+          # Icon from the SVG, if librsvg is available.
+          if brew install librsvg >/dev/null 2>&1; then
+            set=chummer-rs.iconset; mkdir -p $set
+            for s in 16 32 128 256 512; do
+              rsvg-convert -w $s -h $s packaging/chummer-rs.svg -o $set/icon_${s}x${s}.png
+              rsvg-convert -w $((s*2)) -h $((s*2)) packaging/chummer-rs.svg -o $set/icon_${s}x${s}@2x.png
+            done
+            iconutil -c icns $set -o "$app/Resources/chummer-rs.icns"
+          fi
+          # Ad-hoc signature: required for Apple Silicon; not notarised.
+          codesign --force --deep -s - "$dir/chummer-rs.app"
+          cp LICENSE README.md "$dir/"
+          ditto -c -k --keepParent "$dir" "$dir.zip"
+          echo "ASSET=$dir.zip" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: ${{ env.ASSET }}
+
   release:
-    needs: build
+    needs: [build, macos]
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

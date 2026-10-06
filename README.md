@@ -1,8 +1,8 @@
 # chummer-rs
 
 A Rust rewrite of [Chummer5a](https://github.com/chummer5a/chummer5a), the
-Shadowrun 5th Edition character manager. It runs natively on Linux and
-Windows: no Wine, no .NET, no Internet Explorer.
+Shadowrun 5th Edition character manager. It runs natively on Linux,
+Windows and macOS: no Wine, no .NET, no Internet Explorer.
 
 > **Derived from Chummer5a.** chummer-rs is an independent port of
 > [chummer5a/chummer5a](https://github.com/chummer5a/chummer5a)
@@ -20,12 +20,18 @@ warnings (see [docs/interop.md](docs/interop.md)).
 
 ## Download
 
-Prebuilt packages for Linux and Windows are on the
+Prebuilt packages for Linux, Windows and macOS are on the
 [Releases](../../releases) page. Unpack and run `chummer-rs` (`chummer-rs.exe`
 on Windows). Keep the `resources` folder next to the program.
 
+On macOS, unzip and move `chummer-rs.app` to Applications. The app is
+not notarised by Apple, so the first time right-click it and choose
+Open (or run `xattr -dr com.apple.quarantine /Applications/chummer-rs.app`).
+`chummer-cli` is inside the bundle, in `chummer-rs.app/Contents/MacOS/`.
+
 Character sheets need `xsltproc`:
 - Linux: it is in the `libxslt` package.
+- macOS: it comes with the system.
 - Windows: put `xsltproc.exe` on your PATH.
 
 ## Build from source
