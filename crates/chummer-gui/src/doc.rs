@@ -33,6 +33,11 @@ impl Doc {
         Doc { session: Session::new(ch), engine }
     }
 
+    /// A character whose commands carry `author` (the campaign's GM).
+    pub fn with_author(ch: Character, engine: Arc<Engine>, author: &str) -> Doc {
+        Doc { session: Session::new(ch).with_author(author), engine }
+    }
+
     pub fn ch(&self) -> &Character {
         self.session.ch()
     }
@@ -72,6 +77,11 @@ impl Doc {
 
     pub fn redo(&mut self) -> Option<String> {
         self.session.redo()
+    }
+
+    /// Saved inside a campaign file: no longer modified.
+    pub fn mark_saved(&mut self) {
+        self.session.mark_saved();
     }
 
     pub fn save(&mut self, path: &Path) -> std::io::Result<()> {

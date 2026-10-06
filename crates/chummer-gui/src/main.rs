@@ -3,11 +3,13 @@
 
 mod ai_ui;
 mod browser;
+mod campaign_ui;
 mod career_ui;
 mod combo;
 mod dice_ui;
 mod doc;
 mod drug_ui;
+mod gm_screen;
 mod gm_ui;
 mod history_ui;
 mod improvement_ui;
@@ -51,6 +53,8 @@ const ROSTER_KEY: &str = "roster_folders";
 enum Home {
     MasterIndex,
     Roster,
+    /// The open campaign's GM screen (`gm_screen`).
+    Campaign,
 }
 
 /// What the MDI tab strip selects.
@@ -62,6 +66,7 @@ enum Mdi {
 
 enum Pending {
     CloseTab(usize),
+    CloseCampaign,
     Quit,
 }
 
@@ -90,6 +95,8 @@ struct App {
     settings_editor: settings_ui::SettingsEditor,
     wizard: Option<wizard::Wizard>,
     critter: Option<gm_ui::CritterWizard>,
+    /// The open campaign, shown as the GM Screen tab.
+    gm: Option<gm_screen::GmScreen>,
     pdfs: SourcebookLibrary,
     sources_window: pdf_ui::SourcesWindow,
     browser: browser::DataBrowser,
@@ -128,6 +135,7 @@ impl App {
             settings_editor: settings_ui::SettingsEditor::new(),
             wizard: None,
             critter: None,
+            gm: None,
             pdfs: SourcebookLibrary::load(),
             sources_window,
             engine: Arc::new(engine),
@@ -180,6 +188,10 @@ impl App {
     }
 
     fn open(&mut self, path: &Path) {
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(chummer_core::campaign::EXTENSION)) {
+            self.open_campaign(path);
+            return;
+        }
         if let Some(i) = self.views.iter().position(|v| v.path().as_deref() == Some(path)) {
             self.active = i;
             self.home = None;
@@ -216,6 +228,10 @@ impl App {
     }
 
     fn save(&mut self, idx: usize, save_as: bool) -> bool {
+        if self.views.get(idx).is_some_and(|v| v.campaign_member.is_some()) {
+            // A campaign member is saved with its campaign.
+            return self.save_campaign(false);
+        }
         let Some(v) = self.views.get_mut(idx) else { return false };
         let path = match (save_as, v.path()) {
             (false, Some(p)) => Some(p),
@@ -249,11 +265,22 @@ impl App {
         if idx >= self.views.len() {
             return;
         }
-        if self.views[idx].ch().dirty && !force {
-            self.pending = Some(Pending::CloseTab(idx));
+        if let Some(id) = self.views[idx].campaign_member.filter(|_| self.gm.is_some()) {
+            // A campaign member: its changes stay in the GM screen.
+            let doc = self.views.remove(idx).into_doc();
+            if let Some(gm) = self.gm.as_mut() {
+                gm.give_back(id, doc);
+            }
+            self.active = self.active.min(self.views.len().saturating_sub(1));
+            self.home = Some(Home::Campaign);
             return;
+        } else {
+            if self.views[idx].ch().dirty && !force {
+                self.pending = Some(Pending::CloseTab(idx));
+                return;
+            }
+            self.views.remove(idx);
         }
-        self.views.remove(idx);
         if self.active >= self.views.len() {
             self.active = self.views.len().saturating_sub(1);
         }
@@ -283,6 +310,87 @@ impl App {
                 self.home = None;
             }
         }
+    }
+
+    /// File → New Campaign.
+    fn new_campaign(&mut self) {
+        if !self.close_campaign(false) {
+            return;
+        }
+        self.gm = Some(gm_screen::GmScreen::new_campaign(&self.lang.tr("New Campaign")));
+        self.home = Some(Home::Campaign);
+    }
+
+    fn open_campaign_dialog(&mut self) {
+        if let Some(p) = rfd::FileDialog::new().add_filter("chummer-rs campaign", &[chummer_core::campaign::EXTENSION]).add_filter("All files", &["*"]).pick_file() {
+            self.open_campaign(&p);
+        }
+    }
+
+    fn open_campaign(&mut self, path: &Path) {
+        if self.gm.as_ref().and_then(|g| g.path.as_deref()) == Some(path) {
+            self.home = Some(Home::Campaign);
+            return;
+        }
+        if !self.close_campaign(false) {
+            self.status = Some(("Save or close the open campaign first.".into(), true));
+            return;
+        }
+        match gm_screen::GmScreen::open(path, &self.engine) {
+            Ok(gm) => {
+                self.gm = Some(gm);
+                self.home = Some(Home::Campaign);
+                self.remember(path);
+                self.status = Some((format!("Opened {}", path.display()), false));
+            }
+            Err(e) => self.status = Some((e, true)),
+        }
+    }
+
+    fn save_campaign(&mut self, save_as: bool) -> bool {
+        let Some(gm) = self.gm.as_mut() else { return false };
+        match gm.save(&mut self.views, save_as) {
+            Ok(Some(p)) => {
+                self.status = Some((format!("Saved {}", p.display()), false));
+                self.remember(&p);
+                true
+            }
+            Ok(None) => false,
+            Err(e) => {
+                self.status = Some((e, true));
+                false
+            }
+        }
+    }
+
+    /// Close the campaign and its members' tabs. With unsaved changes
+    /// and no `force`, asks first and returns false.
+    fn close_campaign(&mut self, force: bool) -> bool {
+        let Some(gm) = &self.gm else { return true };
+        if !force && gm.is_dirty(&self.views) {
+            self.pending = Some(Pending::CloseCampaign);
+            return false;
+        }
+        self.views.retain(|v| v.campaign_member.is_none());
+        self.gm = None;
+        self.active = self.active.min(self.views.len().saturating_sub(1));
+        if self.home == Some(Home::Campaign) || self.views.is_empty() {
+            self.home = Some(Home::Roster);
+        }
+        true
+    }
+
+    /// Open a campaign member as a character tab (or bring its tab front).
+    fn open_member(&mut self, id: chummer_core::campaign::MemberId) {
+        if let Some(i) = self.views.iter().position(|v| v.campaign_member == Some(id)) {
+            self.select(Mdi::Character(i));
+            return;
+        }
+        let Some(doc) = self.gm.as_mut().and_then(|g| g.lend(id)) else { return };
+        let mut v = CharacterView::from_doc(doc, &self.engine);
+        v.campaign_member = Some(id);
+        self.views.push(v);
+        self.select(Mdi::Character(self.views.len() - 1));
     }
 
     /// Edit → Undo on the open character.
@@ -319,6 +427,29 @@ impl App {
                     ui.close();
                     self.open_dialog();
                 }
+                ui.separator();
+                if ui.button(self.lang.tr("New Campaign")).on_hover_text(self.lang.tr("A GM screen: players, NPCs, critters, initiative and damage")).clicked() {
+                    ui.close();
+                    self.new_campaign();
+                }
+                if ui.button(self.lang.tr("Open Campaign…")).clicked() {
+                    ui.close();
+                    self.open_campaign_dialog();
+                }
+                let has_gm = self.gm.is_some();
+                if ui.add_enabled(has_gm, egui::Button::new(self.lang.tr("Save Campaign"))).clicked() {
+                    ui.close();
+                    self.save_campaign(false);
+                }
+                if ui.add_enabled(has_gm, egui::Button::new(self.lang.tr("Save Campaign As…"))).clicked() {
+                    ui.close();
+                    self.save_campaign(true);
+                }
+                if ui.add_enabled(has_gm, egui::Button::new(self.lang.tr("Close Campaign"))).clicked() {
+                    ui.close();
+                    self.close_campaign(false);
+                }
+                ui.separator();
                 ui.menu_button(self.lang.tr("Open recent"), |ui| {
                     if self.recent.is_empty() {
                         ui.weak(self.lang.tr("No recent files"));
@@ -461,6 +592,9 @@ impl App {
     /// The MDI tabs: Master Index, Character Roster, then one per character.
     fn mdi_tabs(&self) -> Vec<(Mdi, String)> {
         let mut tabs = vec![(Mdi::Home(Home::MasterIndex), self.lang.tr("Master Index")), (Mdi::Home(Home::Roster), self.lang.tr("Character Roster"))];
+        if let Some(gm) = &self.gm {
+            tabs.push((Mdi::Home(Home::Campaign), format!("🎭 {}", gm.title(&self.views))));
+        }
         tabs.extend(self.views.iter().enumerate().map(|(i, v)| (Mdi::Character(i), v.title())));
         tabs
     }
@@ -490,12 +624,14 @@ impl App {
         let current = self.mdi();
         let mut pick = None;
         let mut close = None;
+        let mut close_gm = false;
         theme::strip_frame(ui, |ui| {
             for (m, label) in self.mdi_tabs() {
-                let (r, closed) = theme::tab(ui, current == m, &label, matches!(m, Mdi::Character(_)));
+                let (r, closed) = theme::tab(ui, current == m, &label, matches!(m, Mdi::Character(_) | Mdi::Home(Home::Campaign)));
                 if closed {
-                    if let Mdi::Character(i) = m {
-                        close = Some(i);
+                    match m {
+                        Mdi::Character(i) => close = Some(i),
+                        _ => close_gm = true,
                     }
                 } else if r.clicked() {
                     pick = Some(m);
@@ -507,6 +643,9 @@ impl App {
         }
         if let Some(i) = close {
             self.close_tab(i, false);
+        }
+        if close_gm {
+            self.close_campaign(false);
         }
     }
 
@@ -530,6 +669,8 @@ impl App {
         }
         if save && self.current().is_some() {
             self.save(self.active, false);
+        } else if save && self.home == Some(Home::Campaign) {
+            self.save_campaign(false);
         }
         if close && self.current().is_some() {
             self.close_tab(self.active, false);
@@ -705,7 +846,9 @@ impl App {
         let (idx, what) = match p {
             Pending::CloseTab(i) => (Some(*i), self.views.get(*i).map(|v| v.ch().display_name()).unwrap_or_default()),
             Pending::Quit => (None, "your characters".to_owned()),
+            Pending::CloseCampaign => (None, self.gm.as_ref().map(|g| g.campaign.name.clone()).unwrap_or_default()),
         };
+        let campaign = matches!(p, Pending::CloseCampaign);
         let mut choice = None;
         egui::Modal::new(egui::Id::new("unsaved")).show(ctx, |ui| {
             ui.heading(self.lang.tr("Unsaved Changes"));
@@ -724,6 +867,16 @@ impl App {
             });
         });
         match (choice, idx) {
+            (Some(0), None) if campaign => {
+                if self.save_campaign(false) {
+                    self.close_campaign(true);
+                }
+                self.pending = None;
+            }
+            (Some(1), None) if campaign => {
+                self.close_campaign(true);
+                self.pending = None;
+            }
             (Some(0), Some(i)) => {
                 if self.save(i, false) {
                     self.close_tab(i, true);
@@ -735,8 +888,9 @@ impl App {
                 self.pending = None;
             }
             (Some(0), None) => {
-                let dirty: Vec<usize> = (0..self.views.len()).filter(|&i| self.views[i].ch().dirty).collect();
-                if dirty.into_iter().all(|i| self.save(i, false)) {
+                let gm_ok = !self.gm.as_ref().is_some_and(|g| g.is_dirty(&self.views)) || self.save_campaign(false);
+                let dirty: Vec<usize> = (0..self.views.len()).filter(|&i| self.views[i].ch().dirty && self.views[i].campaign_member.is_none()).collect();
+                if gm_ok && dirty.into_iter().all(|i| self.save(i, false)) {
                     self.allow_close = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
@@ -755,7 +909,8 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.views.iter().any(|v| v.ch().dirty) {
+        let gm_dirty = self.gm.as_ref().is_some_and(|g| g.is_dirty(&self.views));
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && (gm_dirty || self.views.iter().any(|v| v.ch().dirty)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(Pending::Quit);
         }
@@ -791,6 +946,19 @@ impl eframe::App for App {
 
         match self.mdi() {
             Mdi::Home(Home::Roster) => self.welcome(ctx),
+            Mdi::Home(Home::Campaign) => {
+                let engine = self.engine.clone();
+                let action = match self.gm.as_mut() {
+                    Some(gm) => gm.ui(ctx, &engine, &self.lang, &mut self.views, &mut self.status),
+                    None => {
+                        self.home = Some(Home::Roster);
+                        None
+                    }
+                };
+                if let Some(gm_screen::Action::Open(id)) = action {
+                    self.open_member(id);
+                }
+            }
             Mdi::Home(Home::MasterIndex) => {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     self.browser.ui(ui, &self.engine.store, &self.lang, &self.pdfs, &mut self.status);
@@ -916,7 +1084,7 @@ fn main() -> anyhow::Result<()> {
             "--theme" => theme_arg = args.next().and_then(|t| theme::ThemeKind::parse(&t)),
             "--new" => window = Some("new".into()),
             "-h" | "--help" => {
-                println!("usage: chummer-rs [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5|file.chum5lz ...]");
+                println!("usage: chummer-rs [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5|file.chum5lz|file.chummercampaign ...]");
                 return Ok(());
             }
             _ => files.push(PathBuf::from(a)),

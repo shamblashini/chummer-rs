@@ -78,6 +78,12 @@ fn summary(lang: &Language, i: &Improvement) -> String {
 }
 
 impl ImprovementsPanel {
+    /// Open the Create Improvement dialog with `group` preset (the GM
+    /// screen's quick override).
+    pub fn open_create(&mut self, store: &DataStore, lang: &Language, group: &str) {
+        self.dialog = Some(Dialog::new(store, lang, group));
+    }
+
     /// The custom improvements part of the tab. Returns true on a change.
     pub fn tab(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language) -> bool {
         let mut changed = false;

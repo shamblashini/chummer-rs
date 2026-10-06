@@ -36,6 +36,15 @@ USAGE:
     chummer-cli commands                   Print an example of every command as JSON
 
     chummer-cli export <file.chum5> <XML|JSON|stylesheet> -o <out>   Export a character
+    chummer-cli campaign new <out.chummercampaign> <name>   Create a campaign
+    chummer-cli campaign add <campaign> <file.chum5> [options]
+                                           Add a character to a campaign
+        --kind <Player|NPC|Enemy|Critter|Spirit|Drone>  (default Player)
+        --link                 keep the character in its file (default:
+                               copy it into the campaign)
+        --copies <n>           add n numbered copies with new GUIDs
+        --player <name>  --group <name>
+    chummer-cli campaign list <campaign>   List members, encounters and the feed
     chummer-cli roster <dir>...            List characters in folders
     chummer-cli new <out.chum5> [options]  Create a character (Priority / Sum-to-Ten)
         --settings <name|id>   preset (default Standard)
@@ -107,6 +116,7 @@ fn run(args: &[String]) -> Result<()> {
         "settings" => settings_cmd(&Engine::load()?, rest),
         "new" => new_cmd(&Engine::load()?, rest),
         "export" => export_cmd(&Engine::load()?, rest),
+        "campaign" => campaign_cmd(rest),
         "hash" => {
             let ch = load(one_file(rest)?)?;
             println!("{}", command::hex(&command::state_hash(&ch)));
@@ -185,6 +195,71 @@ fn apply_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
         println!("wrote {out}");
     }
     Ok(())
+}
+
+/// `campaign new|add|list`: local campaign files (the GM screen's).
+fn campaign_cmd(rest: &[String]) -> Result<()> {
+    use chummer_core::campaign::{Campaign, Member, MemberKind};
+    let opt = |name: &str| rest.iter().position(|a| a == name).and_then(|i| rest.get(i + 1)).cloned();
+    match rest {
+        [c, out, name, ..] if c == "new" => {
+            let mut camp = Campaign::new(name.as_str());
+            camp.encounters.push(chummer_core::campaign::Encounter::new("Encounter 1"));
+            camp.save(Path::new(out))?;
+            println!("wrote {out} (campaign {})", camp.id);
+            Ok(())
+        }
+        [c, file, ch_file, ..] if c == "add" => {
+            let path = Path::new(file);
+            let mut camp = Campaign::load(path)?;
+            let ch_path = Path::new(ch_file);
+            let ch = load(ch_path)?;
+            let kind = MemberKind::from(opt("--kind").unwrap_or_else(|| "Player".into()));
+            let mut m = if rest.iter().any(|a| a == "--link") {
+                let abs = std::fs::canonicalize(ch_path).unwrap_or_else(|_| ch_path.to_owned());
+                Member::linked(kind, &abs, &ch)
+            } else {
+                Member::embedded(kind, &ch)
+            };
+            m.player = opt("--player").unwrap_or_default();
+            m.group = opt("--group").unwrap_or_default();
+            match opt("--copies").map(|n| n.parse::<u32>()).transpose().context("--copies takes a number")? {
+                Some(n) => {
+                    let engine = Engine::load()?;
+                    for id in camp.add_copies(&engine, &m, &ch, n) {
+                        println!("added {} ({id})", camp.member(id).map(|m| m.name.as_str()).unwrap_or(""));
+                    }
+                }
+                None => {
+                    let id = camp.add(m);
+                    println!("added {} ({id})", ch.display_name());
+                }
+            }
+            camp.save(path)?;
+            Ok(())
+        }
+        [c, file] if c == "list" => {
+            let path = Path::new(file);
+            let camp = Campaign::load(path)?;
+            println!("{} ({}), created {}", camp.name, camp.id, camp.created);
+            for (kind, members) in camp.grouped() {
+                println!("{}:", kind.plural());
+                for m in members {
+                    let hash = m.load_character(path.parent()).map_or_else(|e| format!("ERROR {e}"), |ch| command::hex(&command::state_hash(&ch))[..16].to_owned());
+                    let place = if m.is_linked() { "linked" } else { "embedded" };
+                    println!("  {:<28} {:<10} {:<12} {place:<8} {hash}  {}", m.name, m.player, m.group, m.id);
+                }
+            }
+            for e in &camp.encounters {
+                println!("encounter {:?}: {} combatants, round {}", e.name, e.combatants.len(), e.round);
+            }
+            for item in camp.log.iter().rev().take(20) {
+                println!("  {} {}", chummer_core::chargen::iso_from_unix(item.at.div_euclid(1000)), item.description);
+            }
+            Ok(())
+        }
+        _ => bail!("usage: chummer-cli campaign new <out> <name> | add <campaign> <file> [--kind K] [--link] [--copies N] [--player P] [--group G] | list <campaign>"),
+    }
 }
 
 fn one_file(rest: &[String]) -> Result<&Path> {

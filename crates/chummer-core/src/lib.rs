@@ -37,3 +37,4 @@ pub mod roster;
 pub mod calendar;
 pub mod play;
 pub mod command;
+pub mod campaign;

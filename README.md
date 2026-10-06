@@ -278,6 +278,16 @@ Chummer 5.225.
   - Searchable drop-downs: lists with more than 8 entries filter as you type (words in any order); Enter picks the first match.
   - A dice roller (click any skill pool) and an initiative tracker.
   - A character roster (the Character Roster tab).
+- **GM screen** (File → New Campaign / Open Campaign…): a campaign opens
+  as its own tab next to the character tabs.
+  ![GM screen](docs/screenshots/gm-screen-graphite.png)
+  - **Roster** (left): players, NPCs, enemies, critters, spirits and drones, grouped by kind, with player, group or faction, notes and each member's damage. Add characters from files: copied into the campaign, or linked so they stay in their own `.chum5`/`.chum5lz`. Add critters with the critter builder, NPCs from a PACKS kit (a karma-build character of the chosen metatype with the kit applied, one or several), or an open character tab. Duplicate makes "Halloweener Ganger 1…4": copies with new GUIDs and numbered names.
+  - **Open** a member as a full character tab. The tab edits the same character, with the same undo history; closing it hands it back to the GM screen. Saving the campaign (Ctrl+S on the GM screen or on a member's tab) stores copied characters in the campaign file and saves linked ones to their own files.
+  - **Encounters** (middle): initiative order from each sheet's initiative (or a score you type), Roll initiative starts the next combat round, Next pass takes 10 from everyone, Next marks the current combatant as acted. Acted, delay, Seize the Initiative and Blitz (5d6) per combatant (Seize and Blitz spend the character's Edge), −5/−10 for interrupts, and quick combatants without a sheet (name, initiative, dice, their own damage tracks). Ties go to Edge, then Reaction, then Intuition.
+  - **Combatant card:** physical (with overflow), stun, matrix and vehicle condition monitors, wound modifier, armor, Edge boxes, and dice pools (defense, damage resistance, composure, judge intentions, the best skills, weapons): click a pool to roll it. Quick damage: "8P AP-2" with an optional soak roll; Physical below the modified armor becomes Stun, extra Stun carries over into Physical, and the boxes are set through commands.
+  - **GM awards and overrides:** give or take karma or nuyen with a note (a career ledger entry, shown as "GM gave Ghost 100 karma: great run"), and Add Improvement for a custom improvement the GM allows.
+  - **Activity** (right): the campaign's feed of every change to its characters (from the command logs, with undos), awards, damage and dice rolls, and the GM's notes.
+  - The format is chummer-rs's own: one `.chummercampaign` file, an LZMA-compressed JSON document (see [docs/online-design.md](docs/online-design.md#campaigns)). `chummer-cli campaign new|add|list` makes and reads them.
 - **GM tools:**
   - File → New Critter… builds a critter or NPC from `critters.xml`, as Chummer does. Spirits, sprites and other Force creatures are built at a chosen Force: attributes, skills and powers follow from it. Spirits get their optional powers and Materialization (or Possession or Inhabitation). Critters open in career mode with rules ignored.
   - Special → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, attributes, skills, skill groups, knowledge skills, adept powers, martial arts, complex forms, A.I. programs, spells, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen. Attribute and skill levels use creation points first, then karma, within the creation maximums. Chummer 5.226 applies no attributes, skills or powers from a kit.
@@ -360,6 +370,10 @@ chummer-cli sources import-wine | scan <dir> | detect | open SR5 143
 chummer-cli hash character.chum5          # state hash (BLAKE3 of the saved XML)
 chummer-cli commands                      # every command as JSON, for scripts
 chummer-cli apply character.chum5 log.json -o out.chum5   # run commands
+chummer-cli campaign new seattle.chummercampaign "Seattle Nights"
+chummer-cli campaign add seattle.chummercampaign ghost.chum5 --player Anna [--link]
+chummer-cli campaign add seattle.chummercampaign ganger.chum5 --kind Enemy --copies 4 --group Halloweeners
+chummer-cli campaign list seattle.chummercampaign
 ```
 
 `apply` reads a JSON array of commands (as `chummer-cli commands`
@@ -445,6 +459,10 @@ cargo test --workspace
 - Undo/redo and the history are for the open session only. They are not
   saved; closing the character clears them. History descriptions are in
   English.
+- GM screen: damage to vehicles and drones is set by clicking their
+  boxes (no vehicle soak); quick combatants soak nothing; the feed's
+  texts are in English; matrix initiative and astral initiative are not
+  offered in the encounter (the sheet's physical initiative is used).
 - Creation issues not checked yet: metagenic quality balance, the
   Prototype Transhuman bioware limit, vehicle and drone mod slots, cyberware
   grades whose requirements are not met, and Friends in High Places
@@ -470,6 +488,7 @@ cargo test --workspace
 | `chargen.rs`, `career/`, `essence_loss.rs` | Creation, career ledger, essence loss |
 | `command.rs`, `command/` | Commands: the one way a character changes; sessions with undo/redo and the log |
 | `gm/` | Critters, PACKS kits, custom spells |
+| `campaign.rs`, `campaign/` | Local campaigns: members, encounters (initiative, damage), the activity feed, the `.chummercampaign` file |
 | `print.rs`, `export.rs`, `roster.rs`, `calendar.rs` | Sheets, export, roster, calendar |
 | `tree.rs` | Item lists as Chummer's trees (root nodes, locations, nesting) |
 | `crates/chummer-gui` | egui desktop application |
