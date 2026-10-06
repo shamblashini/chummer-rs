@@ -461,6 +461,7 @@ impl MagicEditor {
         let grade = metamagic::current_grade(ch);
         let taken = ch.items("metamagics", "metamagic").iter().filter(|m| m.get_i32("grade").unwrap_or(0) > 0).count() as i32;
         let free = (grade - taken).max(0);
+        // LIKELY-BUG(LB-30): Chummer adds to the grade selected in its tree; this picks the grade. See docs/likely-bugs.md.
         // Career mode: the first metamagic at a grade is free, more cost
         // karma; they go to the lowest grade with a free slot, else the top.
         let career_grade = (1..=grade).find(|g| career::metamagic_karma_cost(cx.engine, ch, *g) == 0).unwrap_or(grade);

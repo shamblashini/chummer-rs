@@ -13,6 +13,7 @@ pub fn expression_to_int(s: Option<&str>, force: i32, offset: i32, min_from_forc
     let Some(s) = s.filter(|s| !s.trim().is_empty()) else { return offset };
     let f = force.to_string();
     let replaced = s.replace('F', &f).replace("1D6", &f).replace("2D6", &f);
+    // LIKELY-BUG(LB-10): with a Force, every limit is at least 1, so spirits get RES/DEP/ESS limits of 1 where the data says 0. See docs/likely-bugs.md.
     // A failed evaluation leaves Chummer's starting value of 1.
     let v = crate::expr::evaluate_num(&replaced).map_or(1, crate::expr::standard_round) + offset;
     if force > 0 {

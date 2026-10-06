@@ -524,6 +524,7 @@ impl<'a> Veh<'a> {
         let (mut bon, mut boff) = (0, 0);
         for (i, m) in self.active(ex) {
             for v in [m.bonus("handling"), m.wireless_only("handling")] {
+                // LIKELY-BUG(LB-08): the on-road handling bonus is evaluated against the off-road handling. See docs/likely-bugs.md.
                 // Chummer passes the off-road value here.
                 bon += self.parse_bonus(v.as_deref(), i, off, "Handling", true);
             }
@@ -547,6 +548,7 @@ impl<'a> Veh<'a> {
         self.speed_like(ex, ("accel", "Accel", b.accel), ("offroadaccel", "OffroadAccel", b.offroad_accel), 6)
     }
 
+    // LIKELY-BUG(LB-08): an off-road speed/accel override is compared with the on-road total. See docs/likely-bugs.md.
     /// Shared body of `GetTotalSpeed` and `GetTotalAccel`, including their
     /// quirk: an off-road override is compared with the on-road total.
     fn speed_like(&self, ex: Option<usize>, on_key: (&str, &str, i32), off_key: (&str, &str, i32), div: i32) -> (i32, i32, String) {

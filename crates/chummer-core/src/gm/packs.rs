@@ -200,6 +200,7 @@ impl Applier<'_> {
 /// Apply a kit to a creation-mode character, in `AddPACKSKit` order.
 /// Like Chummer 5.226, kit attributes and skills are not applied (the
 /// selection dialog only lists them).
+// LIKELY-BUG(LB-09): kit attributes, skills, knowledge skills and powers are not applied. See docs/likely-bugs.md.
 pub fn apply(ch: &mut Character, store: &DataStore, settings: Option<&CharacterSettings>, kit: &Element) -> KitReport {
     let mut a = Applier { store, books: settings.map(CharacterSettings::books).unwrap_or_default(), report: KitReport::default() };
     for (k, label) in [("attributes", "Attributes"), ("skills", "Skills"), ("knowledgeskills", "Knowledge Skills"), ("powers", "Powers")] {
@@ -564,6 +565,7 @@ fn vehicles(ch: &mut Character, a: &mut Applier<'_>, kit: &Element) {
                 .into_iter()
                 .find(|m| m.get("name").contains("Weapon Mount") || (!m.get("weaponmountcategories").is_empty() && m.get("weaponmountcategories").contains(&category)))
                 .map(|m| m.get("guid"))
+                // LIKELY-BUG(LB-23): deviates from Chummer (fixed here). See docs/likely-bugs.md.
                 // Chummer only looks at mods; vehicles with built-in weapon
                 // mounts (drones) would lose the weapon there.
                 .or_else(|| items_in(ch, &vguid, "weaponmounts").into_iter().find(|m| m.child("weapons").is_none_or(|w| w.elements().next().is_none())).map(|m| m.get("guid")));
@@ -691,6 +693,7 @@ pub fn from_character(ch: &Character, sheet: &Sheet, settings: Option<&Character
         let of = |t: &str| qs.iter().filter(|q| q.get("qualitytype") == t).collect::<Vec<_>>();
         let (pos, neg) = (of("Positive"), of("Negative"));
         let mut q = Element::new("qualities");
+        // LIKELY-BUG(LB-06): a kit with only negative qualities is exported without them. See docs/likely-bugs.md.
         // Chummer writes the negative list only when there are positive
         // qualities too (it tests `blnPositive` twice).
         if !pos.is_empty() {
