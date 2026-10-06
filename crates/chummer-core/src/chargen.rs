@@ -16,6 +16,8 @@ use crate::settings::CharacterSettings;
 use crate::xml::Element;
 
 mod karma;
+pub mod guide;
+pub mod issues;
 pub use karma::{connection_maximum, karma_breakdown};
 
 /// Version written as `<appversion>`. Chummer5a uses it to choose load
@@ -716,56 +718,10 @@ pub fn nuyen_spent(ch: &Character, store: Option<&DataStore>) -> f64 {
         + sum("lifestyles", "lifestyle", &|e| lifestyle::total_cost(ch, e))
 }
 
-/// Problems that block finishing creation (`CheckCharacterValidity`).
-pub fn validity_problems(ch: &Character, b: &Budget, settings: &CharacterSettings) -> Vec<String> {
-    let mut p = Vec::new();
-    let mut check = |left: i32, what: &str| {
-        if left < 0 {
-            p.push(format!("{what} overspent by {}", -left));
-        }
-    };
-    check(Budget::left(b.attribute_points), "Attribute points");
-    check(Budget::left(b.special_points), "Special attribute points");
-    check(Budget::left(b.skill_points), "Skill points");
-    check(Budget::left(b.skill_group_points), "Skill group points");
-    check(b.karma_left(), "Karma");
-    if let Some((total, used)) = b.power_points {
-        if used > total + 1e-9 {
-            p.push(format!("Power points overspent: {used} of {total}"));
-        }
-    }
-    if b.nuyen_left() < 0.0 {
-        p.push(format!("Nuyen overspent by {}", crate::format::nuyen(-b.nuyen_left())));
-    }
-    if b.positive_quality_karma > b.quality_limit {
-        p.push(format!("Positive qualities cost {} karma, limit is {}", b.positive_quality_karma, b.quality_limit));
-    }
-    if b.negative_quality_karma > b.quality_limit {
-        p.push(format!("Negative qualities give {} karma, limit is {}", b.negative_quality_karma, b.quality_limit));
-    }
-    let at_max = ch
-        .attributes
-        .iter()
-        .filter(|a| a.category == "Standard" && a.metatype_max > 0)
-        .filter(|a| a.metatype_min + a.base + a.karma >= a.metatype_max)
-        .count() as i32;
-    let allowed = settings.int("maxnumbermaxattributescreate", 1);
-    if at_max > allowed {
-        p.push(format!("{at_max} attributes at their maximum, only {allowed} allowed"));
-    }
-    if !ch.created {
-        let skill_name = |suid: &str| ch.doc.child("newskills").and_then(|n| n.child("skills")).and_then(|s| s.elements().find(|e| e.get("suid").eq_ignore_ascii_case(suid))).map(|e| e.get("name")).unwrap_or_default();
-        for s in ch.skills.iter().filter(|s| s.specs.iter().filter(|x| !x.free).count() > 1) {
-            p.push(format!("{} has more than one specialization", skill_name(&s.suid)));
-        }
-        for k in ch.knowledge_skills.iter().filter(|k| k.specs.len() > 1) {
-            p.push(format!("{} has more than one specialization", k.name));
-        }
-    }
-    if (ch.is_magician() || ch.is_adept()) && ch.mag_enabled() && ch.doc.child("tradition").is_none_or(|t| t.get("name").is_empty()) && ch.is_magician() {
-        p.push("Magicians need a tradition (choose one on the Spells & Spirits tab)".into());
-    }
-    p
+/// Problems that block finishing creation (`CheckCharacterValidity`):
+/// the error messages of [`issues::issues`].
+pub fn validity_problems(ch: &Character, sheet: &Sheet, b: &Budget, settings: &CharacterSettings, store: Option<&DataStore>) -> Vec<String> {
+    issues::issues(ch, b, sheet, settings, store).into_iter().filter(issues::Issue::is_error).map(|i| i.message()).collect()
 }
 
 /// Finish creation: keep up to 7 karma and 5,000¥, switch to career mode

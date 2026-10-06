@@ -18,6 +18,8 @@ pub struct Wizard {
     talent_skills: Vec<String>,
     name: String,
     error: Option<String>,
+    /// Open the character with guided creation (saved as the preference).
+    guided: bool,
 }
 
 pub enum WizardResult {
@@ -38,6 +40,7 @@ impl Wizard {
             talent_skills: Vec::new(),
             name: String::new(),
             error: None,
+            guided: crate::view::guided_offer(),
         }
     }
 
@@ -206,6 +209,7 @@ impl Wizard {
             if let Some(e) = &self.error {
                 ui.colored_label(ui.visuals().error_fg_color, e);
             }
+            ui.checkbox(&mut self.guided, lang.tr("Guided creation")).on_hover_text(lang.tr("Walk through character creation one step at a time"));
             ui.horizontal(|ui| {
                 let skills_ok = self.talent_skills.iter().all(|s| !s.is_empty());
                 let ok = (karma_build || prios.validate(&settings).is_ok()) && skills_ok;
@@ -219,6 +223,7 @@ impl Wizard {
                         talent_skills: self.talent_skills.clone(),
                         name: if self.name.trim().is_empty() { "New Runner".into() } else { self.name.trim().to_owned() },
                     };
+                    crate::view::save_guided_preference(self.guided);
                     match chargen::create(engine, &spec) {
                         Ok(ch) => result = WizardResult::Created(Box::new(ch)),
                         Err(e) => self.error = Some(e),

@@ -45,7 +45,7 @@ fn mundane_human_priority() {
     assert_eq!(again.skills.len(), ch.skills.len());
     assert_eq!(again.field("settings"), STANDARD);
     assert_eq!(again.field("appversion"), chargen::CHUMMER_APP_VERSION);
-    assert!(chargen::validity_problems(&ch, &b, engine.settings.resolve(STANDARD).unwrap()).is_empty());
+    assert!(chargen::validity_problems(&ch, &s, &b, engine.settings.resolve(STANDARD).unwrap(), Some(&engine.store)).is_empty());
 }
 
 #[test]
@@ -135,8 +135,8 @@ fn creation_rules_for_specs_gender_and_magic_skills() {
     let guid = ch.skills.iter().find(|k| engine.catalog.get(&k.suid).is_some_and(|d| d.name == "Pistols")).unwrap().guid.clone();
     chargen::add_specialization(&mut ch, &guid, "Revolvers");
     chargen::add_specialization(&mut ch, &guid, "Semi-Automatics");
-    let (_, b) = sheet(&engine, &ch);
-    let problems = chargen::validity_problems(&ch, &b, engine.settings.resolve(STANDARD).unwrap());
+    let (s, b) = sheet(&engine, &ch);
+    let problems = chargen::validity_problems(&ch, &s, &b, engine.settings.resolve(STANDARD).unwrap(), Some(&engine.store));
     assert!(problems.iter().any(|p| p.contains("Pistols has more than one specialization")), "{problems:?}");
 }
 

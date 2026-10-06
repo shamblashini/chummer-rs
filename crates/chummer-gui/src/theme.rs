@@ -383,6 +383,68 @@ pub fn pool_chip(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
 /// underlined text tab (Graphite). `close` adds a "×" whose click is
 /// reported separately.
 pub fn tab(ui: &mut egui::Ui, selected: bool, label: &str, close: bool) -> (egui::Response, bool) {
+    tab_with(ui, selected, label, close, TabDeco::default())
+}
+
+/// Extra marks on a tab: an issue badge, and whether it is de-emphasised
+/// (still clickable) because the guided-creation step is elsewhere.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TabDeco {
+    pub badge: Option<Badge>,
+    pub dim: bool,
+}
+
+/// How many problems a tab (or row) has; `error` when any blocks
+/// finishing creation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Badge {
+    pub count: usize,
+    pub error: bool,
+}
+
+/// Colour of a warning mark: Classic's yellow WinForms warning sign or a
+/// red error sign; Graphite's warning or bad text colour.
+fn mark_color(t: &Theme, error: bool) -> Color32 {
+    match (t.kind, error) {
+        (ThemeKind::Classic, false) => Color32::from_rgb(0xFF, 0xCC, 0x00),
+        (ThemeKind::Classic, true) => Color32::from_rgb(0xD0, 0x21, 0x21),
+        (ThemeKind::Graphite, false) => t.palette.warning,
+        (ThemeKind::Graphite, true) => t.palette.bad,
+    }
+}
+
+/// Paint the warning mark centred in `rect`: Classic a small warning
+/// triangle with "!", Graphite a dot.
+pub fn paint_mark(painter: &egui::Painter, rect: egui::Rect, t: &Theme, error: bool) {
+    let c = rect.center();
+    let fill = mark_color(t, error);
+    match t.kind {
+        ThemeKind::Classic => {
+            let h = rect.height().min(rect.width()).min(13.0);
+            let pts = vec![egui::pos2(c.x, c.y - h / 2.0), egui::pos2(c.x + h / 2.0 + 1.0, c.y + h / 2.0), egui::pos2(c.x - h / 2.0 - 1.0, c.y + h / 2.0)];
+            painter.add(egui::Shape::convex_polygon(pts, fill, Stroke::new(1.0_f32, Color32::from_rgb(0x6B, 0x55, 0x00))));
+            let ink = if error { Color32::WHITE } else { Color32::BLACK };
+            painter.line_segment([egui::pos2(c.x, c.y - h / 2.0 + 4.0), egui::pos2(c.x, c.y + h / 2.0 - 4.0)], Stroke::new(1.5_f32, ink));
+            painter.circle_filled(egui::pos2(c.x, c.y + h / 2.0 - 2.0), 0.9, ink);
+        }
+        ThemeKind::Graphite => {
+            painter.circle_filled(c, 3.5, fill);
+        }
+    }
+}
+
+/// A warning mark as a widget, for rows of tables and lists.
+pub fn warning_mark(ui: &mut egui::Ui, error: bool) -> egui::Response {
+    let t = current(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+    if ui.is_rect_visible(rect) {
+        paint_mark(ui.painter(), rect, &t, error);
+    }
+    resp
+}
+
+/// [`tab`] with a badge and de-emphasis.
+pub fn tab_with(ui: &mut egui::Ui, selected: bool, label: &str, close: bool, deco: TabDeco) -> (egui::Response, bool) {
     let t = current(ui.ctx());
     let p = t.palette;
     let classic = t.kind == ThemeKind::Classic;
@@ -390,7 +452,10 @@ pub fn tab(ui: &mut egui::Ui, selected: bool, label: &str, close: bool) -> (egui
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font.clone(), Color32::PLACEHOLDER);
     let pad = if classic { egui::vec2(6.0, 3.0) } else { egui::vec2(9.0, 6.0) };
     let close_w = if close { font.size + 4.0 } else { 0.0 };
-    let size = egui::vec2(galley.size().x + 2.0 * pad.x + close_w, galley.size().y + 2.0 * pad.y);
+    let badge_font = FontId::proportional((font.size - 2.0).max(9.0));
+    let badge_galley = deco.badge.map(|b| ui.painter().layout_no_wrap(b.count.to_string(), badge_font.clone(), Color32::PLACEHOLDER));
+    let badge_w = badge_galley.as_ref().map_or(0.0, |g| 14.0 + g.size().x + 3.0);
+    let size = egui::vec2(galley.size().x + 2.0 * pad.x + close_w + badge_w, galley.size().y + 2.0 * pad.y);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let close_rect = egui::Rect::from_min_max(egui::pos2(rect.max.x - close_w - pad.x * 0.5, rect.min.y), egui::pos2(rect.max.x - pad.x * 0.5, rect.max.y));
     let over_close = close && resp.hover_pos().is_some_and(|pos| close_rect.contains(pos));
@@ -418,7 +483,16 @@ pub fn tab(ui: &mut egui::Ui, selected: bool, label: &str, close: bool) -> (egui
             }
             if selected || hovered { p.text } else { p.weak }
         };
+        let text_color = if deco.dim && !selected && !hovered { p.weak.gamma_multiply(if classic { 1.0 } else { 0.7 }) } else { text_color };
+        let label_w = galley.size().x;
         painter.galley(rect.min + pad, galley, text_color);
+        if let (Some(b), Some(g)) = (deco.badge, badge_galley) {
+            let x = rect.min.x + pad.x + label_w + 3.0;
+            let mark = egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 7.0), egui::vec2(14.0, 14.0));
+            paint_mark(painter, mark, &t, b.error);
+            let color = if classic { p.text } else { mark_color(&t, b.error) };
+            painter.galley(egui::pos2(mark.max.x + 1.0, rect.center().y - g.size().y / 2.0), g, color);
+        }
         if close {
             let c = if over_close { p.bad } else { p.weak };
             painter.text(close_rect.center(), egui::Align2::CENTER_CENTER, "×", font, c);
@@ -429,10 +503,16 @@ pub fn tab(ui: &mut egui::Ui, selected: bool, label: &str, close: bool) -> (egui
 
 /// A row of tabs over a page. Returns true when the selection changed.
 pub fn tab_strip<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, tabs: &[(T, String)]) -> bool {
+    let decorated: Vec<(T, String, TabDeco)> = tabs.iter().map(|(v, l)| (*v, l.clone(), TabDeco::default())).collect();
+    tab_strip_with(ui, current, &decorated)
+}
+
+/// [`tab_strip`] with a badge and de-emphasis per tab.
+pub fn tab_strip_with<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, tabs: &[(T, String, TabDeco)]) -> bool {
     let mut changed = false;
     strip_frame(ui, |ui| {
-        for (v, label) in tabs {
-            if tab(ui, *current == *v, label, false).0.clicked() && *current != *v {
+        for (v, label, deco) in tabs {
+            if tab_with(ui, *current == *v, label, false, *deco).0.clicked() && *current != *v {
                 *current = *v;
                 changed = true;
             }
@@ -463,19 +543,19 @@ pub fn config_path() -> Option<PathBuf> {
     chummer_core::settings::user_settings_dir().and_then(|d| d.parent().map(|p| p.join("gui.ini")))
 }
 
-/// The `theme=` line of a gui.ini.
-pub fn parse_config(text: &str) -> Option<ThemeKind> {
-    text.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "theme").and_then(|(_, v)| ThemeKind::parse(v))
+/// The value of a `key=` line of a gui.ini.
+pub fn config_get(text: &str, key: &str) -> Option<String> {
+    text.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == key).map(|(_, v)| v.trim().to_owned())
 }
 
-/// `text` with its `theme=` line set to `kind`; other lines are kept.
-pub fn set_config(text: &str, kind: ThemeKind) -> String {
-    let line = format!("theme={}", kind.as_str());
+/// `text` with its `key=` line set to `value`; other lines are kept.
+pub fn config_set(text: &str, key: &str, value: &str) -> String {
+    let line = format!("{key}={value}");
     let mut found = false;
     let mut out: Vec<String> = text
         .lines()
         .map(|l| {
-            if l.split_once('=').is_some_and(|(k, _)| k.trim() == "theme") {
+            if l.split_once('=').is_some_and(|(k, _)| k.trim() == key) {
                 found = true;
                 line.clone()
             } else {
@@ -491,18 +571,39 @@ pub fn set_config(text: &str, kind: ThemeKind) -> String {
     s
 }
 
+/// The `theme=` line of a gui.ini.
+pub fn parse_config(text: &str) -> Option<ThemeKind> {
+    config_get(text, "theme").and_then(|v| ThemeKind::parse(&v))
+}
+
+/// `text` with its `theme=` line set to `kind`; other lines are kept.
+#[cfg(test)]
+pub fn set_config(text: &str, kind: ThemeKind) -> String {
+    config_set(text, "theme", kind.as_str())
+}
+
+/// A value saved in gui.ini.
+pub fn load_value(key: &str) -> Option<String> {
+    config_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| config_get(&t, key))
+}
+
+/// Save a gui.ini value, keeping the other lines.
+pub fn save_value(key: &str, value: &str) -> std::io::Result<()> {
+    let Some(path) = config_path() else { return Ok(()) };
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, config_set(&old, key, value))
+}
+
 /// The saved theme; Graphite for new installs.
 pub fn load_kind() -> ThemeKind {
     config_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| parse_config(&t)).unwrap_or_default()
 }
 
 pub fn save_kind(kind: ThemeKind) -> std::io::Result<()> {
-    let Some(path) = config_path() else { return Ok(()) };
-    let old = std::fs::read_to_string(&path).unwrap_or_default();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(path, set_config(&old, kind))
+    save_value("theme", kind.as_str())
 }
 
 #[cfg(test)]

@@ -33,6 +33,9 @@ pub struct RowView {
     pub clickable: bool,
     /// Hover text for the first cell (item notes).
     pub hover: String,
+    /// A creation problem with this item: (message, is an error), shown
+    /// as a warning mark before the name.
+    pub warning: Option<(String, bool)>,
 }
 
 /// What happened this frame.
@@ -187,6 +190,9 @@ impl<'a> TreeTable<'a> {
                             }
                         }
                         ui.add_space((r.depth + 1) as f32 * INDENT + 2.0);
+                        if let Some((msg, error)) = &v.warning {
+                            theme::warning_mark(ui, *error).on_hover_text(msg);
+                        }
                         let name = v.cells.first().cloned().unwrap_or_default();
                         let mut text = RichText::new(name).color(text_color);
                         if v.group {
