@@ -536,7 +536,13 @@ fn gm_reverts_a_change_and_later_changes_are_rebased() {
 
 #[test]
 fn a_burst_of_typing_is_one_feed_line_and_one_revert() {
+    fn fixed() -> i64 {
+        1_800_000_000_000
+    }
     let mut k = campaign(0);
+    // One clock tick for the whole burst, however slow the machine.
+    let auth = std::mem::replace(&mut k.auth, Authority::new(CampaignId::random(), k.gm, "GM"));
+    k.auth = auth.with_clock(fixed);
     let original = k.auth.character(&k.c1).unwrap().field("alias");
     for v in ["R", "Ra", "Rav", "Rave", "Raven"] {
         k.auth.apply_local(engine(), &k.c1, Command::SetField { key: "alias".into(), value: v.into() }).unwrap();

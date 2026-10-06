@@ -86,6 +86,8 @@ pub struct GmScreen {
     rolls: Vec<String>,
     /// The online side, once the campaign was hosted.
     online: Option<online::GmOnline>,
+    /// Why an online campaign opened without its online state.
+    online_error: Option<String>,
     check_mail_later: bool,
 }
 
@@ -124,6 +126,7 @@ impl GmScreen {
             improvement_for: None,
             rolls: Vec::new(),
             online: None,
+            online_error: None,
             check_mail_later: false,
         }
     }
@@ -143,7 +146,11 @@ impl GmScreen {
     pub fn open(path: &Path, engine: &Arc<Engine>, net: &mut crate::online::Online) -> Result<GmScreen, String> {
         let mut s = GmScreen::open_local(path, engine)?;
         if chummer_sync::hosted::is_online(path) {
-            s.go_online(net, engine, &mut [])?;
+            // Still open the file when its online state cannot be used
+            // (another machine's key): the GM can look at it.
+            if let Err(e) = s.go_online(net, engine, &mut []) {
+                s.online_error = Some(e);
+            }
         }
         Ok(s)
     }
@@ -240,6 +247,11 @@ impl GmScreen {
     /// Save (asking for a file the first time or with `save_as`). Returns
     /// the file, or `None` when cancelled.
     pub fn save(&mut self, views: &mut [CharacterView], save_as: bool) -> Result<Option<PathBuf>, String> {
+        if save_as && self.is_online() {
+            // The authority file belongs to this file name; a copy under
+            // another name would come back as a new campaign.
+            return Err("An online campaign keeps its file name. To move it, copy the .chummercampaign and .authority files together.".into());
+        }
         let path = match (&self.path, save_as) {
             (Some(p), false) => Some(p.clone()),
             _ => rfd::FileDialog::new().add_filter("chummer-rs campaign", &[campaign::EXTENSION]).set_file_name(format!("{}.{}", self.campaign.name, campaign::EXTENSION)).save_file(),

@@ -301,9 +301,12 @@ impl PlayerSession {
         }
     }
 
+    /// Handles a message, saves, then tells the UI (so an event means the
+    /// change is on disk).
     fn handle(&self, msg: ServerMessage) -> Vec<crate::msg::ResyncRequest> {
         let events = self.replica().handle(&self.inner.engine, msg);
         let resync = events.iter().filter_map(|e| if let Event::NeedResync(r) = e { Some(r.clone()) } else { None }).collect();
+        self.save_logged();
         self.emit(events);
         resync
     }

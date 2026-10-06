@@ -208,11 +208,15 @@ impl GmScreen {
             let r = ui.add_enabled(saved, egui::Checkbox::new(&mut on, lang.tr("Host online")));
             let r = if saved { r.on_hover_text(lang.tr("Players connect to this app; changes sync live")) } else { r.on_disabled_hover_text(lang.tr("Save the campaign to a file first")) };
             if r.changed() {
-                if let Err(e) = self.set_hosting(net, engine, views, on) {
-                    *status = Some((e, true));
+                match self.set_hosting(net, engine, views, on) {
+                    Ok(()) => self.online_error = None,
+                    Err(e) => *status = Some((e, true)),
                 }
             }
         });
+        if let Some(e) = &self.online_error {
+            ui.colored_label(ui.visuals().error_fg_color, e);
+        }
         let Some(o) = &mut self.online else {
             ui.weak(lang.tr("Host the campaign to invite players. Their characters then sync with yours; every change is logged here."));
             return;
