@@ -164,6 +164,25 @@ pub fn reconcile(auth: &mut Authority, campaign: &Campaign, base: Option<&Path>,
     out
 }
 
+/// Shows the authority's owners in the campaign: a member whose `owner`
+/// the file leaves open (or marks [`GM_OWNER`]) gets the authority's.
+/// Returns whether anything changed.
+pub fn adopt_owners(auth: &Authority, campaign: &mut Campaign) -> bool {
+    let mut changed = false;
+    for m in &mut campaign.members {
+        if explicit_owner(m).is_some_and(|o| o.is_some()) {
+            continue;
+        }
+        let owner = auth.owner(&character_id(m.id)).map(|o| o.to_string());
+        let normal = if owner.is_none() && m.owner.is_some() { m.owner.clone() } else { owner };
+        if m.owner != normal {
+            m.owner = normal;
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Copies the authority's characters into the campaign: embedded members
 /// store theirs, linked members are saved to their own file when it
 /// differs. The roster names follow.
@@ -272,6 +291,11 @@ impl HostedCampaign {
         let r = reconcile(&mut self.host.authority(), campaign, self.campaign_path.parent(), current);
         self.host.changed();
         r
+    }
+
+    /// [`adopt_owners`] into `campaign`.
+    pub fn adopt_owners(&self, campaign: &mut Campaign) -> bool {
+        adopt_owners(&self.host.authority(), campaign)
     }
 
     /// [`write_back`] into `campaign`.

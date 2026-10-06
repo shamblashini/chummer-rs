@@ -293,7 +293,7 @@ impl GmScreen {
         egui::SidePanel::left("gm_roster").resizable(true).default_width(340.0).min_width(260.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("gm_roster_scroll").auto_shrink(false).show(ui, |ui| self.roster(ui, engine, lang, views, status, &mut action));
         });
-        egui::SidePanel::right("gm_feed").resizable(true).default_width(320.0).min_width(220.0).show(ctx, |ui| {
+        egui::SidePanel::right("gm_feed").resizable(true).default_width(320.0).min_width(220.0).max_width(520.0).show(ctx, |ui| {
             self.online_panel(ui, net, engine, lang, views, status);
             self.feed(ui, lang, views, status);
         });

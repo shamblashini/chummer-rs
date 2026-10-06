@@ -74,6 +74,7 @@ impl GmScreen {
         for (m, e) in rec.failed {
             self.errors.insert(m, e);
         }
+        h.adopt_owners(&mut self.campaign);
         self.online = Some(GmOnline { hosted: h, mail: Default::default(), mail_loop: None, invite: None, signature: self.signature(), name: self.campaign.name.clone() });
         self.online_docs(engine, views);
         Ok(())
@@ -221,11 +222,11 @@ impl GmScreen {
         match (&node, serving) {
             (Some(n), true) => {
                 let relay = n.home_relay().map(|r| r.to_string()).unwrap_or_else(|| lang.tr("connecting to the relay…"));
-                ui.label(RichText::new(format!("● {}", lang.tr("Online"))).color(crate::theme::accent(ui)));
+                ui.label(RichText::new(lang.tr("Online: players can connect")).color(crate::theme::accent(ui)));
                 ui.weak(format!("{} {relay}", lang.tr("Relay:")));
             }
             _ => {
-                ui.weak(format!("○ {}", lang.tr("Offline: changes for players wait in the mailbox")));
+                ui.weak(lang.tr("Offline: changes for players wait in the mailbox"));
             }
         }
         ui.horizontal(|ui| {
@@ -241,7 +242,8 @@ impl GmScreen {
         if let Some(link) = o.invite.clone() {
             ui.horizontal(|ui| {
                 let mut text = link.clone();
-                ui.add(egui::TextEdit::singleline(&mut text).desired_width(ui.available_width() - 60.0).font(egui::TextStyle::Monospace));
+                // A fixed width: the panel must not grow with the link.
+                ui.add(egui::TextEdit::singleline(&mut text).desired_width(200.0).font(egui::TextStyle::Monospace));
                 if ui.button(lang.tr("Copy")).clicked() {
                     ui.ctx().copy_text(link.clone());
                     *status = Some((lang.tr("Invite link copied."), false));
@@ -260,16 +262,22 @@ impl GmScreen {
                 };
             }
         }
-        let members: Vec<(chummer_net::EndpointId, chummer_sync::Member)> = o.hosted.host.authority().members().iter().filter(|(id, _)| **id != o.hosted.host.authority().gm()).map(|(k, v)| (*k, v.clone())).collect();
+        let members: Vec<(chummer_net::EndpointId, chummer_sync::Member)> = {
+            let a = o.hosted.host.authority();
+            a.members().iter().filter(|(id, _)| **id != a.gm()).map(|(k, v)| (*k, v.clone())).collect()
+        };
         if !members.is_empty() {
             ui.label(RichText::new(lang.tr("Players")).strong());
             for (id, m) in members {
                 let on = connected.contains(&id);
                 let name = if m.name.is_empty() { id.fmt_short().to_string() } else { m.name.clone() };
-                let dot = if on { RichText::new("●").color(crate::theme::accent(ui)) } else { RichText::new("○").weak() };
                 ui.horizontal(|ui| {
-                    ui.label(dot);
                     ui.label(name).on_hover_text(id.to_string());
+                    if on {
+                        ui.label(RichText::new(lang.tr("connected")).color(crate::theme::accent(ui)));
+                    } else {
+                        ui.weak(lang.tr("not connected"));
+                    }
                 });
             }
         }
