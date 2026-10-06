@@ -41,7 +41,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          dir="chummer-rs-${GITHUB_REF_NAME}-${{ matrix.name }}"
+          dir="chummer-rs-${GITHUB_REF_NAME//\//-}-${{ matrix.name }}"
           mkdir -p "$dir"
           cp "target/${{ matrix.target }}/release/chummer-rs${{ matrix.ext }}" "$dir/"
           cp "target/${{ matrix.target }}/release/chummer-cli${{ matrix.ext }}" "$dir/"
@@ -78,8 +78,8 @@ jobs:
       - name: Package
         run: |
           set -e
-          ver="${GITHUB_REF_NAME#v}"
-          dir="chummer-rs-${GITHUB_REF_NAME}-macos-universal"
+          ver=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          dir="chummer-rs-${GITHUB_REF_NAME//\//-}-macos-universal"
           app="$dir/chummer-rs.app/Contents"
           mkdir -p "$app/MacOS" "$app/Resources/resources"
           for b in chummer-rs chummer-cli; do
