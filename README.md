@@ -142,7 +142,7 @@ Supported kinds:
 - Weapons, with accessories and underbarrels.
 - Vehicles and drones, with mods and weapon mounts.
 - Lifestyles, with lifestyle qualities.
-- Custom drugs.
+- Custom drugs, priced by their grade.
 - Spells (limited, extended, alchemical), adept powers, complex forms, spirits and sprites.
 - Metamagics and echoes, mentor spirits with their choices, martial arts and techniques, and critter powers.
 - A.I.s: programs and Advanced Programs (creation karma with the free program slots, requirements), Edge maximum equal to Depth, a Core or vehicle track and the home node's Matrix track, limits, matrix initiative and spell defense from the home node.
@@ -217,7 +217,7 @@ Chummer 5.225.
   - A character roster (the Character Roster tab).
 - **GM tools:**
   - File → New Critter… builds a critter or NPC from `critters.xml`, as Chummer does. Spirits, sprites and other Force creatures are built at a chosen Force: attributes, skills and powers follow from it. Spirits get their optional powers and Materialization (or Possession or Inhabitation). Critters open in career mode with rules ignored.
-  - Special → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, martial arts, complex forms, A.I. programs, spells, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen.
+  - Special → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, attributes, skills, skill groups, knowledge skills, adept powers, martial arts, complex forms, A.I. programs, spells, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen. Attribute and skill levels use creation points first, then karma, within the creation maximums. Chummer 5.226 applies no attributes, skills or powers from a kit.
   - Special → Create PACKS Kit… saves the character's things as a Custom kit in `~/.local/share/chummer-rs/packs/custom_*_packs.xml`. Custom kits can also be deleted there.
   - Spells & Spirits tab → Create Spell… designs a custom spell (Street Grimoire). Chummer's rules compute its drain value and descriptors. In career mode it costs spell karma.
 - **Languages:** English, German, French, Japanese, Portuguese and Chinese data names and sheets.
@@ -338,7 +338,7 @@ cargo test --workspace
   - "Change Settings File" in creation mode only offers presets with the same build method. Chummer re-runs metatype and priority selection to switch build methods.
   - Chummer also finds a missing settings file by its `<settingshashcode>`; chummer-rs does not compute that hash.
 - PACKS kits:
-  - Kit attributes and skills are listed but not applied. Chummer 5.226 does not apply them either.
+  - Create PACKS Kit does not write skills (Chummer 5.226 does not either).
   - "Select Martial Art" entries in kits are skipped.
   - Chummer reads custom kits from its own `packs` folder. To use a kit in both programs, copy the file.
 - Tree differences from Chummer5a: multi-level qualities are one row per

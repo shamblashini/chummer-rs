@@ -296,8 +296,11 @@ pub fn cost(drug: &Element) -> f64 {
 /// Multiplier of a drug grade: the grade's `<cost>` in drugcomponents.xml
 /// of `store` (else of the stock data), 1 for an unknown grade.
 pub fn grade_multiplier(store: Option<&DataStore>, grade: &str) -> f64 {
+    let store = match store {
+        Some(st) => Some(st),
+        None => crate::data::shared_store(),
+    };
     store
-        .or_else(|| crate::data::shared_store())
         .and_then(|st| st.doc("drugcomponents.xml").ok())
         .and_then(|doc| crate::data::records(&doc, "grades", "grade").into_iter().find(|g| g.name() == grade).and_then(|g| g.el().get_f64("cost")))
         .unwrap_or(1.0)

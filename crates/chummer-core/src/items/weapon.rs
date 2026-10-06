@@ -1427,7 +1427,8 @@ fn dice_pool(c: &W<'_>) -> i32 {
         // chummer-rs deviates from Chummer (LB-11): Chummer adds the
         // WeaponSpecificDV/AP/Accuracy/Range improvements to the pool too
         // (AP then counts twice). A DV, AP, Accuracy or range bonus is not
-        // extra dice (SR5 p. 178), so they go to their own stats.
+        // extra dice (SR5 p. 173: Accuracy is the limit of the attack test),
+        // so they go to their own stats.
         modifier += c.imps().val("WeaponSpecificDice", Some(&c.get("guid")));
         pool += spec_bonus(c, sk);
     }

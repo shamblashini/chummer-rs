@@ -197,18 +197,26 @@ impl Applier<'_> {
     }
 }
 
-/// Apply a kit to a creation-mode character, in `AddPACKSKit` order.
-/// Like Chummer 5.226, kit attributes and skills are not applied (the
-/// selection dialog only lists them).
-// LIKELY-BUG(LB-09): kit attributes, skills, knowledge skills and powers are not applied. See docs/likely-bugs.md.
+/// Apply a kit to a creation-mode character, in `AddPACKSKit` order, with
+/// the kit's attributes, skills, knowledge skills and adept powers.
+// chummer-rs deviates from Chummer (LB-09): Chummer 5.226 lists a kit's
+// attributes, skills, knowledge skills and powers but applies none of them
+// (Chummer 5 up to 5.193 applied attributes; skills and powers were TODO).
+// Here they are applied, and kits differ from Chummer 5.226.
 pub fn apply(ch: &mut Character, store: &DataStore, settings: Option<&CharacterSettings>, kit: &Element) -> KitReport {
     let mut a = Applier { store, books: settings.map(CharacterSettings::books).unwrap_or_default(), report: KitReport::default() };
-    for (k, label) in [("attributes", "Attributes"), ("skills", "Skills"), ("knowledgeskills", "Knowledge Skills"), ("powers", "Powers")] {
-        if kit.child(k).is_some_and(|n| n.elements().next().is_some()) {
-            a.report.skipped.push(format!("{label}: not applied by kits"));
-        }
-    }
+    let rules = settings.map(crate::calc::Rules::from_settings).unwrap_or_default();
     qualities(ch, &mut a, kit);
+    if let Some(n) = kit.child("attributes") {
+        attributes(ch, &mut a, &rules, settings, n);
+    }
+    if let Some(n) = kit.child("skills") {
+        skills(ch, &mut a, &rules, n);
+    }
+    if let Some(n) = kit.child("knowledgeskills") {
+        knowledge_skills(ch, &mut a, &rules, n);
+    }
+    powers(ch, &mut a, kit);
     if let Some(n) = kit.child("selectmartialart") {
         select_martial_art(ch, &mut a, n.attr("select").unwrap_or_default());
     }
@@ -234,6 +242,194 @@ pub fn apply(ch: &mut Character, store: &DataStore, settings: Option<&CharacterS
     vehicles(ch, &mut a, kit);
     ch.dirty = true;
     a.report
+}
+
+fn sheet_of(ch: &Character, a: &Applier<'_>, rules: &crate::calc::Rules) -> Sheet {
+    crate::calc::compute(ch, rules, Some(a.store), None)
+}
+
+/// Split `points` between creation points (at most `left`; none outside
+/// priority builds) and karma.
+fn split_points(ch: &Character, points: i32, left: i32) -> (i32, i32) {
+    let left = if crate::character::uses_priority_tables(&ch.field("buildmethod")) { left.max(0) } else { 0 };
+    let base = points.min(left);
+    (base, points - base)
+}
+
+/// `<attributes>`: each value is `value - (metatype minimum - 1)`, as
+/// `CreatePACKSKit` writes it. Like Chummer 5's old `AddPACKSKit`, the
+/// listed attributes are first reset to their minimum. The levels above
+/// the minimum are bought with attribute (or special attribute) points
+/// while there are any, then with karma; values are capped at the
+/// maximum, and at one below it once `maxnumbermaxattributescreate`
+/// standard attributes are at their maximum.
+fn attributes(ch: &mut Character, a: &mut Applier<'_>, rules: &crate::calc::Rules, settings: Option<&CharacterSettings>, node: &Element) {
+    let name_of = |tag: &str| if tag.eq_ignore_ascii_case("magadept") { "MAGAdept".to_owned() } else { tag.to_ascii_uppercase() };
+    let enabled = |ch: &Character, n: &str| match n {
+        "MAG" | "MAGAdept" => ch.mag_enabled(),
+        "RES" => ch.res_enabled(),
+        "DEP" => ch.dep_enabled(),
+        _ => true,
+    };
+    let wanted: Vec<(String, i32)> = node.elements().filter_map(|e| Some((name_of(&e.name), e.text().trim().parse::<i32>().ok()?))).collect();
+    for (n, _) in &wanted {
+        if let Some(at) = ch.attribute_mut(n) {
+            at.base = 0;
+            at.karma = 0;
+        }
+    }
+    let sheet = sheet_of(ch, a, rules);
+    let allowed_at_max = settings.map_or(1, |s| s.int("maxnumbermaxattributescreate", 1));
+    let standard: Vec<&str> = crate::attributes::PHYSICAL.iter().chain(crate::attributes::MENTAL).copied().collect();
+    let mut at_max = 0;
+    for (n, kit_value) in wanted {
+        let Some(v) = sheet.attributes.iter().find(|x| x.name == n) else {
+            a.report.skipped.push(format!("Attribute: {n} (not on the character)"));
+            continue;
+        };
+        if !enabled(ch, &n) {
+            a.report.skipped.push(format!("Attribute: {n} (not enabled)"));
+            continue;
+        }
+        let fixed = v.value - v.base - v.karma;
+        let mut target = kit_value + v.metatype_min - 1;
+        let is_standard = standard.contains(&n.as_str());
+        if is_standard && target >= v.total_max {
+            if at_max >= allowed_at_max {
+                target = v.total_max - 1;
+                a.report.skipped.push(format!("Attribute: {n} lowered to {target} (only {allowed_at_max} at the maximum)"));
+            } else {
+                at_max += 1;
+            }
+        }
+        if target > v.total_max {
+            a.report.skipped.push(format!("Attribute: {n} capped at {}", v.total_max));
+        }
+        let points = (target.min(v.total_max) - fixed).max(0);
+        let pool: &[&str] = if is_standard { &standard } else { &["EDG", "MAG", "MAGAdept", "RES", "DEP"] };
+        let total = ch.doc.get_i32(if is_standard { "totalattributes" } else { "totalspecial" }).unwrap_or(0);
+        let used: i32 = ch.attributes.iter().filter(|x| pool.contains(&x.name.as_str())).map(|x| x.base).sum();
+        let (base, karma) = split_points(ch, points, total - used);
+        if let Some(at) = ch.attribute_mut(&n) {
+            at.base = base;
+            at.karma = karma;
+        }
+        a.report.added.push(format!("Attribute: {n} {}", fixed + points));
+    }
+}
+
+/// `<skills>`: `<skillgroup>` (name, rating) first, then `<skill>`
+/// (name, rating, spec). Ratings are capped at the creation maximum and
+/// bought with skill (group) points while there are any, then karma.
+fn skills(ch: &mut Character, a: &mut Applier<'_>, rules: &crate::calc::Rules, node: &Element) {
+    let cap = rules.max_skill_rating_create;
+    let rating = |e: &Element| e.get_i32("rating").unwrap_or(0).clamp(0, cap);
+    for g in node.children_named("skillgroup") {
+        let name = g.get("name");
+        let group_max = ch.doc.child("newskills").and_then(|n| n.get_i32("skillgrpsmax")).unwrap_or(0);
+        let used: i32 = ch.skill_groups.iter().filter(|x| x.name != name).map(|x| x.base).sum();
+        let (base, karma) = split_points(ch, rating(g), group_max - used);
+        let Some(sg) = ch.skill_groups.iter_mut().find(|x| x.name == name) else {
+            a.missing("Skill Group", &name);
+            continue;
+        };
+        sg.base = base;
+        sg.karma = karma;
+        a.report.added.push(format!("Skill Group: {name} {}", base + karma));
+    }
+    let Some(sdoc) = a.doc("skills.xml") else { return };
+    for k in node.children_named("skill") {
+        let name = k.get("name");
+        let Some(rec) = data::find(&sdoc, "skills", "skill", &name) else {
+            a.missing("Skill", &name);
+            continue;
+        };
+        let id = rec.id();
+        if !ch.skills.iter().any(|x| x.suid.eq_ignore_ascii_case(&id)) {
+            super::critter::push_skill(ch, super::critter::skill_element(rec, ""));
+        }
+        let Some(guid) = ch.skills.iter().find(|x| x.suid.eq_ignore_ascii_case(&id)).map(|x| x.guid.clone()) else { continue };
+        if let Some(sk) = ch.skills.iter_mut().find(|x| x.guid == guid) {
+            sk.base = 0;
+            sk.karma = 0;
+        }
+        let sheet = sheet_of(ch, a, rules);
+        let fixed = sheet.skills.iter().find(|x| x.guid == guid).map_or(0, |x| x.total_base - x.base - x.karma);
+        let points = (rating(k) - fixed).max(0);
+        let left = skill_points_left(ch, sheet.knowledge_points);
+        let (base, karma) = split_points(ch, points, left);
+        let spec = k.get("spec");
+        if let Some(sk) = ch.skills.iter_mut().find(|x| x.guid == guid) {
+            sk.base = base;
+            sk.karma = karma;
+            if !spec.is_empty() && !sk.specs.iter().any(|x| x.name == spec) {
+                crate::chargen::add_specialization(ch, &guid, &spec);
+            }
+        }
+        a.report.added.push(format!("Skill: {name} {}", fixed + points));
+    }
+}
+
+/// Skill points left (as `chargen::budget_with` counts them).
+fn skill_points_left(ch: &Character, knowledge_points: i32) -> i32 {
+    let max = ch.doc.child("newskills").and_then(|n| n.get_i32("skillptsmax")).unwrap_or(0);
+    let specs = |s: &[crate::skills::Specialization]| s.iter().filter(|x| !x.free).count() as i32;
+    let active: i32 = ch.skills.iter().map(|s| s.base + if s.buy_with_karma { 0 } else { specs(&s.specs) }).sum();
+    let kno: i32 = ch.knowledge_skills.iter().filter(|k| !k.native_language).map(|k| k.base + specs(&k.specs)).sum();
+    max - active - (kno - knowledge_points).max(0)
+}
+
+/// `<knowledgeskills><skill>` (name, rating, spec, category): added when
+/// missing, bought with free knowledge points while there are any, then
+/// karma.
+fn knowledge_skills(ch: &mut Character, a: &mut Applier<'_>, rules: &crate::calc::Rules, node: &Element) {
+    let cap = rules.max_skill_rating_create;
+    let sdoc = a.doc("skills.xml");
+    for k in node.children_named("skill") {
+        let name = k.get("name");
+        if name.is_empty() {
+            continue;
+        }
+        if !ch.knowledge_skills.iter().any(|x| x.name == name) {
+            let kind = sdoc.as_ref().and_then(|d| data::find(d, "knowledgeskills", "skill", &name).map(|r| r.category())).unwrap_or_else(|| k.get("category"));
+            crate::chargen::add_knowledge_skill(ch, &name, &kind, false);
+        }
+        let sheet = sheet_of(ch, a, rules);
+        let used: i32 = ch.knowledge_skills.iter().filter(|x| !x.native_language && x.name != name).map(|x| x.base + x.specs.iter().filter(|s| !s.free).count() as i32).sum();
+        let (base, karma) = split_points(ch, k.get_i32("rating").unwrap_or(0).clamp(0, cap), sheet.knowledge_points - used);
+        let spec = k.get("spec");
+        if let Some(ks) = ch.knowledge_skills.iter_mut().find(|x| x.name == name) {
+            ks.base = base;
+            ks.karma = karma;
+            if !spec.is_empty() && !ks.specs.iter().any(|x| x.name == spec) {
+                ks.specs.push(crate::skills::Specialization { guid: crate::items::new_guid(), name: spec, free: false, expertise: false });
+            }
+        }
+        a.report.added.push(format!("Knowledge Skill: {name} {}", base + karma));
+    }
+}
+
+/// `<powers><power>` (name with `select`, rating): adept powers, for
+/// adepts and mystic adepts.
+fn powers(ch: &mut Character, a: &mut Applier<'_>, kit: &Element) {
+    let list: Vec<&Element> = kit.child("powers").into_iter().flat_map(|k| k.children_named("power")).collect();
+    if list.is_empty() {
+        return;
+    }
+    if !ch.is_adept() {
+        a.report.skipped.push("Powers: the character is not an adept".into());
+        return;
+    }
+    let Some(doc) = a.doc("powers.xml") else { return };
+    for p in list {
+        let (name, select) = name_select(p);
+        let Some(rec) = find_in(&doc, "powers", "power", &name, &a.books) else {
+            a.missing("Power", &name);
+            continue;
+        };
+        let purchase = Purchase { rating: p.get_i32("rating").unwrap_or(0), answer: select, ..purchase(0, None) };
+        a.ok("Power", &name, items::add("power", ch, a.store, rec, &purchase));
+    }
 }
 
 /// `Character.ModifyNuyenBP`: add, clamped to 0 .. the maximum karma for nuyen.

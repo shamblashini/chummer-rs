@@ -360,7 +360,7 @@ fn skeleton(store: &DataStore, settings: &CharacterSettings, mt: Record<'_>, mv:
 }
 
 /// A saved active `<skill>` (`Skill.Save`; exotic skills add `<specific>`).
-fn skill_element(r: Record<'_>, specific: &str) -> Element {
+pub(crate) fn skill_element(r: Record<'_>, specific: &str) -> Element {
     let mut s = Element::new("skill");
     s.push(Element::with_text("guid", new_guid()));
     s.push(Element::with_text("suid", r.id()));
@@ -508,7 +508,7 @@ fn add_skills(ch: &mut Character, store: &DataStore, node: &Element, force: i32)
     }
 }
 
-fn push_skill(ch: &mut Character, e: Element) {
+pub(crate) fn push_skill(ch: &mut Character, e: Element) {
     ch.skills.push(crate::skills::Skill::from_xml(&e));
     ch.doc.child_or_insert("newskills").child_or_insert("skills").push(e);
 }
