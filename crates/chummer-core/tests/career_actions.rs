@@ -271,20 +271,78 @@ fn fettering_a_spirit_costs_force_times_three() {
     assert_eq!(calc::attribute_values(&ch, "MAG", &r).total, mag);
 }
 
+/// Undo refunds the karma and releases the spirit, giving the point of
+/// Magic back (LB-01; Chummer leaves the spirit fettered).
 #[test]
-fn fettering_undo_refunds_like_chummer() {
+fn fettering_undo_releases_the_spirit() {
     let engine = Engine::load().unwrap();
     let mut ch = load("Glessner");
     give_karma(&mut ch, 50.0);
+    let r = rules(&engine, &ch);
+    let mag = calc::attribute_values(&ch, "MAG", &r).total;
     let guid = add_spirit(&mut ch, &engine, 3, 1);
     let karma = ch.karma;
     let entry = career::set_spirit_fettered(&mut ch, &engine, &guid, true).unwrap().unwrap();
     career::undo_expense(&mut ch, &engine, &entry).unwrap();
-    // Chummer refunds and drops the entry; the spirit stays fettered.
     assert_eq!(ch.karma, karma);
     assert!(career::find_entry(&ch, &entry).is_none());
     let s = ch.items("spirits", "spirit").into_iter().find(|s| s.get("guid") == guid).unwrap();
+    assert_eq!(s.get("fettered"), "False");
+    assert!(!ch.improvements.list.iter().any(|i| i.source == "SpiritFettering"));
+    assert_eq!(calc::attribute_values(&ch, "MAG", &r).total, mag);
+    // The spirit can be fettered again.
+    assert!(career::set_spirit_fettered(&mut ch, &engine, &guid, true).unwrap().is_some());
+}
+
+/// Undo after the spirit was deleted still drops a stale MAG -1, but
+/// leaves the penalty of another fettered spirit alone.
+#[test]
+fn fettering_undo_of_a_deleted_spirit() {
+    let engine = Engine::load().unwrap();
+    let mut ch = load("Glessner");
+    give_karma(&mut ch, 80.0);
+    let first = add_spirit(&mut ch, &engine, 2, 1);
+    let entry = career::set_spirit_fettered(&mut ch, &engine, &first, true).unwrap().unwrap();
+    career::set_spirit_fettered(&mut ch, &engine, &first, false).unwrap();
+    let second = add_spirit(&mut ch, &engine, 2, 1);
+    career::set_spirit_fettered(&mut ch, &engine, &second, true).unwrap().unwrap();
+    ch.remove_item("spirits", &first);
+    career::undo_expense(&mut ch, &engine, &entry).unwrap();
+    let s = ch.items("spirits", "spirit").into_iter().find(|s| s.get("guid") == second).unwrap();
     assert_eq!(s.get("fettered"), "True");
+    assert_eq!(ch.improvements.list.iter().filter(|i| i.source == "SpiritFettering").count(), 1);
+}
+
+/// A fettered spirit gains Banishing Resistance (SG p. 192, LB-32; Chummer
+/// adds nothing). The print lists the critter's powers with it; a spirit
+/// that is not fettered prints no powers, as in Chummer.
+#[test]
+fn fettered_spirits_gain_banishing_resistance() {
+    let engine = Engine::load().unwrap();
+    let lang = chummer_core::lang::Language::load(&data::resource_dir("lang").unwrap(), "en-us");
+    let mut ch = load("Glessner");
+    give_karma(&mut ch, 50.0);
+    let guid = add_spirit(&mut ch, &engine, 3, 1);
+    let printed = |ch: &Character| {
+        let root = chummer_core::print::print_xml(ch, &engine, &lang);
+        let mut v = Vec::new();
+        root.descendants("spirit", &mut v);
+        v.into_iter().find(|s| s.get("guid") == guid).unwrap().clone()
+    };
+    assert!(printed(&ch).child("powers").is_none());
+    let s = ch.items("spirits", "spirit").into_iter().find(|s| s.get("guid") == guid).unwrap().clone();
+    assert!(!spirit::gains_banishing_resistance(&s));
+    career::set_spirit_fettered(&mut ch, &engine, &guid, true).unwrap();
+    let s = ch.items("spirits", "spirit").into_iter().find(|s| s.get("guid") == guid).unwrap().clone();
+    assert!(spirit::gains_banishing_resistance(&s));
+    let p = printed(&ch);
+    let names: Vec<String> = p.child("powers").unwrap().children_named("critterpower").map(|c| c.get("name_english")).collect();
+    assert!(names.contains(&"Banishing Resistance".to_owned()), "{names:?}");
+    assert!(names.contains(&"Accident".to_owned()), "the critter's own powers too: {names:?}");
+    let br = p.child("powers").unwrap().children_named("critterpower").find(|c| c.get("name_english") == "Banishing Resistance").unwrap();
+    assert_eq!((br.get("source"), br.get("page")), ("SG".to_owned(), "194".to_owned()));
+    career::set_spirit_fettered(&mut ch, &engine, &guid, false).unwrap();
+    assert!(printed(&ch).child("powers").is_none());
 }
 
 #[test]

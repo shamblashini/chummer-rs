@@ -265,7 +265,7 @@ pub fn fettering_karma_cost(engine: &Engine, ch: &Character, spirit: &crate::xml
 /// Fetter or release a spirit or sprite (the `Spirit.Fettered` setter in
 /// career mode). Fettering pays [`fettering_karma_cost`] and returns the
 /// expense guid; releasing costs and refunds nothing, and returns `None`.
-// LIKELY-BUG(LB-01): undoing the SpiritFettering expense (career/undo.rs) refunds the karma but leaves the spirit fettered and the MAG -1 improvement in place. See docs/likely-bugs.md.
+/// Undoing the fettering expense releases the spirit again (LB-01).
 pub fn set_spirit_fettered(ch: &mut Character, engine: &Engine, spirit_guid: &str, fettered: bool) -> Result<Option<String>, CareerError> {
     require_career(ch)?;
     let s = ch.items("spirits", "spirit").into_iter().find(|s| s.get("guid").eq_ignore_ascii_case(spirit_guid)).cloned().ok_or_else(|| CareerError::NotFound(format!("spirit {spirit_guid}")))?;

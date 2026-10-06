@@ -93,7 +93,7 @@ karma and 5,000¥.
 - Buy critter powers.
 - Buy A.I. programs and Advanced Programs. Undo refunds the karma and removes the program (Chummer keeps it); it is refused while another program the character has requires it.
 - Bind foci, up to MAG foci and MAG × 5 total force.
-- Fetter a spirit (Force × 3 karma) or a sprite (Force karma). A fettered spirit lowers MAG by 1.
+- Fetter a spirit (Force × 3 karma) or a sprite (Force karma). A fettered spirit lowers MAG by 1 and gains Banishing Resistance (Street Grimoire p. 192; Chummer does not add it). Undoing the fettering expense releases the spirit again.
 - Join or leave a magical group, and quicken spells.
 - Spend and regain Edge, burn a point of Edge and burn street cred.
 

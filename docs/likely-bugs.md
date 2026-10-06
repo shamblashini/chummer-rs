@@ -24,7 +24,7 @@ judgement call).
 
 | Id | Area | Chummer | chummer-rs | Rules | Class | Rec. |
 |---|---|---|---|---|---|---|
-| LB-01 | Career undo: spirit fettering | Undo of the "Fettered a Spirit" expense refunds Force × 3 karma and drops the entry. The spirit stays fettered and the MAG −1 improvement stays (`ExpenseUndo` has no `SpiritFettering` case). | Same. | SG p. 192: fettering costs Force × 3 karma and 1 point of Magic. The refund without unfettering gives a free fetter. | (a) | fix |
+| LB-01 | Career undo: spirit fettering | Undo of the "Fettered a Spirit" expense refunds Force × 3 karma and drops the entry. The spirit stays fettered and the MAG −1 improvement stays (`ExpenseUndo` has no `SpiritFettering` case). | Fixed: undo also releases the spirit, which removes the MAG −1 `SpiritFettering` improvement (or only drops a stale one if the spirit is gone and no other is fettered). | SG p. 192: fettering costs Force × 3 karma and 1 point of Magic. The refund without unfettering gives a free fetter. | (b) — fixed | fixed |
 | LB-02 | Create Spell: area combat spells | The "Area" descriptor is added only when `cboRange.SelectedValue` contains "(A)". The combo value is "T"/"LOS" (the "(A)" goes on the saved range from `chkArea`), so a combat spell never gets "Area". | Fixed: an area combat spell (`d.area`) gets "Area" after its other descriptors ("Direct, Area", "Indirect, Elemental, Area", as in the data), so Witness My Hate no longer applies to it. | SR5 p. 282: area spells are marked "(A)" after the range. The data gives every official area combat spell the "Area" descriptor (Manaball: "Direct, Area"). Witness My Hate (RF p. 151) is for single-target Direct spells only and keys on `Direct,NOT(Area)`, so a custom Manaball wrongly gets +2 DV and +2 drain. | (b) — fixed | fixed |
 | LB-03 | Skill karma cost windows (Jack of All Trades) | `Skill.RangeCost` adds `Value × (min(upper, Max) − max(lower, Min − 1))`. (1) When `lower ≥ Max` the count is negative: 6 → 7 pays +1 from the −1 window (17, not 16). (2) A window is only used when `Minimum ≤ lower`: 3 → 7 skips the +2 window for levels 6–7 (42, not 46). | Same. | RF p. 147, Jack of All Trades: −1 karma per level up to rating 5 (minimum 1), +2 karma per level above 5. Correct costs: 16 and 46. | (a) | fix |
 | LB-04 | Weapon accessory cost multiplier (Vintage) | `WeaponAccessory.Create` reads `<accessorycostmultiplier>` from the data, but `Save` does not write it, so the multiplier is lost after a reload. | Worse: `accessory_element` does not copy the field, so Vintage never doubles the other accessories, not even before saving. | GH3 p. 3, Vintage: physical upgrades cost twice the listed amount. | (a) | fix (copy the field from the data record when the item is made) |
@@ -60,7 +60,7 @@ judgement call).
 |---|---|---|---|---|---|---|
 | LB-30 | Career: which grade a new metamagic goes to | The player selects an initiation grade node in the tree; the metamagic goes there, free if that grade has no metamagic yet. | The GUI picks the lowest grade without one, else the top grade. Costs are the same in total. | SR5 p. 325: each initiation grade gives one metamagic. | (c) | keep |
 | LB-31 | Cyberware Device Rating by grade | `Grade` reads `<devicerating>` from the grade record and falls back to a name table. | Uses only the name table. Bioware grades (data: 0) get 2–6; custom grades with their own value are ignored. | SR5 p. 234: basic cyberware 2, alphaware 3, betaware 4, deltaware 5. Bioware is not an electronic device. | (c) | fix (read the data field) |
-| LB-32 | Fettered spirits | Fettering does not add the Banishing Resistance power. | Same. | SG p. 192: a fettered spirit gains Banishing Resistance. KC p. 91 for sprite pets. | (c) | ask |
+| LB-32 | Fettered spirits | Fettering does not add the Banishing Resistance power. | Fixed: a fettered spirit (not a sprite) has Banishing Resistance, derived from `<fettered>` (nothing extra saved). The GUI shows it next to the Fettered box; the print lists the spirit's powers (critter data plus Banishing Resistance) for a fettered spirit. Spirits that are not fettered print no powers, as in Chummer (which prints them only for a linked spirit file). | SG p. 192: a fettered spirit gains Banishing Resistance. KC p. 91: a sprite pet gains no power. | (b) — fixed | fixed |
 | LB-33 | Essence loss in career mode (RAW) | Burns karma levels and power points step by step as essence drops. | Not ported: a career character's essence-loss improvements stay as they are (`essence_loss.rs`). | SR5 p. 95: any fraction of Essence lost lowers Magic/Resonance by 1. | (c) | fix (missing feature) |
 
 ## Checked, not bugs
@@ -79,7 +79,7 @@ Tests that pin the current behaviour change with a fix.
 
 | Id | Code | Test that pins it |
 |---|---|---|
-| LB-01 | `career/undo.rs:94` (the no-op arm), `career/magic.rs:268` | `tests/career_actions.rs` `fettering_undo_refunds_like_chummer` |
+| LB-01 | `career/undo.rs` `undo_fettering` | `tests/career_actions.rs` `fettering_undo_releases_the_spirit`, `fettering_undo_of_a_deleted_spirit` |
 | LB-02 | `gm/custom_spell.rs` `descriptors` | `tests/gm.rs` `custom_spell_drain_and_descriptors`, `witness_my_hate_skips_custom_area_spells` |
 | LB-03 | `calc/karma_cost.rs:24` (`window_extra`), `modifiers` below it | `calc/karma_cost.rs` `active_skill_cost_windows` (42 and 17) |
 | LB-04 | `items/weapon.rs:703`, `accessory_element` at `items/weapon.rs:242` | `items/weapon.rs` `accessory_multiplier_comes_from_the_saved_accessory` |
@@ -100,7 +100,7 @@ Tests that pin the current behaviour change with a fix.
 | LB-26 | `career/undo.rs:94` | `tests/ai.rs:192` |
 | LB-30 | `chummer-gui/src/magic_ui.rs:464` | — |
 | LB-31 | `play/matrix.rs:69` | — |
-| LB-32 | `items/magic/spirit.rs:122` | — |
+| LB-32 | `items/magic/spirit.rs` `powers`, `print/magic.rs` `spirit` | `tests/career_actions.rs` `fettered_spirits_gain_banishing_resistance` |
 | LB-33 | `essence_loss.rs` (module docs) | — |
 | LB-40 | `career/actions.rs:55` | — |
 

@@ -116,10 +116,33 @@ pub fn check_release(ch: &Character, spirit: &Element) -> Result<(), String> {
     Ok(())
 }
 
+/// The power a fettered spirit gains (SG p. 192).
+pub const FETTERED_POWER: &str = "Banishing Resistance";
+
+/// Whether the spirit has [`FETTERED_POWER`] from being fettered: a
+/// fettered spirit; sprites gain nothing (Sprite Pet, KC p. 91).
+pub fn gains_banishing_resistance(spirit: &Element) -> bool {
+    spirit.get_bool("fettered").unwrap_or(false) && spirit.get("type") != "Sprite"
+}
+
+/// The spirit's powers as (name, `select`): the critter record's
+/// `<powers>`, plus [`FETTERED_POWER`] for a fettered spirit.
+// chummer-rs deviates from Chummer here (LB-32): Chummer never adds
+// Banishing Resistance, but SG p. 192 says a fettered spirit gains it.
+// It follows `<fettered>`, so nothing extra is saved.
+pub fn powers(record: Option<&Element>, spirit: &Element) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> =
+        record.and_then(|r| r.child("powers")).map(|p| p.children_named("power").map(|x| (x.text(), x.attr("select").unwrap_or_default().to_owned())).collect()).unwrap_or_default();
+    if gains_banishing_resistance(spirit) && !v.iter().any(|(n, _)| n == FETTERED_POWER) {
+        v.push((FETTERED_POWER.into(), String::new()));
+    }
+    v
+}
+
 /// Set `<fettered>` and the MAG −1 augment a fettered spirit (not a
 /// sprite) costs, as an `Attribute` improvement from `SpiritFettering`.
-/// Releasing removes every `SpiritFettering` improvement.
-// LIKELY-BUG(LB-32): a fettered spirit does not get the Banishing Resistance power (SG p. 192), in Chummer either. See docs/likely-bugs.md.
+/// Releasing removes every `SpiritFettering` improvement. The power it
+/// gains follows the flag ([`powers`]).
 pub fn set_fettered(ch: &mut Character, guid: &str, fettered: bool) -> Result<(), String> {
     let s = super::super::find_by_guid_mut(ch.items_mut("spirits"), guid).ok_or_else(|| format!("spirit {guid} not found"))?;
     s.set_child_text("fettered", crate::improvement::bool_str(fettered));

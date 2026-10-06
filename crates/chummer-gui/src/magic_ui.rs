@@ -728,7 +728,9 @@ fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut 
             if sprite {
                 ui.label("");
             } else {
-                c |= ui.checkbox(&mut fettered, "").changed();
+                // A fettered spirit gains Banishing Resistance (SG p. 192).
+                let power = if spirit::gains_banishing_resistance(s) { lang.data_name("critterpowers.xml", "", spirit::FETTERED_POWER) } else { String::new() };
+                c |= ui.checkbox(&mut fettered, power).changed();
             }
             if c {
                 let guid = s.get("guid");

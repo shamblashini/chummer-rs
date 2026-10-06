@@ -8,6 +8,7 @@
 
 use super::{add, bool_text, copy, copy_bool, num, Ctx};
 use crate::expr::{self, standard_round};
+use crate::items::magic::spirit;
 use crate::xml::Element;
 
 /// `guid`, `sourceid`, `name`, `fullname`, `name_english`, `fullname_english`.
@@ -569,6 +570,18 @@ pub fn spirit(ctx: &Ctx, item: &Element) -> Element {
             add(&mut attrs, a, v.to_string());
         }
         out.push(attrs);
+        // Chummer prints the critter's powers only for a linked spirit
+        // file. A fettered spirit gains Banishing Resistance (SG p. 192,
+        // LB-32), so chummer-rs prints its powers, with that one.
+        if spirit::gains_banishing_resistance(item) {
+            let mut list = Element::new("powers");
+            for (name, select) in spirit::powers(Some(&rec), item) {
+                if let Some(p) = spirit_power(ctx, &name, &select) {
+                    list.push(p);
+                }
+            }
+            out.push(list);
+        }
         add(&mut out, "source", rec.get("source"));
         add(&mut out, "page", rec.get("page"));
     }
@@ -576,6 +589,24 @@ pub fn spirit(ctx: &Ctx, item: &Element) -> Element {
     add(&mut out, "type", if sprite { "Sprite" } else { "Spirit" });
     ctx.notes(&mut out, item);
     out
+}
+
+/// `Spirit.PrintPowerInfo`: a power from spiritpowers.xml, else
+/// critterpowers.xml (exact name first, then a name the entry starts
+/// with), printed as a `<critterpower>`.
+fn spirit_power(ctx: &Ctx, name: &str, select: &str) -> Option<Element> {
+    let find = |file: &str| -> Option<Element> {
+        let doc = ctx.store.doc(file).ok()?;
+        let list = doc.child("powers")?;
+        let found = list.children_named("power").find(|p| p.get("name") == name).or_else(|| list.children_named("power").find(|p| name.starts_with(&p.get("name")))).cloned();
+        found
+    };
+    let mut rec = find("spiritpowers.xml").or_else(|| find("critterpowers.xml"))?;
+    let base = rec.get("name");
+    let extras = name.strip_prefix(base.as_str()).unwrap_or("").trim().trim_start_matches('(').trim_end_matches(')').trim();
+    let extra = [select, extras].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", ");
+    rec.set_child_text("extra", extra);
+    Some(critter_power(ctx, &rec))
 }
 
 fn critter(ctx: &Ctx, name: &str) -> Option<Element> {

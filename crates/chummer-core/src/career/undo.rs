@@ -96,9 +96,26 @@ fn undo_karma_object(ch: &mut Character, engine: &Engine, e: &ExpenseEntry) -> R
             }
             crate::items::aiprogram::remove(ch, id).map_err(CareerError::Refused)?;
         }
-        // Chummer has no case for this either: the karma is refunded and
-        // the spirit stays fettered (see docs/likely-bugs.md).
-        K::SpiritFettering => {}
+        // chummer-rs deviates from Chummer here (LB-01): Chummer has no case
+        // for this, so the karma is refunded and the spirit stays fettered
+        // with the MAG -1. Fettering costs Force x 3 karma and 1 Magic
+        // (SG p. 192), so the refund also releases the spirit and gives
+        // the Magic back.
+        K::SpiritFettering => undo_fettering(ch, id)?,
+    }
+    Ok(())
+}
+
+/// `SpiritFettering` undo: the id is the spirit guid. Release the spirit
+/// (which drops the `SpiritFettering` improvement). If the spirit is gone
+/// and no other one is fettered, drop any stale improvement.
+fn undo_fettering(ch: &mut Character, id: &str) -> Result<(), CareerError> {
+    use crate::items::magic::spirit;
+    let spirits = ch.items("spirits", "spirit");
+    if spirits.iter().any(|s| s.get("guid").eq_ignore_ascii_case(id) && s.get_bool("fettered").unwrap_or(false)) {
+        spirit::set_fettered(ch, id, false).map_err(CareerError::Refused)?;
+    } else if !spirits.iter().any(|s| s.get_bool("fettered").unwrap_or(false)) {
+        ch.improvements.list.retain(|i| i.source != spirit::FETTERING_SOURCE);
     }
     Ok(())
 }
