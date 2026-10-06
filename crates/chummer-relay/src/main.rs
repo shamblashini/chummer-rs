@@ -27,7 +27,7 @@ struct Args {
     /// Let's Encrypt contact email (overrides the file).
     #[arg(long)]
     contact_email: Option<String>,
-    /// Local test setup: self-signed certificate for localhost on
+    /// Local test setup: self-signed certificate for 127.0.0.1 on
     /// unprivileged ports (HTTP 3340, HTTPS 3443, QAD 7842, mailbox 7843).
     #[arg(long)]
     dev: bool,
@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if args.dev {
-        cfg.hostname = "localhost".into();
+        cfg.hostname = "127.0.0.1".into();
         cfg.tls.cert_mode = CertMode::SelfSigned;
         cfg.http_bind = "[::]:3340".parse()?;
         cfg.https_bind = "[::]:3443".parse()?;
@@ -80,6 +80,10 @@ async fn main() -> Result<()> {
     tracing::info!("relay listening: {}", node.relay_url());
     match node.mailbox_id() {
         Some(id) => {
+            match node.wait_online(std::time::Duration::from_secs(30)).await {
+                Ok(()) => tracing::info!("mailbox node connected to the relay"),
+                Err(e) => tracing::warn!("{e:#} (is `hostname` reachable from this server?)"),
+            }
             tracing::info!("mailbox node id: {id}");
             tracing::info!("give users this relay entry: {}", node.relay_entry());
         }

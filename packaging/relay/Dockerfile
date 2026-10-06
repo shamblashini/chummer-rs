@@ -8,10 +8,13 @@ RUN cargo build --release --locked -p chummer-relay \
 
 FROM debian:bookworm-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates libcap2-bin \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --home /var/lib/chummer-relay --create-home chummer-relay
 COPY --from=build /usr/local/bin/chummer-relay /usr/local/bin/chummer-relay
+# Ports 80 and 443 as a non-root user, also with host networking (where the
+# host's unprivileged-port limit applies).
+RUN setcap 'cap_net_bind_service=+ep' /usr/local/bin/chummer-relay
 COPY packaging/relay/relay.example.toml /etc/chummer-relay/relay.toml
 USER chummer-relay
 VOLUME /var/lib/chummer-relay

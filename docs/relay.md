@@ -57,7 +57,7 @@ to `/etc/chummer-relay/relay.toml` and set at least `hostname` and
 Command-line flags override the file: `--config`, `--hostname`,
 `--data-dir`, `--cert-mode lets-encrypt|manual|self-signed`,
 `--contact-email`. `--dev` starts a local test relay (self-signed
-certificate for `localhost`, HTTP 3340, HTTPS 3443).
+certificate for `127.0.0.1`, HTTP 3340, HTTPS 3443).
 
 ### Mailbox limits
 
@@ -103,7 +103,14 @@ journalctl -u chummer-relay               # shows the mailbox node id
 ```
 
 The unit runs as a dynamic user with only `CAP_NET_BIND_SERVICE` and keeps
-its data in `/var/lib/chummer-relay`.
+its data in `/var/lib/chummer-relay`. With `cert_mode = "manual"`, that
+user cannot read root-only files such as `/etc/letsencrypt/live/.../privkey.pem`:
+copy the certificate and key into a readable place in a certbot deploy hook,
+or use Let's Encrypt mode instead.
+
+The mailbox node connects to the relay through `hostname`, so the server
+must be able to reach its own public name. The log says "mailbox node
+connected to the relay" when it works.
 
 ## The mailbox node id
 
