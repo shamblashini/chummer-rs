@@ -38,7 +38,7 @@ impl Entry {
 /// Summarise one character file.
 pub fn summarize(path: &Path) -> Entry {
     let mut e = Entry { path: path.to_owned(), ..Default::default() };
-    let src = match std::fs::read_to_string(path) {
+    let src = match crate::chum5lz::read_text(path) {
         Ok(s) => s,
         Err(err) => {
             e.error = Some(err.to_string());
@@ -84,7 +84,7 @@ fn collect(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
         let p = entry.path();
         if p.is_dir() && depth < 2 {
             collect(&p, depth + 1, out);
-        } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("chum5")) {
+        } else if crate::chum5lz::is_character_file(&p) {
             out.push(p);
         }
     }

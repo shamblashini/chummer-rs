@@ -117,11 +117,17 @@ fn identity(ctx: &Ctx, out: &mut Element) {
 
 /// `Character.PrintMugshots`.
 fn mugshots(ctx: &Ctx, out: &mut Element) {
-    let shots: Vec<String> = ctx.ch.doc.child("mugshots").map(|m| m.children_named("mugshot").map(Element::text).collect()).unwrap_or_default();
+    mugshots_of(&ctx.ch.doc, out);
+}
+
+/// `PrintMugshots` of a character or contact: the `<mugshots>` and
+/// `<mainmugshotindex>` of `e`.
+pub(super) fn mugshots_of(e: &Element, out: &mut Element) {
+    let shots: Vec<String> = e.child("mugshots").map(|m| m.children_named("mugshot").map(Element::text).collect()).unwrap_or_default();
     if shots.is_empty() {
         return;
     }
-    let main = ctx.ch.doc.get_i32("mainmugshotindex").filter(|i| *i >= 0 && (*i as usize) < shots.len()).map(|i| i as usize);
+    let main = e.get_i32("mainmugshotindex").filter(|i| *i >= 0 && (*i as usize) < shots.len()).map(|i| i as usize);
     if let Some(i) = main {
         add(out, "mainmugshotbase64", shots[i].clone());
     }

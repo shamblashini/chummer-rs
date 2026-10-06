@@ -13,9 +13,9 @@ Windows: no Wine, no .NET, no Internet Explorer.
 > program and its data goes to the Chummer5a authors. chummer-rs is not
 > affiliated with or endorsed by the Chummer5a project.
 
-chummer-rs reads and writes the same `.chum5` files and uses Chummer5a's own
-game data, custom data and character sheets. Characters move between the
-two programs: files created by chummer-rs load in Chummer5a 5.226 without
+chummer-rs reads and writes the same `.chum5` (and compressed `.chum5lz`)
+files and uses Chummer5a's own game data, custom data and character
+sheets. Characters move between the two programs: files created by chummer-rs load in Chummer5a 5.226 without
 warnings (see [docs/interop.md](docs/interop.md)).
 
 ## Download
@@ -170,12 +170,32 @@ an expandable stat block (type, metatype, gender, age, personal life,
 preferred payment, hobbies/vice) with `contacts.xml`'s lists; pets have a
 name and a `critters.xml` metatype. Contacts can also be added from a
 Chummer contacts XML file (Add from File). Any entry can be linked to
-another `.chum5` (Attach Character): its name, metatype, gender, age and
-mugshot then come from that file, and Open Character opens it in a new
-tab. The link is saved as Chummer saves it (`<file>` as picked,
-`<relative>` from the program directory); a link made on Windows also
-works when the linked file sits next to the character's own save. A
-missing linked file shows a warning and nothing else.
+another `.chum5` or `.chum5lz` (Attach Character): its name, metatype,
+gender, age and mugshot then come from that file, on screen and on
+printed sheets, and Open Character opens it in a new tab. The link is
+saved as Chummer saves it (`<file>` as picked, `<relative>` from the
+program directory); a link made on Windows also works when the linked
+file sits next to the character's own save. A missing linked file shows
+a warning and nothing else.
+
+To reorder entries, drag a row by its ☰ handle or use the ⏶/⏷ buttons.
+The order is saved as the order of the `<contact>` elements, which is
+the order Chummer loads them in. The notes button opens a notes dialog
+with Chummer's notes colour (Select Colour). The colour is saved as
+Chummer saves it (`ColorTranslator.ToHtml`: a colour name such as
+`Chocolate` or `#RRGGBB`), the notes text is shown in it, and in dark
+themes it is shown the way Chummer's dark mode shows it. A contact's
+`<colour>` tints its row, as Chummer paints the contact control with it.
+
+**Compressed saves.** `.chum5lz` files (Chummer's LZMA-compressed saves)
+open, save, show in the roster and recent lists, and work as linked
+contacts and in every `chummer-cli` command. Save As keeps the format of
+the open file and offers both. The file is the `.chum5` XML in the
+`.lzma` format with Chummer's default "Balanced" settings (16 MiB
+dictionary, lc 3, lp 0, pb 2, end marker). Files saved with any of
+Chummer's compression levels open. Files written by Chummer
+5.225 open in chummer-rs, and files written by chummer-rs open in
+Chummer 5.225.
 
 ### More
 
@@ -326,10 +346,12 @@ cargo test --workspace
   `startcollapsed` starts open; vehicle mods are always grouped by
   category (Chummer's default; the option to turn it off is not read);
   Chummer's "Initiate Grade" nodes are plain "Grade N" groups.
-- Relationships: no Swap Ordering, no drag and drop of contacts, no
-  contact colours, and notes are edited inline (no notes colour). Linked
-  `.chum5lz` (compressed) saves cannot be read. Character sheets print
-  the contact's own name and metatype, not the linked character's.
+- Relationships:
+  - No "Swap Ordering". In Chummer it only switches the contact panel
+    between left-to-right and top-to-bottom flow; it changes no data.
+  - Chummer has no editor for a contact's `<colour>`; chummer-rs shows
+    it but cannot change it either.
+  - Locations and items have no notes colour editor.
 - About 290 UI labels have no Chummer translation string and stay English.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute

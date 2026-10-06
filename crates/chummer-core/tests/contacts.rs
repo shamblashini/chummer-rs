@@ -115,12 +115,17 @@ fn missing_linked_file_is_not_an_error() {
     let owner = dir.join("owner.chum5");
     assert_eq!(contacts::resolve(c, Path::new("/opt/chummer-rs"), Some(&owner)), Some(LinkedPath::Found(dir.join("Fixer.chum5"))));
 
-    // Compressed saves are found but reported as unsupported.
-    std::fs::write(dir.join("Lz.chum5lz"), b"\x00").unwrap();
-    contacts::set_field(&mut ch, &guid, "file", &dir.join("Lz.chum5lz").to_string_lossy());
+    // Compressed saves resolve and read like plain ones.
+    let lz = dir.join("Lz.chum5lz");
+    std::fs::copy(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/chum5lz/fixer-chummer.chum5lz"), &lz).unwrap();
+    contacts::set_field(&mut ch, &guid, "file", &lz.to_string_lossy());
     let c = contacts::of_type(&ch, ContactType::Contact).into_iter().find(|c| c.get("guid") == guid).unwrap();
-    assert!(matches!(contacts::resolve(c, Path::new("/opt"), None), Some(LinkedPath::Unsupported(_))));
-    assert!(LinkedCharacter::load(&dir.join("Lz.chum5lz")).is_err());
+    assert_eq!(contacts::resolve(c, Path::new("/opt"), None), Some(LinkedPath::Found(lz.clone())));
+    let l = LinkedCharacter::load(&lz).unwrap();
+    assert_eq!((l.name.as_str(), l.metatype.as_str()), ("Lz Fixer", "Elf"));
+    // A broken compressed file is an error, not a panic.
+    std::fs::write(dir.join("Bad.chum5lz"), b"\x00").unwrap();
+    assert!(LinkedCharacter::load(&dir.join("Bad.chum5lz")).is_err());
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -160,4 +165,123 @@ fn add_contacts_from_file() {
     assert_eq!(rex.get("name"), "Rex");
     assert!(!rex.get("guid").is_empty());
     assert!(contacts::import(&mut ch, "<character/>").is_err());
+}
+
+fn guids(ch: &Character, kind: ContactType) -> Vec<String> {
+    contacts::of_type(ch, kind).iter().map(|c| c.get("guid")).collect()
+}
+
+#[test]
+fn reordering_is_saved_as_element_order() {
+    let dir = scratch("order");
+    let mut ch = Character::load(&fixture("Barrett.chum5")).unwrap();
+    let start = guids(&ch, ContactType::Contact);
+    let a = contacts::add(&mut ch, ContactType::Contact);
+    let enemy = contacts::add(&mut ch, ContactType::Enemy);
+    let b = contacts::add(&mut ch, ContactType::Contact);
+    let c = contacts::add(&mut ch, ContactType::Contact);
+    let mut want = start.clone();
+    want.extend([a.clone(), b.clone(), c.clone()]);
+    assert_eq!(guids(&ch, ContactType::Contact), want);
+
+    // Drag c onto a (dropped above it), then a below b; up/down buttons.
+    assert!(contacts::move_contact(&mut ch, &c, &a, false));
+    assert!(contacts::move_contact(&mut ch, &a, &b, true));
+    assert!(!contacts::move_contact(&mut ch, &a, &b, true), "already there");
+    assert!(!contacts::move_contact(&mut ch, &a, &a, false));
+    let mut want = start.clone();
+    want.extend([c.clone(), b.clone(), a.clone()]);
+    assert_eq!(guids(&ch, ContactType::Contact), want);
+    assert!(contacts::move_step(&mut ch, &a, true));
+    assert!(!contacts::move_step(&mut ch, &b, false), "b is last now");
+    let mut want = start.clone();
+    want.extend([c.clone(), a.clone(), b.clone()]);
+    assert_eq!(guids(&ch, ContactType::Contact), want);
+    // Steps stay within one type: the enemy never moves among contacts.
+    assert!(!contacts::move_step(&mut ch, &enemy, true));
+    assert!(!contacts::move_step(&mut ch, &enemy, false));
+
+    let order = guids(&ch, ContactType::Contact);
+    let path = dir.join("ordered.chum5");
+    ch.dirty = false;
+    let first = order[0].clone();
+    assert!(!contacts::move_step(&mut ch, &first, true));
+    assert!(!ch.dirty, "a no-op move leaves the character clean");
+    ch.save(&path).unwrap();
+    let again = Character::load(&path).unwrap();
+    assert_eq!(guids(&again, ContactType::Contact), order);
+    assert_eq!(guids(&again, ContactType::Enemy), [enemy]);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn notes_colour_round_trips_like_color_translator() {
+    let dir = scratch("colour");
+    let mut ch = Character::load(&fixture("Barrett.chum5")).unwrap();
+    let g = contacts::add(&mut ch, ContactType::Contact);
+    let find = |ch: &Character| contacts::of_type(ch, ContactType::Contact).into_iter().find(|c| c.get("guid") == g).unwrap().clone();
+    assert_eq!(find(&ch).get("notesColor"), "Chocolate");
+    assert_eq!(contacts::notes_color(&find(&ch)), [0xD2, 0x69, 0x1E]);
+    assert!(contacts::preferred_color(&find(&ch)).is_none());
+    // Picking the colour it already has changes nothing.
+    assert!(!contacts::set_notes_color(&mut ch, &g, [0xD2, 0x69, 0x1E]));
+    assert!(contacts::set_notes_color(&mut ch, &g, [0x12, 0xAB, 0x0F]));
+    contacts::set_field(&mut ch, &g, "colour", "-65536");
+    let path = dir.join("c.chum5");
+    ch.save(&path).unwrap();
+    let again = Character::load(&path).unwrap();
+    let c = find(&again);
+    assert_eq!(c.get("notesColor"), "#12AB0F");
+    assert_eq!(contacts::notes_color(&c), [0x12, 0xAB, 0x0F]);
+    assert_eq!(contacts::preferred_color(&c), Some([0xFF, 0xFF, 0, 0]));
+    // Unreadable text falls back to the default, as Chummer's default color.
+    let mut ch2 = again.clone();
+    contacts::set_field(&mut ch2, &g, "notesColor", "nonsense");
+    assert_eq!(contacts::notes_color(&find(&ch2)), [0xD2, 0x69, 0x1E]);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn printed_contact_uses_the_linked_character() {
+    use chummer_core::{data, engine::Engine, lang::Language, print};
+    let dir = scratch("print");
+    let linked = dir.join("Glessner.chum5lz");
+    // A compressed link, to cover .chum5lz on the way.
+    Character::load(&fixture("Glessner.chum5")).unwrap().save(&linked).unwrap();
+    let mut ch = Character::load(&fixture("Barrett.chum5")).unwrap();
+    let g = contacts::add(&mut ch, ContactType::Contact);
+    for (k, v) in [("name", "Own Name"), ("metatype", "Dwarf"), ("gender", "Female ♀"), ("age", "Young"), ("role", "Fixer")] {
+        contacts::set_field(&mut ch, &g, k, v);
+    }
+    let mut unlinked = ch.clone();
+    assert!(contacts::link(&mut ch, &g, &linked, Path::new("/opt/chummer-rs")));
+    let owner = dir.join("owner.chum5");
+    ch.save(&owner).unwrap();
+
+    let engine = Engine::load().unwrap();
+    let lang = Language::load(&data::resource_dir("lang").unwrap(), "en-us");
+    let printed = |ch: &Character| -> chummer_core::xml::Element {
+        let root = print::print_xml(ch, &engine, &lang);
+        let c = root.child("character").unwrap().child("contacts").unwrap().children_named("contact").find(|c| c.get("guid") == g).unwrap().clone();
+        c
+    };
+    let p = printed(&Character::load(&owner).unwrap());
+    assert_eq!(p.get("name"), "Glessner");
+    assert_eq!(p.get("metatype"), "Ork (Satyr)");
+    assert_eq!(p.get("gender"), "Male ♂");
+    let glessner = Character::load(&fixture("Glessner.chum5")).unwrap();
+    assert_eq!(p.get("age"), glessner.field("age"));
+    // The contact's own fields still print where Chummer uses them.
+    assert_eq!(p.get("role"), "Fixer");
+    // Mugshots are the linked character's.
+    let main = contacts::main_mugshot(&glessner.doc).unwrap();
+    assert_eq!(p.get("mainmugshotbase64"), main);
+    assert!(p.child("othermugshots").is_some());
+
+    // Unlinked: the contact's own fields and no mugshots.
+    unlinked.file = Some(owner.clone());
+    let p = printed(&unlinked);
+    assert_eq!((p.get("name").as_str(), p.get("metatype").as_str(), p.get("gender").as_str(), p.get("age").as_str()), ("Own Name", "Dwarf", "Female ♀", "Young"));
+    assert!(p.child("mainmugshotbase64").is_none());
+    std::fs::remove_dir_all(dir).ok();
 }

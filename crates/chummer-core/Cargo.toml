@@ -8,3 +8,8 @@ license.workspace = true
 [dependencies]
 quick-xml.workspace = true
 thiserror.workspace = true
+lzma-rust2.workspace = true
+
+[dev-dependencies]
+# An independent LZMA decoder to check .chum5lz files against.
+lzma-rs = "0.3"
