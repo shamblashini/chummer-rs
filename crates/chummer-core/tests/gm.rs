@@ -168,6 +168,8 @@ fn kit_round_trip_through_the_packs_folder() {
     let builtin = packs::load(&store, None);
     let settings = engine.settings.resolve(STANDARD);
     packs::apply(&mut source, &store, settings, packs::find_kit(&builtin, "Intro Runner Pack", "Core Packs").unwrap());
+    source.attribute_mut("LOG").unwrap().base = 2;
+    source.attribute_mut("CHA").unwrap().karma = 1;
     let s = sheet(&engine, &source);
     let kit = packs::from_character(&source, &s, settings, "My Kit", packs::KitParts::default());
     assert_eq!(kit.get("category"), "Custom");
@@ -186,11 +188,82 @@ fn kit_round_trip_through_the_packs_folder() {
     let report = packs::apply(&mut fresh, &store, settings, packs::find_kit(&merged, "My Kit", "Custom").unwrap());
     assert!(fresh.items("armors", "armor").iter().any(|a| a.get("name") == "Armor Vest"), "{report:?}");
     assert!(fresh.items("gears", "gear").iter().any(|g| g.get("name") == "Fake SIN" && g.get("rating") == "1"));
-    assert!(report.skipped.iter().any(|s| s.starts_with("Attributes")), "attributes are listed but not applied");
+    // LB-09: the kit's attributes are applied (Chummer 5.226 lists them only).
+    assert!(report.skipped.iter().all(|s| !s.starts_with("Attribute")), "{report:?}");
+    let f = sheet(&engine, &fresh);
+    for n in ["BOD", "LOG", "CHA", "EDG"] {
+        assert_eq!(f.attr_values(n).unwrap().value, s.attr_values(n).unwrap().value, "{n}");
+    }
 
     assert!(packs::delete(&dir, "My Kit").unwrap());
     assert!(packs::find_kit(&packs::load(&store, Some(&dir)), "My Kit", "Custom").is_none());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn kit_export_writes_each_quality_list_it_has() {
+    // LB-06: Chummer drops the negative list when there are no positive
+    // qualities, and writes an empty <negative/> when there are no negative.
+    let engine = Engine::load().unwrap();
+    let base = new_runner(&engine);
+    let store = engine.store_for_character(&base);
+    let settings = engine.settings.resolve(STANDARD);
+    let qdoc = store.doc("qualities.xml").unwrap();
+    let kit_with = |quality: &str| {
+        let mut ch = base.clone();
+        let rec = chummer_core::data::find(&qdoc, "qualities", "quality", quality).unwrap();
+        chargen::add_quality(&mut ch, &store, rec, None);
+        let s = sheet(&engine, &ch);
+        packs::from_character(&ch, &s, settings, "Q", packs::KitParts::default())
+    };
+    let neg = kit_with("Bad Luck");
+    assert!(neg.path("qualities/positive").is_none());
+    assert_eq!(neg.path("qualities/negative/quality").map(|q| q.text()), Some("Bad Luck".to_owned()));
+    let pos = kit_with("Ambidextrous");
+    assert_eq!(pos.path("qualities/positive/quality").map(|q| q.text()), Some("Ambidextrous".to_owned()));
+    assert!(pos.path("qualities/negative").is_none());
+}
+
+#[test]
+fn kit_attributes_and_skills_are_applied() {
+    // LB-09: Chummer 5.226 applies none of these.
+    let engine = Engine::load().unwrap();
+    let mut ch = new_runner(&engine);
+    let store = engine.store_for_character(&ch);
+    let settings = engine.settings.resolve(STANDARD);
+    let kit = chummer_core::xml::parse(
+        "<pack><name>T</name><category>Custom</category>\
+         <attributes><bod>4</bod><agi>6</agi><rea>6</rea><str>1</str><cha>1</cha><int>3</int><log>1</log><wil>1</wil><edg>2</edg></attributes>\
+         <skills><skillgroup><name>Athletics</name><rating>2</rating></skillgroup><skill><name>Pistols</name><rating>9</rating><spec>Revolvers</spec></skill><skill><name>Gymnastics</name><rating>4</rating></skill></skills>\
+         <knowledgeskills><skill><name>Seattle Gangs</name><rating>2</rating><category>Street</category></skill></knowledgeskills>\
+         </pack>",
+    )
+    .unwrap();
+    let report = packs::apply(&mut ch, &store, settings, &kit);
+    let s = sheet(&engine, &ch);
+    let value = |n: &str| s.attr_values(n).unwrap().value;
+    // Kit value + (metatype minimum - 1): a human's minimum is 1, Edge's 2.
+    assert_eq!((value("BOD"), value("AGI"), value("INT"), value("EDG")), (4, 6, 3, 3));
+    // Only one attribute at the maximum (SR5 p. 66).
+    assert_eq!(value("REA"), 5);
+    assert!(report.skipped.iter().any(|r| r.starts_with("Attribute: REA lowered")), "{report:?}");
+    let pistols = s.skills.iter().find(|x| x.name == "Pistols").unwrap();
+    assert_eq!(pistols.total_base, 6, "capped at the creation maximum");
+    assert_eq!(pistols.specs, vec!["Revolvers".to_owned()]);
+    assert_eq!(ch.skill_groups.iter().find(|g| g.name == "Athletics").unwrap().rating(), 2);
+    // A member of a rated group buys only the levels above the group.
+    let gym = s.skills.iter().find(|x| x.name == "Gymnastics").unwrap();
+    assert_eq!(gym.total_base, 4);
+    let own = ch.skills.iter().find(|x| x.guid == gym.guid).unwrap();
+    assert_eq!(own.base + own.karma, 2);
+    let gangs = ch.knowledge_skills.iter().find(|k| k.name == "Seattle Gangs").unwrap();
+    assert_eq!((gangs.kind.as_str(), gangs.base + gangs.karma), ("Street", 2));
+    // Creation points first, the rest with karma: no point pool overspent.
+    let rules = engine.rules_for(&ch);
+    let b = chargen::budget(&ch, &s, &rules, settings.unwrap());
+    for (what, p) in [("attributes", b.attribute_points), ("special", b.special_points), ("skills", b.skill_points), ("groups", b.skill_group_points), ("knowledge", b.knowledge_points)] {
+        assert!(p.1 <= p.0, "{what}: {p:?}");
+    }
 }
 
 #[test]

@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::custom_data;
 use crate::xml::{self, Element};
@@ -224,3 +224,11 @@ pub const BROWSABLE: &[(&str, &str, &str, &str)] = &[
     ("Weapons", "weapons.xml", "weapons", "weapon"),
     ("Weapon Accessories", "weapons.xml", "accessories", "accessory"),
 ];
+
+/// The stock game data, for lookups that only have a saved element at
+/// hand (weapon ranges, accessory and drug grade multipliers, cyberware
+/// grade device ratings). Custom data is not included.
+pub fn shared_store() -> Option<&'static DataStore> {
+    static STORE: OnceLock<Option<DataStore>> = OnceLock::new();
+    STORE.get_or_init(DataStore::discover).as_ref()
+}

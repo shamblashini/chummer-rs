@@ -534,7 +534,7 @@ pub fn total_cost(ch: &Character, store: &DataStore, guid: &str) -> f64 {
         }
         "vehicle" => vehicle::cost(e),
         "lifestyle" => lifestyle::total_cost(ch, e),
-        "drug" => drug::cost(e),
+        "drug" => drug::cost_with(Some(store), e),
         _ => crate::chargen::item_cost(e),
     }
 }

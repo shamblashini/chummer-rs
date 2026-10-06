@@ -235,3 +235,16 @@ fn vehicle_and_drone_damage() {
     assert_eq!(vehicle::filled(d), vehicle::condition_monitor(d, &rules));
     assert_eq!(d.get("matrixcmfilled"), "2");
 }
+
+#[test]
+fn ware_device_rating_comes_from_the_grade_data() {
+    // LB-31: the grade's <devicerating> (SR5 p. 234); bioware grades have 0.
+    let ware = |grade: &str, source: &str| {
+        chummer_core::xml::parse(&format!("<cyberware><name>Test</name><grade>{grade}</grade><improvementsource>{source}</improvementsource></cyberware>")).unwrap()
+    };
+    assert_eq!(matrix::total(&ware("Standard", "Cyberware"), "Device Rating"), 2);
+    assert_eq!(matrix::total(&ware("Betaware", "Cyberware"), "Device Rating"), 4);
+    assert_eq!(matrix::total(&ware("Gammaware (Adapsin)", "Cyberware"), "Device Rating"), 6);
+    assert_eq!(matrix::total(&ware("Betaware", "Bioware"), "Device Rating"), 0);
+    assert_eq!(matrix::total(&ware("Standard", "Bioware"), "Device Rating"), 0);
+}

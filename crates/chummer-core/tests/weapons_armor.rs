@@ -196,6 +196,29 @@ fn wireless_smartgun_adds_smartlink_dice() {
 }
 
 #[test]
+fn weapon_specific_bonuses_go_to_their_own_stat() {
+    // LB-11: Chummer adds WeaponSpecificDV/AP/Accuracy/Range to the pool.
+    let engine = Engine::load().unwrap();
+    let mut ch = fixture("Fuzzy-chargen.chum5");
+    let sheet = engine.sheet(&ch);
+    let w = named(&ch, "weapons", "weapon", "Ares Alpha").clone();
+    let before = weapon::stats(&ch, &sheet, &w);
+    let guid = w.get("guid");
+    for kind in ["WeaponSpecificDV", "WeaponSpecificAP", "WeaponSpecificAccuracy", "WeaponSpecificRange"] {
+        let val = if kind == "WeaponSpecificRange" { 100.0 } else { 1.0 };
+        ch.improvements.list.push(chummer_core::improvement::Improvement { kind: kind.into(), improved_name: guid.clone(), val, enabled: true, rating: 1, ..Default::default() });
+    }
+    let after = weapon::stats(&ch, &sheet, &w);
+    assert_eq!(after.dice_pool, before.dice_pool);
+    assert_eq!((before.damage.as_str(), after.damage.as_str()), ("11P", "12P"));
+    assert_eq!((before.ap.as_str(), after.ap.as_str()), ("-2", "-1"));
+    assert_eq!(after.accuracy, before.accuracy + 1);
+    assert_ne!(after.ranges, before.ranges);
+    ch.improvements.list.push(chummer_core::improvement::Improvement { kind: "WeaponSpecificDice".into(), improved_name: guid, val: 2.0, enabled: true, rating: 1, ..Default::default() });
+    assert_eq!(weapon::stats(&ch, &sheet, &w).dice_pool, before.dice_pool + 2);
+}
+
+#[test]
 fn melee_damage_uses_strength() {
     let engine = Engine::load().unwrap();
     let ch = fixture("Apex Predator.chum5");

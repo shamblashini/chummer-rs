@@ -184,7 +184,7 @@ impl DrugBuilder {
                 for line in effect_lines(&fx, lang) {
                     ui.label(line);
                 }
-                ui.label(format!("{} {}", lang.tr("Cost per dose:"), format::nuyen(drug::cost(&d))));
+                ui.label(format!("{} {}", lang.tr("Cost per dose:"), format::nuyen(drug::cost_with(Some(store), &d))));
                 ui.add_space(6.0);
                 if ui.add(crate::theme::primary_button(ui, lang.tr("Add drug"))).clicked() {
                     *add = true;
@@ -212,7 +212,7 @@ impl DrugBuilder {
         };
         let guid = d.get("guid");
         let name = d.get("name");
-        let cost = drug::cost(&d);
+        let cost = drug::cost_with(Some(store), &d);
         drug::add_element(ch, d);
         if ch.created && cost > 0.0 {
             if let Err(e) = career::pay_for_item(ch, "drug", None, &guid, cost) {

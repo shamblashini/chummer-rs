@@ -21,18 +21,24 @@ fn named<'a>(ch: &'a Character, kind: &'a str, name: &'a str) -> Vec<&'a Improve
 
 /// Flat extra for the levels of `lower+1..=upper` an improvement's
 /// Minimum/Maximum window covers.
-// LIKELY-BUG(LB-03): a window that ends below `lower` gives a negative level count (a surcharge), and `modifiers` skips windows whose Minimum is above `lower`. See docs/likely-bugs.md.
+// chummer-rs deviates from Chummer (LB-03): Chummer's level count goes
+// negative for a window that ends below `lower` (6 -> 7 with Jack of All
+// Trades pays +1 from the -1 window) and skips windows whose Minimum is
+// above `lower` (3 -> 7 skips the +2 for levels 6-7). RF p. 147 charges
+// per level in each window, so the count is clamped at 0 and every window
+// that overlaps the range counts.
 fn window_extra(i: &Improvement, lower: i32, upper: i32) -> f64 {
     let max = if i.max == 0.0 { i32::MAX } else { i.max as i32 };
-    i.val * f64::from(upper.min(max) - lower.max(i.min as i32 - 1))
+    i.val * f64::from((upper.min(max) - lower.max(i.min as i32 - 1)).max(0))
 }
 
-/// Per-level extra and multiplier from (extra kind, multiplier kind, name)
-/// triples whose Minimum is at most `gate`.
+/// Per-level extra (every window, see `window_extra`) and multiplier (only
+/// improvements whose Minimum is at most `gate`) from (extra kind,
+/// multiplier kind, name) triples.
 fn modifiers(ch: &Character, kinds: &[(&str, &str, &str)], gate: i32, lower: i32, upper: i32) -> (f64, f64) {
     let (mut extra, mut mult) = (0.0, 1.0);
     for (extra_kind, mult_kind, name) in kinds {
-        extra += named(ch, extra_kind, name).iter().filter(|i| i.min as i32 <= gate).map(|i| window_extra(i, lower, upper)).sum::<f64>();
+        extra += named(ch, extra_kind, name).iter().map(|i| window_extra(i, lower, upper)).sum::<f64>();
         mult *= named(ch, mult_kind, name).iter().filter(|i| i.min as i32 <= gate).map(|i| i.val / 100.0).product::<f64>();
     }
     (extra, mult)
@@ -153,12 +159,12 @@ fn group_category_modifiers(ch: &Character, categories: &[&str], lower: i32, upp
     let (mut extra, mut mult) = (0.0, 1.0);
     for i in &ch.improvements.list {
         let mode_ok = i.condition.is_empty() || (i.condition == "career") == ch.created || (i.condition == "create") != ch.created;
-        if !i.enabled || !mode_ok || !categories.contains(&i.improved_name.as_str()) || i.min as i32 > lower {
+        if !i.enabled || !mode_ok || !categories.contains(&i.improved_name.as_str()) {
             continue;
         }
         match i.kind.as_str() {
             "SkillGroupCategoryKarmaCost" => extra += window_extra(i, lower, upper),
-            "SkillGroupCategoryKarmaCostMultiplier" => mult *= i.val / 100.0,
+            "SkillGroupCategoryKarmaCostMultiplier" if i.min as i32 <= lower => mult *= i.val / 100.0,
             _ => {}
         }
     }
@@ -207,10 +213,25 @@ mod tests {
         let ch = character(vec![imp("ActiveSkillKarmaCost", -1.0, 0.0, 5.0), imp("ActiveSkillKarmaCost", 2.0, 6.0, 0.0)]);
         let rules = Rules::default();
         let s = ActiveSkill { key: "Pistols", category: "Combat Active", exotic: false, buy_with_karma: false, specs: &[] };
-        // 3 -> 7: 22 levels x 2 = 44, -1 x (5 - 3); the +2 needs Minimum <= 3.
-        assert_eq!(active_skill(&ch, &s, 3, 7, None, &rules), 42);
-        // 6 -> 7: 14, -1 x (5 - 6) (Chummer's own sign quirk), +2 x (7 - 6).
-        assert_eq!(active_skill(&ch, &s, 6, 7, None, &rules), 17);
+        // RF p. 147 (LB-03; Chummer gives 42 and 17).
+        // 3 -> 7: 22 levels x 2 = 44, -1 x 2 (levels 4-5), +2 x 2 (levels 6-7).
+        assert_eq!(active_skill(&ch, &s, 3, 7, None, &rules), 46);
+        // 6 -> 7: 14, no -1 level, +2 x 1.
+        assert_eq!(active_skill(&ch, &s, 6, 7, None, &rules), 16);
+    }
+
+    #[test]
+    fn jack_of_all_trades_windows_per_level() {
+        let ch = character(vec![imp("ActiveSkillKarmaCost", -1.0, 0.0, 5.0), imp("ActiveSkillKarmaCost", 2.0, 6.0, 0.0)]);
+        let rules = Rules::default();
+        let s = ActiveSkill { key: "Pistols", category: "Combat Active", exotic: false, buy_with_karma: false, specs: &[] };
+        // Buying level by level costs the same as one step.
+        let stepwise: i32 = (1..7).map(|l| active_skill(&ch, &s, l, l + 1, None, &rules)).sum();
+        assert_eq!(stepwise, active_skill(&ch, &s, 1, 7, None, &rules));
+        // 1 -> 5: 28 - 4 (levels 2-5); no +2 level.
+        assert_eq!(active_skill(&ch, &s, 1, 5, None, &rules), 24);
+        // 0 -> 1: new skill 2, -1 -> 1 (never below 1 per level).
+        assert_eq!(active_skill(&ch, &s, 0, 1, None, &rules), 1);
     }
 
     #[test]

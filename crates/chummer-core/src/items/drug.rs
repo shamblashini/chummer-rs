@@ -288,13 +288,34 @@ pub fn effects(drug: &Element) -> Effects {
     out
 }
 
-/// Nuyen cost of one dose (`Drug.Cost`): each active component's cost at
-/// its level (`DrugComponent.CostPerLevel`). Chummer applies no grade
-/// multiplier here.
-// LIKELY-BUG(LB-05): the drug grade's <cost> multiplier (Street Cooked 0.5, Pharmaceutical 2, Designer 6) is not applied. See docs/likely-bugs.md.
+/// Nuyen cost of one dose with the stock game data (`cost_with`).
 pub fn cost(drug: &Element) -> f64 {
+    cost_with(None, drug)
+}
+
+/// Multiplier of a drug grade: the grade's `<cost>` in drugcomponents.xml
+/// of `store` (else of the stock data), 1 for an unknown grade.
+pub fn grade_multiplier(store: Option<&DataStore>, grade: &str) -> f64 {
+    let store = match store {
+        Some(st) => Some(st),
+        None => crate::data::shared_store(),
+    };
+    store
+        .and_then(|st| st.doc("drugcomponents.xml").ok())
+        .and_then(|doc| crate::data::records(&doc, "grades", "grade").into_iter().find(|g| g.name() == grade).and_then(|g| g.el().get_f64("cost")))
+        .unwrap_or(1.0)
+}
+
+/// Nuyen cost of one dose (`Drug.Cost`): each active component's cost at
+/// its level (`DrugComponent.CostPerLevel`), times the grade multiplier.
+// chummer-rs deviates from Chummer (LB-05): Chummer reads the grade's
+// <cost> in CreateCustomDrug and never applies it. CF p. 190 prices the
+// grades (Street Cooked half, Pharmaceutical x2, Designer x6), so the sum
+// is multiplied by it.
+pub fn cost_with(store: Option<&DataStore>, drug: &Element) -> f64 {
     let attrs = expr::NoAttributes;
-    drug.child("drugcomponents")
+    let sum: f64 = drug
+        .child("drugcomponents")
         .map(|x| {
             x.children_named("drugcomponent")
                 .filter(|c| active_effect(c).is_some())
@@ -305,7 +326,9 @@ pub fn cost(drug: &Element) -> f64 {
                 })
                 .sum()
         })
-        .unwrap_or(0.0)
+        .unwrap_or(0.0);
+    let grade = drug.get("grade");
+    if grade.is_empty() { sum } else { sum * grade_multiplier(store, &grade) }
 }
 
 /// `"+#,0;-#,0;0"`.

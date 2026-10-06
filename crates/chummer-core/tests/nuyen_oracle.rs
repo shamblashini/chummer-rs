@@ -42,6 +42,9 @@
 //! | Ushi Resub | +45 | grid on Low, x0.9 (Cramped) |
 //! | Yeti-#ffffff2 | +23.6 | grid on Low; multipliers multiplied |
 //!
+//! Apex Predator also differs by the Vintage doubling that Chummer's Save
+//! loses and chummer-rs keeps (LB-04, [`vintage_doubling`]).
+//!
 //! [`creation_nuyen_left_matches_chummer`] counts exact matches.
 //! [`only_lifestyle_drift_remains`] re-prices lifestyles with the 5.202
 //! formula ([`lifestyle_5202`], test-only) and requires every fixture to
@@ -53,7 +56,7 @@ use std::path::PathBuf;
 use chummer_core::chargen;
 use chummer_core::character::Character;
 use chummer_core::engine::Engine;
-use chummer_core::items::lifestyle;
+use chummer_core::items::{lifestyle, weapon};
 use chummer_core::xml::Element;
 
 /// Exact matches must not fall below this.
@@ -100,12 +103,30 @@ fn creation_nuyen_left_matches_chummer() {
 fn only_lifestyle_drift_remains() {
     let mut bad = Vec::new();
     for (name, ch, saved, left) in creation_fixtures() {
-        let drift: f64 = ch.items("lifestyles", "lifestyle").into_iter().map(|e| lifestyle::total_cost(&ch, e) - lifestyle_5202(&ch, e)).sum();
+        let mut drift: f64 = ch.items("lifestyles", "lifestyle").into_iter().map(|e| lifestyle::total_cost(&ch, e) - lifestyle_5202(&ch, e)).sum();
+        drift += vintage_doubling(&ch);
         if (left + drift - saved).abs() >= 0.5 {
-            bad.push(format!("{name}: saved {saved}, computed {left}, lifestyle drift {drift}"));
+            bad.push(format!("{name}: saved {saved}, computed {left}, lifestyle drift and Vintage {drift}"));
         }
     }
     assert!(bad.is_empty(), "differences not explained by lifestyle drift:\n{}", bad.join("\n"));
+}
+
+/// What the Vintage accessory adds to the other accessories of its weapon
+/// (GH3 p. 3: twice the cost). Chummer's Save drops the multiplier, so the
+/// fixtures' saved nuyen does not include it; chummer-rs does (LB-04).
+/// Apex Predator: Custom Look 300 + Personalized Grip 100 on two weapons.
+fn vintage_doubling(ch: &Character) -> f64 {
+    ch.items("weapons", "weapon")
+        .into_iter()
+        .map(|w| {
+            let mut plain = w.clone();
+            if let Some(a) = plain.child_mut("accessories") {
+                a.children.retain(|c| !matches!(c, chummer_core::xml::Node::Element(e) if e.get("name") == "Vintage"));
+            }
+            weapon::cost(w) - weapon::cost(&plain)
+        })
+        .sum()
 }
 
 /// The 5.202 `Lifestyle.TotalMonthlyCost` x months, for the drift check

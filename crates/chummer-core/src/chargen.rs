@@ -712,7 +712,7 @@ pub fn nuyen_spent(ch: &Character, store: Option<&DataStore>) -> f64 {
             Some(st) => sum("vehicles", "vehicle", &|e| vehicle::cost_with(ch, st, e)),
             None => sum("vehicles", "vehicle", &vehicle::cost),
         }
-        + sum("drugs", "drug", &drug::cost)
+        + sum("drugs", "drug", &|e| drug::cost_with(store, e))
         + sum("lifestyles", "lifestyle", &|e| lifestyle::total_cost(ch, e))
 }
 

@@ -64,10 +64,21 @@ fn eval(s: &str, rating: i32) -> i32 {
     expr::value_to_int(s, rating, &expr::NoAttributes)
 }
 
-/// `Cyberware.Grade.DeviceRating` (the grades in cyberware.xml and
-/// bioware.xml).
-// LIKELY-BUG(LB-31): hard-coded by grade name; Chummer reads the grade's <devicerating> (bioware grades: 0) and uses this table only as a fallback. See docs/likely-bugs.md.
-fn grade_device_rating(grade: &str) -> i32 {
+/// `Cyberware.Grade.DeviceRating`: the grade record's `<devicerating>` in
+/// cyberware.xml or bioware.xml (by `improvementsource`), else Chummer's
+/// fallback table by grade name.
+// chummer-rs deviates from the earlier port (LB-31), which used only the
+// name table: bioware grades (data: 0) got 2-6. SR5 p. 234 gives the
+// cyberware grades their Device Rating; bioware is not an electronic device.
+fn grade_device_rating(e: &Element) -> i32 {
+    let grade = e.get("grade");
+    let file = if crate::items::cyberware::is_bioware(e) { "bioware.xml" } else { "cyberware.xml" };
+    let from_data = crate::data::shared_store()
+        .and_then(|st| st.doc(file).ok())
+        .and_then(|doc| crate::items::cyberware::grade_record(&doc, &grade).and_then(|g| g.get_i32("devicerating")));
+    if let Some(dr) = from_data {
+        return dr;
+    }
     for (prefix, dr) in [("Alphaware", 3), ("Betaware", 4), ("Deltaware", 5), ("Gammaware", 6)] {
         if grade.starts_with(prefix) {
             return dr;
@@ -105,7 +116,7 @@ pub fn base(e: &Element, name: &str) -> i32 {
     if s.trim().is_empty() {
         let dr_string = attribute_string(e, "Device Rating");
         if e.name == "cyberware" {
-            let grade = grade_device_rating(&e.get("grade"));
+            let grade = grade_device_rating(e);
             match name {
                 "Device Rating" => return grade,
                 "Program Limit" | "Data Processing" | "Firewall" if dr_string.trim().is_empty() => return grade,
