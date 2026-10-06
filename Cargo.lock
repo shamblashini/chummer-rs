@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chummer-core",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "lzma-rs",
  "lzma-rust2",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chummer-core",
