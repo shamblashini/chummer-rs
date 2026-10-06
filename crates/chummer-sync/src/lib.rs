@@ -27,7 +27,7 @@ pub mod persist;
 pub mod player;
 pub mod replica;
 
-pub use authority::{Authority, LocalApplied, Member, Submitted};
+pub use authority::{Authority, LocalApplied, Member, Reverted, Submitted};
 pub use host::{AuthorityHost, HostEvent, MailReport};
 pub use msg::{CharacterId, FeedEntry};
 pub use player::{PlayerConfig, PlayerSession, SyncMode};

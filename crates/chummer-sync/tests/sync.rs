@@ -462,3 +462,106 @@ fn the_log_window_compacts_and_far_behind_clients_get_a_snapshot() {
     let back = Authority::from_bytes(&k.auth.to_bytes()).unwrap();
     assert_eq!(back.log(&k.c1).len(), LOG_WINDOW);
 }
+
+#[test]
+fn gm_reverts_a_change_and_later_changes_are_rebased() {
+    let mut k = campaign(0);
+    let mut r1 = Replica::new();
+    joined(&mut k.auth, k.p1, &mut r1, "Alice");
+    // v1: the GM gives karma; v2: the player spends some of it on a skill;
+    // v3: the player sets an alias.
+    let push = |k: &mut Campaign, r: &mut Replica| {
+        let p = k.auth.push_for(&k.p1, &k.c1).unwrap();
+        k.auth.mark_delivered(k.p1, &k.c1, p.version);
+        r.handle(engine(), ServerMessage::Push(p))
+    };
+    k.auth.apply_local(engine(), &k.c1, gain(20.0, "Good run")).unwrap();
+    push(&mut k, &mut r1);
+    let (skill, cost) = raisable(r1.character(&k.c1).unwrap());
+    assert!(cost <= 20);
+    r1.edit(engine(), &k.c1, Command::RaiseSkill { skill }).unwrap();
+    submit(&mut k.auth, k.p1, &mut r1, &k.c1);
+    r1.edit(engine(), &k.c1, Command::SetField { key: "alias".into(), value: "Raven".into() }).unwrap();
+    submit(&mut k.auth, k.p1, &mut r1, &k.c1);
+    assert_eq!(k.auth.version(&k.c1), Some(3));
+    let before_award = munin(0);
+
+    // Reverting the alias: only it goes.
+    let r = k.auth.revert(engine(), &k.c1, 3).unwrap();
+    assert_eq!(r.reverted, 3..=3);
+    assert!(r.dropped.is_empty());
+    assert_eq!(k.auth.version(&k.c1), Some(4), "a revert is a new version");
+    let ch = k.auth.character(&k.c1).unwrap();
+    assert_eq!(ch.field("alias"), before_award.field("alias"));
+    assert_eq!(ch.karma, 20 - cost);
+    assert!(r.applied.notify.contains(&k.p1));
+    // The player gets it as an ordinary entry and agrees on the hash.
+    push(&mut k, &mut r1);
+    assert_in_sync(&k.auth, &r1, &k.c1);
+    let line = r1.feed().back().unwrap().to_string();
+    assert_eq!(line, "GM: Reverted: Set Alias to “Raven”", "{line}");
+
+    // Reverting the award: the skill raise needed that karma, so it is
+    // dropped and named.
+    let r = k.auth.revert(engine(), &k.c1, 1).unwrap();
+    assert_eq!(r.dropped.len(), 1, "{:?}", r.dropped);
+    assert!(r.dropped[0].starts_with("Raised "), "{:?}", r.dropped);
+    let ch = k.auth.character(&k.c1).unwrap();
+    assert_eq!(ch.karma, 0);
+    assert_eq!(command::state_hash(ch), command::state_hash(&command::restore(&command::snapshot(&before_award)).unwrap()));
+    let feed = k.auth.feed().back().unwrap().to_string();
+    assert!(feed.starts_with("GM: Reverted: Gained 20 karma: Good run, and 1 later change that needed it"), "{feed}");
+    push(&mut k, &mut r1);
+    assert_in_sync(&k.auth, &r1, &k.c1);
+
+    // Reverting something a later revert already took back changes nothing.
+    assert!(k.auth.revert(engine(), &k.c1, 2).is_err());
+    // A replayed copy of an op that was reverted still runs only once.
+    let v = k.auth.version(&k.c1);
+    r1.edit(engine(), &k.c1, gain(1.0, "x")).unwrap();
+    let batch = r1.batch(&k.c1).unwrap();
+    k.auth.submit(engine(), k.p1, batch.clone()).unwrap();
+    k.auth.revert(engine(), &k.c1, v.unwrap() + 1).unwrap();
+    let again = k.auth.submit(engine(), k.p1, batch).unwrap();
+    assert_eq!(again.ack.accepted.len(), 1);
+    assert_eq!(k.auth.character(&k.c1).unwrap().karma, 0, "not applied a second time");
+
+    // The revert state survives a save and load.
+    let mut back = Authority::from_bytes(&k.auth.to_bytes()).unwrap();
+    assert_eq!(back.hash(&k.c1), k.auth.hash(&k.c1));
+    let v = back.version(&k.c1).unwrap();
+    back.revert(engine(), &k.c1, v).unwrap();
+    assert_eq!(back.character(&k.c1).unwrap().karma, 1, "the revert of the revert");
+}
+
+#[test]
+fn a_burst_of_typing_is_one_feed_line_and_one_revert() {
+    let mut k = campaign(0);
+    let original = k.auth.character(&k.c1).unwrap().field("alias");
+    for v in ["R", "Ra", "Rav", "Rave", "Raven"] {
+        k.auth.apply_local(engine(), &k.c1, Command::SetField { key: "alias".into(), value: v.into() }).unwrap();
+    }
+    assert_eq!(k.auth.version(&k.c1), Some(5));
+    let lines: Vec<String> = k.auth.feed().iter().map(|f| f.to_string()).collect();
+    assert_eq!(lines, ["GM: Set Alias to “Raven”"]);
+    assert_eq!(k.auth.revert_range(&k.c1, 5), Some(1..=5));
+    k.auth.revert(engine(), &k.c1, 5).unwrap();
+    assert_eq!(k.auth.character(&k.c1).unwrap().field("alias"), original);
+}
+
+#[test]
+fn reverts_reach_back_only_as_far_as_the_log_window() {
+    use chummer_sync::authority::LOG_WINDOW;
+    let mut k = campaign(0);
+    for i in 0..LOG_WINDOW + 5 {
+        // Different fields, so nothing coalesces.
+        k.auth.apply_local(engine(), &k.c1, gain(1.0, &format!("r{i}"))).unwrap();
+    }
+    assert!(!k.auth.can_revert(&k.c1, 5), "dropped from the window");
+    assert!(k.auth.revert(engine(), &k.c1, 5).is_err());
+    let first = (LOG_WINDOW + 5 - LOG_WINDOW + 1) as u64;
+    assert!(k.auth.can_revert(&k.c1, first));
+    // The window's base moved with the log, so the rebuilt state is right.
+    k.auth.revert(engine(), &k.c1, first).unwrap();
+    assert_eq!(k.auth.character(&k.c1).unwrap().karma, (LOG_WINDOW + 5 - 1) as i32);
+}

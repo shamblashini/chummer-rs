@@ -281,3 +281,25 @@ fn undo_steps_share_unchanged_sections() {
         assert_eq!(session.state_hash(), *h);
     }
 }
+
+#[test]
+fn revert_restores_a_snapshot_exactly() {
+    let Ok(engine) = Engine::load() else { return };
+    let ch = load("Munin_Career");
+    let target = command::restore(&command::snapshot(&ch)).unwrap();
+    let mut sess = Session::new(ch);
+    sess.apply(&engine, gain(true, 10.0)).unwrap();
+    sess.apply(&engine, Command::SetField { key: s("alias"), value: s("Raven") }).unwrap();
+    assert_ne!(sess.state_hash(), command::state_hash(&target));
+    let r = sess.apply(&engine, Command::Revert { snapshot: command::snapshot(&target), what: s("two changes"), from: 1, to: 2 }).unwrap();
+    assert!(r.changed);
+    assert!(r.description.starts_with("Reverted: two changes"), "{}", r.description);
+    assert_eq!(sess.state_hash(), command::state_hash(&target));
+    // Reverting to the state it is already in changes nothing.
+    let again = sess.apply(&engine, Command::Revert { snapshot: command::snapshot(&target), what: s("x"), from: 1, to: 1 }).unwrap();
+    assert!(!again.changed);
+    // A damaged snapshot is refused and leaves the character alone.
+    let before = sess.state_hash();
+    assert!(sess.apply(&engine, Command::Revert { snapshot: vec![1, 2, 3], what: s("x"), from: 1, to: 1 }).is_err());
+    assert_eq!(sess.state_hash(), before);
+}

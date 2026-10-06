@@ -233,5 +233,6 @@ fn what(cmd: &Command, b: &Character, a: &Character, engine: &Engine) -> String 
         SetMatrixDamage { device, filled } => format!("Set {} matrix damage to {filled}", item_name(b, device)),
         SetActiveCommlink { device, on } => format!("{} {}", if *on { "Activated" } else { "Deactivated" }, item_name(b, device)),
         SetHomeNode { device, on } => format!("{} {} as home node", if *on { "Set" } else { "Unset" }, item_name(b, device)),
+        Revert { what, .. } => format!("Reverted: {what}"),
     }
 }

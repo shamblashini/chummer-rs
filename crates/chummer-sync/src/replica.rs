@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::feed;
 use crate::mail::Inbox;
-use crate::msg::{Ack, CharacterId, ClientMessage, FeedEntry, Hash, Have, Membership, Op, OpId, Push, PushBody, ResyncRequest, ServerMessage, SubmitBatch};
+use crate::msg::{Ack, CharacterId, ClientMessage, Entry, FeedEntry, Hash, Have, Membership, Op, OpId, Push, PushBody, ResyncRequest, ServerMessage, SubmitBatch};
 use crate::persist::{self, PersistError};
 
 fn now_ms() -> i64 {
@@ -107,6 +107,9 @@ pub struct Replica {
     membership: Option<Membership>,
     refused: Vec<Refused>,
     feed: VecDeque<FeedEntry>,
+    /// The last log entry added to the feed per character, to merge bursts
+    /// of edits into one line as the authority does.
+    feed_last: BTreeMap<CharacterId, Entry>,
     pub inbox: Inbox,
 }
 
@@ -133,6 +136,7 @@ impl Replica {
             membership: None,
             refused: Vec::new(),
             feed: VecDeque::new(),
+            feed_last: BTreeMap::new(),
             inbox: Inbox::default(),
         }
     }
@@ -378,7 +382,12 @@ impl Replica {
         }
         let name = push.name.clone();
         for e in &new_entries {
-            feed::push(&mut self.feed, feed::from_entry(&members, &id, &name, e));
+            let line = feed::from_entry(&members, &id, &name, e);
+            match self.feed_last.get(&id) {
+                Some(prev) if feed::coalesces(prev, e) => feed::merge(&mut self.feed, line, prev.version),
+                _ => feed::push(&mut self.feed, line),
+            }
+            self.feed_last.insert(id.clone(), e.clone());
         }
         let c = self.copies.get_mut(&id).expect("present");
         // Commands of ours the authority logged are confirmed.
@@ -480,6 +489,7 @@ impl Replica {
             membership: f.membership,
             refused: f.refused,
             feed: f.feed.into(),
+            feed_last: BTreeMap::new(),
             inbox: f.inbox,
         })
     }

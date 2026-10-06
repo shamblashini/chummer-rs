@@ -210,6 +210,14 @@ pub enum Command {
     SetMatrixDamage { device: String, filled: i32 },
     SetActiveCommlink { device: String, on: bool },
     SetHomeNode { device: String, on: bool },
+
+    // ----- online campaigns -----
+    /// The GM reverted earlier changes: the whole character becomes
+    /// `snapshot` ([`snapshot`]), the state the campaign authority rebuilt
+    /// without them. `what` describes what was reverted, for the log;
+    /// `from..=to` are the campaign versions it takes back (the
+    /// authority's bookkeeping, so later reverts can rebuild around it).
+    Revert { snapshot: Vec<u8>, what: String, from: u64, to: u64 },
 }
 
 impl Command {
@@ -249,7 +257,8 @@ impl Command {
         match self {
             SetField { key, .. } => !crate::character::INFO_FIELDS.iter().chain(crate::character::TEXT_FIELDS).any(|(k, _)| k == key) || matches!(key.as_str(), "metatype" | "metavariant"),
             SetItemText { field, .. } => field == "location",
-            SetContactField { .. } | SetContactNotes { .. } | SetWeekNotes { .. } | SetImprovementNotes { .. } => false,
+            // A revert restores a state the rules already produced.
+            SetContactField { .. } | SetContactNotes { .. } | SetWeekNotes { .. } | SetImprovementNotes { .. } | Revert { .. } => false,
             _ => true,
         }
     }
@@ -358,6 +367,7 @@ impl Command {
             SetMatrixDamage { device: g.clone(), filled: 1 },
             SetActiveCommlink { device: g.clone(), on: true },
             SetHomeNode { device: g, on: false },
+            Revert { snapshot: Vec::new(), what: s("Raised Pistols to 5 (10 karma)"), from: 3, to: 4 },
         ]
     }
 }

@@ -50,6 +50,29 @@ pub fn from_entry(members: &[MemberInfo], character: &CharacterId, character_nam
     }
 }
 
+/// Edits of one value in one go (typing in a text box, a spinner): the
+/// same author, the same [`Command::coalesce_key`], less than
+/// [`COALESCE_MS`] apart. The feed shows them as one line, and a revert
+/// takes them back together.
+pub fn coalesces(prev: &Entry, next: &Entry) -> bool {
+    prev.author == next.author
+        && next.version == prev.version + 1
+        && next.env.at - prev.env.at <= COALESCE_MS
+        && prev.env.cmd.coalesce_key().is_some_and(|k| next.env.cmd.coalesce_key().as_deref() == Some(k.as_str()))
+}
+
+/// The gap below which [`coalesces`] merges edits (as `Session` does).
+pub const COALESCE_MS: i64 = 1500;
+
+/// Adds `entry`, replacing the line for `prev_version` of the same
+/// character when it is the newest line.
+pub(crate) fn merge(feed: &mut std::collections::VecDeque<FeedEntry>, entry: FeedEntry, prev_version: u64) {
+    match feed.back_mut() {
+        Some(last) if last.character == entry.character && last.version == Some(prev_version) => *last = entry,
+        _ => push(feed, entry),
+    }
+}
+
 pub(crate) fn push(feed: &mut std::collections::VecDeque<FeedEntry>, entry: FeedEntry) {
     feed.push_back(entry);
     while feed.len() > FEED_LIMIT {

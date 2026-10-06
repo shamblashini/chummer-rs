@@ -260,6 +260,18 @@ impl AuthorityHost {
         Ok(r)
     }
 
+    /// The GM reverts the change that made `version` of `id`
+    /// ([`Authority::revert`]); pushed or mailed like any GM edit.
+    pub fn gm_revert(&self, id: &CharacterId, version: u64) -> Result<crate::authority::Reverted, String> {
+        let r = self.shared.lock().revert(&self.shared.engine, id, version)?;
+        self.shared.touch();
+        let _ = self.shared.events.send(HostEvent::Changed(id.clone()));
+        if !r.applied.notify.is_empty() {
+            let _ = self.sweep.send(r.applied.notify.clone());
+        }
+        Ok(r)
+    }
+
     /// Writes the authority to its file now (when it has one).
     pub fn save(&self) -> std::io::Result<()> {
         self.shared.touch();

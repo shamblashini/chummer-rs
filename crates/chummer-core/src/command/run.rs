@@ -445,6 +445,15 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
         SetMatrixDamage { device, filled } => flag(matrix::set_filled(ch, device, *filled)),
         SetActiveCommlink { device, on } => flag(matrix::set_active(ch, device, *on)),
         SetHomeNode { device, on } => flag(matrix::set_home_node(ch, device, *on)),
+        Revert { snapshot, .. } => {
+            let mut state = super::restore(snapshot).map_err(reject)?;
+            if super::canonical(&state) == super::canonical(ch) {
+                return Ok(Done::Unchanged);
+            }
+            state.file = ch.file.clone();
+            *ch = state;
+            changed()
+        }
     }
 }
 

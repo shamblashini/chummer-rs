@@ -106,6 +106,10 @@ struct CharState {
     log: VecDeque<LogItem>,
     /// The hash at `version - log.len()`.
     base_hash: Hash,
+    /// The character at `version - log.len()`, for reverting entries in
+    /// the window; and its snapshot, made on the first save after it moved.
+    base: Character,
+    base_snapshot: Option<Vec<u8>>,
     seen: Seen,
     /// The last snapshot made, and its version (compressing is slow).
     snapshot: Option<(u64, Vec<u8>)>,
@@ -114,7 +118,7 @@ struct CharState {
 impl CharState {
     fn new(name: String, owner: Option<EndpointId>, ch: Character) -> CharState {
         let hash = command::state_hash(&ch);
-        CharState { name, owner, ch, version: 0, hash, log: VecDeque::new(), base_hash: hash, seen: Seen::default(), snapshot: None }
+        CharState { name, owner, base: ch.clone(), ch, version: 0, hash, log: VecDeque::new(), base_hash: hash, base_snapshot: None, seen: Seen::default(), snapshot: None }
     }
 
     fn window_base(&self) -> u64 {
@@ -143,12 +147,22 @@ impl CharState {
         }
     }
 
-    fn push_log(&mut self, item: LogItem) {
+    fn push_log(&mut self, engine: &Engine, item: LogItem) {
         self.log.push_back(item);
         while self.log.len() > LOG_WINDOW {
             let old = self.log.pop_front().expect("not empty");
+            // Commands are deterministic: the base moves forward exactly as
+            // the live state did.
+            if command::apply(&mut self.base, engine, &old.entry.env).is_err() {
+                tracing::warn!("the log window's base did not take an entry it applied before");
+            }
             self.base_hash = old.hash;
+            self.base_snapshot = None;
         }
+    }
+
+    fn base_snapshot(&mut self) -> Vec<u8> {
+        self.base_snapshot.get_or_insert_with(|| command::snapshot(&self.base)).clone()
     }
 
     /// From `from` (with hash `from_hash`, when known) to now: the entries
@@ -173,6 +187,17 @@ pub struct Submitted {
     /// Other members who see this character and should get a push
     /// ([`Authority::push_for`]).
     pub notify: Vec<EndpointId>,
+}
+
+/// What [`Authority::revert`] did.
+#[derive(Debug, Clone)]
+pub struct Reverted {
+    pub applied: LocalApplied,
+    /// The versions taken back.
+    pub reverted: std::ops::RangeInclusive<u64>,
+    /// Later changes that no longer applied ("Raised Pistols to 6 (12
+    /// karma) (not enough karma)").
+    pub dropped: Vec<String>,
 }
 
 /// A GM edit made at the authority.
@@ -422,8 +447,12 @@ impl Authority {
                 c.version += 1;
                 c.hash = command::state_hash(&c.ch);
                 let entry = Entry { version: c.version, op: op.id, env, author, description: applied.description.clone() };
-                feed::push(&mut self.feed, feed::from_entry(&members, id, &c.name, &entry));
-                c.push_log(LogItem { entry, hash: c.hash });
+                let line = feed::from_entry(&members, id, &c.name, &entry);
+                match c.log.back() {
+                    Some(prev) if feed::coalesces(&prev.entry, &entry) => feed::merge(&mut self.feed, line, prev.entry.version),
+                    _ => feed::push(&mut self.feed, line),
+                }
+                c.push_log(engine, LogItem { entry, hash: c.hash });
                 if let Some(name) = Some(c.ch.display_name()).filter(|n| *n != c.name) {
                     c.name = name;
                     self.membership_rev += 1;
@@ -514,6 +543,82 @@ impl Authority {
             }
             Outcome::Rejected(r) => Err(Rejected { reason: r.reason, confirm: r.confirm }),
         }
+    }
+
+    /// Which log entries reverting `version` takes back: the entry and the
+    /// earlier ones of its burst (a text box or spinner edited in one go,
+    /// which the feed shows as one line). `None` when `version` is not in
+    /// the log window.
+    pub fn revert_range(&self, id: &CharacterId, version: u64) -> Option<std::ops::RangeInclusive<u64>> {
+        let c = self.chars.get(id)?;
+        let base = c.window_base();
+        if version <= base || version > c.version {
+            return None;
+        }
+        let at = |v: u64| &c.log[(v - base - 1) as usize].entry;
+        let mut first = version;
+        while first > base + 1 && feed::coalesces(at(first - 1), at(first)) {
+            first -= 1;
+        }
+        Some(first..=version)
+    }
+
+    /// Whether the change that made `version` can still be reverted.
+    pub fn can_revert(&self, id: &CharacterId, version: u64) -> bool {
+        self.revert_range(id, version).is_some()
+    }
+
+    /// The GM reverts the change that made `version` (with the rest of its
+    /// burst, [`Authority::revert_range`]): the state before it is rebuilt
+    /// from the log window's base, every later entry is applied again on
+    /// top (a rebase; entries that no longer apply are dropped and named),
+    /// and the result becomes a new version through a
+    /// [`Command::Revert`] logged with the GM as author. Versions only go
+    /// forward, so replicas take it like any other entry.
+    pub fn revert(&mut self, engine: &Engine, id: &CharacterId, version: u64) -> Result<Reverted, String> {
+        let range = self.revert_range(id, version).ok_or_else(|| format!("this change is too old to revert (only the last {LOG_WINDOW} changes of a character can be)"))?;
+        let c = self.chars.get(id).expect("checked");
+        let base = c.window_base();
+        let entries: Vec<&Entry> = c.log.iter().map(|i| &i.entry).collect();
+        // Which entries are taken back: this range, and those of earlier
+        // reverts that are still in force (newest first, so reverting a
+        // revert brings its entries back).
+        let mut excluded: std::collections::BTreeSet<u64> = range.clone().collect();
+        for e in entries.iter().rev() {
+            if let Command::Revert { from, to, .. } = &e.env.cmd {
+                if !excluded.contains(&e.version) && *from > base {
+                    excluded.extend(*from..=*to);
+                }
+            }
+        }
+        // Rebuild from the window's base without them. A revert reaching
+        // behind the base is kept as it is (its state is all we have).
+        let mut state = c.base.clone();
+        let mut dropped = Vec::new();
+        for e in &entries {
+            let skip = excluded.contains(&e.version) || matches!(&e.env.cmd, Command::Revert { from, .. } if *from > base);
+            if skip {
+                continue;
+            }
+            if let Err(r) = command::apply(&mut state, engine, &e.env) {
+                dropped.push(format!("{} ({})", feed::text(&e.env, &e.description), r.reason));
+            }
+        }
+        let last = entries[(*range.end() - base - 1) as usize];
+        let mut what = match &last.env.cmd {
+            Command::Revert { what, .. } => format!("the revert of {what}"),
+            _ => feed::text(&last.env, &last.description),
+        };
+        if !dropped.is_empty() {
+            what = format!("{what}, and {} later change{} that needed it", dropped.len(), if dropped.len() == 1 { "" } else { "s" });
+        }
+        let reverted = range;
+        let cmd = Command::Revert { snapshot: command::snapshot(&state), what, from: *reverted.start(), to: *reverted.end() };
+        let applied = self.apply_local(engine, id, cmd).map_err(|r| r.reason)?;
+        if !applied.accepted.changed {
+            return Err("reverting it changes nothing (a later change already undid it)".into());
+        }
+        Ok(Reverted { applied, reverted, dropped })
     }
 
     // ----- what members are sent -----
@@ -662,7 +767,10 @@ impl Authority {
 
     // ----- persistence -----
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&mut self) -> Vec<u8> {
+        for c in self.chars.values_mut() {
+            c.base_snapshot();
+        }
         let file = AuthorityFile {
             campaign: self.campaign,
             me: self.me,
@@ -684,6 +792,7 @@ impl Authority {
                     version: c.version,
                     hash: c.hash,
                     base_hash: c.base_hash,
+                    base: c.base_snapshot.clone().expect("made above"),
                     log: c.log.iter().cloned().collect(),
                     seen: c.seen.order.iter().filter_map(|id| c.seen.map.get(id).map(|o| (*id, o.clone()))).collect(),
                 })
@@ -703,13 +812,26 @@ impl Authority {
         let mut chars = BTreeMap::new();
         for s in f.characters {
             let ch = command::restore(&s.snapshot)?;
+            let base = command::restore(&s.base)?;
             let mut seen = Seen::default();
             for (id, o) in s.seen {
                 seen.insert(id, o);
             }
             chars.insert(
                 s.id,
-                CharState { name: s.name, owner: s.owner, ch, version: s.version, hash: s.hash, log: s.log.into(), base_hash: s.base_hash, seen, snapshot: Some((s.version, s.snapshot)) },
+                CharState {
+                    name: s.name,
+                    owner: s.owner,
+                    ch,
+                    version: s.version,
+                    hash: s.hash,
+                    log: s.log.into(),
+                    base_hash: s.base_hash,
+                    base,
+                    base_snapshot: Some(s.base),
+                    seen,
+                    snapshot: Some((s.version, s.snapshot)),
+                },
             );
         }
         Ok(Authority {
@@ -731,7 +853,7 @@ impl Authority {
         })
     }
 
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+    pub fn save(&mut self, path: &Path) -> std::io::Result<()> {
         persist::write_atomic(path, &self.to_bytes())
     }
 
@@ -748,7 +870,8 @@ pub(crate) fn describe_intent(env: &Envelope) -> String {
 }
 
 const MAGIC: &[u8; 4] = b"CRSA";
-const FORMAT: u16 = 1;
+/// 2: the log window's base state is stored (for reverts).
+const FORMAT: u16 = 2;
 
 /// The authority file: everything above, characters as snapshots.
 #[derive(Serialize, Deserialize)]
@@ -777,6 +900,8 @@ struct StoredCharacter {
     version: u64,
     hash: Hash,
     base_hash: Hash,
+    /// The state at the log window's base, as a snapshot.
+    base: Vec<u8>,
     log: Vec<LogItem>,
     seen: Vec<(OpId, Outcome)>,
 }
