@@ -94,6 +94,20 @@ pub fn remove(ch: &mut Character, guid: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Name of another program on the character whose data requires the
+/// program `guid` (`<required>` … `<program>Name</program>`), if any.
+pub fn required_by(ch: &Character, store: &DataStore, guid: &str) -> Option<String> {
+    let programs = ch.items("aiprograms", "aiprogram");
+    let name = programs.iter().find(|p| p.get("guid").eq_ignore_ascii_case(guid))?.get("name");
+    let doc = store.doc("programs.xml").ok()?;
+    programs.iter().filter(|p| !p.get("guid").eq_ignore_ascii_case(guid)).find_map(|p| {
+        let rec = super::magic::find_saved(&doc, "programs", "program", p)?;
+        let mut found = Vec::new();
+        rec.el().child("required")?.descendants("program", &mut found);
+        found.iter().any(|e| e.text() == name).then(|| p.get("name"))
+    })
+}
+
 /// `AIProgram.IsAdvancedProgram`.
 pub fn is_advanced(p: &Element) -> bool {
     p.get_bool("isadvancedprogram").unwrap_or(false)

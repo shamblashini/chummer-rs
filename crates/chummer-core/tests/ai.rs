@@ -189,10 +189,20 @@ fn career_programs_cost_karma_and_undo_refunds() {
     assert_eq!(adv.undo.unwrap().karma_type, KarmaExpenseType::AddAIAdvancedProgram);
     // No creation karma in career mode.
     assert_eq!(karma_for(&engine, &ch, "programs"), 0);
-    // Like Chummer, undo refunds the karma and keeps the program.
+    // Undo refunds the karma and removes the program (Chummer keeps it),
+    // unless a program the character keeps requires it.
+    let rec = program(&engine, "Clearsight Autosoft");
+    let cs = career::learn_ai_program(&mut ch, &engine, data::Record(&rec), &Purchase::default()).unwrap();
+    let cs_entry = career::entries(&ch).into_iter().find(|e| e.undo.as_ref().is_some_and(|u| u.object_id == cs)).unwrap();
+    let karma = ch.karma;
+    assert!(career::undo_expense(&mut ch, &engine, &cs_entry.guid).is_err(), "Abduction requires Clearsight Autosoft");
+    assert_eq!(ch.karma, karma);
+    assert!(ch.items("aiprograms", "aiprogram").iter().any(|p| p.get("guid") == cs));
+    ch.karma += 5;
     career::undo_expense(&mut ch, &engine, &e.guid).unwrap();
     assert_eq!(ch.karma, start + 20 - 8);
-    assert_eq!(ch.items("aiprograms", "aiprogram").len(), 2);
+    let names: Vec<String> = ch.items("aiprograms", "aiprogram").iter().map(|p| p.get("name")).collect();
+    assert_eq!(names, ["Abduction", "Clearsight Autosoft"]);
     // Not enough karma: nothing is added.
     ch.karma = 4;
     let rec = program(&engine, "Edit");
@@ -268,5 +278,5 @@ fn kits_add_programs() {
     let r = chummer_core::gm::packs::apply(&mut ch, &engine.store, engine.settings.resolve(STANDARD), &kit);
     assert!(r.added.contains(&"Program: Browse".to_owned()), "{r:?}");
     assert_eq!(r.skipped.len(), 1);
-    assert_eq!(ch.items("aiprograms", "aiprogram").len(), 1);
+    assert_eq!(ch.items("aiprograms", "aiprogram").len(), 2);
 }

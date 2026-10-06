@@ -88,10 +88,17 @@ fn undo_karma_object(ch: &mut Character, engine: &Engine, e: &ExpenseEntry) -> R
         K::BindFocus => unbind_focus(ch, engine, id),
         K::AddMartialArtTechnique => remove_technique(ch, id),
         K::ManualAdd | K::ManualSubtract | K::QuickeningMetamagic => {}
-        // Chummer has no case for these: the karma is refunded and the
-        // entry dropped, but the program stays and the spirit stays
-        // fettered.
-        K::AddAIProgram | K::AddAIAdvancedProgram | K::SpiritFettering => {}
+        // Chummer has no case for these, so its undo refunds the karma and
+        // keeps the program. Removing it matches the other purchases.
+        K::AddAIProgram | K::AddAIAdvancedProgram => {
+            if let Some(by) = crate::items::aiprogram::required_by(ch, &engine.store, id) {
+                return Err(CareerError::Refused(format!("{by} requires this program; remove {by} first")));
+            }
+            crate::items::aiprogram::remove(ch, id).map_err(CareerError::Refused)?;
+        }
+        // Chummer has no case for this either: the karma is refunded and
+        // the spirit stays fettered (see docs/likely-bugs.md).
+        K::SpiritFettering => {}
     }
     Ok(())
 }

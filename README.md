@@ -91,7 +91,7 @@ karma and 5,000¥.
 - Learn martial arts and their techniques.
 - Learn metamagics and echoes. The first one at a grade is free; each further one costs karma.
 - Buy critter powers.
-- Buy A.I. programs and Advanced Programs (undo refunds the karma and keeps the program, as in Chummer).
+- Buy A.I. programs and Advanced Programs. Undo refunds the karma and removes the program (Chummer keeps it); it is refused while another program the character has requires it.
 - Bind foci, up to MAG foci and MAG × 5 total force.
 - Fetter a spirit (Force × 3 karma) or a sprite (Force karma). A fettered spirit lowers MAG by 1.
 - Join or leave a magical group, and quicken spells.
