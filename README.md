@@ -192,7 +192,8 @@ open, save, show in the roster and recent lists, and work as linked
 contacts and in every `chummer-cli` command. Save As keeps the format of
 the open file and offers both. The file is the `.chum5` XML in the
 `.lzma` format with Chummer's default "Balanced" settings (16 MiB
-dictionary, lc 3, lp 0, pb 2, end marker). Files written by Chummer
+dictionary, lc 3, lp 0, pb 2, end marker). Files saved with any of
+Chummer's compression levels open. Files written by Chummer
 5.225 open in chummer-rs, and files written by chummer-rs open in
 Chummer 5.225.
 
