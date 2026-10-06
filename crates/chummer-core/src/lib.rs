@@ -16,6 +16,8 @@ pub mod sections;
 pub mod tree;
 pub mod attributes;
 pub mod character;
+pub mod chum5lz;
+pub mod html_color;
 pub mod contacts;
 pub mod skills;
 pub mod calc;

@@ -13,6 +13,7 @@ chummer-core = { path = "crates/chummer-core" }
 quick-xml = "0.42"
 thiserror = "2"
 anyhow = "1"
+lzma-rust2 = { version = "0.21", default-features = false, features = ["std", "encoder"] }
 
 [profile.release]
 lto = "thin"

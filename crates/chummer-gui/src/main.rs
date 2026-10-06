@@ -194,7 +194,12 @@ impl App {
     }
 
     fn open_dialog(&mut self) {
-        let files = rfd::FileDialog::new().add_filter("Chummer character", &["chum5"]).add_filter("All files", &["*"]).pick_files();
+        let files = rfd::FileDialog::new()
+            .add_filter("Chummer character", &["chum5", "chum5lz"])
+            .add_filter("Raw Chummer5 Saves", &["chum5"])
+            .add_filter("Compressed Chummer5 Saves", &["chum5lz"])
+            .add_filter("All files", &["*"])
+            .pick_files();
         for f in files.unwrap_or_default() {
             self.open(&f);
         }
@@ -204,10 +209,17 @@ impl App {
         let Some(v) = self.views.get_mut(idx) else { return false };
         let path = match (save_as, v.path()) {
             (false, Some(p)) => Some(p),
-            _ => rfd::FileDialog::new()
-                .add_filter("Chummer character", &["chum5"])
-                .set_file_name(format!("{}.chum5", v.ch.display_name()))
-                .save_file(),
+            _ => {
+                // Keep the current file's format; Chummer's Save As offers
+                // both (`DialogFilter_Chum5` / `DialogFilter_Chum5lz`).
+                let compressed = v.path().is_some_and(|p| chummer_core::chum5lz::is_chum5lz(&p));
+                let (first, second) = if compressed { (("Compressed Chummer5 Saves", "chum5lz"), ("Raw Chummer5 Saves", "chum5")) } else { (("Raw Chummer5 Saves", "chum5"), ("Compressed Chummer5 Saves", "chum5lz")) };
+                rfd::FileDialog::new()
+                    .add_filter(first.0, &[first.1])
+                    .add_filter(second.0, &[second.1])
+                    .set_file_name(format!("{}.{}", v.ch.display_name(), first.1))
+                    .save_file()
+            }
         };
         let Some(path) = path else { return false };
         match self.engine.save(&mut v.ch, &path) {
@@ -539,7 +551,7 @@ impl App {
                 if ui.button(format!("📂  {}", self.lang.tr("Open Character…"))).clicked() {
                     self.open_dialog();
                 }
-                ui.weak(self.lang.tr("or drop .chum5 files onto this window"));
+                ui.weak(self.lang.tr("or drop .chum5 or .chum5lz files onto this window"));
                 ui.add_space(16.0);
                 if self.pdfs.linked_count() == 0 && ui.button(format!("📖 {}", self.lang.tr("Link your sourcebook PDFs…"))).clicked() {
                     self.show_sources = true;
@@ -836,7 +848,7 @@ fn main() -> anyhow::Result<()> {
             "--theme" => theme_arg = args.next().and_then(|t| theme::ThemeKind::parse(&t)),
             "--new" => window = Some("new".into()),
             "-h" | "--help" => {
-                println!("usage: chummer-rs [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5 ...]");
+                println!("usage: chummer-rs [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5|file.chum5lz ...]");
                 return Ok(());
             }
             _ => files.push(PathBuf::from(a)),

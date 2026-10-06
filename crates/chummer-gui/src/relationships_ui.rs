@@ -144,7 +144,6 @@ impl RelationshipsPanel {
             let startup = startup.get_or_insert_with(contacts::startup_dir);
             let state = match contacts::resolve(c, startup, owner) {
                 Some(LinkedPath::Found(p)) => LinkedCharacter::load(&p),
-                Some(LinkedPath::Unsupported(p)) => Err(format!("{}: compressed .chum5lz saves are not supported", p.display())),
                 Some(LinkedPath::Missing(f)) => Err(missing(&f)),
                 None => continue,
             };
@@ -279,7 +278,6 @@ impl RelationshipsPanel {
                 if ui.button(lang.tr("Open Character")).clicked() {
                     match contacts::resolve(c, &contacts::startup_dir(), ch.file.as_deref()) {
                         Some(LinkedPath::Found(p)) => request_open(ui.ctx(), p),
-                        Some(LinkedPath::Unsupported(p)) => *status = Some((format!("{}: compressed .chum5lz saves are not supported", p.display()), true)),
                         _ => *status = Some((lang.tr_fmt("The save file {0} could not be found.", &[&c.get("file")]), true)),
                     }
                     ui.close();

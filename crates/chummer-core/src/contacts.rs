@@ -3,6 +3,7 @@
 //!
 //! All three live in `<contacts>/<contact>` and differ by `<type>`
 //! (`Contact.EntityType`). Any of them can be linked to another `.chum5`
+//! or `.chum5lz`
 //! (`Contact.FileName` / `RelativeFileName`); while the linked file loads,
 //! Chummer shows its name, metatype, gender, age and mugshots in place of
 //! the contact's own, but still saves the contact's own fields.
@@ -105,6 +106,77 @@ pub fn set_field(ch: &mut Character, guid: &str, key: &str, value: &str) -> bool
     c.set_child_text(key, value);
     ch.dirty = true;
     true
+}
+
+/// The notes colour (`Contact.NotesColor`) as RGB: `<notesColor>`, or
+/// the default (Chocolate) when it is missing or unreadable.
+pub fn notes_color(c: &Element) -> [u8; 3] {
+    crate::html_color::parse(&c.get("notesColor"))
+        .or_else(|| crate::html_color::parse(crate::html_color::DEFAULT_NOTES_COLOR))
+        .expect("default colour parses")
+}
+
+/// The notes dialog's colour picker: save the colour as
+/// `ColorTranslator.ToHtml` does. Returns whether it changed.
+pub fn set_notes_color(ch: &mut Character, guid: &str, rgb: [u8; 3]) -> bool {
+    let Some(c) = ch.items("contacts", "contact").into_iter().find(|c| c.get("guid").eq_ignore_ascii_case(guid)) else { return false };
+    if notes_color(c) == rgb {
+        return false;
+    }
+    set_field(ch, guid, "notesColor", &crate::html_color::to_html(rgb))
+}
+
+/// The contact's display colour (`Contact.PreferredColor`, `<colour>`,
+/// the ARGB the `ContactControl` background is painted with), when it is
+/// not the default. Chummer has no editor for it; it only comes from
+/// files.
+pub fn preferred_color(c: &Element) -> Option<[u8; 4]> {
+    let v = c.get_i32("colour")?;
+    crate::html_color::is_custom_contact_colour(v).then(|| crate::html_color::from_argb(v))
+}
+
+fn is_contact(n: &crate::xml::Node, guid: &str) -> bool {
+    matches!(n, crate::xml::Node::Element(e) if e.name == "contact" && e.get("guid").eq_ignore_ascii_case(guid))
+}
+
+/// Drag and drop: move the contact `guid` to just before (or, with
+/// `after`, just after) the contact `target`. Chummer keeps contacts in
+/// `<contacts>` in list order and has no sort-order field, so the new
+/// order is saved as the element order. Returns whether anything moved.
+pub fn move_contact(ch: &mut Character, guid: &str, target: &str, after: bool) -> bool {
+    let Some(list) = ch.doc.child("contacts").map(|c| &c.children) else { return false };
+    let (Some(from), Some(_)) = (list.iter().position(|n| is_contact(n, guid)), list.iter().position(|n| is_contact(n, target))) else { return false };
+    if guid.eq_ignore_ascii_case(target) {
+        return false;
+    }
+    let mut moved = list.clone();
+    let node = moved.remove(from);
+    let at = moved.iter().position(|n| is_contact(n, target)).expect("target is still there");
+    moved.insert(if after { at + 1 } else { at }, node);
+    let order = |l: &[crate::xml::Node]| -> Vec<String> {
+        l.iter().filter_map(|n| match n {
+            crate::xml::Node::Element(e) if e.name == "contact" => Some(e.get("guid")),
+            _ => None,
+        }).collect()
+    };
+    if order(&moved) == order(list) {
+        return false;
+    }
+    ch.items_mut("contacts").children = moved;
+    true
+}
+
+/// Move up / Move down: swap places with the previous (`up`) or next
+/// entry of the same type. Returns whether it moved.
+pub fn move_step(ch: &mut Character, guid: &str, up: bool) -> bool {
+    let Some(c) = ch.items("contacts", "contact").into_iter().find(|c| c.get("guid").eq_ignore_ascii_case(guid)) else { return false };
+    let same: Vec<String> = of_type(ch, ContactType::of(c)).iter().map(|c| c.get("guid")).collect();
+    let Some(i) = same.iter().position(|g| g.eq_ignore_ascii_case(guid)) else { return false };
+    let neighbour = if up { i.checked_sub(1) } else { Some(i + 1).filter(|&j| j < same.len()) };
+    match neighbour {
+        Some(j) => move_contact(ch, guid, &same[j].clone(), !up),
+        None => false,
+    }
 }
 
 /// Remove a contact (and improvements it was the source of).
@@ -265,8 +337,6 @@ pub enum LinkedPath {
     /// Neither `<file>` nor `<relative>` exists (Chummer's
     /// `Message_FileNotFound`, with the `<file>` path).
     Missing(String),
-    /// A `.chum5lz` (compressed) save, which chummer-rs cannot read.
-    Unsupported(PathBuf),
 }
 
 /// The file of a linked contact, like `Contact.RefreshLinkedCharacter`:
@@ -294,14 +364,9 @@ pub fn resolve(c: &Element, startup: &Path, owner: Option<&Path>) -> Option<Link
     }
     let found = candidates.into_iter().find(|p| p.is_file());
     Some(match found {
-        Some(p) if is_chum5lz(&p) => LinkedPath::Unsupported(p),
         Some(p) => LinkedPath::Found(p),
         None => LinkedPath::Missing(file),
     })
-}
-
-fn is_chum5lz(p: &Path) -> bool {
-    p.extension().is_some_and(|e| e.eq_ignore_ascii_case("chum5lz"))
 }
 
 /// What Chummer shows from a linked character.
@@ -320,9 +385,6 @@ pub struct LinkedCharacter {
 
 impl LinkedCharacter {
     pub fn load(path: &Path) -> Result<LinkedCharacter, String> {
-        if is_chum5lz(path) {
-            return Err(format!("{}: compressed .chum5lz saves are not supported", path.display()));
-        }
         let ch = Character::load(path).map_err(|e| e.to_string())?;
         Ok(LinkedCharacter::of(&ch, path))
     }

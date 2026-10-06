@@ -15,19 +15,60 @@ pub fn contacts(ctx: &Ctx) -> Element {
     out
 }
 
+/// The character a contact is linked to, when its file resolves and
+/// loads (`Contact.LinkedCharacter`).
+fn linked_character(ctx: &Ctx, c: &Element) -> Option<crate::character::Character> {
+    use crate::contacts::{self, LinkedPath};
+    match contacts::resolve(c, &contacts::startup_dir(), ctx.ch.file.as_deref())? {
+        LinkedPath::Found(p) => crate::character::Character::load(&p).ok(),
+        LinkedPath::Missing(_) => None,
+    }
+}
+
+/// `Contact.Print`. While the contact is linked to a character file that
+/// loads, the name, metatype, gender, age and mugshots are the linked
+/// character's (`Contact.Name` etc. read through `LinkedCharacter`).
 fn contact(ctx: &Ctx, c: &Element) -> Element {
+    let linked = linked_character(ctx, c);
     let mut out = Element::new("contact");
     copy(&mut out, c, "guid");
-    copy(&mut out, c, "name");
+    match &linked {
+        // `Character.CharacterName`: alias, else name, else "Unnamed Character".
+        Some(l) => {
+            let name = [l.field("alias"), l.field("name")].into_iter().find(|s| !s.trim().is_empty()).unwrap_or_else(|| ctx.s("String_UnnamedCharacter"));
+            add(&mut out, "name", name);
+        }
+        None => copy(&mut out, c, "name"),
+    }
     add(&mut out, "role", ctx.lang.data_name("contacts.xml", "", &c.get("role")));
     copy(&mut out, c, "location");
     let connection = c.get_i32("connection").unwrap_or(0);
     let shown = if c.get_bool("group").unwrap_or(false) { format!("{}({connection})", ctx.s("String_Group")) } else { connection.to_string() };
     add(&mut out, "connection", shown);
     add(&mut out, "loyalty", c.get_i32("loyalty").unwrap_or(0).to_string());
-    add(&mut out, "metatype", c.get("metatype"));
-    add(&mut out, "gender", [c.get("gender"), c.get("sex")].into_iter().find(|s| !s.is_empty()).unwrap_or_default());
-    for f in ["age", "contacttype", "preferredpayment", "hobbiesvice", "personallife"] {
+    // `DisplayMetatypeMethod`: "Metatype (Metavariant)" of the linked
+    // character, else the contact's own text, through metatypes.xml.
+    let metatype = match &linked {
+        Some(l) => {
+            let mt = ctx.lang.data_name("metatypes.xml", "", &l.field("metatype"));
+            let variant = l.field("metavariant");
+            if variant.is_empty() {
+                mt
+            } else {
+                format!("{mt}{}({})", ctx.space(false), ctx.lang.data_name("metatypes.xml", "", &variant))
+            }
+        }
+        None => ctx.lang.data_name("metatypes.xml", "", &c.get("metatype")),
+    };
+    add(&mut out, "metatype", metatype);
+    let (gender, age) = match &linked {
+        // `Character.Gender` / `Character.Age`.
+        Some(l) => (l.field("gender"), l.field("age")),
+        None => ([c.get("gender"), c.get("sex")].into_iter().find(|s| !s.is_empty()).unwrap_or_default(), c.get("age")),
+    };
+    add(&mut out, "gender", ctx.lang.data_name("contacts.xml", "", &gender));
+    add(&mut out, "age", ctx.lang.data_name("contacts.xml", "", &age));
+    for f in ["contacttype", "preferredpayment", "hobbiesvice", "personallife"] {
         add(&mut out, f, ctx.lang.data_name("contacts.xml", "", &c.get(f)));
     }
     let kind = c.child_text("type").filter(|t| !t.is_empty()).unwrap_or_else(|| "Contact".into());
@@ -36,6 +77,8 @@ fn contact(ctx: &Ctx, c: &Element) -> Element {
     copy_bool(&mut out, c, "blackmail");
     copy_bool(&mut out, c, "family");
     ctx.notes(&mut out, c);
+    // `Contact.PrintMugshots`: the linked character's, else the contact's own.
+    super::character::mugshots_of(linked.as_ref().map_or(c, |l| &l.doc), &mut out);
     out
 }
 

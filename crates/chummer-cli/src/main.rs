@@ -1,4 +1,5 @@
-//! chummer-cli: inspect and check `.chum5` characters from a terminal.
+//! chummer-cli: inspect and check `.chum5` / `.chum5lz` characters from a
+//! terminal.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -16,6 +17,8 @@ const USAGE: &str = "\
 chummer-cli — Shadowrun 5e character tools (chummer-rs)
 
 USAGE:
+    Character files are .chum5 or compressed .chum5lz (by extension).
+
     chummer-cli info <file.chum5>          Show a character sheet summary
     chummer-cli skills <file.chum5>        List skills with dice pools
     chummer-cli items <file.chum5>         List gear, ware, weapons and more
@@ -130,7 +133,7 @@ fn run(args: &[String]) -> Result<()> {
 fn one_file(rest: &[String]) -> Result<&Path> {
     match rest {
         [f] => Ok(Path::new(f)),
-        _ => bail!("expected one .chum5 file"),
+        _ => bail!("expected one .chum5 or .chum5lz file"),
     }
 }
 
@@ -251,7 +254,7 @@ fn check(engine: &Engine, targets: &[String]) -> Result<()> {
         if p.is_dir() {
             for e in std::fs::read_dir(&p)? {
                 let f = e?.path();
-                if f.extension().is_some_and(|x| x == "chum5") {
+                if chummer_core::chum5lz::is_character_file(&f) {
                     files.push(f);
                 }
             }
@@ -260,7 +263,7 @@ fn check(engine: &Engine, targets: &[String]) -> Result<()> {
         }
     }
     if files.is_empty() {
-        bail!("no .chum5 files given");
+        bail!("no .chum5 or .chum5lz files given");
     }
     files.sort();
     let mut problems = 0;
@@ -490,7 +493,7 @@ fn new_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
 /// `sheet`: render a character with an XSLT sheet (Chummer's
 /// CharacterSheetViewer, as a command).
 fn sheet_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
-    let Some(file) = rest.first() else { bail!("expected a .chum5 file") };
+    let Some(file) = rest.first() else { bail!("expected a .chum5 or .chum5lz file") };
     let opt = |k: &str| rest.iter().position(|a| a == k).and_then(|i| rest.get(i + 1)).cloned();
     let flag = |k: &str| rest.iter().any(|a| a == k);
     let lang_code = opt("--lang").unwrap_or_else(|| "en-us".into());

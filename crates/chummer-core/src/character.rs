@@ -75,7 +75,7 @@ pub fn uses_priority_tables(build_method: &str) -> bool {
 
 impl Character {
     pub fn load(path: &Path) -> Result<Character, LoadError> {
-        let src = std::fs::read_to_string(path).map_err(|e| LoadError::Io(path.to_owned(), e))?;
+        let src = crate::chum5lz::read_text(path).map_err(|e| LoadError::Io(path.to_owned(), e))?;
         let mut c = Character::from_str(&src).map_err(|e| match e {
             LoadError::Xml(_, x) => LoadError::Xml(path.to_owned(), x),
             LoadError::NotCharacter(_, r) => LoadError::NotCharacter(path.to_owned(), r),
@@ -194,10 +194,10 @@ impl Character {
         self.to_document().to_xml_string()
     }
 
+    /// Write the character; a `.chum5lz` path is LZMA-compressed like
+    /// Chummer's compressed saves.
     pub fn save(&mut self, path: &Path) -> std::io::Result<()> {
-        let tmp = path.with_extension("chum5.tmp");
-        std::fs::write(&tmp, self.to_xml_string())?;
-        std::fs::rename(&tmp, path)?;
+        crate::chum5lz::write_text(path, &self.to_xml_string())?;
         self.file = Some(path.to_owned());
         self.dirty = false;
         Ok(())
