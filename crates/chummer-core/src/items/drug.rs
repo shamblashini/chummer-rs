@@ -291,6 +291,7 @@ pub fn effects(drug: &Element) -> Effects {
 /// Nuyen cost of one dose (`Drug.Cost`): each active component's cost at
 /// its level (`DrugComponent.CostPerLevel`). Chummer applies no grade
 /// multiplier here.
+// LIKELY-BUG(LB-05): the drug grade's <cost> multiplier (Street Cooked 0.5, Pharmaceutical 2, Designer 6) is not applied. See docs/likely-bugs.md.
 pub fn cost(drug: &Element) -> f64 {
     let attrs = expr::NoAttributes;
     drug.child("drugcomponents")

@@ -304,11 +304,15 @@ cargo test --workspace
 
 ## Not done yet
 
+- Places where chummer-rs copies (or fixes) what looks like a Chummer5a
+  bug are listed, with rules references, in
+  [docs/likely-bugs.md](docs/likely-bugs.md).
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
 - Some career-mode details:
   - Enchantments, rituals and enhancements learned at a grade.
   - Binding stacked foci (undo of a stacked focus binding works).
   - The Living Persona's matrix bonuses.
+  - Essence loss under the RAW rules (career characters keep their essence-loss improvements).
 - PDF export needs a browser's Print to PDF; no converter is bundled.
 - Settings files:
   - "Change Settings File" in creation mode only offers presets with the same build method. Chummer re-runs metatype and priority selection to switch build methods.

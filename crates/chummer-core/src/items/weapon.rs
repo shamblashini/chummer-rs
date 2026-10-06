@@ -700,6 +700,7 @@ pub fn own_cost(w: &Element, parent: Option<&Element>) -> f64 {
 /// of equipped accessories, or 1. `WeaponAccessory.Load` reads the
 /// multiplier from the saved element (default 1) and `Save` never writes
 /// it, so a loaded Vintage accessory no longer doubles the others.
+// LIKELY-BUG(LB-04): `accessory_element` does not copy `accessorycostmultiplier`, so Vintage never doubles accessory costs. See docs/likely-bugs.md.
 fn accessory_multiplier(w: &Element) -> f64 {
     let m: i32 = accessories(w).filter(|a| equipped(a)).map(|a| a.get_i32("accessorycostmultiplier").unwrap_or(1)).filter(|m| *m != 1).sum();
     if m == 0 { 1.0 } else { f64::from(m) }
@@ -1409,6 +1410,7 @@ fn dice_pool(c: &W<'_>) -> i32 {
             modifier += c.imps().val("Smartlink", None);
         }
         modifier += c.imps().val("WeaponCategoryDice", Some(&c.get("category")));
+        // LIKELY-BUG(LB-11): WeaponSpecificDV/AP/Accuracy/Range improvements are added to the dice pool. See docs/likely-bugs.md.
         // Chummer adds all weapon-specific improvements here.
         let guid = c.get("guid");
         for k in ["WeaponSpecificDice", "WeaponSpecificDV", "WeaponSpecificAP", "WeaponSpecificAccuracy", "WeaponSpecificRange"] {

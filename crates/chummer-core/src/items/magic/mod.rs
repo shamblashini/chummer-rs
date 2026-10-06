@@ -132,6 +132,7 @@ pub(crate) fn data_dec(e: &Element, k: &str) -> String {
 /// text. (`XmlNode.IsNullOrInnerTextIsEmpty` also treats nodes such as
 /// `<bonus><unarmeddvphysical /></bonus>` as empty, which would lose the
 /// bonus on save; the 5.18x-5.20x saves kept them, and so does this port.)
+// LIKELY-BUG(LB-25): deviates from Chummer (fixed here). See docs/likely-bugs.md.
 pub(crate) fn inner_text_empty(e: &Element) -> bool {
     e.elements().next().is_none() && e.text().trim().is_empty()
 }

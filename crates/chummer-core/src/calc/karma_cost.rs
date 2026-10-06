@@ -21,6 +21,7 @@ fn named<'a>(ch: &'a Character, kind: &'a str, name: &'a str) -> Vec<&'a Improve
 
 /// Flat extra for the levels of `lower+1..=upper` an improvement's
 /// Minimum/Maximum window covers.
+// LIKELY-BUG(LB-03): a window that ends below `lower` gives a negative level count (a surcharge), and `modifiers` skips windows whose Minimum is above `lower`. See docs/likely-bugs.md.
 fn window_extra(i: &Improvement, lower: i32, upper: i32) -> f64 {
     let max = if i.max == 0.0 { i32::MAX } else { i.max as i32 };
     i.val * f64::from(upper.min(max) - lower.max(i.min as i32 - 1))

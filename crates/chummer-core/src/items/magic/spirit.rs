@@ -119,6 +119,7 @@ pub fn check_release(ch: &Character, spirit: &Element) -> Result<(), String> {
 /// Set `<fettered>` and the MAG −1 augment a fettered spirit (not a
 /// sprite) costs, as an `Attribute` improvement from `SpiritFettering`.
 /// Releasing removes every `SpiritFettering` improvement.
+// LIKELY-BUG(LB-32): a fettered spirit does not get the Banishing Resistance power (SG p. 192), in Chummer either. See docs/likely-bugs.md.
 pub fn set_fettered(ch: &mut Character, guid: &str, fettered: bool) -> Result<(), String> {
     let s = super::super::find_by_guid_mut(ch.items_mut("spirits"), guid).ok_or_else(|| format!("spirit {guid} not found"))?;
     s.set_child_text("fettered", crate::improvement::bool_str(fettered));

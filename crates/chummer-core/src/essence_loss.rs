@@ -3,7 +3,8 @@
 //!
 //! Ported: the RAW creation-mode branch, the
 //! `SpecialKarmaCostBasedOnShownValue` house rule (both modes), and the
-//! Cyberzombie attribute adjustment. Career mode under RAW is not ported:
+//! Cyberzombie attribute adjustment. Career mode under RAW is not ported
+//! (LIKELY-BUG(LB-33), see docs/likely-bugs.md):
 //! it burns karma levels and power points incrementally against the
 //! improvements from the previous call, so [`refresh`] leaves a career
 //! character's essence-loss improvements as they are.

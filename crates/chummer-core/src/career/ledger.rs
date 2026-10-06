@@ -328,6 +328,7 @@ fn manual_amount(m: &ManualExpense) -> Result<f64, CareerError> {
 ///
 /// Chummer logs the nuyen at `WftP` but deducts it at `WftM`; this port
 /// uses `WftP` for both so the log always matches the balance.
+// LIKELY-BUG(LB-24): deviates from Chummer (fixed here). See docs/likely-bugs.md.
 pub fn karma_gained(ch: &mut Character, cr: &CareerRules, m: &ManualExpense) -> Result<String, CareerError> {
     require_career(ch)?;
     let amount = manual_amount(m)?;

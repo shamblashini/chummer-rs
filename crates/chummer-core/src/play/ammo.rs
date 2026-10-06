@@ -641,6 +641,7 @@ pub fn reload(ch: &mut Character, weapon_guid: &str, ammo: Option<&str>, count: 
             // Just top up the currently loaded ammo.
             let top_up = count - qty(&cur);
             let new_count = if top_up > qty(&sel_el) {
+                // LIKELY-BUG(LB-20): deviates from Chummer (fixed here). See docs/likely-bugs.md.
                 // Chummer subtracts here (`Quantity - selected.Quantity`)
                 // while its comment says the stacks merge; they merge.
                 let merged = qty(&cur) + qty(&sel_el);

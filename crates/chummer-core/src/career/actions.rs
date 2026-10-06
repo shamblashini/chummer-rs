@@ -52,6 +52,7 @@ pub(super) fn degrade_attribute(ch: &mut Character, rules: &Rules, abbrev: &str)
 /// Permanently burn a point of Edge (`cmdBurnEdge_Click`). Chummer logs
 /// no expense for it and nothing is refunded: the point comes off the
 /// karma levels, then the base points, then the metatype minimum.
+// LIKELY-BUG(LB-40): not a bug (checked). See docs/likely-bugs.md.
 pub fn burn_edge(ch: &mut Character, engine: &Engine) -> Result<(), CareerError> {
     require_career(ch)?;
     let rules = CareerRules::for_character(engine, ch).rules;

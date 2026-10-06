@@ -230,6 +230,7 @@ pub fn gear(ctx: &Ctx, item: &Element, parent: GearParent) -> Element {
     add(&mut out, "rating", item.get_i32("rating").unwrap_or(0).to_string());
     add(&mut out, "qty", display_qty(ctx, item));
     ctx.add_avail(&mut out, gear_avail(ctx, item), true);
+    // LIKELY-BUG(LB-07): top-level gear prints an <owncost> of 1 / CostFor, not its cost. See docs/likely-bugs.md.
     // `Gear.OwnCost` is `(pre * Parent?.ChildCostMultiplier ?? 1) / CostFor`:
     // without a gear or armor parent the product is null, so Chummer
     // prints `1 / CostFor`.

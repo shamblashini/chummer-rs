@@ -158,6 +158,7 @@ fn apply_rules(d: &mut SpellDesign) {
             if !m(d, 4) {
                 exclusive(d, 5, &[4]);
             }
+            // LIKELY-BUG(LB-21): deviates from Chummer (fixed here). See docs/likely-bugs.md.
             // If Extended Area is selected, Area must also be selected. (The
             // form tests the Active box here, a slip; this follows its comment.)
             if m(d, 14) {
@@ -381,6 +382,7 @@ pub fn descriptors(d: &SpellDesign) -> String {
             if m(2) {
                 v.push("Indirect");
             }
+            // LIKELY-BUG(LB-02): area combat spells get no "Area" descriptor, so Witness My Hate (Direct,NOT(Area)) applies to them. See docs/likely-bugs.md.
             // Chummer tests the range combo's value ("T"/"LOS"), which never
             // contains "(A)", so combat spells never get an Area descriptor.
             if d.range.contains("(A)") {

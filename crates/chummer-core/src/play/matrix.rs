@@ -66,6 +66,7 @@ fn eval(s: &str, rating: i32) -> i32 {
 
 /// `Cyberware.Grade.DeviceRating` (the grades in cyberware.xml and
 /// bioware.xml).
+// LIKELY-BUG(LB-31): hard-coded by grade name; Chummer reads the grade's <devicerating> (bioware grades: 0) and uses this table only as a fallback. See docs/likely-bugs.md.
 fn grade_device_rating(grade: &str) -> i32 {
     for (prefix, dr) in [("Alphaware", 3), ("Betaware", 4), ("Deltaware", 5), ("Gammaware", 6)] {
         if grade.starts_with(prefix) {

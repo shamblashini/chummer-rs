@@ -275,6 +275,7 @@ pub enum LinkedPath {
 /// directory). chummer-rs also looks for the file next to the owner's
 /// save, so links made on Windows (`C:\...`) work once the files are
 /// copied over together. `None` when the contact is not linked.
+// LIKELY-BUG(LB-22): Chummer never loads a contact's <relative>; chummer-rs reads it (fixed here). See docs/likely-bugs.md.
 pub fn resolve(c: &Element, startup: &Path, owner: Option<&Path>) -> Option<LinkedPath> {
     let file = c.get("file");
     if file.is_empty() {

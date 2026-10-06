@@ -292,6 +292,7 @@ fn calculated_dv(ctx: &Ctx, item: &Element) -> String {
             let substituted = expr::substitute_attributes(&e, &crate::calc::SheetAttributes(&ctx.sheet.attributes));
             match expr::evaluate_num(&substituted) {
                 Ok(v) => drain = standard_round(v),
+                // LIKELY-BUG(LB-12): a non-numeric DV such as "Special" prints as "Special(Special)". See docs/likely-bugs.md.
                 Err(_) => append = e,
             }
         }
