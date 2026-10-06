@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use anyhow::{bail, Context, Result};
 use chummer_core::attributes;
 use chummer_core::character::Character;
+use chummer_core::command::{self, Command, Envelope, Session};
 use chummer_core::data;
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
@@ -25,6 +26,14 @@ USAGE:
     chummer-cli check <file|dir>...        Load and recompute; report problems
     chummer-cli search <text> [kind]       Search game data (kind e.g. Gear)
     chummer-cli kinds                      List searchable data kinds
+
+    chummer-cli hash <file.chum5>          Print the character's state hash (BLAKE3)
+    chummer-cli apply <file.chum5> <log.json> [-o <out.chum5>]
+                                           Apply commands (a JSON array of
+                                           envelopes or commands) and print
+                                           what each did; without -o nothing
+                                           is written
+    chummer-cli commands                   Print an example of every command as JSON
 
     chummer-cli export <file.chum5> <XML|JSON|stylesheet> -o <out>   Export a character
     chummer-cli roster <dir>...            List characters in folders
@@ -98,6 +107,18 @@ fn run(args: &[String]) -> Result<()> {
         "settings" => settings_cmd(&Engine::load()?, rest),
         "new" => new_cmd(&Engine::load()?, rest),
         "export" => export_cmd(&Engine::load()?, rest),
+        "hash" => {
+            let ch = load(one_file(rest)?)?;
+            println!("{}", command::hex(&command::state_hash(&ch)));
+            Ok(())
+        }
+        "apply" => apply_cmd(&Engine::load()?, rest),
+        "commands" => {
+            for c in Command::examples() {
+                println!("{}", serde_json_line(&c));
+            }
+            Ok(())
+        }
         "roster" => {
             let dirs: Vec<PathBuf> = rest.iter().map(PathBuf::from).collect();
             for e in chummer_core::roster::scan(&dirs) {
@@ -128,6 +149,42 @@ fn run(args: &[String]) -> Result<()> {
         }
         other => bail!("unknown command {other:?}\n\n{USAGE}"),
     }
+}
+
+fn serde_json_line(c: &Command) -> String {
+    let e = Envelope::new(c.clone(), 0, 0, "");
+    let json = e.to_json();
+    // Just the command part of the envelope.
+    let start = json.find("\"cmd\":").map_or(0, |i| i + 6);
+    let end = json.rfind(",\"seed\"").unwrap_or(json.len());
+    json[start..end].to_owned()
+}
+
+/// `apply <file> <log.json> [-o <out>]`: run a command log through
+/// `command::apply`, the same entry point the GUI uses.
+fn apply_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
+    let (file, log, out) = match rest {
+        [f, l] => (f, l, None),
+        [f, l, o, out] if o == "-o" => (f, l, Some(out)),
+        _ => bail!("usage: chummer-cli apply <file.chum5> <log.json> [-o <out.chum5>]"),
+    };
+    let mut session = Session::new(load(Path::new(file))?);
+    let json = std::fs::read_to_string(log).with_context(|| format!("reading {log}"))?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+    let envelopes = command::parse_log(&json, now).with_context(|| format!("{log} is not a command log"))?;
+    for (i, env) in envelopes.into_iter().enumerate() {
+        match session.apply_envelope(engine, env) {
+            Ok(r) if r.changed => println!("{:>3}  {}", i + 1, r.description),
+            Ok(_) => println!("{:>3}  (no change)", i + 1),
+            Err(e) => bail!("command {} rejected: {e}", i + 1),
+        }
+    }
+    println!("version {}  hash {}", session.version(), command::hex(&session.state_hash()));
+    if let Some(out) = out {
+        session.save(engine, Path::new(out)).with_context(|| format!("writing {out}"))?;
+        println!("wrote {out}");
+    }
+    Ok(())
 }
 
 fn one_file(rest: &[String]) -> Result<&Path> {

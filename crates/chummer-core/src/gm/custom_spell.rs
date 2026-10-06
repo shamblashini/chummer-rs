@@ -14,7 +14,7 @@ use crate::xml::Element;
 pub const MODIFIER_SLOTS: usize = 14;
 
 /// The form's state.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SpellDesign {
     pub name: String,
     /// A `spells.xml` category, e.g. "Combat".

@@ -5,6 +5,7 @@
 
 use chummer_core::career;
 use chummer_core::character::Character;
+use chummer_core::command::Command;
 use chummer_core::engine::Engine;
 use chummer_core::items::aiprogram;
 use chummer_core::lang::Language;
@@ -15,7 +16,7 @@ use crate::pdf_ui::Status;
 
 /// The program list with its summary. Returns whether the character
 /// changed.
-pub fn tab(ui: &mut egui::Ui, ch: &mut Character, engine: &Engine, lang: &Language, status: &mut Status) -> bool {
+pub fn tab(ui: &mut egui::Ui, ch: &mut crate::doc::Doc, engine: &Engine, lang: &Language, status: &mut Status) -> bool {
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
         if ch.created {
@@ -66,10 +67,7 @@ pub fn tab(ui: &mut egui::Ui, ch: &mut Character, engine: &Engine, lang: &Langua
         }
     });
     if let Some(g) = remove {
-        match aiprogram::remove(ch, &g) {
-            Ok(()) => changed = true,
-            Err(e) => *status = Some((e, true)),
-        }
+        changed = ch.run(Command::RemoveAiProgram { guid: g }, status).is_some();
     }
     changed
 }

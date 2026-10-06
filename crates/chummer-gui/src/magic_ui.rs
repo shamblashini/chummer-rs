@@ -10,6 +10,7 @@ use chummer_core::bonus::Choice;
 use chummer_core::calc::Sheet;
 use chummer_core::career;
 use chummer_core::character::Character;
+use chummer_core::command::{Command, RecordRef};
 use chummer_core::data::{self, DataStore, Record};
 use chummer_core::engine::Engine;
 use chummer_core::items::magic::{self, account, martialart, mentor, metamagic, power, spell, spirit};
@@ -21,6 +22,7 @@ use chummer_core::sources::SourcebookLibrary;
 use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
+use crate::doc::Doc;
 use crate::pdf_ui::Status;
 use crate::select::{self, SelectDialog};
 
@@ -242,14 +244,14 @@ pub struct MagicEditor {
 
 impl MagicEditor {
     /// The mentor spirit and foci, shown once per page.
-    pub fn shared_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+    pub fn shared_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
         let changed = self.mentor_ui(ui, ch, cx, status);
         changed | foci_ui(ui, ch, cx, status)
     }
 
     /// The editor for one sub-section (`container`). Returns true if the
     /// character changed.
-    pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, container: &str, status: &mut Status) -> bool {
+    pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, container: &str, status: &mut Status) -> bool {
         let mut changed = false;
         changed |= match container {
             "spells" => self.spells_ui(ui, ch, cx, status),
@@ -264,7 +266,7 @@ impl MagicEditor {
 
     // ----- spells -----
 
-    fn spells_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+    fn spells_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
         let mut changed = false;
         let lang = cx.lang;
         ui.horizontal(|ui| {
@@ -304,7 +306,7 @@ impl MagicEditor {
     }
 
     /// The `SelectSpell` checkboxes for the picked spell, then add it.
-    fn spell_options_window(&mut self, ctx: &egui::Context, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+    fn spell_options_window(&mut self, ctx: &egui::Context, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
         let Some(p) = self.pending_spell.as_mut() else { return false };
         let rec = Record(&p.rec);
         let mut add = false;
@@ -348,18 +350,14 @@ impl MagicEditor {
         let p = self.pending_spell.take().expect("checked above");
         let rec = Record(&p.rec);
         let name = rec.name();
-        if ch.created {
-            report(status, career::learn_spell_with(ch, cx.engine, cx.store, rec, p.answer.as_deref(), &p.opts), |_| format!("Learned {name}"))
-        } else {
-            spell::add(ch, cx.store, rec, p.answer.as_deref(), &p.opts);
-            *status = Some((format!("Added {name}"), false));
-            true
-        }
+        let cmd = Command::AddSpell { record: RecordRef::of(rec), answer: p.answer.clone(), options: p.opts.clone() };
+        let learned = if ch.created { format!("Learned {name}") } else { format!("Added {name}") };
+        report(status, ch.apply(cmd), |_| learned)
     }
 
     // ----- mentor spirit -----
 
-    fn mentor_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+    fn mentor_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
         let mentors: Vec<Element> = ch.items("mentorspirits", "mentorspirit").into_iter().cloned().collect();
         let pending = mentor::pending_mentor_qualities(ch, cx.store);
         if mentors.is_empty() && pending.is_empty() {
@@ -418,7 +416,8 @@ impl MagicEditor {
                 let saved_ok = m.get("extrachoice1") == c1 && m.get("extrachoice2") == c2;
                 let complete = (set1.is_empty() || !c1.is_empty()) && (set2.is_empty() || !c2.is_empty());
                 if ui.add_enabled(!saved_ok && complete, egui::Button::new(lang.tr("Apply choices"))).clicked() {
-                    let r = mentor::set_mentor_choices(ch, cx.store, &guid, Some(c1.as_str()).filter(|s| !s.is_empty()), Some(c2.as_str()).filter(|s| !s.is_empty()));
+                    let cmd = Command::SetMentorChoices { mentor: guid.clone(), choice1: Some(c1).filter(|s| !s.is_empty()), choice2: Some(c2).filter(|s| !s.is_empty()) };
+                    let r = ch.apply(cmd);
                     changed |= report(status, r, |_| format!("Mentor choices set for {}", m.get("name")));
                 }
                 ui.add_space(4.0);
@@ -440,7 +439,7 @@ impl MagicEditor {
                 Pick::None => {}
                 Pick::Cancel => self.mentor = None,
                 Pick::Done(name, _) => {
-                    let r = mentor::add_mentor_for_quality(ch, cx.store, qguid, mtype, &name, None, None);
+                    let r = ch.apply(Command::ChooseMentor { quality: qguid.clone(), mentor_type: mtype.clone(), name: name.clone() });
                     changed |= report(status, r, |_| format!("{name} is now your mentor; pick its choices below"));
                     self.mentor = None;
                 }
@@ -451,9 +450,9 @@ impl MagicEditor {
 
     // ----- metamagics and echoes -----
 
-    fn metamagic_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+    fn metamagic_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
         let echo = ch.is_technomancer() && !ch.is_magician();
-        let (what, file, container, item) = if echo {
+        let (_what, file, container, item) = if echo {
             let (f, c, i) = metamagic::data_path("Echo");
             ("echo", f, c, i)
         } else {
@@ -514,14 +513,8 @@ impl MagicEditor {
                 Pick::None => {}
                 Pick::Cancel => self.metamagic = None,
                 Pick::Done(name, answer) => {
-                    let r = store.doc(file).map_err(|e| e.to_string()).and_then(|doc| {
-                        let rec = data::find(&doc, container, item, &name).ok_or_else(|| format!("unknown {what} {name}"))?;
-                        if ch.created {
-                            career::learn_metamagic(ch, cx.engine, rec, answer.as_deref(), self.metamagic_grade.unwrap_or(career_grade)).map_err(|e| e.to_string())
-                        } else {
-                            metamagic::add(ch, store, rec, answer.as_deref())
-                        }
-                    });
+                    let kind = if echo { "Echo" } else { "Metamagic" };
+                    let r = ch.apply(Command::AddMetamagic { kind: kind.into(), name: name.clone(), answer, grade: self.metamagic_grade.unwrap_or(career_grade) });
                     changed |= report(status, r, |_| format!("Added {name}"));
                     self.metamagic = None;
                 }
@@ -532,7 +525,7 @@ impl MagicEditor {
 
     // ----- martial arts -----
 
-    fn martial_arts_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+    fn martial_arts_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
         let arts: Vec<Element> = ch.items("martialarts", "martialart").into_iter().cloned().collect();
         let Ok(doc) = cx.store.doc("martialarts.xml") else { return false };
         let mut changed = false;
@@ -573,7 +566,7 @@ impl MagicEditor {
                 let can = !pick.is_empty() && (!ch.created || ch.karma >= cost);
                 if ui.add_enabled(can, egui::Button::new(label)).clicked() {
                     let t = pick.clone();
-                    let r = if ch.created { career::learn_technique(ch, cx.engine, cx.store, &guid, &t).map_err(|e| e.to_string()) } else { martialart::add_technique(ch, cx.store, &guid, &t) };
+                    let r = ch.apply(Command::LearnTechnique { art: guid.clone(), technique: t.clone() });
                     changed |= report(status, r, |_| format!("Learned {t}"));
                     pick.clear();
                 }
@@ -617,7 +610,7 @@ fn choice_sets(rec: Record<'_>) -> (Vec<String>, Vec<String>) {
 
 // ----- adept powers -----
 
-fn powers_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+fn powers_ui(ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
     let powers: Vec<Element> = ch.items("powers", "power").into_iter().cloned().collect();
     let second = cx.settings.is_some_and(|s| s.flag("mysadeptsecondmagattribute"));
     let mag = account::adept_mag(ch, cx.sheet, second);
@@ -637,7 +630,7 @@ fn powers_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut S
             if ch.created {
                 let cost = career::power_point_karma_cost(cx.engine, ch);
                 if ui.add_enabled(ch.karma >= cost, egui::Button::new(lang.tr_fmt("Buy power point ({0} karma)", &[&cost]))).clicked() {
-                    changed |= report(status, career::buy_power_point(ch, cx.engine), |_| "Bought a power point".into());
+                    changed |= report(status, ch.apply(Command::BuyPowerPoint), |_| "Bought a power point".into());
                 }
             }
         }
@@ -660,17 +653,8 @@ fn powers_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut S
                 let mut r = p.get_i32("rating").unwrap_or(1);
                 let resp = ui.add(egui::DragValue::new(&mut r).range(1..=max)).on_hover_text(lang.tr_fmt("Up to {0}", &[&max]));
                 if resp.changed() && r != p.get_i32("rating").unwrap_or(1) {
-                    let mut probe = p.clone();
-                    probe.set_child_text("rating", r.to_string());
-                    let cost_new = power::power_point_cost(ch, &probe, mag);
-                    if !ignore && cost_new > cost_now && used - cost_now + cost_new > total + 1e-9 {
-                        *status = Some((format!("Not enough power points for {} level {r}", p.get("name")), true));
-                    } else {
-                        match power::set_rating(ch, cx.store, &guid, r) {
-                            Ok(()) => changed = true,
-                            Err(e) => *status = Some((e, true)),
-                        }
-                    }
+                    // Refused when the power points run out.
+                    changed |= ch.run(Command::SetPowerRating { power: guid.clone(), rating: r }, status).is_some();
                 }
             } else {
                 ui.label("—");
@@ -686,7 +670,7 @@ fn powers_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut S
 }
 
 /// Career mode: spend karma to quicken a spell (`cmdQuickenSpell_Click`).
-fn quicken_ui(ui: &mut egui::Ui, ch: &mut Character, lang: &Language, status: &mut Status) -> bool {
+fn quicken_ui(ui: &mut egui::Ui, ch: &mut Doc, lang: &Language, status: &mut Status) -> bool {
     let spells: Vec<(String, String)> = ch.items("spells", "spell").iter().map(|s| (s.get("guid"), s.get("name"))).collect();
     if spells.is_empty() {
         return false;
@@ -705,7 +689,7 @@ fn quicken_ui(ui: &mut egui::Ui, ch: &mut Character, lang: &Language, status: &m
         ui.add(egui::DragValue::new(&mut karma).range(1..=999).suffix(" karma"));
         let can = !pick.is_empty() && ch.karma >= karma;
         if ui.add_enabled(can, egui::Button::new(lang.tr("Quicken"))).clicked() {
-            changed = report(status, career::quicken_spell(ch, &pick, karma), |_| lang.tr_fmt("Quickened ({0} karma)", &[&karma]));
+            changed = report(status, ch.apply(Command::QuickenSpell { spell: pick.clone(), karma }), |_| lang.tr_fmt("Quickened ({0} karma)", &[&karma]));
         }
     });
     ui.data_mut(|d| {
@@ -722,7 +706,7 @@ fn fmt_pp(v: f64) -> String {
 
 // ----- spirits and sprites -----
 
-fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+fn spirits_ui(ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
     let lang = cx.lang;
     let spirits: Vec<Element> = ch.items("spirits", "spirit").into_iter().cloned().collect();
     if spirits.is_empty() {
@@ -753,14 +737,15 @@ fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut 
                 c |= ui.checkbox(&mut fettered, power).changed();
             }
             if c {
-                let guid = s.get("guid");
-                let was = s.get_bool("fettered").unwrap_or(false);
-                if ch.created && fettered != was {
-                    // Career mode: fettering costs karma (Spirit.Fettered).
-                    let r = career::set_spirit_fettered(ch, cx.engine, &guid, fettered);
-                    changed |= report(status, r, |_| if fettered { format!("Fettered {}", s.get("name")) } else { format!("Released {}", s.get("name")) });
-                } else {
-                    changed |= spirit::set_state(ch, &guid, force, services, bound, fettered);
+                // Career mode: fettering costs karma (Spirit.Fettered).
+                match ch.apply(Command::SetSpiritState { spirit: s.get("guid"), force, services, bound, fettered }) {
+                    Ok(r) => {
+                        if let Some(m) = r.message {
+                            *status = Some((m, false));
+                        }
+                        changed |= r.changed;
+                    }
+                    Err(e) => *status = Some((e.reason, true)),
                 }
             }
             ui.end_row();
@@ -771,7 +756,7 @@ fn spirits_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut 
 
 // ----- foci -----
 
-fn foci_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Status) -> bool {
+fn foci_ui(ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -> bool {
     let foci: Vec<Element> = ch.items("gears", "gear").into_iter().filter(|g| matches!(g.get("category").as_str(), "Foci" | "Metamagic Foci")).cloned().collect();
     if foci.is_empty() || !ch.mag_enabled() {
         return false;
@@ -799,19 +784,19 @@ fn foci_ui(ui: &mut egui::Ui, ch: &mut Character, cx: &Ctx<'_>, status: &mut Sta
                 let resp = ui.add_enabled(was || !ch.created || ch.karma >= cost, egui::Checkbox::new(&mut on, ""));
                 if resp.changed() && on != was {
                     if on {
-                        let ok = if ch.created {
-                            report(status, career::bind_focus(ch, cx.engine, &guid), |_| format!("Bound {} for {cost} karma", g.get("name")))
-                        } else {
-                            account::bind_focus(ch, &guid).is_some()
-                        };
-                        if ok {
-                            account::set_focus_bonded(ch, cx.store, &guid, true);
-                            changed = true;
+                        match ch.apply(Command::BindFocus { gear: guid.clone() }) {
+                            Ok(r) => {
+                                if let Some(m) = r.message {
+                                    *status = Some((m, false));
+                                }
+                                changed = true;
+                            }
+                            // Creation mode refuses silently, as before.
+                            Err(e) if ch.created => *status = Some((e.reason, true)),
+                            Err(_) => {}
                         }
                     } else {
-                        account::unbind_focus(ch, &guid);
-                        account::set_focus_bonded(ch, cx.store, &guid, false);
-                        changed = true;
+                        changed |= ch.set(Command::UnbindFocus { gear: guid.clone() });
                     }
                 }
                 ui.end_row();

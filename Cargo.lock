@@ -795,9 +795,13 @@ dependencies = [
 name = "chummer-core"
 version = "0.2.0"
 dependencies = [
+ "blake3",
  "lzma-rs",
  "lzma-rust2",
+ "postcard",
  "quick-xml 0.42.0",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 

@@ -6,7 +6,7 @@ use crate::data::{DataStore, Record};
 use crate::xml::Element;
 
 /// The variants `SelectSpell` offers, plus where the spell came from.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpellOptions {
     pub limited: bool,
     pub extended: bool,

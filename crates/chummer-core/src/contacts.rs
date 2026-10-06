@@ -16,7 +16,7 @@ use crate::items::new_guid;
 use crate::xml::Element;
 
 /// `ContactType`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ContactType {
     Contact,
     Enemy,

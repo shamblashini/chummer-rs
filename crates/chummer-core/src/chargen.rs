@@ -759,8 +759,18 @@ pub fn finalize(ch: &mut Character, b: &Budget, settings: &CharacterSettings) {
 }
 
 /// The current UTC time in .NET's sortable `"s"` format, as expense dates use.
+///
+/// Inside a deterministic scope (`command::apply`) it is the command's time.
 pub fn now_iso() -> String {
+    if let Some(now) = crate::dice::scoped_now() {
+        return now;
+    }
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    iso_from_unix(secs)
+}
+
+/// Unix seconds in .NET's sortable `"s"` format (UTC).
+pub fn iso_from_unix(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let tod = secs.rem_euclid(86_400);
     // Civil-from-days (Howard Hinnant).

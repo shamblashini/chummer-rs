@@ -5,13 +5,15 @@
 //!
 //! All changes go through `chummer_core::items::edit`; this file only draws.
 
-use chummer_core::character::Character;
+use chummer_core::command::Command;
 use chummer_core::data::DataStore;
 use chummer_core::engine::Engine;
 use chummer_core::format;
 use chummer_core::items::{self, edit};
 use chummer_core::lang::Language;
 use eframe::egui::{self, RichText};
+
+use crate::doc::Doc;
 
 
 /// What the editor asks of its caller this frame.
@@ -49,7 +51,7 @@ impl Default for ItemEditor {
 }
 
 impl ItemEditor {
-    pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, engine: &Engine, lang: &Language, guid: &str) -> EditorResult {
+    pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, engine: &Engine, lang: &Language, guid: &str) -> EditorResult {
         let mut res = EditorResult::default();
         let Some(e) = edit::find(ch, guid).cloned() else {
             res.removed = true;
@@ -82,10 +84,7 @@ impl ItemEditor {
                 let mut r = e.get_i32("rating").unwrap_or(min);
                 let resp = ui.add_enabled(!career && !included, egui::DragValue::new(&mut r).range(min..=max));
                 if resp.changed() {
-                    match edit::apply_rating_change(ch, store, guid, r) {
-                        Ok(_) => res.changed = true,
-                        Err(err) => res.status = Some((err, true)),
-                    }
+                    res.changed |= ch.run(Command::SetItemRating { guid: guid.to_owned(), rating: r }, &mut res.status).is_some();
                 }
                 ui.end_row();
             }
@@ -95,7 +94,7 @@ impl ItemEditor {
                 let step = e.get_f64("costfor").filter(|c| *c > 0.0).unwrap_or(1.0);
                 let resp = ui.add_enabled(!career && !included, egui::DragValue::new(&mut q).range(1.0..=100_000.0).speed(step).max_decimals(2));
                 if resp.changed() {
-                    res.changed |= edit::set_quantity(ch, guid, q);
+                    res.changed |= ch.set(Command::SetItemQuantity { guid: guid.to_owned(), qty: q });
                 }
                 ui.end_row();
             }
@@ -103,7 +102,7 @@ impl ItemEditor {
                 ui.label(lang.tr("Equipped"));
                 let mut on = e.get_bool("equipped").unwrap_or(true);
                 if ui.checkbox(&mut on, "").changed() {
-                    res.changed |= edit::set_equipped(ch, store, guid, on);
+                    res.changed |= ch.set(Command::SetItemEquipped { guid: guid.to_owned(), on });
                 }
                 ui.end_row();
             }
@@ -111,7 +110,7 @@ impl ItemEditor {
                 ui.label(lang.tr("Wireless"));
                 let mut on = e.get_bool("wirelesson").unwrap_or(false);
                 if ui.checkbox(&mut on, "").changed() {
-                    res.changed |= edit::set_wireless(ch, store, guid, on);
+                    res.changed |= ch.set(Command::SetItemWireless { guid: guid.to_owned(), on });
                 }
                 ui.end_row();
             }
@@ -119,7 +118,7 @@ impl ItemEditor {
                 ui.label(if tag == "lifestyle" { lang.tr("Name") } else { lang.tr("Custom name") });
                 let mut v = e.get(field);
                 if ui.add(egui::TextEdit::singleline(&mut v).desired_width(180.0)).changed() {
-                    res.changed |= edit::set_text(ch, guid, field, &v);
+                    res.changed |= ch.set(Command::SetItemText { guid: guid.to_owned(), field: field.to_owned(), value: v });
                 }
                 ui.end_row();
             }
@@ -150,11 +149,11 @@ impl ItemEditor {
                     ui.add(egui::TextEdit::singleline(&mut self.new_location).hint_text(lang.tr("New location")).desired_width(90.0));
                     let name = self.new_location.trim().to_owned();
                     if ui.add_enabled(!name.is_empty(), egui::Button::new(lang.tr("Add"))).clicked() {
-                        pick = edit::add_location(ch, guid, &name);
+                        res.changed |= ch.set(Command::AddItemLocation { guid: guid.to_owned(), name });
                         self.new_location.clear();
                     }
                     if let Some(g) = pick {
-                        res.changed |= edit::set_text(ch, guid, "location", &g);
+                        res.changed |= ch.set(Command::SetItemText { guid: guid.to_owned(), field: "location".into(), value: g });
                     }
                 });
                 ui.end_row();
@@ -207,7 +206,7 @@ impl ItemEditor {
         ui.label(RichText::new(lang.tr("Notes")).strong());
         let mut notes = e.get("notes");
         if ui.add(egui::TextEdit::multiline(&mut notes).desired_width(f32::INFINITY).desired_rows(3)).changed() {
-            res.changed |= edit::set_text(ch, guid, "notes", &notes);
+            res.changed |= ch.set(Command::SetItemText { guid: guid.to_owned(), field: "notes".into(), value: notes });
         }
 
         self.children_ui(ui, ch, store, lang, guid, &tag, &mut res);
@@ -218,7 +217,7 @@ impl ItemEditor {
 
     /// Nested items and the "Add …" commands.
     #[allow(clippy::too_many_arguments)]
-    fn children_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, lang: &Language, guid: &str, tag: &str, res: &mut EditorResult) {
+    fn children_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, guid: &str, tag: &str, res: &mut EditorResult) {
         let kids = edit::children(ch, guid);
         let kinds = edit::child_kinds(ch, guid);
         if kids.is_empty() && kinds.is_empty() && tag != "vehicle" {
@@ -253,10 +252,7 @@ impl ItemEditor {
                     }
                 });
                 if ui.add_enabled(!self.mount_size.is_empty(), egui::Button::new(format!("➕ {}", lang.tr("Add Weapon Mount")))).clicked() {
-                    match edit::add_weapon_mount(ch, store, guid, &self.mount_size) {
-                        Ok(_) => res.changed = true,
-                        Err(e) => res.status = Some((e, true)),
-                    }
+                    res.changed |= ch.run(Command::AddWeaponMount { vehicle: guid.to_owned(), size: self.mount_size.clone() }, &mut res.status).is_some();
                 }
             });
         }
@@ -264,7 +260,7 @@ impl ItemEditor {
 
     /// Career mode sells (`ICanSell.Sell`), creation mode deletes.
     #[allow(clippy::too_many_arguments)]
-    fn remove_ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, lang: &Language, guid: &str, tag: &str, included: bool, res: &mut EditorResult) {
+    fn remove_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, guid: &str, tag: &str, included: bool, res: &mut EditorResult) {
         if included {
             return;
         }
@@ -273,13 +269,10 @@ impl ItemEditor {
                 ui.add(egui::DragValue::new(&mut self.sell_percent).range(0.0..=100.0).suffix(" %"));
                 let value = edit::sale_value(ch, store, guid, self.sell_percent / 100.0);
                 if ui.button(lang.tr_fmt("Sell for {0}", &[&format::nuyen(value)])).on_hover_text(lang.tr("Removes the item and adds the proceeds to the log")).clicked() {
-                    match edit::sell(ch, store, guid, self.sell_percent / 100.0) {
-                        Ok(v) => {
-                            res.status = Some((format!("Sold for {}", format::nuyen(v)), false));
-                            res.changed = true;
-                            res.removed = true;
-                        }
-                        Err(e) => res.status = Some((e.to_string(), true)),
+                    if let Some(r) = ch.run(Command::SellItem { guid: guid.to_owned(), fraction: self.sell_percent / 100.0 }, &mut res.status) {
+                        res.status = r.message.map(|m| (m, false));
+                        res.changed = true;
+                        res.removed = true;
                     }
                 }
             });
@@ -289,7 +282,7 @@ impl ItemEditor {
         let b = ui.button(RichText::new(text).color(if self.confirm_remove { crate::theme::warn(ui) } else { ui.visuals().text_color() }));
         if b.on_hover_text(lang.tr("Also removes its improvements and everything inside it")).clicked() {
             if self.confirm_remove {
-                if edit::remove(ch, guid) {
+                if ch.set(Command::DeleteItem { guid: guid.to_owned() }) {
                     res.changed = true;
                     res.removed = true;
                 }

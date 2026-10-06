@@ -47,6 +47,45 @@ apply(character, command) -> Result<Applied, Rejected>
 - The karma/nuyen ledger stays as it is; commands that spend karma or
   nuyen still write ledger entries.
 
+Implemented in `chummer_core::command` (local part, no networking):
+
+- `Command` is a serde enum (about 100 variants; `Command::examples()`
+  has one of each). It names things by stable identifiers: item, skill,
+  contact and ledger guids, data records by `<id>` with the name as a
+  fallback (`RecordRef`), improvements by index plus `<sourcename>`
+  (refused when they no longer match). Kits and imported contact files
+  travel as their XML text, so a command does not depend on files on
+  the sender's disk.
+- A command travels in an `Envelope { cmd, seed: u64, at: i64 (Unix
+  ms), author: String }`. JSON (`to_json`) is for debugging and logs;
+  postcard (`to_bytes`) is the compact wire form.
+- `apply(ch, engine, &Envelope) -> Result<Applied, Rejected>`. While it
+  runs, `items::new_guid()` draws from the envelope's seed and
+  `chargen::now_iso()` returns the envelope's time (a thread-local scope,
+  `dice::deterministic`); outside `apply` both behave as before. After a
+  successful command the essence-loss improvements are refreshed as the
+  GUI used to do after every edit (creation: always; career: when the
+  essence or the essence at special start changed; plain-text edits
+  skip it).
+- A rejected command leaves the character byte-identical to before
+  (`apply` restores its copy). `Rejected.confirm` marks a reason that
+  is a question for the user (firing with too few rounds); the UI then
+  sends a follow-up command.
+- `Applied` holds the character before the command (for undo), a
+  description for the log ("Raised Pistols to 5 (10 karma)"), an optional
+  status message and a count for bulk commands. `changed: false` means
+  there was nothing to do; nothing is recorded.
+- `Session` (one per open character) holds the log, the undo stack (100
+  steps) and the redo stack. Undo restores the state before the last
+  command exactly and takes its entry off the log; redo puts it back. Undo
+  steps store only the top-level parts of the document that changed, so
+  large mugshots are not copied 100 times. Commands with the same
+  `coalesce_key` (one text box, one spinner) less than 1.5 s apart merge
+  into one log entry and one undo step; this is safe because those
+  commands set a value outright.
+- The career ledger's own "Undo" (refund an expense) is a command,
+  `UndoExpense`, and can itself be undone.
+
 ### 2. Versions, hashes and snapshots
 
 - Each character in a campaign has a version: the number of commands
@@ -108,11 +147,28 @@ at). The GM can revert any entry.
 - `chummer-authority` (optional): the authority without a GUI, for
   groups that want a campaign online all the time.
 
+Implemented (local part):
+
+- `Session::version()` is the number of commands in the log. It is not
+  saved in the `.chum5`. Undo lowers it and redo raises it again, so a
+  version always names one state of this session's history.
+- `state_hash(ch)` is BLAKE3 of the canonical form: the saved XML
+  without `<chummerrsversion>` and the export-only totals (`<totaless>`,
+  attribute `<totalvalue>`), so the hash does not depend on the
+  chummer-rs version or on whether the file was saved. Loading a saved
+  file and saving it again gives the same XML for every test fixture.
+  A saved and reloaded character has the live session's hash.
+- `snapshot(ch)` is the canonical XML, LZMA-compressed as `.chum5lz`;
+  `restore(bytes)` loads it.
+- `replay(ch, engine, &[Envelope])` applies a log; the tests replay a
+  live session's log (with undos and merged edits) onto the original
+  file and get the same hash.
+
 ## Work order
 
 1. Persistent creation warnings and guided creation.
 2. macOS builds.
-3. The command layer, with undo/redo.
+3. The command layer, with undo/redo (done).
 4. Local GM screen and campaign file (players, NPCs, critters,
    initiative, damage), using commands.
 5. Sync between two local instances: rebasing, hashes, snapshots.

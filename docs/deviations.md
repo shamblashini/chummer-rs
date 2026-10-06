@@ -129,7 +129,8 @@ file differences.
 | Character sheets are shown in the built-in sheet viewer. | Chummer's XSLT sheets run through `xsltproc` (on a copy with two libxslt fixes) and open in the web browser. Sheets that `sheets.xml` lists but that are not shipped are left out (Chummer shows "File not found"). | No .NET or embedded browser. | no |
 | Light and dark mode. | Two themes: Classic (Chummer's Windows look) and Graphite (dark). | Native look on Linux. | no |
 | Sourcebook PDF scan. | The scan matches by title (`&` = "and"), then by each book's known text with `pdftotext`, and lists the PDFs it did not link with the reason. Links can be imported from Chummer in a Wine or Proton prefix. PDFs open in a native viewer (evince, zathura, okular, ...). | Linux; files with odd names. | no |
-| — | `chummer-cli`: info, skills, items, check, new, sheet, export, roster, search, settings, sources. | Extra. | no |
+| — | `chummer-cli`: info, skills, items, check, new, sheet, export, roster, search, settings, sources, hash, apply, commands. | Extra. | no |
+| No undo; a failed purchase can leave partial changes behind (Chummer rolls some back by hand). | Edit → Undo/Redo (100 steps per character) and a History tab. Every change is a command; a refused command leaves the character exactly as it was. Saving writes the export totals (`<totalvalue>`, `<totaless>`) into the file only, not into the open character. | Extra; groundwork for GM/player sync (docs/online-design.md). | no |
 
 ## Not implemented
 

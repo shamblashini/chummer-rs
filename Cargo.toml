@@ -32,6 +32,8 @@ clap = { version = "4", features = ["derive"] }
 toml = "1"
 rcgen = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["std"] }
+serde_json = "1"
+blake3 = "1"
 
 [profile.release]
 lto = "thin"

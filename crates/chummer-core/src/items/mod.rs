@@ -35,7 +35,7 @@ use crate::data::{DataStore, Record};
 use crate::xml::Element;
 
 /// What the buyer chose when adding an item.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Purchase {
     /// Rating, for items that have one (0 = none).
     pub rating: i32,
@@ -180,7 +180,14 @@ pub fn find_by_guid_mut<'a>(e: &'a mut Element, guid: &str) -> Option<&'a mut El
 }
 
 /// A random (v4) GUID, formatted like .NET's `Guid.ToString()`.
+///
+/// Inside a deterministic scope (`command::apply`) the GUID comes from the
+/// command's seed instead.
 pub fn new_guid() -> String {
+    if let Some(a) = crate::dice::scoped_u64() {
+        let b = crate::dice::scoped_u64().unwrap_or(0);
+        return format_guid(a, b);
+    }
     let mut rng = crate::dice::Rng::from_time();
     // Mix in a process-wide counter so GUIDs made in the same instant differ.
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -191,6 +198,11 @@ pub fn new_guid() -> String {
     }
     let a = rng.next_u64() ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let b = rng.next_u64();
+    format_guid(a, b)
+}
+
+/// A v4 GUID from 128 random bits.
+fn format_guid(a: u64, b: u64) -> String {
     let mut bytes = [0u8; 16];
     bytes[..8].copy_from_slice(&a.to_le_bytes());
     bytes[8..].copy_from_slice(&b.to_le_bytes());

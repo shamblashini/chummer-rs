@@ -292,7 +292,7 @@ pub(super) fn book_nuyen(ch: &mut Character, amount: f64, reason: impl Into<Stri
 // ---------------------------------------------------------------------------
 
 /// What the `CreateExpense` form collects.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ManualExpense {
     /// Always positive; the button decides the sign.
     pub amount: f64,
