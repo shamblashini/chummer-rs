@@ -278,5 +278,5 @@ fn kits_add_programs() {
     let r = chummer_core::gm::packs::apply(&mut ch, &engine.store, engine.settings.resolve(STANDARD), &kit);
     assert!(r.added.contains(&"Program: Browse".to_owned()), "{r:?}");
     assert_eq!(r.skipped.len(), 1);
-    assert_eq!(ch.items("aiprograms", "aiprogram").len(), 2);
+    assert_eq!(ch.items("aiprograms", "aiprogram").len(), 1);
 }
