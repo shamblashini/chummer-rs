@@ -28,7 +28,7 @@ pub fn panel(ui: &mut egui::Ui, session: &Session, lang: &Language) -> Option<Ac
             action = Some(Action::Redo);
         }
     });
-    ui.weak(lang.tr_fmt("{0} changes this session", &[&session.version()]));
+    ui.weak(lang.tr_fmt("Changes this session: {0}", &[&session.version()]));
     ui.separator();
     if session.log().is_empty() && !session.can_redo() {
         ui.weak(lang.tr("No changes yet."));
