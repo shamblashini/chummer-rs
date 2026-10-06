@@ -44,7 +44,8 @@ Characters made with `chummer-cli new` load with no dialogs or warnings:
 Chummer's Karma Summary shows the same budgets as chummer-rs. Re-saving in Chummer drops only `<chummerrsversion>`. Chummer adds:
 
 - Its usual calculated values.
-- An "Unarmed Attack" weapon, which every Chummer character has.
+- An "Unarmed Attack" weapon, which every Chummer character has. (Since
+  then chummer-rs adds it to new characters too.)
 
 ## Compressed saves (.chum5lz), 2026-10-06
 

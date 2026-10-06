@@ -153,8 +153,9 @@ custom name, location and notes, add things inside it, or sell it.
 The "bonus" of every quality, piece of ware, power and item applies, just
 as in Chummer5a. Every bonus type in the game data is handled.
 
-**Custom improvements.** On the Improvements tab, in creation and career
-mode, a GM can add one-off modifiers of any type in `improvements.xml`
+**Custom improvements.** On the Improvements tab (career mode; in
+creation, as in Chummer, the tab only shows once a character has custom
+improvements), a GM can add one-off modifiers of any type in `improvements.xml`
 (Add Improvement), for example +1 Agility or an extra condition monitor
 box. They can be edited, deleted, turned on and off, sorted into groups
 (with Enable All / Disable All), and given notes. They are saved in
