@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/chummer-core", "crates/chummer-gui", "crates/chummer-cli", "crates/chummer-net", "crates/chummer-relay", "crates/chummer-sync"]
+members = ["crates/chummer-core", "crates/chummer-gui", "crates/chummer-cli", "crates/chummer-net", "crates/chummer-relay", "crates/chummer-sync", "crates/chummer-authority"]
 
 [workspace.package]
 version = "0.2.0"

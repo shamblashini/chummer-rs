@@ -1,0 +1,21 @@
+[package]
+name = "chummer-authority"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "chummer-rs headless campaign host: serves a GM's campaign file around the clock"
+
+[[bin]]
+name = "chummer-authority"
+path = "src/main.rs"
+
+[dependencies]
+chummer-core.workspace = true
+chummer-net.workspace = true
+chummer-sync.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time"] }
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

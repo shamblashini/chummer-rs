@@ -1202,3 +1202,12 @@ fn main() -> anyhow::Result<()> {
     }))
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
+
+#[cfg(test)]
+mod url_tests {
+    #[test]
+    fn file_urls_become_paths() {
+        assert_eq!(super::url_to_path("file:///home/x/My%20Runner.chum5"), std::path::PathBuf::from("/home/x/My Runner.chum5"));
+        assert_eq!(super::url_to_path("file:///a/b%"), std::path::PathBuf::from("/a/b%"));
+    }
+}

@@ -294,17 +294,11 @@ Chummer 5.225.
   - Special → Create PACKS Kit… saves the character's things as a Custom kit in `~/.local/share/chummer-rs/packs/custom_*_packs.xml`. Custom kits can also be deleted there.
   - Spells & Spirits tab → Create Spell… designs a custom spell (Street Grimoire). Chummer's rules compute its drain value and descriptors. In career mode it costs spell karma.
 - **Languages:** English, German, French, Japanese, Portuguese and Chinese data names and sheets.
-- **Online campaigns (networking foundation, not in the app yet):** the
-  `chummer-net` library and the `chummer-relay` server; see
-  [docs/online-design.md](docs/online-design.md) and [docs/relay.md](docs/relay.md).
-  - A persistent node key per installation (`node.key` in the config folder) is the user's identity.
-  - Peer-to-peer QUIC connections with [iroh](https://www.iroh.computer/), found by node id through our relays only.
-  - The campaign protocol (hello and invite check, submit and ack, push from the GM, ping) and `chummer-rs://join/...` invite links.
-  - A relay mailbox for offline peers: messages are sealed to the recipient and signed by the sender, with size, count, daily and expiry limits.
-  - `chummer-relay` runs the relay and the mailbox, with Docker and systemd files in `packaging/relay/`.
-  - The sync layer, `chummer-sync`: the GM's app is the authority. It applies players' commands in one order, rebases commands made on an older version (both the GM's and the player's edits apply; a command that no longer passes, such as a raise without enough karma, is refused with the reason), runs a command delivered twice only once, and logs every change with its author ("GM: Gained 100 karma: Good run"). Players see and edit only their own characters; the GM sees all.
-  - Players keep local copies with an outbox, so they can edit offline; the copies and the outbox survive a restart. A copy that drifts (hash mismatch) reloads the GM's snapshot.
-  - Play-by-post: when the GM's app is not reachable, the outbox goes to the relay mailbox, sealed to the GM; the GM's app applies it when it next collects mail and mails the results back. Large snapshots are cut to the relay's size limit.
+- **Online campaigns:** the GM hosts a campaign from the GM screen (or
+  with `chummer-authority`); players join with an invite link and edit
+  their own characters, live or by play-by-post. Every change is logged
+  with its author, and the GM can revert any of them. See
+  [Online campaigns](#online-campaigns).
 
 ### Layout and themes
 
@@ -382,6 +376,99 @@ what each command did and the final version and hash.
 
 Settings are stored in `~/.config/chummer-rs/`.
 
+## Online campaigns
+
+The GM's app is the campaign's host. There is no game server and no
+account: peers connect directly (QUIC through [iroh](https://www.iroh.computer/),
+with NAT hole punching) and use a relay only to find each other, or when
+a direct path is not possible. The relay also keeps a sealed mailbox
+for play-by-post. Each installation's identity is its node key
+(`node.key` in the config folder).
+
+> The project's public relay is not running yet. Until it is, run your
+> own (`chummer-relay`, [docs/relay.md](docs/relay.md)) and enter it in
+> Tools → Online Settings.
+
+**The GM hosts a campaign**
+
+1. Make a campaign (File → New Campaign), add the characters, and save it.
+2. On the GM screen, tick **Host online** (top of the right-hand panel).
+   The first time, the campaign becomes an online campaign: its
+   characters move into the campaign's log, kept in
+   `<name>.authority` next to `<name>.chummercampaign`. From then on
+   every change to them is logged, hosted or not. You still open only
+   the `.chummercampaign` file.
+3. **Invite player** makes a link (`chummer-rs://join/…`). Copy it and
+   send it to your players. One link works for the whole group.
+4. When a player has joined, they show under Players. Select a
+   character in the roster and set **Played by** to the player. NPCs,
+   critters and other characters you keep are never sent to players.
+5. Edit characters as usual. Your changes reach the player at once ("GM
+   gave you 100 karma: Good run" in their History). Their changes show in
+   the Activity feed with their name.
+6. **Revert** on a line of the Activity feed (or in a character's
+   History) takes that change back. Later changes are applied again on
+   top; the ones that needed the reverted change (a skill bought with
+   the reverted karma) are dropped and named in the status bar.
+7. **Check mail** collects changes players made while you were offline
+   and mails them yours. The app also does this when hosting starts and
+   every three minutes.
+
+Undo and Redo are off for online characters: a change is in the
+campaign log as soon as it is made. Use Revert instead.
+
+**A player joins**
+
+1. File → **Join Campaign…** and paste the link (or open the link: the
+   Linux desktop file registers `chummer-rs://`; on Windows, Tools →
+   Online Settings has a button for it; any system can pass the link as
+   the first argument, `chummer-rs 'chummer-rs://join/…'`). Enter the
+   name the GM sees.
+2. The campaign shows under **Campaigns** on the Character Roster tab
+   with its state: online, via mailbox, or offline, and how many changes
+   wait to be confirmed. Your characters appear there when the GM gives
+   them to you; click one to open it.
+3. The tab shows a badge: ✔ synced, ⟳N changes waiting, ⚠N changes the
+   GM's app refused (listed in the History tab, with Dismiss), ⏸
+   offline. History shows the character's campaign log.
+
+**Play-by-post.** Players can always edit. When the GM's app is not
+reachable, changes go to the relay's mailbox, sealed to the GM; the
+GM's app applies them when it next checks mail and mails back the
+results and its own changes. Mail is end-to-end encrypted; the relay
+cannot read it.
+
+**Always online: `chummer-authority`.** A campaign can run on a server
+instead of the GM's app (not both at the same time):
+
+```bash
+chummer-authority --key node.key run Seattle.chummercampaign      # serve it (Ctrl+C / SIGTERM stops)
+chummer-authority --key node.key invite Seattle.chummercampaign   # print an invite link
+chummer-authority --key node.key assign Seattle.chummercampaign Ghost Anna   # or a node id, or gm
+chummer-authority --key node.key status Seattle.chummercampaign   # members, owners, activity
+```
+
+Copy the campaign file, its `.authority` file and the GM's `node.key`
+to the server (the key is the campaign's address). `invite` and
+`assign` work while it runs. It writes the characters back into the
+campaign file every few minutes and when it stops, so the GM can later
+open the file in the app again. A systemd unit is in
+`packaging/authority/`; relays come from `online.json` or `--relay`.
+
+**Settings.** Tools → Online Settings: your name, your node id (a GM
+can assign you a character with it), the relays
+(`https://relay.example.org#<mailbox node id>`, one per line, as
+`chummer-relay` prints them) and trusted certificates for relays with a
+self-signed certificate. They are stored in `online.json` in the config
+folder.
+
+**Testing on one machine.** `chummer-relay --dev` runs a relay on
+127.0.0.1 with a self-signed certificate (see
+[docs/relay.md](docs/relay.md#local-test-relay)). Give each app
+instance its own `XDG_CONFIG_HOME` (another node key), and in Online
+Settings enter `https://127.0.0.1:3443#<mailbox id>` and its
+`self-signed-cert.pem`.
+
 ## How it is checked
 
 The 34 test characters from Chummer5a's own test suite are oracles. Chummer
@@ -426,12 +513,26 @@ cargo test --workspace
   features, omissions, file differences) is in
   [docs/deviations.md](docs/deviations.md).
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
-- Online campaigns: networking and sync exist as libraries; "Host
-  campaign" and "Join" in the GUI and the headless `chummer-authority`
-  binary are not done. The GM cannot revert a log entry yet, and undo
-  in a campaign does not take a command back out of the outbox. The
-  project's public relay is not running yet; its URL and mailbox id in
-  `chummer_net::config` are placeholders.
+- Online campaigns:
+  - The project's public relay is not running yet; its URL and mailbox
+    id in `chummer_net::config` are placeholders.
+  - Only the last 256 changes of a character can be reverted, and only
+    by the GM. Undo is off for online characters.
+  - One GM per campaign; the GM's node key is the campaign's address, so
+    hosting from another machine needs a copy of `node.key`. The app
+    and `chummer-authority` must not host the same campaign at once
+    (nothing locks the files).
+  - A `chummer-rs://` link opened while the app runs starts a second
+    app; paste the link into File → Join Campaign instead. On macOS the
+    link is not registered (paste it, or pass it as an argument).
+  - Typing in an online character's text box sends each keystroke as a
+    change (the feed shows a burst as one line, and Revert takes the
+    burst back together).
+  - NPCs marked "Visible to players" are not shown to players yet, and
+    players see only their own characters' activity.
+  - The authority file keeps a compressed copy of each character plus
+    the state 256 changes back, so characters with large mugshots make
+    it large.
 - Some career-mode details:
   - Enchantments, rituals and enhancements learned at a grade.
   - Binding stacked foci (undo of a stacked focus binding works).
@@ -494,7 +595,8 @@ cargo test --workspace
 | `crates/chummer-gui` | egui desktop application |
 | `crates/chummer-cli` | Command-line tool |
 | `crates/chummer-net` | Online campaigns: iroh endpoints, campaign protocol, invites, mailbox client, sealing |
-| `crates/chummer-sync` | Online campaigns: the GM's authority, player replicas with an outbox, mailbox play-by-post |
+| `crates/chummer-sync` | Online campaigns: the GM's authority (with revert), player replicas with an outbox, mailbox play-by-post, the hosted campaign file (`hosted.rs`) and the app's node |
+| `crates/chummer-authority` | Headless campaign host (`packaging/authority/`) |
 | `crates/chummer-relay` | Relay server and mailbox (`packaging/relay/`, [docs/relay.md](docs/relay.md)) |
 | `tools/gen_bonus_table.py` | Generates simple bonus handlers from Chummer5a's C# |
 | `resources/` | Data, translations, custom data, sheets and export templates from Chummer5a |

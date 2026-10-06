@@ -1,0 +1,40 @@
+# systemd unit for chummer-authority: one campaign served around the clock.
+#   useradd --system --home /var/lib/chummer-authority chummer-authority
+#   install -m755 chummer-authority /usr/local/bin/
+#   install -d /usr/local/share/chummer-rs && cp -r resources /usr/local/share/chummer-rs/
+#   install -d -m700 /var/lib/chummer-authority /var/lib/chummer-authority/chummer-rs
+#   cp ~/Campaigns/Seattle.chummercampaign ~/Campaigns/Seattle.authority /var/lib/chummer-authority/
+#   cp ~/.config/chummer-rs/node.key /var/lib/chummer-authority/   (the GM's key: the campaign's host id)
+#   cp ~/.config/chummer-rs/online.json /var/lib/chummer-authority/chummer-rs/  (relays; optional)
+#   chown -R chummer-authority: /var/lib/chummer-authority
+#   install -m644 chummer-authority.service /etc/systemd/system/
+#   systemctl enable --now chummer-authority
+# Invites and assignments while it runs:
+#   sudo -u chummer-authority chummer-authority --key /var/lib/chummer-authority/node.key \
+#     invite /var/lib/chummer-authority/Seattle.chummercampaign
+# One unit per campaign: copy the file as chummer-authority@.service and use %i for the name.
+[Unit]
+Description=chummer-rs campaign host
+Documentation=https://github.com/shamblashini/chummer-rs#online-campaigns
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=chummer-authority
+Group=chummer-authority
+ExecStart=/usr/local/bin/chummer-authority --key /var/lib/chummer-authority/node.key run /var/lib/chummer-authority/Seattle.chummercampaign
+Environment=RUST_LOG=info,iroh=warn
+# online.json (relays) is read from $XDG_CONFIG_HOME/chummer-rs/.
+Environment=XDG_CONFIG_HOME=/var/lib/chummer-authority
+Environment=CHUMMER_RESOURCES=/usr/local/share/chummer-rs/resources
+StateDirectory=chummer-authority
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

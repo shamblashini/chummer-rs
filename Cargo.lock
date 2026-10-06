@@ -783,6 +783,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "chummer-authority"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chummer-core",
+ "chummer-net",
+ "chummer-sync",
+ "clap",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "chummer-cli"
 version = "0.2.0"
 dependencies = [

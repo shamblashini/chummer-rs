@@ -17,7 +17,13 @@ blobs, keyed by the recipient's node id, until they are collected or expire.
 
 The project's public relay is the default in the app
 (`chummer_net::config::DEFAULT_RELAY_URL`). Anyone can run their own one and
-point their app at it.
+point their app at it. How GMs host and players join is in the README's
+[Online campaigns](../README.md#online-campaigns); the design is in
+[online-design.md](online-design.md).
+
+The release's Linux package includes `chummer-relay` (and the files of
+`packaging/relay/`); on other systems build it with
+`cargo build --release -p chummer-relay`, or use Docker (below).
 
 ## What you need
 
@@ -135,9 +141,14 @@ relay and its mailbox.
 
 The app's network settings are a list of relay entries
 (`chummer_net::config::NetConfig`). The default list is the project's
-public relay. A user can add their own relay entry, or replace the list
-with it. The app uses the relay with the lowest latency as its home relay
-and looks peers up on all of them.
+public relay. In the app, Tools → Online Settings → Relays takes one entry
+per line (`https://relay.example.org#<mailbox node id>`, as the relay
+prints it at start-up); "Project relay" puts the default back. The
+settings are stored in `online.json` in the chummer-rs config folder,
+which `chummer-authority` reads too (or give `--relay`). The app uses the
+relay with the lowest latency as its home relay and looks peers up on
+all of them; the first entry with a mailbox is used for play-by-post.
+Changed relays take effect after the app restarts.
 
 A GM on a private relay can put it into invite links
 (`&relay=<url>`), so players who do not have it in their list can still
@@ -147,6 +158,24 @@ For a `self-signed` relay, clients must also trust its certificate
 (`<data_dir>/self-signed-cert.pem`, `NetConfig::extra_ca_roots`). Use this
 only for testing or a private group; with a public name, use Let's
 Encrypt.
+
+## Local test relay
+
+`chummer-relay --dev` runs a relay for tests on this machine: hostname
+`127.0.0.1`, a self-signed certificate made in the data directory, HTTP
+on 3340, HTTPS on 3443, QUIC address discovery on 7842 and the mailbox
+on 7843.
+
+```bash
+mkdir relay-dev && cd relay-dev
+chummer-relay --dev --data-dir .
+# prints: give users this relay entry: https://127.0.0.1:3443/#<mailbox id>
+```
+
+In each app (give each one its own `XDG_CONFIG_HOME`, so each has its
+own node key), open Tools → Online Settings, enter that relay entry and
+add `relay-dev/self-signed-cert.pem` under Trusted certificates. For
+`chummer-authority`, pass `--relay <entry> --ca relay-dev/self-signed-cert.pem`.
 
 ## How peers find each other
 

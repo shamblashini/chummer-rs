@@ -209,7 +209,113 @@ Work-order steps 5 and 7 and the messages for step 6.
 - Transport: `AuthorityHost` (a chummer-net `CampaignHandler`: invite
   check, joins, submits, live pushes, mailbox rounds, periodic saves)
   and `PlayerSession` (connects, falls back to the mailbox, saves the
-  replica after every change).
+  replica after every change). `PlayerSession::edit_now` applies an
+  edit at once and leaves sending it to a background task (for a UI
+  thread); `keep_synced` syncs on start, then every minute and when a
+  live connection drops.
+- One endpoint per app (`chummer_sync::Node`): two endpoints with one
+  key would push each other off the relay. It always accepts the
+  campaign ALPN; a `HostSlot` hands connections to the hosted campaign
+  or hangs up when nothing is hosted (players then use the mailbox).
+  `stop_serving` closes the players' connections.
+- Feed lines merge a burst of edits of one value (same author, same
+  `coalesce_key`, less than 1.5 s apart, consecutive versions) into one
+  line, in the authority and in replicas, as the local `Session` does
+  for undo steps. The commands themselves stay separate.
+
+### Revert (implemented)
+
+The GM can take back any change still in a character's log window (the
+last 256): `Authority::revert(engine, id, version)`.
+
+- The authority keeps the character at the window's base (`base`, saved
+  as a snapshot; the file format is 2). When the window drops an entry,
+  the base takes it (commands are deterministic).
+- Reverting version *v* takes back *v* and the earlier entries of its
+  burst (`revert_range`). The state is rebuilt from the base: every
+  entry in the window is applied again in order, except the reverted
+  ones and those of earlier reverts still in force (a revert of a
+  revert brings its entries back). An entry that no longer applies is
+  dropped and named ("…, and 1 later change that needed it").
+- The result is logged as a new version with `Command::Revert {
+  snapshot, what, from, to }` and the GM as author. Versions only go
+  forward, so replicas apply it like any other entry (the command sets
+  the whole character from the snapshot) and the hashes agree. A revert
+  that changes nothing is refused. `from..=to` is what later reverts read
+  to rebuild around it; a revert whose range fell out of the window is
+  replayed as its snapshot.
+- Dedup is unaffected: a replayed copy of a reverted op is answered from
+  the seen set and does not run again.
+
+### The hosted campaign (implemented: `chummer_sync::hosted`)
+
+The glue the GUI and `chummer-authority` share between a GM's
+`.chummercampaign` file and the authority.
+
+- Files: the GM opens `<name>.chummercampaign` only. The authority
+  lives next to it in `<name>.authority`, made the first time the
+  campaign is hosted. `<name>.invites` takes invites made by
+  `chummer-authority invite` (`<token> <role> <label>` lines) for a
+  running host to merge.
+- Ids: `CharacterId` = the member's `MemberId` (32 hex digits); the
+  campaign id is the same 128 bits in both crates.
+- Once a sidecar exists every change to the campaign's characters goes
+  through the authority, hosted or not, so the authority's characters
+  are the newest. `reconcile` adds members that are new in the file
+  (with the GM's open copy when there is one), drops removed ones, copies
+  the campaign name, and takes an owner the file names (`owner` = a
+  player's node id, or `"gm"` to take a character back); a member
+  without one keeps the authority's owner. `write_back` (on save) puts
+  the authority's characters into embedded members and saves linked
+  ones whose file differs, and writes the owners into the file.
+- Members with an owner are that player's characters; the rest (NPCs,
+  critters, spirits) belong to the GM and are never sent to players.
+- `HostedCampaign::open` loads or makes the authority, reconciles and
+  starts an `AuthorityHost` saving to the sidecar. A sidecar made with
+  another node key is refused (the key is the campaign's address).
+
+### The GUI (implemented)
+
+- `Doc` (an open character) has three backends: a local `Session`
+  (files, campaigns not online), a GM character of the authority
+  (`AuthorityHost::gm_edit`: applied at once, logged, pushed or mailed),
+  and a player's replica copy (`PlayerSession::edit_now`). Online
+  documents keep a copy of the backend's state (the backends are behind
+  locks) and take the new state each frame when the version, hash or
+  outbox changed.
+- Undo and redo are for local documents only, and say why in a tooltip
+  on online ones: a change is in the campaign log as soon as it is made
+  and may have been sent; an inverse command does not exist for every
+  command, and rolling a replica back would fight the authority. The GM
+  reverts instead (History panel and the GM screen's feed).
+- GM screen: Host online (makes the campaign online the first time,
+  swaps every member's `Doc` to the authority, including tabs it lent),
+  status and relay, Invite player (link with a Copy button), Players
+  (joined, connected), Played by (owner), the authority's feed with
+  author, character and Revert, Check mail with the last report, and a
+  mailbox round on host start and every three minutes. Opening a
+  campaign that has a sidecar backs it by the authority (not served
+  until Host online).
+- Player: File → Join Campaign (also prefilled from a `chummer-rs://`
+  argument), the Campaigns list on the Character Roster tab (state,
+  pending and refused counts, sync now, leave), characters as normal
+  tabs with a badge (✔, ⟳N, ⚠N, ⏸), and the character's campaign log
+  in History ("GM gave you 100 karma: note", `feed::for_owner`), with
+  refused changes and Dismiss. Joined campaigns are kept in
+  `campaigns/joined.json` and `campaigns/<id>.replica` in the config
+  folder.
+- Tools → Online Settings: name, node id, relay entries, trusted
+  certificates (`chummer_net::config::OnlineSettings`, `online.json`).
+
+### Headless authority (implemented: `chummer-authority`)
+
+`run` serves a campaign file with the same glue; it merges new invites
+and re-reads the campaign file when it changes (every 5 s), does a
+mailbox round every 3 minutes, and writes the characters back into the
+campaign file every 5 minutes when they changed and when it stops.
+`invite` appends to the invites file and prints the link, `assign` sets
+a member's owner in the campaign file, `status` prints the authority's
+state. A systemd unit is in `packaging/authority/`.
 
 ## Campaigns
 
@@ -257,22 +363,21 @@ only a different `format` is refused. A plain (uncompressed) JSON file
 also loads. Saving writes a temporary file and renames it. Loading an
 embedded member and hashing it gives the `state_hash` it had when saved.
 
-### What the sync (steps 5–7, `chummer-sync`) builds on
+### What the sync (steps 5–8) builds on
 
 - Member ids are stable for a member's life and are the key for
   per-member versions, command logs, snapshots and hashes. Those live in
   chummer-sync, not in the campaign file: the file holds the members'
   current characters only.
-- The GM's app is the authority for every member. Each open member is a
-  `Session` (in the GUI a `Doc` with author "GM"), so its log of
-  envelopes, its version and `state_hash` are what a replica needs; a
-  player's commands would arrive as envelopes with the player as author
-  and go through `Session::apply_envelope`.
+- The GM's app is the authority for every member. In a local campaign
+  each open member is a `Session` (in the GUI a `Doc` with author "GM");
+  once the campaign is online it is a character of the `Authority` (see
+  "The hosted campaign" above).
 - `owner` (node id) is where "players see and edit only their own
-  characters" will be checked; `visible_to_players` is for showing NPCs
-  to players.
-- Encounters and the feed are GM-side state. A later step may send the
-  feed (filtered by owner) to players.
+  characters" is checked; `visible_to_players` is stored for showing
+  NPCs to players later.
+- Encounters stay GM-side state. Players get the feed of their own
+  characters through the pushes' log entries.
 
 ## Work order
 
@@ -283,6 +388,7 @@ embedded member and hashing it gives the `state_hash` it had when saved.
    initiative, damage), using commands (done; see Campaigns).
 5. Sync between two local instances: rebasing, hashes, snapshots (done:
    `chummer-sync`).
-6. iroh connections, the relay, invite links.
-7. Outbox and mailbox (done: `chummer-sync`).
-8. The optional headless authority.
+6. iroh connections, the relay, invite links (done: `chummer-net`,
+   `chummer-relay`, and in the app: hosting, joining, settings).
+7. Outbox and mailbox (done: `chummer-sync`, wired into the app).
+8. The optional headless authority (done: `chummer-authority`).

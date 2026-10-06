@@ -16,14 +16,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The Linux package also carries chummer-relay (for servers).
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             name: linux-x86_64
             ext: ""
+            servers: "-p chummer-relay"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             name: windows-x86_64
             ext: ".exe"
+            servers: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +40,7 @@ jobs:
           sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
       - uses: Swatinem/rust-cache@v2
       - name: Build
-        run: cargo build --release --locked -p chummer-gui -p chummer-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p chummer-gui -p chummer-cli -p chummer-authority ${{ matrix.servers }} --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |
@@ -45,6 +48,12 @@ jobs:
           mkdir -p "$dir"
           cp "target/${{ matrix.target }}/release/chummer-rs${{ matrix.ext }}" "$dir/"
           cp "target/${{ matrix.target }}/release/chummer-cli${{ matrix.ext }}" "$dir/"
+          cp "target/${{ matrix.target }}/release/chummer-authority${{ matrix.ext }}" "$dir/"
+          if [ -n "${{ matrix.servers }}" ]; then
+            cp "target/${{ matrix.target }}/release/chummer-relay" "$dir/"
+            mkdir -p "$dir/packaging"
+            cp -r packaging/relay packaging/authority "$dir/packaging/"
+          fi
           mkdir -p "$dir/resources"
           cp -r resources/data resources/lang resources/sheets resources/customdata resources/export resources/xml_license.txt "$dir/resources/"
           cp LICENSE README.md "$dir/"
@@ -73,7 +82,7 @@ jobs:
       - name: Build
         run: |
           for t in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --locked -p chummer-gui -p chummer-cli --target $t
+            cargo build --release --locked -p chummer-gui -p chummer-cli -p chummer-authority --target $t
           done
       - name: Package
         run: |
@@ -82,7 +91,7 @@ jobs:
           dir="chummer-rs-${GITHUB_REF_NAME//\//-}-macos-universal"
           app="$dir/chummer-rs.app/Contents"
           mkdir -p "$app/MacOS" "$app/Resources/resources"
-          for b in chummer-rs chummer-cli; do
+          for b in chummer-rs chummer-cli chummer-authority; do
             lipo -create -output "$app/MacOS/$b" \
               "target/aarch64-apple-darwin/release/$b" "target/x86_64-apple-darwin/release/$b"
           done
