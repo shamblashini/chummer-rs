@@ -169,6 +169,14 @@ impl App {
         }
     }
 
+    /// Guided creation on or off, for every open character and new ones.
+    fn set_guided(&mut self, on: bool) {
+        view::save_guided_preference(on);
+        for v in &mut self.views {
+            v.set_guided(on);
+        }
+    }
+
     fn open(&mut self, path: &Path) {
         if let Some(i) = self.views.iter().position(|v| v.path().as_deref() == Some(path)) {
             self.active = i;
@@ -368,6 +376,10 @@ impl App {
                 }
             });
             ui.menu_button(self.lang.tr("View"), |ui| {
+                let mut guided = view::guided_preference();
+                if ui.checkbox(&mut guided, self.lang.tr("Guided creation")).on_hover_text(self.lang.tr("Walk through character creation one step at a time")).changed() {
+                    self.set_guided(guided);
+                }
                 ui.menu_button(self.lang.tr("Theme"), |ui| {
                     for k in theme::ThemeKind::ALL {
                         if crate::combo::selectable_label(ui, self.theme == k, self.lang.tr(k.label())).clicked() {
@@ -739,6 +751,9 @@ impl eframe::App for App {
                 }
                 if let Some(p) = relationships_ui::take_open_request(ctx) {
                     self.open(&p);
+                }
+                if self.views.get_mut(idx).is_some_and(CharacterView::take_guide_hidden) {
+                    self.set_guided(false);
                 }
             }
         }

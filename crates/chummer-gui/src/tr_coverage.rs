@@ -52,6 +52,8 @@ fn table_labels() -> BTreeSet<String> {
     out.extend(attributes::PHYSICAL.iter().chain(attributes::MENTAL).chain(attributes::SPECIAL).map(|a| attributes::long_name(a).to_owned()));
     out.extend(crate::view::TABS.iter().map(|(_, l)| (*l).to_owned()));
     out.extend(crate::settings_ui::LABELS.iter().map(|(_, l)| (*l).to_owned()));
+    out.extend(chargen::issues::templates().into_iter().map(str::to_owned));
+    out.extend(chargen::guide::ALL.iter().flat_map(|s| [s.title(), s.explanation("Priority"), s.explanation("Karma"), s.explanation("LifeModule"), s.explanation("SumtoTen")]).map(str::to_owned));
     out.remove("");
     out
 }

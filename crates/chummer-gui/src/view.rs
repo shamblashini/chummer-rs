@@ -24,10 +24,18 @@ use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 use egui_extras::{Column, TableBuilder};
 
+// Creation issues and guided creation; child modules so they can use the
+// view's state.
+#[path = "guide_ui.rs"]
+mod guide_ui;
+#[path = "issues_ui.rs"]
+mod issues_ui;
+pub use guide_ui::{guided_offer, guided_preference, save_guided_preference};
+
 /// The character tabs, in Chummer5a's order (CharacterCareer.Designer.cs).
 /// Magic, resonance and critter tabs only show when the character has
 /// them, like in Chummer; see [`CharacterView::visible`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
     Common,
     Skills,
@@ -103,7 +111,14 @@ pub struct CharacterView {
     confirm_remove: Option<(String, String, String)>,
     /// Creation-mode budget, recomputed with the sheet.
     budget: Option<chargen::Budget>,
-    problems: Vec<String>,
+    /// Creation issues (`chargen::issues`), recomputed with the budget.
+    issues: Vec<chargen::issues::Issue>,
+    /// Issue panels closed until their issues change.
+    dismissed: issues_ui::Dismissed,
+    /// Guided creation, when on.
+    guide: Option<guide_ui::Guide>,
+    /// "Hide guide" was clicked; the app turns the preference off.
+    guide_hidden: bool,
     settings: Option<CharacterSettings>,
     select: Option<SelectDialog>,
     confirm_finish: bool,
@@ -177,6 +192,11 @@ impl CharacterView {
         self.tab = tab;
     }
 
+    /// Whether "Hide guide" was clicked since the last call.
+    pub fn take_guide_hidden(&mut self) -> bool {
+        std::mem::take(&mut self.guide_hidden)
+    }
+
     pub fn open_packs(&mut self, mode: crate::gm_ui::PacksMode) {
         self.packs.open(mode);
     }
@@ -198,7 +218,10 @@ impl CharacterView {
             only_rated: false,
             confirm_remove: None,
             budget: None,
-            problems: Vec::new(),
+            issues: Vec::new(),
+            dismissed: Default::default(),
+            guide: None,
+            guide_hidden: false,
             settings,
             select: None,
             confirm_finish: false,
@@ -221,6 +244,7 @@ impl CharacterView {
             info_text: "description",
         };
         v.refresh_budget();
+        v.set_guided(guided_preference());
         v
     }
 
@@ -228,12 +252,12 @@ impl CharacterView {
         match (&self.settings, self.ch.created) {
             (Some(st), false) => {
                 let b = chargen::budget_with(&self.ch, &self.sheet, &self.rules, st, Some(&self.store));
-                self.problems = chargen::validity_problems(&self.ch, &b, st);
+                self.issues = chargen::issues::issues(&self.ch, &b, &self.sheet, st, Some(&self.store));
                 self.budget = Some(b);
             }
             _ => {
                 self.budget = None;
-                self.problems.clear();
+                self.issues.clear();
             }
         }
     }
@@ -325,12 +349,15 @@ impl CharacterView {
             changed |= self.side_panel(ui, lang, &mut roll);
         });
         changed |= self.item_editor_panel(ctx, engine, lang, status);
+        self.guide_bar(ctx, lang, pdfs, status);
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(key) = crate::ruleset_ui::banner(ui, &self.ch, engine, lang, self.tab == Tab::Common) {
                 changed |= self.switch_settings(&key, engine, status);
             }
             let tabs: Vec<(Tab, String)> = TABS.iter().filter(|(t, _)| self.visible(*t)).map(|(t, l)| (*t, lang.tr(l))).collect();
-            crate::theme::tab_strip(ui, &mut self.tab, &tabs);
+            let tabs = self.decorated_tabs(tabs);
+            crate::theme::tab_strip_with(ui, &mut self.tab, &tabs);
+            self.issue_panel(ui, lang);
             let salt = self.tab as u8;
             let page = |ui: &mut egui::Ui, f: &mut dyn FnMut(&mut egui::Ui) -> bool| egui::ScrollArea::both().id_salt(("tab_page", salt)).auto_shrink(false).show(ui, |ui| f(ui)).inner;
             changed |= match self.tab {
@@ -407,7 +434,9 @@ impl CharacterView {
         if !tabs.iter().any(|(t, _)| *t == self.side_tab) {
             self.side_tab = tabs[0].0;
         }
-        crate::theme::tab_strip(ui, &mut self.side_tab, &tabs);
+        let summary = self.summary_badge();
+        let tabs: Vec<_> = tabs.into_iter().map(|(t, l)| (t, l, if t == SideTab::Summary { summary } else { Default::default() })).collect();
+        crate::theme::tab_strip_with(ui, &mut self.side_tab, &tabs);
         let mut changed = false;
         egui::ScrollArea::vertical().id_salt("side_scroll").auto_shrink(false).show(ui, |ui| {
             changed = match self.side_tab {
@@ -813,6 +842,7 @@ impl CharacterView {
             }
         });
         ui.add_space(4.0);
+        let marks = self.item_marks(lang);
         let needle = self.skill_filter.to_lowercase();
         let filter = |name: &str, rating: i32| (needle.is_empty() || name.to_lowercase().contains(&needle)) && (!self.only_rated || rating > 0);
         let rows: Vec<(usize, calc::SkillValues)> =
@@ -853,7 +883,12 @@ impl CharacterView {
                         }
                         ui.end_row();
                         for (i, s) in &kno {
-                            ui.label(&s.name);
+                            ui.horizontal(|ui| {
+                                if let Some((msg, err)) = marks.get(&s.guid) {
+                                    crate::theme::warning_mark(ui, *err).on_hover_text(msg);
+                                }
+                                ui.label(&s.name);
+                            });
                             ui.weak(lang.data_name("skills.xml", "", &s.category));
                             if s.native {
                                 ui.weak(lang.tr("native"));
@@ -936,7 +971,14 @@ impl CharacterView {
                         for (i, s) in &rows {
                             let r = SourceRef::new(&s.source, &s.page);
                             let label = if s.disabled { RichText::new(&s.name).weak() } else { RichText::new(&s.name) };
-                            let name = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
+                            let name = ui
+                                .horizontal(|ui| {
+                                    if let Some((msg, err)) = marks.get(&s.guid) {
+                                        crate::theme::warning_mark(ui, *err).on_hover_text(msg);
+                                    }
+                                    ui.add(egui::Label::new(label).sense(egui::Sense::click()))
+                                })
+                                .inner;
                             if let Some(r) = r {
                                 if name.on_hover_text(format!("{r} — {}", lang.tr("click to open the rulebook"))).clicked() {
                                     pdf_ui::open(pdfs, &r, status);
@@ -1235,7 +1277,8 @@ impl CharacterView {
         let headers: Vec<String> = sec.columns.iter().map(|c| lang.tr(c.header)).collect();
         let selected = self.item_editor.as_ref().map(|(g, _)| g.as_str());
         let mut remove = None;
-        let out = crate::tree_table::TreeTable::new(sec.container, &headers).selected(selected).show(ui, &tree, |n| tree_row(sec, n, lang), |ui, n| {
+        let marks = self.item_marks(lang);
+        let out = crate::tree_table::TreeTable::new(sec.container, &headers).selected(selected).show(ui, &tree, |n| tree_row(sec, n, lang, &marks), |ui, n| {
             let Entry::Item { el, top } = n.value else { return };
             pdf_ui::source_icon(ui, pdfs, SourceRef::of(el), status);
             if top && ui.small_button("🗑").on_hover_text(lang.tr("Remove (also removes its improvements)")).clicked() {
@@ -1351,10 +1394,11 @@ impl CharacterView {
             ui.label(if left < 0.0 { t.color(ui.visuals().error_fg_color) } else { t });
             ui.end_row();
         });
-        for p in &self.problems {
-            ui.colored_label(crate::theme::warn(ui), format!("• {p}"));
-        }
-        let ok = self.problems.is_empty();
+        ui.add_space(6.0);
+        ui.heading(lang.tr("Issues"));
+        self.issue_list(ui, lang);
+        ui.add_space(6.0);
+        let ok = !self.issues.iter().any(chargen::issues::Issue::is_error);
         let r = ui.add_enabled(ok, crate::theme::primary_button(ui, lang.tr("Finish creation")));
         if r.on_disabled_hover_text(lang.tr("Fix the problems above first")).clicked() {
             self.confirm_finish = true;
@@ -1371,12 +1415,10 @@ impl CharacterView {
         egui::Modal::new(egui::Id::new("finish_creation")).show(ctx, |ui| {
             ui.heading(lang.tr("Finish creation?"));
             ui.label(lang.tr("The character switches to career mode. Creation budgets go away; karma and nuyen become plain resources."));
-            let carry_k = self.settings.as_ref().map_or(7, |s| s.karma("karmacarryover", 7));
-            if b.karma_left() > carry_k {
-                ui.colored_label(crate::theme::warn(ui), lang.tr_fmt("{0} karma is left, only {1} carries over.", &[&b.karma_left(), &carry_k]));
-            }
-            if b.nuyen_left() > 5000.0 {
-                ui.colored_label(crate::theme::warn(ui), lang.tr_fmt("{0} is left, only 5,000¥ carries over.", &[&chummer_core::format::nuyen(b.nuyen_left())]));
+            // Everything still open, as Chummer's "are you sure?" prompts.
+            for i in self.issues.iter().filter(|i| i.severity != chargen::issues::Severity::Info) {
+                let color = if i.is_error() { ui.visuals().error_fg_color } else { crate::theme::warn(ui) };
+                ui.colored_label(color, format!("• {}", issues_ui::message(lang, i)));
             }
             ui.horizontal(|ui| {
                 if ui.button(lang.tr("Finish")).clicked() {
@@ -1780,7 +1822,7 @@ fn cell(it: &Element, field: &str) -> String {
 
 /// A tree-table row for a section node: a group's label, or an item's
 /// name and column cells.
-fn tree_row(sec: &Section, n: &chummer_core::tree::ItemNode, lang: &Language) -> crate::tree_table::RowView {
+fn tree_row(sec: &Section, n: &chummer_core::tree::ItemNode, lang: &Language, marks: &std::collections::HashMap<String, (String, bool)>) -> crate::tree_table::RowView {
     use chummer_core::tree::Label;
     match &n.value {
         Entry::Group(label) => {
@@ -1794,7 +1836,7 @@ fn tree_row(sec: &Section, n: &chummer_core::tree::ItemNode, lang: &Language) ->
         Entry::Item { el, .. } => {
             let mut cells = vec![display_name(sec, el, lang)];
             cells.extend(sec.columns.iter().skip(1).map(|c| cell(el, c.field)));
-            crate::tree_table::RowView { cells, group: false, clickable: chummer_core::items::edit::is_item(el), hover: el.get("notes") }
+            crate::tree_table::RowView { cells, group: false, clickable: chummer_core::items::edit::is_item(el), hover: el.get("notes"), warning: marks.get(&el.get("guid")).cloned() }
         }
     }
 }

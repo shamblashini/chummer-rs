@@ -88,6 +88,12 @@ struct Lists {
 }
 
 impl RelationshipsPanel {
+    /// Show a contact: the Contacts sub-tab, with its stat block open.
+    pub fn show_contact(&mut self, guid: &str) {
+        self.tab = 0;
+        self.expanded.insert(guid.to_owned());
+    }
+
     /// The tab's contents; true when the character changed.
     pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Character, store: &DataStore, lang: &Language, status: &mut Status) -> bool {
         if self.lists.is_none() {

@@ -79,9 +79,47 @@ A Creation panel shows what is left of each budget:
 - Nuyen, including karma converted to nuyen.
 - Quality limits.
 
-The panel also lists everything that blocks finishing creation. Finish
-creation moves the character into career mode, carrying over at most 7
-karma and 5,000¥.
+**Creation issues.** While a character is in creation, chummer-rs checks
+it all the time with Chummer's finish-creation rules, so the problems do
+not wait for a pop-up at the end:
+- Errors block Finish creation: overspent attribute, special, skill and
+  skill group points, karma or nuyen; too many attributes at their
+  maximum; more than one specialization per skill; quality limits; adept
+  power points; no tradition for a magician; Essence at 0; too many native
+  languages, martial arts or techniques; a contact worth more than 7
+  points; items above the allowed Availability (Restricted Gear is
+  counted); banned ware grades; items over their capacity.
+- Warnings are reminders: unspent points of any pool, free spells and
+  power points left, more karma or nuyen than carries over, a mentor
+  spirit not chosen yet, no technomancer stream.
+- Each tab with issues has a warning badge with the count (Classic: a
+  yellow warning sign; Graphite: a coloured dot). The focused tab shows
+  its issues at the top; click one to go to the row or item. ✖ hides the
+  panel until something changes. Rows with a problem have a warning mark.
+- The Karma Summary lists every issue, and Finish creation shows the
+  full list before it switches to career mode, carrying over at most 7
+  karma and 5,000¥.
+
+**Guided creation.** For new players, a guide bar walks through the build
+one step at a time. Turn it on in the New Character wizard or with
+View → Guided creation (saved in `gui.ini`). The steps follow the build
+method:
+
+| Build method | Steps |
+|---|---|
+| Priority, Sum-to-Ten | Concept & metatype → attributes → special attributes → qualities → active skills → knowledge skills → spells / adept powers / complex forms (if the character has them) → cyberware → street gear → vehicles → contacts → character info → review & finish |
+| Point Buy | Concept & metatype → qualities (magic and resonance are qualities here) → attributes → special attributes → skills → … as above |
+| Life Modules | Concept & metatype → life modules → qualities → attributes → … as above |
+
+Each step explains its rule in plain words, with a 📖 link to the
+rulebook page (SR5 or Run Faster), and lists what is still to do there.
+Next is allowed when the step has no errors; the step chips let you jump
+anywhere. Tabs outside the current step are dimmed, not locked. The
+current step is remembered per file in `~/.config/chummer-rs/guide.ini`,
+not in the .chum5.
+
+![Guided creation, Graphite theme](docs/screenshots/guided-creation-graphite.png)
+![Creation issues on the Skills tab, Classic theme](docs/screenshots/guided-creation-classic.png)
 
 **Career mode.**
 - Raise attributes, skills, skill groups and knowledge skills for karma at Chummer's costs.
@@ -356,6 +394,11 @@ cargo test --workspace
     it but cannot change it either.
   - Locations and items have no notes colour editor.
 - About 290 UI labels have no Chummer translation string and stay English.
+- Creation issues not checked yet: metagenic quality balance, the
+  Prototype Transhuman bioware limit, vehicle and drone mod slots, cyberware
+  grades whose requirements are not met, and Friends in High Places
+  contact limits. A missing technomancer stream is only a warning,
+  because there is no stream picker yet.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute
   and tab flags; objects it created (a free spell, say) stay until it is
