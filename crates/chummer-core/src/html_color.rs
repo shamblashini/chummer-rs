@@ -89,6 +89,93 @@ pub fn is_custom_contact_colour(v: i32) -> bool {
     v != DEFAULT_CONTACT_COLOUR && v != 0
 }
 
+/// `ColorManager.GenerateDarkModeColor` (`GetDarkModeVersion`): how
+/// Chummer shows a stored (light-mode) colour in dark mode. Lightness is
+/// inverted, dark results are lifted a little and strong saturation is
+/// toned down.
+pub fn dark_mode(rgb: [u8; 3]) -> [u8; 3] {
+    let (h, s, l) = hsl(rgb);
+    let hue = h / 360.0;
+    let new_l = 1.0 - l;
+    let mut value = new_l + s * new_l.min(1.0 - new_l);
+    let mut sat_hsv = if value.abs() < f32::EPSILON { 0.0 } else { 2.0 * (1.0 - new_l / value) };
+    value += 0.14 * (1.0 - value.sqrt());
+    value = value.min(1.0);
+    let mid = from_hsv(hue, sat_hsv, value);
+    let (_, s2, l2) = hsl(mid);
+    value = l2 + s2 * l2.min(1.0 - l2);
+    sat_hsv = if value.abs() < f32::EPSILON { 0.0 } else { 2.0 * (1.0 - l2 / value) };
+    from_hsv(hue, sat_hsv - 0.1 * sat_hsv * sat_hsv, value)
+}
+
+/// `Color.GetHue` (degrees), `GetSaturation` and `GetBrightness` (HSL).
+fn hsl(rgb: [u8; 3]) -> (f32, f32, f32) {
+    let [r, g, b] = rgb.map(|c| c as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    if max == min {
+        return (0.0, 0.0, l);
+    }
+    let d = max - min;
+    let s = if l <= 0.5 { d / (max + min) } else { d / (2.0 - max - min) };
+    let mut h = if r == max {
+        (g - b) / d
+    } else if g == max {
+        2.0 + (b - r) / d
+    } else {
+        4.0 + (r - g) / d
+    } * 60.0;
+    if h < 0.0 {
+        h += 360.0;
+    }
+    (h, s, l)
+}
+
+/// `ColorManager.FromHsv` (hue 0..1).
+fn from_hsv(hue: f32, sat: f32, value: f32) -> [u8; 3] {
+    let (hue, sat, value) = (hue.clamp(0.0, 1.0) as f64, sat.clamp(0.0, 1.0) as f64, value.clamp(0.0, 1.0) as f64);
+    let chroma = sat * value;
+    let common = value - chroma;
+    let cardinal = hue * 6.0;
+    let mut m2 = cardinal;
+    while m2 > 2.0 {
+        m2 -= 2.0;
+    }
+    let minor = chroma * (1.0 - (m2 - 1.0).abs());
+    let (mut r, mut g, mut b) = (common, common, common);
+    match cardinal.floor() as i32 {
+        5 | 6 => {
+            r += chroma;
+            b += minor;
+        }
+        4 => {
+            r += minor;
+            b += chroma;
+        }
+        3 => {
+            g += minor;
+            b += chroma;
+        }
+        2 => {
+            g += chroma;
+            b += minor;
+        }
+        1 => {
+            r += minor;
+            g += chroma;
+        }
+        _ => {
+            r += chroma;
+            g += minor;
+        }
+    }
+    [r, g, b].map(|c| {
+        let v = (c * 255.0).round();
+        if v.is_nan() { 0 } else { v.clamp(0.0, 255.0) as u8 }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,6 +197,17 @@ mod tests {
         assert_eq!(to_html([0xD2, 0x69, 0x1E]), "#D2691E");
         assert_eq!(to_html([0, 0x3f, 0xff]), "#003FFF");
         assert_eq!(parse(&to_html([1, 2, 3])), Some([1, 2, 3]));
+    }
+
+    #[test]
+    fn dark_mode_inverts_lightness() {
+        // Black text becomes light, white becomes dark; hue survives.
+        let [r, g, b] = dark_mode([0, 0, 0]);
+        assert!(r > 200 && r == g && g == b, "{r} {g} {b}");
+        let [r, ..] = dark_mode([255, 255, 255]);
+        assert!(r < 60);
+        let [r, g, b] = dark_mode(parse("Chocolate").unwrap());
+        assert!(r > g && g > b, "still orange-brown: {r} {g} {b}");
     }
 
     #[test]

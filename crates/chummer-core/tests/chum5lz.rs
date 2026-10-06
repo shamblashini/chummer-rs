@@ -72,7 +72,7 @@ fn save_and_load_round_trip() {
 fn roster_lists_compressed_saves() {
     let dir = scratch("roster");
     std::fs::copy(chummer_file(), dir.join("a.chum5lz")).unwrap();
-    let v = chummer_core::roster::scan(&[dir.clone()]);
+    let v = chummer_core::roster::scan(std::slice::from_ref(&dir));
     assert_eq!(v.len(), 1);
     assert_eq!(v[0].display_name(), "Lz Fixer");
     assert!(v[0].error.is_none());

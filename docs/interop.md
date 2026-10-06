@@ -45,3 +45,23 @@ Chummer's Karma Summary shows the same budgets as chummer-rs. Re-saving in Chumm
 
 - Its usual calculated values.
 - An "Unarmed Attack" weapon, which every Chummer character has.
+
+## Compressed saves (.chum5lz), 2026-10-06
+
+Checked with a Chummer5a 5.225 release build under the same Wine setup:
+
+- `chummer-cli new` wrote a character, Chummer opened it and saved it with
+  File > Save As as "Compressed Chummer5 Saves". That file is
+  `crates/chummer-core/tests/chum5lz/fixer-chummer.chum5lz`. Its header is
+  `5D 00 00 00 01` + eight `FF` bytes (lc 3, lp 0, pb 2, 16 MiB
+  dictionary, unknown size); `xz --format=lzma -d` and chummer-rs decode it
+  to the same XML.
+- `chummer-cli new out.chum5lz` wrote a compressed character. It passes
+  `xz --format=lzma -t`, and Chummer's File > Open loaded it with only the
+  usual "created in a later version" question that 5.225 asks for any
+  5.226 file.
+
+To drive Chummer from a script on a hidden X display, focus its window
+first (`xdotool windowfocus`); keyboard input does not reach it otherwise.
+The Save As dialog appends the filter's extension, so type the name
+without `.chum5lz` or rename the result.

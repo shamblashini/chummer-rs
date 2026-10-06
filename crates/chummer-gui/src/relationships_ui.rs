@@ -54,9 +54,30 @@ pub struct RelationshipsPanel {
     linked: HashMap<String, Linked>,
     /// Contacts with their stat block shown (`cmdExpand`).
     expanded: HashSet<String>,
-    notes_open: HashSet<String>,
+    /// The notes dialog (`EditNotes`), while open.
+    notes_edit: Option<NotesEdit>,
     confirm: Option<Confirm>,
     lists: Option<std::rc::Rc<Lists>>,
+}
+
+/// The notes dialog: the text and colour being edited for one entry.
+struct NotesEdit {
+    guid: String,
+    kind: ContactType,
+    text: String,
+    color: [u8; 3],
+    /// The colour picker is open (`btnColorSelect` / `ColorDialog`).
+    picking: bool,
+}
+
+/// Drag-and-drop payload: the guid of the entry being dragged.
+struct DragContact(String);
+
+/// A stored (light-mode) colour as shown in the current theme, like
+/// `ColorManager.GenerateCurrentModeColor`.
+fn shown_color(ui: &egui::Ui, rgb: [u8; 3]) -> egui::Color32 {
+    let [r, g, b] = if ui.visuals().dark_mode { chummer_core::html_color::dark_mode(rgb) } else { rgb };
+    egui::Color32::from_rgb(r, g, b)
 }
 
 /// Drop-down lists, read once.
@@ -114,18 +135,38 @@ impl RelationshipsPanel {
             if entries.is_empty() {
                 ui.weak(lang.tr("None."));
             }
-            for c in &entries {
+            let count = entries.len();
+            for (i, c) in entries.iter().enumerate() {
                 let guid = c.get("guid");
-                ui.push_id(&guid, |ui| {
-                    changed |= match kind {
-                        ContactType::Pet => self.pet_row(ui, ch, c, lang, status),
-                        _ => self.contact_row(ui, ch, c, kind, lang, status),
-                    };
+                let row = ui.push_id(&guid, |ui| {
+                    // `ContactControl.BackColor` = `Contact.PreferredColor`.
+                    let fill = contacts::preferred_color(c).map_or(egui::Color32::TRANSPARENT, |[a, r, g, b]| {
+                        let shown = shown_color(ui, [r, g, b]);
+                        egui::Color32::from_rgba_unmultiplied(shown.r(), shown.g(), shown.b(), a.min(96))
+                    });
+                    egui::Frame::new().fill(fill).inner_margin(2.0).show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                            changed |= self.order_handle(ui, ch, &guid, i, count, lang);
+                            ui.vertical(|ui| {
+                                changed |= match kind {
+                                    ContactType::Pet => self.pet_row(ui, ch, c, lang, status),
+                                    _ => self.contact_row(ui, ch, c, kind, lang, status),
+                                };
+                            });
+                        });
+                    })
+                    .response
                 });
+                changed |= drop_target(ui, ch, &row.response, &guid);
                 ui.separator();
             }
         });
-        changed | self.confirm_dialog(ui.ctx(), ch, lang)
+        changed |= self.notes_dialog(ui.ctx(), ch, lang) | self.confirm_dialog(ui.ctx(), ch, lang);
+        // A click or drop that changed the list shows on the next frame.
+        if changed || ui.input(|i| i.pointer.any_released()) {
+            ui.ctx().request_repaint();
+        }
+        changed
     }
 
     /// Load the linked files of `entries` whose link is new or changed.
@@ -221,7 +262,7 @@ impl RelationshipsPanel {
                 ui.end_row();
             });
         }
-        changed | self.notes(ui, ch, c)
+        changed
     }
 
     /// One `PetControl`: name, metatype (from `critters.xml`), link,
@@ -244,7 +285,29 @@ impl RelationshipsPanel {
             }
             changed |= self.buttons(ui, ch, c, ContactType::Pet, lang, status, false);
         });
-        changed | self.notes(ui, ch, c)
+        changed
+    }
+
+    /// The drag handle (Chummer drags the whole `ContactControl`) and Move
+    /// Up / Move Down buttons.
+    fn order_handle(&mut self, ui: &mut egui::Ui, ch: &mut Character, guid: &str, index: usize, count: usize, lang: &Language) -> bool {
+        let mut changed = false;
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let id = egui::Id::new(("contact_drag", guid));
+            ui.dnd_drag_source(id, DragContact(guid.to_owned()), |ui| {
+                ui.label(RichText::new("☰").weak());
+            })
+            .response
+            .on_hover_text(lang.tr("Drag to reorder"));
+            if ui.add_enabled(index > 0, egui::Button::new("⏶").small().frame(false)).on_hover_text(lang.tr("Move Up")).clicked() {
+                changed |= contacts::move_step(ch, guid, true);
+            }
+            if ui.add_enabled(index + 1 < count, egui::Button::new("⏷").small().frame(false)).on_hover_text(lang.tr("Move Down")).clicked() {
+                changed |= contacts::move_step(ch, guid, false);
+            }
+        });
+        changed
     }
 
     fn mugshot(&self, ui: &mut egui::Ui, guid: &str, size: f32) {
@@ -304,9 +367,11 @@ impl RelationshipsPanel {
         let notes = c.get("notes");
         let note_tip = if kind == ContactType::Enemy { lang.tr("Edit Enemy Notes.") } else { lang.tr("Edit Contact Notes.") };
         let note_tip = if notes.is_empty() { note_tip } else { format!("{note_tip}\n\n{notes}") };
-        let label = if notes.is_empty() { RichText::new("📝") } else { RichText::new("📝").color(crate::theme::accent(ui)) };
-        if ui.small_button(label).on_hover_text(note_tip).clicked() && !self.notes_open.remove(&guid) {
-            self.notes_open.insert(guid.clone());
+        // With notes, the button shows the notes colour (the colour
+        // Chummer's tree nodes use for items with notes).
+        let label = if notes.is_empty() { RichText::new("📝") } else { RichText::new("📝").color(shown_color(ui, contacts::notes_color(c))) };
+        if ui.small_button(label).on_hover_text(note_tip).clicked() {
+            self.notes_edit = Some(NotesEdit { guid: guid.clone(), kind, text: notes.replace("\r\n", "\n"), color: contacts::notes_color(c), picking: false });
         }
         if ui.add_enabled(!read_only, egui::Button::new("🗑").small()).clicked() {
             self.confirm = Some(Confirm::Delete(guid, kind));
@@ -314,14 +379,53 @@ impl RelationshipsPanel {
         changed
     }
 
-    fn notes(&mut self, ui: &mut egui::Ui, ch: &mut Character, c: &Element) -> bool {
-        let guid = c.get("guid");
-        if !self.notes_open.contains(&guid) {
+    /// `EditNotes`: the notes text, shown in the notes colour, and "Select
+    /// Colour" (only while there are notes). OK saves both.
+    fn notes_dialog(&mut self, ctx: &egui::Context, ch: &mut Character, lang: &Language) -> bool {
+        let Some(edit) = &mut self.notes_edit else { return false };
+        let mut choice = None;
+        let title = if edit.kind == ContactType::Enemy { lang.tr("Edit Enemy Notes.") } else { lang.tr("Edit Contact Notes.") };
+        egui::Modal::new(egui::Id::new("contact_notes")).show(ctx, |ui| {
+            ui.set_width(520.0);
+            ui.heading(title.trim_end_matches('.'));
+            let color = shown_color(ui, edit.color);
+            egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                ui.add(egui::TextEdit::multiline(&mut edit.text).text_color(color).desired_rows(10).desired_width(f32::INFINITY));
+            });
+            if edit.picking && !edit.text.is_empty() {
+                // The picker edits the stored (light-mode) colour.
+                let mut c = egui::Color32::from_rgb(edit.color[0], edit.color[1], edit.color[2]);
+                if egui::widgets::color_picker::color_picker_color32(ui, &mut c, egui::widgets::color_picker::Alpha::Opaque) {
+                    edit.color = [c.r(), c.g(), c.b()];
+                }
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(!edit.text.is_empty(), |ui| {
+                    let swatch = RichText::new("⏹").color(color);
+                    if ui.button(swatch).clicked() | ui.button(lang.tr("Select Colour")).clicked() {
+                        edit.picking = !edit.picking;
+                    }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(lang.tr("Cancel")).clicked() {
+                        choice = Some(false);
+                    }
+                    if ui.button(lang.tr("OK")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.ctrl) {
+                        choice = Some(true);
+                    }
+                });
+            });
+        });
+        let Some(ok) = choice else { return false };
+        let edit = self.notes_edit.take().expect("open");
+        if !ok {
             return false;
         }
-        let mut text = c.get("notes");
-        let r = ui.add(egui::TextEdit::multiline(&mut text).desired_rows(3).desired_width(f32::INFINITY));
-        r.changed() && contacts::set_field(ch, &guid, "notes", &text)
+        let stored = ch.items("contacts", "contact").into_iter().find(|c| c.get("guid") == edit.guid).map(|c| c.get("notes")).unwrap_or_default();
+        // Keep the file's line endings when the text did not change.
+        let text_changed = stored.replace("\r\n", "\n") != edit.text && contacts::set_field(ch, &edit.guid, "notes", &edit.text);
+        text_changed | contacts::set_notes_color(ch, &edit.guid, edit.color)
     }
 
     fn confirm_dialog(&mut self, ctx: &egui::Context, ch: &mut Character, lang: &Language) -> bool {
@@ -365,6 +469,25 @@ impl RelationshipsPanel {
             }
             None => false,
         }
+    }
+}
+
+/// Drag and drop onto a row: a line shows where the dragged entry goes
+/// (above the row when the pointer is in its upper half, else below);
+/// releasing moves it there.
+fn drop_target(ui: &mut egui::Ui, ch: &mut Character, row: &egui::Response, guid: &str) -> bool {
+    let Some(dragged) = row.dnd_hover_payload::<DragContact>() else { return false };
+    if dragged.0 == guid {
+        return false;
+    }
+    let Some(pos) = ui.ctx().pointer_interact_pos() else { return false };
+    let after = pos.y > row.rect.center().y;
+    let y = if after { row.rect.bottom() } else { row.rect.top() };
+    let stroke = egui::Stroke::new(2.0_f32, crate::theme::accent(ui));
+    ui.painter().hline(row.rect.x_range(), y, stroke);
+    match row.dnd_release_payload::<DragContact>() {
+        Some(p) => contacts::move_contact(ch, &p.0, guid, after),
+        None => false,
     }
 }
 

@@ -7,5 +7,5 @@ Exec=chummer-rs %F
 Icon=chummer-rs
 Terminal=false
 Categories=Game;RolePlaying;
-MimeType=application/x-chummer5;
+MimeType=application/x-chummer5;application/x-chummer5lz;
 StartupWMClass=chummer-rs

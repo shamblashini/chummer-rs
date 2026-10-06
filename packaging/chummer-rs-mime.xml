@@ -5,4 +5,9 @@
     <sub-class-of type="application/xml"/>
     <glob pattern="*.chum5"/>
   </mime-type>
+  <mime-type type="application/x-chummer5lz">
+    <comment>Chummer character (compressed)</comment>
+    <sub-class-of type="application/x-lzma"/>
+    <glob pattern="*.chum5lz"/>
+  </mime-type>
 </mime-info>
