@@ -150,11 +150,11 @@ fn command_refused_after_rebase_is_reported() {
     assert!(s.ack.accepted.is_empty());
     assert_eq!(s.ack.rejected.len(), 1);
     let reason = s.ack.rejected[0].reason.clone();
-    assert!(!reason.is_empty());
+    assert!(reason.contains("not enough karma"), "{reason}");
     let refused: Vec<_> = ev.iter().filter_map(|e| if let Event::Refused(r) = e { Some(r.clone()) } else { None }).collect();
     assert_eq!(refused.len(), 1);
     assert_eq!(refused[0].reason, reason);
-    assert!(refused[0].description.contains("(") || !refused[0].description.is_empty());
+    assert!(!refused[0].description.is_empty());
     assert_eq!(r1.refused(), refused.as_slice());
     // The refused raise is gone; the player sees the GM's state.
     assert_in_sync(&k.auth, &r1, &k.c1);
@@ -372,4 +372,93 @@ fn mail_messages_split_and_reassemble() {
         assert_eq!(mail::split(&MailMessage::Client(ClientMessage::Submit(b.clone())), mail::MIN_BLOB_LIMIT).len(), 1);
     }
     assert_eq!(mail::split_batch(batch, mail::DEFAULT_BLOB_LIMIT).len(), 1);
+}
+
+#[test]
+fn refused_command_vanishes_even_when_the_ack_is_old_news() {
+    let mut k = campaign(0);
+    let (skill, cost) = raisable(k.auth.character(&k.c1).unwrap());
+    k.auth.apply_local(engine(), &k.c1, gain(cost as f64, "Payout")).unwrap();
+    let mut r1 = Replica::new();
+    joined(&mut k.auth, k.p1, &mut r1, "Alice");
+    r1.edit(engine(), &k.c1, Command::RaiseSkill { skill }).unwrap();
+    k.auth.apply_local(engine(), &k.c1, spend(cost as f64, "Bribe")).unwrap();
+    let s = k.auth.submit(engine(), k.p1, r1.batch(&k.c1).unwrap()).unwrap();
+    // A push brings the replica to the authority's version before the ack
+    // is handled.
+    let push = k.auth.log(&k.c1).last().cloned().map(|e| chummer_sync::msg::Push {
+        character: k.c1.clone(),
+        name: String::new(),
+        from_version: e.version - 1,
+        body: PushBody::Entries(vec![e]),
+        version: k.auth.version(&k.c1).unwrap(),
+        hash: k.auth.hash(&k.c1).unwrap(),
+    });
+    r1.handle(engine(), ServerMessage::Push(push.unwrap()));
+    assert_eq!(r1.outbox(&k.c1).len(), 1);
+    let ev = r1.handle(engine(), ServerMessage::Ack(s.ack));
+    assert!(ev.iter().any(|e| matches!(e, Event::Refused(_))));
+    assert_in_sync(&k.auth, &r1, &k.c1);
+}
+
+#[test]
+fn a_push_that_overtakes_its_ack_waits_for_it() {
+    let mut k = campaign(0);
+    let mut r1 = Replica::new();
+    joined(&mut k.auth, k.p1, &mut r1, "Alice");
+    r1.edit(engine(), &k.c1, gain(3.0, "Mine")).unwrap();
+    let s = k.auth.submit(engine(), k.p1, r1.batch(&k.c1).unwrap()).unwrap();
+    // The GM edits right after; the push starts at the ack's version.
+    k.auth.apply_local(engine(), &k.c1, gain(100.0, "GM's")).unwrap();
+    let push = k.auth.push_for(&k.p1, &k.c1).unwrap();
+    assert_eq!(push.from_version, 1);
+    let ev = r1.handle(engine(), ServerMessage::Push(push));
+    assert!(ev.is_empty(), "kept for later: {ev:?}");
+    let ev = r1.handle(engine(), ServerMessage::Ack(s.ack));
+    assert!(!ev.iter().any(|e| matches!(e, Event::NeedResync(_))), "{ev:?}");
+    assert_in_sync(&k.auth, &r1, &k.c1);
+    assert_eq!(r1.version(&k.c1), Some(2));
+
+    // A real gap (a push that never came) turns into a resync after the next ack.
+    k.auth.apply_local(engine(), &k.c1, gain(1.0, "lost")).unwrap();
+    k.auth.mark_delivered(k.p1, &k.c1, 3);
+    k.auth.apply_local(engine(), &k.c1, gain(1.0, "late")).unwrap();
+    let push = k.auth.push_for(&k.p1, &k.c1).unwrap();
+    assert!(r1.handle(engine(), ServerMessage::Push(push)).is_empty());
+    assert_eq!(r1.resync_requests().len(), 1, "polled at sync time");
+}
+
+#[test]
+fn the_log_window_compacts_and_far_behind_clients_get_a_snapshot() {
+    use chummer_sync::authority::LOG_WINDOW;
+    let mut k = campaign(0);
+    let mut r1 = Replica::new();
+    joined(&mut k.auth, k.p1, &mut r1, "Alice");
+    let mut early = None;
+    for i in 0..LOG_WINDOW + 50 {
+        k.auth.apply_local(engine(), &k.c1, Command::SetField { key: "alias".into(), value: format!("A{i}") }).unwrap();
+        if i == 99 {
+            early = Some((k.auth.version(&k.c1).unwrap(), k.auth.hash(&k.c1).unwrap()));
+        }
+    }
+    let v = k.auth.version(&k.c1).unwrap();
+    assert_eq!(v, (LOG_WINDOW + 50) as u64);
+    assert_eq!(k.auth.log(&k.c1).len(), LOG_WINDOW);
+
+    // Inside the window: just the entries.
+    let (ev, eh) = early.unwrap();
+    let have = [chummer_sync::msg::Have { character: k.c1.clone(), version: ev, hash: eh }];
+    let (_, pushes) = k.auth.join(k.p1, "Alice", &have).unwrap();
+    assert!(matches!(&pushes[0].body, PushBody::Entries(e) if e.len() as u64 == v - ev));
+    // Behind the window: a snapshot, and the replica catches up from it.
+    let ClientMessage::Join { have, .. } = r1.join_message("Alice") else { unreachable!() };
+    assert_eq!(have[0].version, 0);
+    let (m, pushes) = k.auth.join(k.p1, "Alice", &have).unwrap();
+    assert!(pushes[0].is_snapshot());
+    r1.handle(engine(), ServerMessage::Joined { membership: m, pushes });
+    assert_in_sync(&k.auth, &r1, &k.c1);
+    assert_eq!(r1.character(&k.c1).unwrap().field("alias"), format!("A{}", LOG_WINDOW + 49));
+    // And the window still checks hashes after a save and load.
+    let back = Authority::from_bytes(&k.auth.to_bytes()).unwrap();
+    assert_eq!(back.log(&k.c1).len(), LOG_WINDOW);
 }

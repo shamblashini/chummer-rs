@@ -90,6 +90,11 @@ struct Copy {
     needs_resync: bool,
     /// `confirmed` compressed, made on the first save after it changed.
     snapshot: std::sync::OnceLock<Vec<u8>>,
+    /// Pushes that start after our version: they overtook the answer that
+    /// fills the gap (an ack and a push travel on different streams). Kept
+    /// until the gap is filled; still there after an ack, they mean a
+    /// resync.
+    early: Vec<Push>,
 }
 
 /// The player's local copies. See the module documentation.
@@ -263,7 +268,7 @@ impl Replica {
 
     /// Resync requests for drifted copies.
     pub fn resync_requests(&self) -> Vec<ResyncRequest> {
-        self.copies.iter().filter(|(_, c)| c.needs_resync).map(|(id, c)| ResyncRequest { character: id.clone(), have_version: c.version }).collect()
+        self.copies.iter().filter(|(_, c)| c.needs_resync || !c.early.is_empty()).map(|(id, c)| ResyncRequest { character: id.clone(), have_version: c.version }).collect()
     }
 
     // ----- what arrives -----
@@ -311,6 +316,12 @@ impl Replica {
         let mut ev = Vec::new();
         let id = push.character.clone();
         let members = self.members().to_vec();
+        if let (PushBody::Entries(_), Some(c)) = (&push.body, self.copies.get_mut(&id)) {
+            if !c.needs_resync && push.from_version > c.version {
+                c.early.push(push);
+                return ev;
+            }
+        }
         let new_entries: Vec<_> = push.entries().iter().filter(|e| self.copies.get(&id).is_none_or(|c| e.version > c.version)).cloned().collect();
         match push.body {
             PushBody::Snapshot { bytes, .. } => {
@@ -322,13 +333,13 @@ impl Replica {
                     Ok(ch) => ch,
                     Err(e) => return vec![Event::Error(format!("could not read the snapshot of {id}: {e}"))],
                 };
-                let outbox = self.copies.remove(&id).map(|c| c.outbox).unwrap_or_default();
+                let (outbox, early) = self.copies.remove(&id).map(|c| (c.outbox, c.early)).unwrap_or_default();
                 let hash = command::state_hash(&ch);
                 let needs_resync = hash != push.hash;
                 if needs_resync {
                     ev.push(Event::Error(format!("the snapshot of {id} does not match its hash")));
                 }
-                self.copies.insert(id.clone(), Copy { name: push.name.clone(), current: ch.clone(), confirmed: ch, version: push.version, hash, outbox, needs_resync, snapshot: std::sync::OnceLock::from(bytes) });
+                self.copies.insert(id.clone(), Copy { name: push.name.clone(), current: ch.clone(), confirmed: ch, version: push.version, hash, outbox, needs_resync, snapshot: std::sync::OnceLock::from(bytes), early });
             }
             PushBody::Entries(entries) => {
                 let Some(c) = self.copies.get_mut(&id) else {
@@ -337,10 +348,6 @@ impl Replica {
                 };
                 if c.needs_resync {
                     return ev;
-                }
-                if push.from_version > c.version {
-                    c.needs_resync = true;
-                    return vec![Event::NeedResync(ResyncRequest { character: id, have_version: c.version })];
                 }
                 if push.version <= c.version {
                     // Old news; check we agree on where we are.
@@ -381,14 +388,24 @@ impl Replica {
             return ev;
         }
         rebuild(engine, c);
-        ev.push(Event::Updated(id));
+        ev.push(Event::Updated(id.clone()));
+        ev.extend(self.drain_early(engine, &id));
         ev
+    }
+
+    /// Applies stashed pushes whose start we have reached.
+    fn drain_early(&mut self, engine: &Engine, id: &CharacterId) -> Vec<Event> {
+        let Some(c) = self.copies.get_mut(id) else { return Vec::new() };
+        let (ready, wait): (Vec<Push>, Vec<Push>) = std::mem::take(&mut c.early).into_iter().partition(|p| p.from_version <= c.version);
+        c.early = wait;
+        ready.into_iter().flat_map(|p| self.apply_push(engine, p)).collect::<Vec<_>>()
     }
 
     /// Handles the answer to one of our batches.
     pub fn apply_ack(&mut self, engine: &Engine, ack: Ack) -> Vec<Event> {
         let id = ack.character.clone();
         let mut ev = Vec::new();
+        let before = self.copies.get(&id).map(|c| c.outbox.len());
         if let Some(c) = self.copies.get_mut(&id) {
             for r in &ack.rejected {
                 if let Some(pos) = c.outbox.iter().position(|p| p.op.id == r.op) {
@@ -402,13 +419,23 @@ impl Replica {
             c.outbox.retain(|p| !ack.accepted.iter().any(|a| a.op == p.op.id && !a.changed));
         }
         ev.extend(self.apply_push(engine, ack.update));
+        ev.extend(self.drain_early(engine, &id));
         if let Some(c) = self.copies.get_mut(&id) {
             // Accepted ones are in the log the update carried; any left
             // were applied before our confirmed version.
-            let before = c.outbox.len();
             c.outbox.retain(|p| !ack.accepted.iter().any(|a| a.op == p.op.id && a.version <= c.version));
-            if c.outbox.len() != before && !c.needs_resync {
+            if Some(c.outbox.len()) != before && !c.needs_resync {
                 rebuild(engine, c);
+                if !ev.contains(&Event::Updated(id.clone())) {
+                    ev.push(Event::Updated(id.clone()));
+                }
+            }
+            // The ack brought us to the authority's state of a moment ago;
+            // a push still starting after that missed something.
+            if !c.early.is_empty() && !c.needs_resync {
+                c.early.clear();
+                c.needs_resync = true;
+                ev.push(Event::NeedResync(ResyncRequest { character: id, have_version: c.version }));
             }
         }
         ev
@@ -440,7 +467,7 @@ impl Replica {
         let mut copies = BTreeMap::new();
         for s in f.characters {
             let ch = command::restore(&s.snapshot)?;
-            let mut c = Copy { name: s.name, current: ch.clone(), confirmed: ch, version: s.version, hash: s.hash, outbox: s.outbox, needs_resync: s.needs_resync, snapshot: std::sync::OnceLock::from(s.snapshot) };
+            let mut c = Copy { name: s.name, current: ch.clone(), confirmed: ch, version: s.version, hash: s.hash, outbox: s.outbox, needs_resync: s.needs_resync, snapshot: std::sync::OnceLock::from(s.snapshot), early: Vec::new() };
             rebuild(engine, &mut c);
             copies.insert(s.id, c);
         }

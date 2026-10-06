@@ -192,7 +192,13 @@ impl PlayerSession {
         let role = client.welcome().role;
         *self.inner.role.lock().expect("poisoned") = Some(role);
         let join_msg = self.replica().join_message(&self.inner.cfg.name);
-        let reply = request(&client, &join_msg).await?;
+        let reply = match request(&client, &join_msg).await {
+            Ok(r) => r,
+            Err(e) => {
+                client.close();
+                return Err(e);
+            }
+        };
         *self.inner.client.lock().expect("poisoned") = Some(client.clone());
         let resync = self.handle(reply);
         self.save_logged();
