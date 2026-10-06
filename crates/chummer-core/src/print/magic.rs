@@ -260,6 +260,7 @@ fn calculated_dv(ctx: &Ctx, item: &Element) -> String {
     let dv = if force { &base[1..] } else { base.as_str() };
     let dv = if dv.is_empty() { "0".to_owned() } else { dv.trim_start_matches('+').to_owned() };
     let mut append = String::new();
+    let mut failed = false;
     let mut drain = 0;
     match expr::parse_plain(&dv) {
         Some(mut v) => {
@@ -276,30 +277,38 @@ fn calculated_dv(ctx: &Ctx, item: &Element) -> String {
             drain = standard_round(v);
         }
         None => {
-            let mut e = format!("({dv})");
+            let mut mods = String::new();
             for v in &imps {
-                e.push_str(&format!("+({})", num_invariant(*v)));
+                mods.push_str(&format!("+({})", num_invariant(*v)));
             }
             if limited {
-                e.push_str("-2");
+                mods.push_str("-2");
             }
             if extended {
-                e.push_str("+2");
+                mods.push_str("+2");
             }
+            let mut e = format!("({dv}){mods}");
             if barehanded && !force {
                 e = format!("2*({e})");
             }
             let substituted = expr::substitute_attributes(&e, &crate::calc::SheetAttributes(&ctx.sheet.attributes));
             match expr::evaluate_num(&substituted) {
                 Ok(v) => drain = standard_round(v),
-                // LIKELY-BUG(LB-12): a non-numeric DV such as "Special" prints as "Special(Special)". See docs/likely-bugs.md.
-                Err(_) => append = e,
+                // chummer-rs deviates from Chummer here (LB-12): Chummer appends
+                // the whole failed expression to the DV, so "Special" prints as
+                // "Special(Special)" (cosmetic, no rule). Only the modifiers
+                // are appended here: "Special" stays "Special", a limited one
+                // reads "Special-2".
+                Err(_) => {
+                    failed = true;
+                    append = mods;
+                }
             }
         }
     }
     if force {
-        if !append.is_empty() {
-            let s = format!("{base}F{append}");
+        if failed {
+            let s = format!("{base}{append}");
             if barehanded { format!("2 * ({s})") } else { s }
         } else {
             let n = match drain {
@@ -309,7 +318,7 @@ fn calculated_dv(ctx: &Ctx, item: &Element) -> String {
             };
             if barehanded { format!("2 * (F{n})") } else { format!("F{n}") }
         }
-    } else if !append.is_empty() {
+    } else if failed {
         let s = format!("{base}{append}");
         if barehanded { format!("2 * ({s})") } else { s }
     } else {

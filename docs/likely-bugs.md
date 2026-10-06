@@ -25,7 +25,7 @@ judgement call).
 | Id | Area | Chummer | chummer-rs | Rules | Class | Rec. |
 |---|---|---|---|---|---|---|
 | LB-01 | Career undo: spirit fettering | Undo of the "Fettered a Spirit" expense refunds Force × 3 karma and drops the entry. The spirit stays fettered and the MAG −1 improvement stays (`ExpenseUndo` has no `SpiritFettering` case). | Same. | SG p. 192: fettering costs Force × 3 karma and 1 point of Magic. The refund without unfettering gives a free fetter. | (a) | fix |
-| LB-02 | Create Spell: area combat spells | The "Area" descriptor is added only when `cboRange.SelectedValue` contains "(A)". The combo value is "T"/"LOS" (the "(A)" goes on the saved range from `chkArea`), so a combat spell never gets "Area". | Same (`d.range` is "T"/"LOS", `d.area` is separate). | SR5 p. 282: area spells are marked "(A)" after the range. The data gives every official area combat spell the "Area" descriptor (Manaball: "Direct, Area"). Witness My Hate (RF p. 151) is for single-target Direct spells only and keys on `Direct,NOT(Area)`, so a custom Manaball wrongly gets +2 DV and +2 drain. | (a) | fix |
+| LB-02 | Create Spell: area combat spells | The "Area" descriptor is added only when `cboRange.SelectedValue` contains "(A)". The combo value is "T"/"LOS" (the "(A)" goes on the saved range from `chkArea`), so a combat spell never gets "Area". | Fixed: an area combat spell (`d.area`) gets "Area" after its other descriptors ("Direct, Area", "Indirect, Elemental, Area", as in the data), so Witness My Hate no longer applies to it. | SR5 p. 282: area spells are marked "(A)" after the range. The data gives every official area combat spell the "Area" descriptor (Manaball: "Direct, Area"). Witness My Hate (RF p. 151) is for single-target Direct spells only and keys on `Direct,NOT(Area)`, so a custom Manaball wrongly gets +2 DV and +2 drain. | (b) — fixed | fixed |
 | LB-03 | Skill karma cost windows (Jack of All Trades) | `Skill.RangeCost` adds `Value × (min(upper, Max) − max(lower, Min − 1))`. (1) When `lower ≥ Max` the count is negative: 6 → 7 pays +1 from the −1 window (17, not 16). (2) A window is only used when `Minimum ≤ lower`: 3 → 7 skips the +2 window for levels 6–7 (42, not 46). | Same. | RF p. 147, Jack of All Trades: −1 karma per level up to rating 5 (minimum 1), +2 karma per level above 5. Correct costs: 16 and 46. | (a) | fix |
 | LB-04 | Weapon accessory cost multiplier (Vintage) | `WeaponAccessory.Create` reads `<accessorycostmultiplier>` from the data, but `Save` does not write it, so the multiplier is lost after a reload. | Worse: `accessory_element` does not copy the field, so Vintage never doubles the other accessories, not even before saving. | GH3 p. 3, Vintage: physical upgrades cost twice the listed amount. | (a) | fix (copy the field from the data record when the item is made) |
 | LB-05 | Custom drug grade cost | `CreateCustomDrug` reads the grade's `<cost>` into `_dblCostMultiplier` and never uses it. `Drug.Cost` sums the components only. | Same (`drug::cost`). | CF p. 190: street-cooked drugs cost half. Data: Street Cooked 0.5, Pharmaceutical 2, Designer 6. | (a) | fix |
@@ -40,7 +40,7 @@ judgement call).
 | LB-09 | PACKS kits: attributes and skills | `AddPACKSKit` lists the kit's attributes, skills, knowledge skills and powers in the dialog but does not apply them. | Same; reported as skipped. Listed in README "Not done yet". | Kits are a Chummer feature; no rules. Data has kits that set attributes and skills, which now do nothing. | (a) | ask (a fix makes kits differ from Chummer 5.226) |
 | LB-10 | Critter attribute limits at a Force | `ExpressionToInt` gives at least `intMinValueFromForce` (1) when Force > 0, also for a literal "0". Spirits get RES and DEP limits and an ESS minimum of 1 where the data says 0. A failed expression also gives 1. | Same (`gm::expression_to_int`). | SR5 p. 303: spirit stat blocks have no Resonance or Depth. The floor of 1 for real attributes (F−3 at Force 1) is fine. | (a) | ask (only RES/DEP of spirits change; not shown for spirits) |
 | LB-11 | Weapon dice pool | `Weapon.DicePool` adds the `WeaponSpecificDV`, `WeaponSpecificAP`, `WeaponSpecificAccuracy` and `WeaponSpecificRange` improvements to the pool, not only `WeaponSpecificDice`. | Same. | A DV/AP/Accuracy bonus is not a dice pool bonus. No stock data or custom improvement type creates these four, so there is no effect today. | (a) | ask (latent) |
-| LB-12 | Print: spell drain "Special" | `Spell.CalculatedDv` sends a non-numeric DV through XPath; it fails and the text is appended: "Special(Special)". | Same; the test `special_dv_follows_chummer` pins it. | n/a (cosmetic). | (a) | ask (cosmetic) |
+| LB-12 | Print: spell drain "Special" | `Spell.CalculatedDv` sends a non-numeric DV through XPath; it fails and the text is appended: "Special(Special)". | Fixed: when the DV does not evaluate, only the modifiers are appended: "Special" prints as "Special", a limited one as "Special-2". | n/a (cosmetic). | (b) — fixed | fixed |
 
 ## Already fixed in chummer-rs
 
@@ -80,7 +80,7 @@ Tests that pin the current behaviour change with a fix.
 | Id | Code | Test that pins it |
 |---|---|---|
 | LB-01 | `career/undo.rs:94` (the no-op arm), `career/magic.rs:268` | `tests/career_actions.rs` `fettering_undo_refunds_like_chummer` |
-| LB-02 | `gm/custom_spell.rs:385` | `tests/gm.rs:234` |
+| LB-02 | `gm/custom_spell.rs` `descriptors` | `tests/gm.rs` `custom_spell_drain_and_descriptors`, `witness_my_hate_skips_custom_area_spells` |
 | LB-03 | `calc/karma_cost.rs:24` (`window_extra`), `modifiers` below it | `calc/karma_cost.rs` `active_skill_cost_windows` (42 and 17) |
 | LB-04 | `items/weapon.rs:703`, `accessory_element` at `items/weapon.rs:242` | `items/weapon.rs` `accessory_multiplier_comes_from_the_saved_accessory` |
 | LB-05 | `items/drug.rs:294` | — |
@@ -90,7 +90,7 @@ Tests that pin the current behaviour change with a fix.
 | LB-09 | `gm/packs.rs:203` | — |
 | LB-10 | `gm/mod.rs:16` | `gm/mod.rs` tests ("even a 0 limit is raised to 1") |
 | LB-11 | `items/weapon.rs:1413` | — |
-| LB-12 | `print/magic.rs:295` | `tests/print_oracle.rs` `special_dv_follows_chummer` |
+| LB-12 | `print/magic.rs` `calculated_dv` | `tests/print_oracle.rs` `special_dv_prints_as_is`, `limited_special_dv_appends_the_modifier` |
 | LB-20 | `play/ammo.rs:644` | — |
 | LB-21 | `gm/custom_spell.rs:161` | `tests/gm.rs` (detection: extended area implies area) |
 | LB-22 | `contacts.rs:278` | — |

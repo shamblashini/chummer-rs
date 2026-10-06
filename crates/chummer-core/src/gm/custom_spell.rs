@@ -382,14 +382,17 @@ pub fn descriptors(d: &SpellDesign) -> String {
             if m(2) {
                 v.push("Indirect");
             }
-            // LIKELY-BUG(LB-02): area combat spells get no "Area" descriptor, so Witness My Hate (Direct,NOT(Area)) applies to them. See docs/likely-bugs.md.
-            // Chummer tests the range combo's value ("T"/"LOS"), which never
-            // contains "(A)", so combat spells never get an Area descriptor.
-            if d.range.contains("(A)") {
-                v.push("Area");
-            }
             if m(3) {
                 v.push("Elemental");
+            }
+            // chummer-rs deviates from Chummer here (LB-02): Chummer tests the
+            // range combo's value ("T"/"LOS"), which never contains "(A)", so
+            // its combat spells never get "Area". SR5 p. 282 marks area spells
+            // and the data gives every area combat spell "Area" (Manaball:
+            // "Direct, Area"; Fireball: "Indirect, Elemental, Area"), which
+            // keeps Witness My Hate (RF p. 151, Direct,NOT(Area)) off them.
+            if d.area {
+                v.push("Area");
             }
         }
     }

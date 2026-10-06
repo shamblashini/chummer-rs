@@ -231,7 +231,7 @@ fn custom_spell_drain_and_descriptors() {
     d.range = "LOS".into();
     // +1 physical, +2 area, +2×2 element effects, -1 stun
     assert_eq!(custom_spell::drain(&d), "(F/2)+6");
-    assert_eq!(custom_spell::descriptors(&d), "Indirect, Elemental", "Chummer never adds Area for combat spells");
+    assert_eq!(custom_spell::descriptors(&d), "Indirect, Elemental, Area", "as Fireball in the data (LB-02)");
     let e = custom_spell::element(&d, "g");
     assert_eq!(e.get("range"), "LOS(A)");
     assert_eq!(e.get("damage"), "S");
@@ -281,3 +281,40 @@ fn custom_spell_on_a_character() {
     assert_eq!(ch.karma, 15);
 }
 
+
+/// Witness My Hate (RF p. 151) keys on `Direct,NOT(Area)`: a custom area
+/// combat spell now has the Area descriptor, so it gets no extra drain
+/// (LB-02; Chummer gives it +2).
+#[test]
+fn witness_my_hate_skips_custom_area_spells() {
+    let engine = Engine::load().unwrap();
+    let lang = chummer_core::lang::Language::load(&chummer_core::data::resource_dir("lang").unwrap(), "en-us");
+    let mut ch = new_runner(&engine);
+    let mut single = combat_design();
+    custom_spell::set_modifier(&mut single, 0, true); // Direct
+    custom_spell::set_modifier(&mut single, 3, true); // Physical
+    let mut area = single.clone();
+    area.name = "Zap Ball".into();
+    area.area = true;
+    assert_eq!(custom_spell::descriptors(&area), "Direct, Area");
+    let g1 = custom_spell::add(&mut ch, &engine, &single).unwrap();
+    let g2 = custom_spell::add(&mut ch, &engine, &area).unwrap();
+    for kind in ["SpellDescriptorDrain", "SpellDescriptorDamage"] {
+        ch.improvements.list.push(chummer_core::improvement::Improvement {
+            improved_name: "Direct,NOT(Area)".into(),
+            kind: kind.into(),
+            source: "Quality".into(),
+            val: 2.0,
+            rating: 1,
+            enabled: true,
+            ..Default::default()
+        });
+    }
+    let root = chummer_core::print::print_xml(&ch, &engine, &lang);
+    let mut spells = Vec::new();
+    root.descendants("spell", &mut spells);
+    let dv = |g: &str| spells.iter().find(|s| s.get("guid") == g).unwrap().get("dv_english");
+    let saved = |g: &str| ch.items("spells", "spell").into_iter().find(|s| s.get("guid") == g).unwrap().get("dv").replace('/', "÷");
+    assert_ne!(dv(&g1), saved(&g1), "the single-target spell gets the drain bonus");
+    assert_eq!(dv(&g2), saved(&g2), "the area spell does not");
+}

@@ -263,9 +263,10 @@ fn spells_translate_codes() {
 
 /// `Spell.CalculatedDv` sends a non-numeric DV such as `Special` through
 /// the XPath evaluator, which rejects the letters, so Chummer appends the
-/// failed expression: `Special(Special)`.
+/// failed expression: `Special(Special)`. chummer-rs prints the DV as it
+/// is, with only the modifiers appended (LB-12).
 #[test]
-fn special_dv_follows_chummer() {
+fn special_dv_prints_as_is() {
     let engine = Engine::load().unwrap();
     let lang = Language::load(&data::resource_dir("lang").unwrap(), "en-us");
     let mut seen = 0;
@@ -278,11 +279,28 @@ fn special_dv_follows_chummer() {
         let root = print::print_xml(&ch, &engine, &lang);
         for p in all(&root, "spell") {
             let s = saved.iter().find(|s| s.get("guid") == p.get("guid")).unwrap();
-            if s.get("dv") == "Special" && !s.get_bool("limited").unwrap_or(false) {
+            if s.get("dv") == "Special" {
                 seen += 1;
-                assert_eq!(p.get("dv"), "Special(Special)");
+                let want = if s.get_bool("limited").unwrap_or(false) { "Special-2" } else { "Special" };
+                assert_eq!(p.get("dv"), want);
+                assert_eq!(p.get("dv_english"), want);
             }
         }
     }
     assert!(seen > 0);
+}
+
+/// A limited `Special` spell keeps its -2 after the text (LB-12).
+#[test]
+fn limited_special_dv_appends_the_modifier() {
+    let engine = Engine::load().unwrap();
+    let lang = Language::load(&data::resource_dir("lang").unwrap(), "en-us");
+    let f = fixtures().into_iter().find(|f| Character::load(f).unwrap().items("spells", "spell").iter().any(|s| s.get("dv") == "Special")).unwrap();
+    let mut ch = Character::load(&f).unwrap();
+    let guid = ch.items("spells", "spell").into_iter().find(|s| s.get("dv") == "Special").unwrap().get("guid");
+    let spell = ch.items_mut("spells").elements_mut().find(|s| s.get("guid") == guid).unwrap();
+    spell.set_child_text("limited", "True");
+    let root = print::print_xml(&ch, &engine, &lang);
+    let p = all(&root, "spell").into_iter().find(|p| p.get("guid") == guid).unwrap();
+    assert_eq!(p.get("dv"), "Special-2");
 }
