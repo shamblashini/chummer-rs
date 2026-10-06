@@ -53,6 +53,8 @@ Each table has these columns:
 | Chummer5a | chummer-rs | Why | File |
 |---|---|---|---|
 | The creation form has no Improvements tab. | The Improvements tab is shown in creation mode when the character has custom improvements, so they can still be edited. | Nothing becomes unreachable. | no |
+| Creation problems show only as a popup when you click Finish. | Problems are listed all the time: a ⚠ badge with a count on each tab, a panel on the open tab, marks on the rows concerned, and the full list in Karma Summary. An optional guide walks through creation one step at a time. | Community request: don't dump everything at once, and say what's wrong before Finish. | no |
+| A technomancer without a stream is an error. | It is a warning and does not block Finish. | chummer-rs has no stream picker yet, so it must not block finishing. | no |
 
 ## Items & costs
 
