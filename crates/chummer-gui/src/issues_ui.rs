@@ -144,7 +144,9 @@ impl CharacterView {
                 self.only_rated = false;
             }
             Area::Contacts => self.relationships.show_contact(&guid),
-            _ => self.item_editor = Some((guid, crate::item_editor::ItemEditor::default())),
+            // Items the detail pane edits; others only get their tab.
+            _ if chummer_core::items::edit::find(&self.ch, &guid).is_some_and(chummer_core::items::edit::is_item) => self.item_editor = Some((guid, crate::item_editor::ItemEditor::default())),
+            _ => {}
         }
     }
 
@@ -177,16 +179,27 @@ impl CharacterView {
             .inner_margin(egui::Margin::symmetric(8, 4))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal_wrapped(|ui| {
+                // One line for a couple of issues, a list for more.
+                let inline = mine.len() <= 2;
+                ui.horizontal(|ui| {
                     ui.label(crate::theme::strong(ui, if errors { lang.tr("Blocks finishing creation:") } else { lang.tr("Still to do on this tab:") }));
+                    if inline {
+                        for i in &mine {
+                            if issue_row(ui, lang, i) {
+                                jump = Some((*i).clone());
+                            }
+                            ui.add_space(8.0);
+                        }
+                    }
+                    close = ui.small_button("✖").on_hover_text(lang.tr("Hide until something changes")).clicked();
+                });
+                if !inline {
                     for i in &mine {
                         if issue_row(ui, lang, i) {
                             jump = Some((*i).clone());
                         }
-                        ui.add_space(8.0);
                     }
-                    close = ui.small_button("✖").on_hover_text(lang.tr("Hide until something changes")).clicked();
-                });
+                }
             });
         ui.add_space(4.0);
         if close {

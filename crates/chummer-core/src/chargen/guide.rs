@@ -122,9 +122,10 @@ impl Step {
     }
 
     /// Whether an issue is this step's. The review step collects every
-    /// error and the karma total.
+    /// error and warning (what Finish creation will list) and the karma
+    /// total.
     pub fn owns(self, issue: &Issue) -> bool {
-        self.areas().contains(&issue.area) || (self == Step::Review && issue.severity == Severity::Error)
+        self.areas().contains(&issue.area) || (self == Step::Review && issue.severity != Severity::Info)
     }
 
     /// The rulebook page explaining the step, as (book code, page), for
