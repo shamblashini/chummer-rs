@@ -58,7 +58,7 @@ judgement call).
 
 | Id | Area | Chummer | chummer-rs | Rules | Class | Rec. |
 |---|---|---|---|---|---|---|
-| LB-30 | Career: which grade a new metamagic goes to | The player selects an initiation grade node in the tree; the metamagic goes there, free if that grade has no metamagic yet. | The GUI picks the lowest grade without one, else the top grade. Costs are the same in total. | SR5 p. 325: each initiation grade gives one metamagic. | (c) | keep |
+| LB-30 | Career: which grade a new metamagic goes to | The player selects an initiation grade node in the tree; the metamagic goes there, free if that grade has no metamagic yet. | Fixed: the Metamagics section has a Grade dropdown (career mode) showing each grade's cost; the lowest grade without one, else the top grade, is preselected (`career::default_metamagic_grade`). | SR5 p. 325: each initiation grade gives one metamagic. | (b) — fixed | fixed |
 | LB-31 | Cyberware Device Rating by grade | `Grade` reads `<devicerating>` from the grade record and falls back to a name table. | Uses only the name table. Bioware grades (data: 0) get 2–6; custom grades with their own value are ignored. | SR5 p. 234: basic cyberware 2, alphaware 3, betaware 4, deltaware 5. Bioware is not an electronic device. | (c) | fix (read the data field) |
 | LB-32 | Fettered spirits | Fettering does not add the Banishing Resistance power. | Fixed: a fettered spirit (not a sprite) has Banishing Resistance, derived from `<fettered>` (nothing extra saved). The GUI shows it next to the Fettered box; the print lists the spirit's powers (critter data plus Banishing Resistance) for a fettered spirit. Spirits that are not fettered print no powers, as in Chummer (which prints them only for a linked spirit file). | SG p. 192: a fettered spirit gains Banishing Resistance. KC p. 91: a sprite pet gains no power. | (b) — fixed | fixed |
 | LB-33 | Essence loss in career mode (RAW) | Burns karma levels and power points step by step as essence drops. | Not ported: a career character's essence-loss improvements stay as they are (`essence_loss.rs`). | SR5 p. 95: any fraction of Essence lost lowers Magic/Resonance by 1. | (c) | fix (missing feature) |
@@ -98,7 +98,7 @@ Tests that pin the current behaviour change with a fix.
 | LB-24 | `career/ledger.rs:331` | — |
 | LB-25 | `items/magic/mod.rs:135` | — |
 | LB-26 | `career/undo.rs:94` | `tests/ai.rs:192` |
-| LB-30 | `chummer-gui/src/magic_ui.rs:464` | — |
+| LB-30 | `chummer-gui/src/magic_ui.rs` `metamagic_ui`, `career/magic.rs` `default_metamagic_grade` | `tests/career_actions.rs` `metamagic_goes_to_the_chosen_grade` |
 | LB-31 | `play/matrix.rs:69` | — |
 | LB-32 | `items/magic/spirit.rs` `powers`, `print/magic.rs` `spirit` | `tests/career_actions.rs` `fettered_spirits_gain_banishing_resistance` |
 | LB-33 | `essence_loss.rs` (module docs) | — |

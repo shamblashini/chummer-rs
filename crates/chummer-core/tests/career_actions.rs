@@ -394,6 +394,35 @@ fn second_metamagic_at_a_grade_costs_karma() {
     assert!(career::learn_metamagic(&mut ch, &engine, second, None, grade + 5).is_err());
 }
 
+/// The player picks the grade a metamagic goes to (LB-30, as Chummer's
+/// tree selection); the default is the lowest grade with none yet.
+#[test]
+fn metamagic_goes_to_the_chosen_grade() {
+    let engine = Engine::load().unwrap();
+    let mut ch = load("Glessner");
+    give_karma(&mut ch, 300.0);
+    ch.attribute_mut("MAG").unwrap().karma += 3;
+    assert_eq!(career::default_metamagic_grade(&ch), 0, "not initiated");
+    career::add_initiation_grade(&mut ch, &engine, InitiationOptions::default()).unwrap();
+    career::add_initiation_grade(&mut ch, &engine, InitiationOptions::default()).unwrap();
+    assert_eq!(career::grade_count(&ch, false), 2);
+    assert_eq!(career::default_metamagic_grade(&ch), 1);
+    let doc = engine.store.doc("metamagic.xml").unwrap();
+    let rec = |n: &str| data::find(&doc, "metamagics", "metamagic", n).unwrap();
+    // Grade 2 chosen: free, and grade 1 is still the default.
+    let karma = ch.karma;
+    let m = career::learn_metamagic(&mut ch, &engine, rec("Centering"), None, 2).unwrap();
+    assert_eq!(ch.karma, karma);
+    assert_eq!(ch.items("metamagics", "metamagic").into_iter().find(|x| x.get("guid") == m).unwrap().get_i32("grade"), Some(2));
+    assert_eq!(career::default_metamagic_grade(&ch), 1);
+    // A second one at grade 2 costs karma while grade 1 is free.
+    assert_eq!(career::metamagic_karma_cost(&engine, &ch, 2), 15);
+    assert_eq!(career::metamagic_karma_cost(&engine, &ch, 1), 0);
+    career::learn_metamagic(&mut ch, &engine, rec("Masking"), None, 1).unwrap();
+    assert_eq!(ch.karma, karma);
+    assert_eq!(career::default_metamagic_grade(&ch), 2, "every grade has one: the top grade");
+}
+
 #[test]
 fn critter_powers_are_logged_even_when_free() {
     let engine = Engine::load().unwrap();

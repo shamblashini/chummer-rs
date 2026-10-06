@@ -217,6 +217,15 @@ pub fn metamagic_karma_cost(engine: &Engine, ch: &Character, grade: i32) -> i32 
     }
 }
 
+/// The grade a new metamagic or echo is offered at: the lowest grade with
+/// none yet (free), else the top grade. 0 before the first initiation.
+/// Chummer adds to the grade selected in its tree; the player may pick
+/// another grade for [`learn_metamagic`].
+pub fn default_metamagic_grade(ch: &Character) -> i32 {
+    let top = metamagic::current_grade(ch);
+    (1..=top).find(|g| !grade_slot_taken(ch, *g)).unwrap_or(top)
+}
+
 /// Learn a metamagic (an echo when the character has RES) at an initiation
 /// or submersion `grade` (`tsMetamagicAddMetamagic_Click`). The first one
 /// at a grade is free; any further one costs `KarmaMetamagic`. Returns its

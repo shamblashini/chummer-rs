@@ -89,7 +89,7 @@ karma and 5,000¥.
 - Buy off negative qualities.
 - Initiate or submerge (group, ordeal and schooling discounts). A mystic adept with the second-MAG house rule is also limited by MAGAdept.
 - Learn martial arts and their techniques.
-- Learn metamagics and echoes. The first one at a grade is free; each further one costs karma.
+- Learn metamagics and echoes at a chosen grade (the lowest grade without one is preselected). The first one at a grade is free; each further one costs karma.
 - Buy critter powers.
 - Buy A.I. programs and Advanced Programs. Undo refunds the karma and removes the program (Chummer keeps it); it is refused while another program the character has requires it.
 - Bind foci, up to MAG foci and MAG × 5 total force.

@@ -230,6 +230,8 @@ pub struct MagicEditor {
     spell_dialog: Option<SelectDialog>,
     pending_spell: Option<PendingSpell>,
     metamagic: Option<Picker>,
+    /// Career mode: the grade a new metamagic or echo goes to.
+    metamagic_grade: Option<i32>,
     /// Mentor picker for a quality granting one: (quality guid, type, picker).
     mentor: Option<(String, String, Picker)>,
     /// Chosen mentor choices per mentor guid, before applying.
@@ -461,14 +463,32 @@ impl MagicEditor {
         let grade = metamagic::current_grade(ch);
         let taken = ch.items("metamagics", "metamagic").iter().filter(|m| m.get_i32("grade").unwrap_or(0) > 0).count() as i32;
         let free = (grade - taken).max(0);
-        // LIKELY-BUG(LB-30): Chummer adds to the grade selected in its tree; this picks the grade. See docs/likely-bugs.md.
         // Career mode: the first metamagic at a grade is free, more cost
-        // karma; they go to the lowest grade with a free slot, else the top.
-        let career_grade = (1..=grade).find(|g| career::metamagic_karma_cost(cx.engine, ch, *g) == 0).unwrap_or(grade);
+        // karma. As in Chummer (which adds to the grade selected in its
+        // tree) the player picks the grade; the lowest grade with a free
+        // slot, else the top one, is preselected (LB-30).
+        if !self.metamagic_grade.is_some_and(|g| (1..=grade).contains(&g)) {
+            self.metamagic_grade = Some(career::default_metamagic_grade(ch));
+        }
+        let career_grade = self.metamagic_grade.unwrap_or(grade);
         let career_cost = if ch.created && grade > 0 { career::metamagic_karma_cost(cx.engine, ch, career_grade) } else { 0 };
         let lang = cx.lang;
         let what_label = if echo { lang.tr("echo") } else { lang.tr("metamagic") };
         ui.horizontal(|ui| {
+            if ch.created && grade > 0 {
+                ui.label(lang.tr("Grade"));
+                let label = |g: i32| {
+                    let cost = career::metamagic_karma_cost(cx.engine, ch, g);
+                    if cost == 0 { format!("{g} ({})", lang.tr("Free")) } else { format!("{g} ({})", lang.tr_fmt("{0} karma", &[&cost])) }
+                };
+                let mut pick = career_grade;
+                crate::combo::Combo::from_id_salt("metamagic_grade").selected_text(label(pick)).width(120.0).show_ui(ui, |ui| {
+                    for g in 1..=grade {
+                        crate::combo::selectable_value(ui, &mut pick, g, label(g));
+                    }
+                });
+                self.metamagic_grade = Some(pick);
+            }
             let can = if ch.created { grade > 0 && ch.karma >= career_cost } else { free > 0 };
             let mut text = format!("➕ {}", lang.tr_fmt("Add {0}…", &[&what_label]));
             if career_cost > 0 {
@@ -497,7 +517,7 @@ impl MagicEditor {
                     let r = store.doc(file).map_err(|e| e.to_string()).and_then(|doc| {
                         let rec = data::find(&doc, container, item, &name).ok_or_else(|| format!("unknown {what} {name}"))?;
                         if ch.created {
-                            career::learn_metamagic(ch, cx.engine, rec, answer.as_deref(), career_grade).map_err(|e| e.to_string())
+                            career::learn_metamagic(ch, cx.engine, rec, answer.as_deref(), self.metamagic_grade.unwrap_or(career_grade)).map_err(|e| e.to_string())
                         } else {
                             metamagic::add(ch, store, rec, answer.as_deref())
                         }
