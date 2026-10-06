@@ -515,12 +515,24 @@ fn refresh_derived(ch: &mut Character, engine: &Engine, essence_before: (f64, Op
     }
 }
 
-/// The canonical form: the saved XML.
+/// The canonical form: the saved XML without what depends on the program
+/// rather than the character: `<chummerrsversion>`, and the export-only
+/// totals saving stamps in (`<totaless>`, each attribute's
+/// `<totalvalue>`). So a saved and reloaded character, or the same
+/// character on another chummer-rs version, has the same form.
 pub fn canonical(ch: &Character) -> String {
-    ch.to_xml_string()
+    let mut doc = ch.to_document();
+    doc.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.name == "chummerrsversion" || e.name == "totaless"));
+    if let Some(attrs) = doc.child_mut("attributes") {
+        for a in attrs.elements_mut() {
+            a.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.name == "totalvalue"));
+        }
+    }
+    doc.to_xml_string()
 }
 
-/// BLAKE3 of the canonical form. Equal hashes mean equal saved files.
+/// BLAKE3 of the canonical form. Equal hashes mean equal characters
+/// (saved files equal up to the parts [`canonical`] leaves out).
 pub fn state_hash(ch: &Character) -> [u8; 32] {
     *blake3::hash(canonical(ch).as_bytes()).as_bytes()
 }

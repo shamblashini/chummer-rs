@@ -152,11 +152,12 @@ Implemented (local part):
 - `Session::version()` is the number of commands in the log. It is not
   saved in the `.chum5`. Undo lowers it and redo raises it again, so a
   version always names one state of this session's history.
-- `state_hash(ch)` is BLAKE3 of the canonical form, the saved XML
-  (`Character::to_xml_string`). Loading a saved file and saving it again
-  gives the same XML for every test fixture, so equal hashes mean equal
-  files. Saving does not change the hash: the export totals Chummer
-  writes into the file go into a copy.
+- `state_hash(ch)` is BLAKE3 of the canonical form: the saved XML
+  without `<chummerrsversion>` and the export-only totals (`<totaless>`,
+  attribute `<totalvalue>`), so the hash does not depend on the
+  chummer-rs version or on whether the file was saved. Loading a saved
+  file and saving it again gives the same XML for every test fixture.
+  A saved and reloaded character has the live session's hash.
 - `snapshot(ch)` is the canonical XML, LZMA-compressed as `.chum5lz`;
   `restore(bytes)` loads it.
 - `replay(ch, engine, &[Envelope])` applies a log; the tests replay a

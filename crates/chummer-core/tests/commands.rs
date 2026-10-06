@@ -240,6 +240,7 @@ fn saving_does_not_change_the_state() {
     assert_eq!(session.ch().file.as_deref(), Some(path.as_path()));
     let reloaded = Character::load(&path).unwrap();
     assert_eq!(reloaded.field("alias"), "Saved");
+    assert_eq!(command::state_hash(&reloaded), h, "the saved file has the session's hash");
     std::fs::remove_dir_all(&dir).ok();
 }
 
