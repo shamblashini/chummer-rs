@@ -201,7 +201,7 @@ impl Applier<'_> {
 /// the kit's attributes, skills, knowledge skills and adept powers.
 // chummer-rs deviates from Chummer (LB-09): Chummer 5.226 lists a kit's
 // attributes, skills, knowledge skills and powers but applies none of them
-// (Chummer 5 up to 5.193 applied attributes; skills and powers were TODO).
+// (Chummer 5.193 still applied attributes; skills and powers were TODO).
 // Here they are applied, and kits differ from Chummer 5.226.
 pub fn apply(ch: &mut Character, store: &DataStore, settings: Option<&CharacterSettings>, kit: &Element) -> KitReport {
     let mut a = Applier { store, books: settings.map(CharacterSettings::books).unwrap_or_default(), report: KitReport::default() };
@@ -244,8 +244,11 @@ pub fn apply(ch: &mut Character, store: &DataStore, settings: Option<&CharacterS
     a.report
 }
 
+/// The character's computed values, with the skill catalog (skill groups
+/// and rating modifiers need it).
 fn sheet_of(ch: &Character, a: &Applier<'_>, rules: &crate::calc::Rules) -> Sheet {
-    crate::calc::compute(ch, rules, Some(a.store), None)
+    let catalog = crate::calc::SkillCatalog::load(a.store).ok();
+    crate::calc::compute(ch, rules, Some(a.store), catalog.as_ref())
 }
 
 /// Split `points` between creation points (at most `left`; none outside
@@ -354,9 +357,15 @@ fn skills(ch: &mut Character, a: &mut Applier<'_>, rules: &crate::calc::Rules, n
             sk.karma = 0;
         }
         let sheet = sheet_of(ch, a, rules);
-        let fixed = sheet.skills.iter().find(|x| x.guid == guid).map_or(0, |x| x.total_base - x.base - x.karma);
+        // The skill's own points are 0 here, so the rest of its rating
+        // (group, improvements) is fixed.
+        let fixed = sheet.skills.iter().find(|x| x.guid == guid).map_or(0, |x| x.total_base);
         let points = (rating(k) - fixed).max(0);
-        let left = skill_points_left(ch, sheet.knowledge_points);
+        // A group with base points replaces the skill's own base
+        // (`Skill.Base`), so its extra levels are karma.
+        let group = rec.get("skillgroup");
+        let group_has_base = !group.is_empty() && ch.skill_groups.iter().any(|g| g.name == group && g.base > 0);
+        let left = if group_has_base { 0 } else { skill_points_left(ch, sheet.knowledge_points) };
         let (base, karma) = split_points(ch, points, left);
         let spec = k.get("spec");
         if let Some(sk) = ch.skills.iter_mut().find(|x| x.guid == guid) {

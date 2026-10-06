@@ -234,7 +234,7 @@ fn kit_attributes_and_skills_are_applied() {
     let kit = chummer_core::xml::parse(
         "<pack><name>T</name><category>Custom</category>\
          <attributes><bod>4</bod><agi>6</agi><rea>6</rea><str>1</str><cha>1</cha><int>3</int><log>1</log><wil>1</wil><edg>2</edg></attributes>\
-         <skills><skillgroup><name>Athletics</name><rating>2</rating></skillgroup><skill><name>Pistols</name><rating>9</rating><spec>Revolvers</spec></skill></skills>\
+         <skills><skillgroup><name>Athletics</name><rating>2</rating></skillgroup><skill><name>Pistols</name><rating>9</rating><spec>Revolvers</spec></skill><skill><name>Gymnastics</name><rating>4</rating></skill></skills>\
          <knowledgeskills><skill><name>Seattle Gangs</name><rating>2</rating><category>Street</category></skill></knowledgeskills>\
          </pack>",
     )
@@ -251,6 +251,11 @@ fn kit_attributes_and_skills_are_applied() {
     assert_eq!(pistols.total_base, 6, "capped at the creation maximum");
     assert_eq!(pistols.specs, vec!["Revolvers".to_owned()]);
     assert_eq!(ch.skill_groups.iter().find(|g| g.name == "Athletics").unwrap().rating(), 2);
+    // A member of a rated group buys only the levels above the group.
+    let gym = s.skills.iter().find(|x| x.name == "Gymnastics").unwrap();
+    assert_eq!(gym.total_base, 4);
+    let own = ch.skills.iter().find(|x| x.guid == gym.guid).unwrap();
+    assert_eq!(own.base + own.karma, 2);
     let gangs = ch.knowledge_skills.iter().find(|k| k.name == "Seattle Gangs").unwrap();
     assert_eq!((gangs.kind.as_str(), gangs.base + gangs.karma), ("Street", 2));
     // Creation points first, the rest with karma: no point pool overspent.
