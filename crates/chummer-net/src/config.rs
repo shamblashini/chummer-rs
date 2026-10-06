@@ -185,3 +185,71 @@ mod tests {
         assert_eq!(cfg.relays.len(), 2);
     }
 }
+
+/// What the user sets for online campaigns: kept as `online.json` in the
+/// chummer-rs config directory, shared by the app and `chummer-authority`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OnlineSettings {
+    /// Shown to the GM and the other players.
+    pub name: String,
+    /// Relay entries (`https://relay.example.org#<mailbox-id>`), one per
+    /// relay. Empty: the project's public relay ([`NetConfig::default`]).
+    pub relays: Vec<String>,
+    /// PEM files with extra trusted certificates, for relays with a
+    /// private or self-signed certificate (`chummer-relay --dev`).
+    pub ca_files: Vec<std::path::PathBuf>,
+    /// Fixed UDP port for direct connections; `None` picks one.
+    pub port: Option<u16>,
+}
+
+/// File name of [`OnlineSettings`] in the config directory.
+pub const SETTINGS_FILE: &str = "online.json";
+
+impl OnlineSettings {
+    pub fn default_path() -> Option<std::path::PathBuf> {
+        crate::identity::config_dir().map(|d| d.join(SETTINGS_FILE))
+    }
+
+    /// The saved settings; defaults when there are none.
+    pub fn load() -> OnlineSettings {
+        Self::default_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        let p = Self::default_path().ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no user config directory found"))?;
+        if let Some(d) = p.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        std::fs::write(p, serde_json::to_string_pretty(self).expect("serialises"))
+    }
+
+    /// The network configuration these settings describe.
+    pub fn net_config(&self) -> Result<NetConfig, String> {
+        let entries: Vec<&str> = self.relays.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let mut cfg = if entries.is_empty() {
+            NetConfig::default()
+        } else {
+            let relays = entries.iter().map(|e| e.parse::<RelayEntry>().map_err(|err| format!("{e}: {err}"))).collect::<Result<Vec<_>, _>>()?;
+            NetConfig::with_relays(relays)
+        };
+        for f in &self.ca_files {
+            cfg.extra_ca_roots.extend(read_pem_certs(f)?);
+        }
+        cfg.port = self.port;
+        Ok(cfg)
+    }
+}
+
+/// The certificates (DER) in a PEM file, for [`NetConfig::extra_ca_roots`].
+pub fn read_pem_certs(path: &std::path::Path) -> Result<Vec<Vec<u8>>, String> {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::CertificateDer;
+    let certs = CertificateDer::pem_file_iter(path)
+        .and_then(|it| it.collect::<Result<Vec<_>, _>>())
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if certs.is_empty() {
+        return Err(format!("{}: no certificate in the file", path.display()));
+    }
+    Ok(certs.into_iter().map(|c| c.to_vec()).collect())
+}

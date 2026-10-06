@@ -17,6 +17,7 @@ mod initiative;
 mod lifestyle_ui;
 mod magic_ui;
 mod item_editor;
+mod online;
 mod pdf_ui;
 mod relationships_ui;
 mod play_ui;
@@ -106,10 +107,12 @@ struct App {
     pending: Option<Pending>,
     allow_close: bool,
     theme: theme::ThemeKind,
+    /// Online campaigns: the network node, joined campaigns, settings.
+    online: online::Online,
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, engine: Engine, files: Vec<PathBuf>, tab: Option<view::Tab>, theme_arg: Option<theme::ThemeKind>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, engine: Engine, files: Vec<PathBuf>, tab: Option<view::Tab>, theme_arg: Option<theme::ThemeKind>, join: Option<String>) -> Self {
         let theme = theme_arg.unwrap_or_else(theme::load_kind);
         theme::apply(&cc.egui_ctx, &theme::Theme::of(theme));
         let lang_dir = data::resource_dir("lang").unwrap_or_default();
@@ -154,7 +157,12 @@ impl App {
             pending: None,
             allow_close: false,
             theme,
+            online: online::Online::new(),
         };
+        app.online.start_joined(&app.engine);
+        if let Some(link) = join {
+            app.online.join = Some((link, app.online.display_name()));
+        }
         app.roster_folders = storage
             .and_then(|s| s.get_string(ROSTER_KEY))
             .map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect())
@@ -336,7 +344,7 @@ impl App {
             self.status = Some(("Save or close the open campaign first.".into(), true));
             return;
         }
-        match gm_screen::GmScreen::open(path, &self.engine) {
+        match gm_screen::GmScreen::open(path, &self.engine, &mut self.online) {
             Ok(gm) => {
                 self.gm = Some(gm);
                 self.home = Some(Home::Campaign);
@@ -372,6 +380,9 @@ impl App {
             return false;
         }
         self.views.retain(|v| v.campaign_member.is_none());
+        if let Some(gm) = self.gm.as_mut() {
+            gm.close_online(&mut self.online);
+        }
         self.gm = None;
         self.active = self.active.min(self.views.len().saturating_sub(1));
         if self.home == Some(Home::Campaign) || self.views.is_empty() {
@@ -391,6 +402,24 @@ impl App {
         v.campaign_member = Some(id);
         self.views.push(v);
         self.select(Mdi::Character(self.views.len() - 1));
+    }
+
+    /// Open a joined campaign's character (or bring its tab front).
+    fn open_player(&mut self, campaign: usize, id: chummer_sync::CharacterId) {
+        let Some(c) = self.online.joined.get(campaign) else { return };
+        let key = (c.key.clone(), id.clone());
+        if let Some(i) = self.views.iter().position(|v| v.doc().player_key().as_ref() == Some(&key)) {
+            self.select(Mdi::Character(i));
+            return;
+        }
+        let backend = doc::Backend::Player { session: c.session.clone(), id };
+        match doc::Doc::online(backend, self.engine.clone()) {
+            Some(d) => {
+                self.views.push(CharacterView::from_doc(d, &self.engine));
+                self.select(Mdi::Character(self.views.len() - 1));
+            }
+            None => self.status = Some(("The character has not arrived yet; try again in a moment.".into(), true)),
+        }
     }
 
     /// Edit → Undo on the open character.
@@ -449,6 +478,10 @@ impl App {
                     ui.close();
                     self.close_campaign(false);
                 }
+                if ui.button(self.lang.tr("Join Campaign…")).on_hover_text(self.lang.tr("Play in a GM's online campaign with an invite link")).clicked() {
+                    ui.close();
+                    self.online.join = Some((String::new(), self.online.display_name()));
+                }
                 ui.separator();
                 ui.menu_button(self.lang.tr("Open recent"), |ui| {
                     if self.recent.is_empty() {
@@ -490,12 +523,15 @@ impl App {
                 }
             });
             ui.menu_button(self.lang.tr("Edit"), |ui| {
-                let session = self.current().map(|i| self.views[i].doc().session());
-                let undo = session.and_then(|s| s.undo_label()).map(str::to_owned);
-                let redo = session.and_then(|s| s.redo_label()).map(str::to_owned);
+                let doc = self.current().map(|i| self.views[i].doc());
+                let undo = doc.and_then(|d| d.undo_label()).map(str::to_owned);
+                let redo = doc.and_then(|d| d.redo_label()).map(str::to_owned);
+                let online = doc.is_some_and(doc::Doc::is_online);
                 let undo_text = undo.as_ref().map_or_else(|| self.lang.tr("Undo"), |w| self.lang.tr_fmt("Undo: {0}", &[w]));
                 let redo_text = redo.as_ref().map_or_else(|| self.lang.tr("Redo"), |w| self.lang.tr_fmt("Redo: {0}", &[w]));
-                if ui.add_enabled(undo.is_some(), egui::Button::new(undo_text).shortcut_text("Ctrl+Z")).clicked() {
+                let r = ui.add_enabled(undo.is_some(), egui::Button::new(undo_text).shortcut_text("Ctrl+Z"));
+                let r = if online { r.on_disabled_hover_text(self.lang.tr(doc::ONLINE_UNDO)) } else { r };
+                if r.clicked() {
                     ui.close();
                     self.undo();
                 }
@@ -529,6 +565,10 @@ impl App {
                 if ui.button(self.lang.tr("Sourcebooks (PDFs)…")).clicked() {
                     ui.close();
                     self.show_sources = true;
+                }
+                if ui.button(self.lang.tr("Online Settings…")).on_hover_text(self.lang.tr("Your name, relays and the mailbox for online campaigns")).clicked() {
+                    ui.close();
+                    self.online.show_settings = true;
                 }
             });
             ui.menu_button(self.lang.tr("Special"), |ui| {
@@ -703,8 +743,13 @@ impl App {
     /// characters on the left, getting started on the right.
     fn welcome(&mut self, ctx: &egui::Context) {
         let mut open_path = None;
+        let mut open_player = None;
         egui::SidePanel::left("roster_panel").resizable(true).default_width(460.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("roster").auto_shrink(false).show(ui, |ui| {
+                if let Some(online::CampaignAction::Open(c, id)) = self.online.campaigns_ui(ui, &self.lang) {
+                    open_player = Some((c, id));
+                }
+                ui.add_space(12.0);
                 ui.label(crate::theme::strong(ui, self.lang.tr("Recent Characters")));
                 if self.recent.is_empty() {
                     ui.weak(self.lang.tr("No recent files"));
@@ -772,6 +817,9 @@ impl App {
         });
         if let Some(p) = open_path {
             self.open(&p);
+        }
+        if let Some((c, id)) = open_player {
+            self.open_player(c, id);
         }
     }
 
@@ -949,7 +997,7 @@ impl eframe::App for App {
             Mdi::Home(Home::Campaign) => {
                 let engine = self.engine.clone();
                 let action = match self.gm.as_mut() {
-                    Some(gm) => gm.ui(ctx, &engine, &self.lang, &mut self.views, &mut self.status),
+                    Some(gm) => gm.ui(ctx, &engine, &self.lang, &mut self.views, &mut self.status, &mut self.online),
                     None => {
                         self.home = Some(Home::Roster);
                         None
@@ -1059,7 +1107,16 @@ impl eframe::App for App {
                 }
             }
         }
+        let engine = self.engine.clone();
+        self.online.windows(ctx, &engine, &self.lang, &mut self.status);
         self.dialogs(ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(gm) = self.gm.as_mut() {
+            gm.close_online(&mut self.online);
+        }
+        self.online.shutdown();
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1071,11 +1128,32 @@ impl eframe::App for App {
     }
 }
 
+/// `file:///home/x/My%20Runner.chum5` → `/home/x/My Runner.chum5`.
+fn url_to_path(url: &str) -> PathBuf {
+    let rest = url.trim_start_matches("file://");
+    let bytes = rest.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&rest[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    PathBuf::from(String::from_utf8_lossy(&out).into_owned())
+}
+
 fn main() -> anyhow::Result<()> {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut tab = None;
     let mut window: Option<String> = None;
     let mut theme_arg = None;
+    let mut join = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -1084,9 +1162,13 @@ fn main() -> anyhow::Result<()> {
             "--theme" => theme_arg = args.next().and_then(|t| theme::ThemeKind::parse(&t)),
             "--new" => window = Some("new".into()),
             "-h" | "--help" => {
-                println!("usage: chummer-rs [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5|file.chum5lz|file.chummercampaign ...]");
+                println!("usage: chummer-rs [chummer-rs://join/... invite link] [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5|file.chum5lz|file.chummercampaign ...]");
                 return Ok(());
             }
+            // An invite link (the chummer-rs:// handler passes it as an argument).
+            _ if a.starts_with("chummer-rs://") => join = Some(a),
+            // Desktop launchers with %U pass files as file:// URLs.
+            _ if a.starts_with("file://") => files.push(url_to_path(&a)),
             _ => files.push(PathBuf::from(a)),
         }
     }
@@ -1107,7 +1189,7 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     eframe::run_native("chummer-rs", options, Box::new(move |cc| {
-        let mut app = App::new(cc, engine, files, tab, theme_arg);
+        let mut app = App::new(cc, engine, files, tab, theme_arg, join);
         match window.as_deref() {
             Some("sources") => app.show_sources = true,
             Some("browser") => app.home = Some(Home::MasterIndex),

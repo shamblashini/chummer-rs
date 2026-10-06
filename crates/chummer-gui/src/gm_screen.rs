@@ -13,6 +13,12 @@
 //! lends its `Doc` to a [`CharacterView`] (`campaign_member` set) and gets
 //! it back when the tab closes, so edits there keep their history and are
 //! saved with the campaign.
+//!
+//! An online campaign (hosted at least once, `online`) backs every
+//! member's `Doc` by the campaign authority instead, and the feed is the
+//! authority's, with Revert.
+
+mod online;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -78,6 +84,9 @@ pub struct GmScreen {
     improvement_for: Option<MemberId>,
     /// Recent dice rolls, newest first.
     rolls: Vec<String>,
+    /// The online side, once the campaign was hosted.
+    online: Option<online::GmOnline>,
+    check_mail_later: bool,
 }
 
 /// The member's document, wherever it is.
@@ -114,6 +123,8 @@ impl GmScreen {
             improvements: Default::default(),
             improvement_for: None,
             rolls: Vec::new(),
+            online: None,
+            check_mail_later: false,
         }
     }
 
@@ -127,8 +138,17 @@ impl GmScreen {
     }
 
     /// File → Open Campaign. Members whose character does not load are
-    /// listed with the reason.
-    pub fn open(path: &Path, engine: &Arc<Engine>) -> Result<GmScreen, String> {
+    /// listed with the reason. A campaign that was hosted before comes back
+    /// online-backed (not served until the GM hosts it again).
+    pub fn open(path: &Path, engine: &Arc<Engine>, net: &mut crate::online::Online) -> Result<GmScreen, String> {
+        let mut s = GmScreen::open_local(path, engine)?;
+        if chummer_sync::hosted::is_online(path) {
+            s.go_online(net, engine, &mut [])?;
+        }
+        Ok(s)
+    }
+
+    fn open_local(path: &Path, engine: &Arc<Engine>) -> Result<GmScreen, String> {
         let c = Campaign::load(path).map_err(|e| e.to_string())?;
         let mut s = GmScreen::with(c, Some(path.to_owned()));
         let base = path.parent().map(Path::to_owned);
@@ -185,6 +205,16 @@ impl GmScreen {
     /// Save to `path`: embedded members store their character, linked
     /// members are saved to their own files.
     pub fn save_to(&mut self, path: &Path, views: &mut [CharacterView]) -> Result<(), String> {
+        if self.path.as_deref() == Some(path) && self.write_back()? {
+            for m in &self.campaign.members {
+                if let Some(d) = doc_mut(&mut self.live, views, m.id) {
+                    d.mark_saved();
+                }
+            }
+            self.campaign.save(path).map_err(|e| e.to_string())?;
+            self.dirty = false;
+            return Ok(());
+        }
         let base = path.parent().map(Path::to_owned);
         for m in &mut self.campaign.members {
             let Some(doc) = doc_mut(&mut self.live, views, m.id) else { continue };
@@ -231,7 +261,7 @@ impl GmScreen {
                     None => continue,
                 },
             };
-            let rev = doc.session().revision();
+            let rev = doc.revision();
             if l.seen == Some(rev) {
                 continue;
             }
@@ -239,7 +269,10 @@ impl GmScreen {
             if let Some(m) = campaign.member_mut(*id) {
                 m.name = doc.display_name();
             }
-            campaign.absorb(*id, doc.session().log(), &mut l.cursor);
+            // An online campaign's feed is the authority's.
+            if let Some(s) = doc.session() {
+                campaign.absorb(*id, s.log(), &mut l.cursor);
+            }
             l.seen = Some(rev);
         }
     }
@@ -251,13 +284,19 @@ impl GmScreen {
         Some(InitStats { base: s.initiative, dice: s.initiative_dice.max(1) as u32, edge: s.attr("EDG"), reaction: s.attr("REA"), intuition: s.attr("INT") })
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status) -> Option<Action> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status, net: &mut crate::online::Online) -> Option<Action> {
+        self.online_tick(engine, views);
+        self.take_mail_request(net);
         self.sync(engine, views);
         let mut action = None;
         egui::SidePanel::left("gm_roster").resizable(true).default_width(340.0).min_width(260.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("gm_roster_scroll").auto_shrink(false).show(ui, |ui| self.roster(ui, engine, lang, views, status, &mut action));
         });
-        egui::SidePanel::right("gm_feed").resizable(true).default_width(320.0).min_width(220.0).show(ctx, |ui| self.feed(ui, lang));
+        egui::SidePanel::right("gm_feed").resizable(true).default_width(320.0).min_width(220.0).show(ctx, |ui| {
+            self.online_panel(ui, net, engine, lang, views, status);
+            self.feed(ui, lang, views, status);
+        });
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("gm_board_scroll").auto_shrink(false).show(ui, |ui| self.board(ui, engine, lang, views, status, &mut action));
         });
@@ -434,6 +473,8 @@ impl GmScreen {
             ui.label(lang.tr("Player"));
             changed |= ui.add(egui::TextEdit::singleline(&mut m.player).desired_width(f32::INFINITY)).changed();
             ui.end_row();
+            changed |= self.owner_row(ui, lang, id);
+            let m = self.campaign.member_mut(id).expect("checked");
             ui.label(lang.tr("Group"));
             changed |= ui.add(egui::TextEdit::singleline(&mut m.group).desired_width(f32::INFINITY)).changed();
             ui.end_row();
@@ -542,7 +583,7 @@ impl GmScreen {
 
     // ----- feed -----
 
-    fn feed(&mut self, ui: &mut egui::Ui, lang: &Language) {
+    fn feed(&mut self, ui: &mut egui::Ui, lang: &Language, views: &mut [CharacterView], status: &mut Status) {
         egui::TopBottomPanel::bottom("gm_notes").resizable(true).default_height(180.0).show_inside(ui, |ui| {
             ui.label(crate::theme::strong(ui, lang.tr("GM Notes")));
             egui::ScrollArea::vertical().id_salt("gm_notes_scroll").show(ui, |ui| {
@@ -558,6 +599,10 @@ impl GmScreen {
                 ui.label(RichText::new(r).monospace().size(11.5));
             }
             ui.separator();
+        }
+        if self.is_online() {
+            self.online_feed(ui, lang, views, status);
+            return;
         }
         egui::ScrollArea::vertical().id_salt("gm_feed_scroll").auto_shrink(false).show(ui, |ui| {
             if self.campaign.log.is_empty() {
@@ -1041,7 +1086,7 @@ mod tests {
         let path = dir.join("t.chummercampaign");
         gm.save_to(&path, &mut views).unwrap();
         assert!(!gm.is_dirty(&views));
-        let hash = views[0].doc().session().state_hash();
+        let hash = views[0].doc().session().unwrap().state_hash();
         gm.give_back(id, views.pop().unwrap().into_doc());
         let back = Campaign::load(&path).unwrap();
         let ch = back.member(id).unwrap().load_character(None).unwrap();

@@ -238,7 +238,7 @@ impl CharacterView {
         let settings = engine.settings.resolve(&settings_key).cloned();
         let mut v = CharacterView {
             settings_key,
-            seen_revision: doc.session().revision(),
+            seen_revision: doc.revision(),
             store,
             doc,
             sheet,
@@ -294,7 +294,10 @@ impl CharacterView {
     }
 
     pub fn title(&self) -> String {
-        let name = self.doc.display_name();
+        let name = match self.doc.sync_state() {
+            Some(s) => format!("{} {}", self.doc.display_name(), s.badge()),
+            None => self.doc.display_name(),
+        };
         if self.doc.dirty {
             format!("{name} •")
         } else {
@@ -366,7 +369,7 @@ impl CharacterView {
     /// The sheet and budgets for the character as it is now. Essence loss
     /// is refreshed by the commands themselves (`command::apply`).
     fn recompute(&mut self, engine: &Engine) {
-        self.seen_revision = self.doc.session().revision();
+        self.seen_revision = self.doc.revision();
         if self.doc.field("settings") != self.settings_key {
             // Switched (or undone back to) another preset.
             self.refresh_settings(engine);
@@ -398,7 +401,8 @@ impl CharacterView {
     }
 
     pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<u32> {
-        let mut changed = false;
+        // An online character takes what arrived from the campaign.
+        let mut changed = self.doc.refresh();
         let mut roll: Option<u32> = None;
         if !self.visible(self.tab) {
             self.tab = Tab::Common;
@@ -451,7 +455,7 @@ impl CharacterView {
         if let Some(a) = self.action.take() {
             changed |= self.run_action(a, status);
         }
-        if changed || self.doc.session().revision() != self.seen_revision {
+        if changed || self.doc.revision() != self.seen_revision {
             self.recompute(engine);
         }
         roll
@@ -501,11 +505,7 @@ impl CharacterView {
                 SideTab::OtherInfo => self.other_info(ui, lang, roll),
                 SideTab::Condition => self.condition_monitor(ui, lang),
                 SideTab::Defense => self.spell_defense(ui, lang),
-                SideTab::History => match crate::history_ui::panel(ui, self.doc.session(), lang) {
-                    Some(crate::history_ui::Action::Undo) => self.doc.undo().is_some(),
-                    Some(crate::history_ui::Action::Redo) => self.doc.redo().is_some(),
-                    None => false,
-                },
+                SideTab::History => crate::history_ui::panel(ui, &mut self.doc, lang),
             };
         });
         changed

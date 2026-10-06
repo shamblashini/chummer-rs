@@ -66,13 +66,25 @@ impl Node {
     /// Binds the endpoint with `cfg`'s relays and waits up to
     /// [`ONLINE_WAIT`] for one of them. Must run inside a tokio runtime.
     pub async fn start(secret: SecretKey, cfg: NetConfig) -> Result<Node, NetError> {
+        let node = Node::bind(secret, cfg).await?;
+        if !node.cfg.relays.is_empty() && tokio::time::timeout(ONLINE_WAIT, node.endpoint.online()).await.is_err() {
+            tracing::warn!("no relay reachable yet; still trying");
+        }
+        Ok(node)
+    }
+
+    /// Binds the endpoint without waiting for a relay (it connects in the
+    /// background; dialling waits for it).
+    pub async fn bind(secret: SecretKey, cfg: NetConfig) -> Result<Node, NetError> {
         let endpoint = chummer_net::node::bind(secret.clone(), &cfg, vec![CAMPAIGN_ALPN.to_vec()]).await?;
         let slot = HostSlot::default();
         let router = Router::builder(endpoint.clone()).accept(CAMPAIGN_ALPN, slot.clone()).spawn();
-        if !cfg.relays.is_empty() && tokio::time::timeout(ONLINE_WAIT, endpoint.online()).await.is_err() {
-            tracing::warn!("no relay reachable yet; still trying");
-        }
         Ok(Node { endpoint, router, slot, secret, cfg, mailbox: Default::default() })
+    }
+
+    /// Whether a relay connection is up.
+    pub fn is_connected(&self) -> bool {
+        self.home_relay().is_some()
     }
 
     pub fn endpoint(&self) -> &Endpoint {
