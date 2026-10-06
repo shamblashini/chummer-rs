@@ -52,7 +52,7 @@ judgement call).
 | LB-23 | PACKS kits: vehicle weapons | A kit weapon goes into the first vehicle mod that is a weapon mount. Vehicles with built-in `<weaponmounts>` (drones) lose the weapon. | Falls back to a free built-in weapon mount; with none, the weapon goes to the character and is reported. | n/a. | (b) |
 | LB-24 | Career: buy karma with nuyen | Logs the nuyen at `NuyenPerBPWftP` but deducts it at `NuyenPerBPWftM`. | Uses WftP for both, so the log matches the balance. Same result with the default settings (both 2,000). | Chummer house-rule setting; no RAW career exchange. | (b) |
 | LB-25 | Empty-looking bonuses | `IsNullOrInnerTextIsEmpty` treats `<bonus><unarmeddvphysical/></bonus>` as empty, so the bonus is lost on save. | Keeps such bonuses (as the 5.18x–5.20x saves did). | n/a. | (b) |
-| LB-26 | Career undo: A.I. programs | Undo of an A.I. program / Advanced Program purchase refunds the karma and keeps the program. | Being fixed in the A.I. merge (the `career/undo.rs` arm with LB-01). | DT p. 145 (A.I.s). | (b) — in progress |
+| LB-26 | Career undo: A.I. programs | Undo of an A.I. program / Advanced Program purchase refunds the karma and keeps the program. | Fixed: undo removes the program, and is refused while another program on the character requires it. | DT p. 145 (A.I.s). | (b) — fixed |
 
 ## Simplifications in chummer-rs
 
