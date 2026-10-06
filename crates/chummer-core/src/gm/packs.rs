@@ -693,11 +693,12 @@ pub fn from_character(ch: &Character, sheet: &Sheet, settings: Option<&Character
         let of = |t: &str| qs.iter().filter(|q| q.get("qualitytype") == t).collect::<Vec<_>>();
         let (pos, neg) = (of("Positive"), of("Negative"));
         let mut q = Element::new("qualities");
-        // LIKELY-BUG(LB-06): a kit with only negative qualities is exported without them. See docs/likely-bugs.md.
-        // Chummer writes the negative list only when there are positive
-        // qualities too (it tests `blnPositive` twice).
-        if !pos.is_empty() {
-            for (tag, items) in [("positive", &pos), ("negative", &neg)] {
+        // chummer-rs deviates from Chummer (LB-06): Chummer tests
+        // `blnPositive` for both lists, so a kit with only negative qualities
+        // was written with none (and one with only positive ones got an
+        // empty <negative/>). Each list is written when it has qualities.
+        for (tag, items) in [("positive", &pos), ("negative", &neg)] {
+            if !items.is_empty() {
                 let mut k = Element::new(tag);
                 for x in items.iter() {
                     let mut e = text("quality", x.get("name"));

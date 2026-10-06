@@ -10,7 +10,6 @@
 //! (`included`); weapons a record `<addweapon>`s are separate top-level
 //! weapons whose `parentid` points back at it.
 
-use std::sync::OnceLock;
 
 use crate::bonus::{Choice, Ctx};
 use crate::calc::{self, Sheet};
@@ -278,6 +277,13 @@ pub fn accessory_element(rec: Record<'_>, guid: &str, mount: &str, extramount: &
     }
     put("avail", e.get("avail"));
     put("cost", resolved_cost(&field(e, "cost", "0"), cost));
+    // chummer-rs deviates from Chummer (LB-04): Chummer's Save drops the
+    // multiplier, so Vintage stops doubling after a reload. GH3 p. 3 doubles
+    // the cost of the other accessories, so it is kept in the element
+    // (`WeaponAccessory.Load` reads it back).
+    if let Some(m) = e.child_text("accessorycostmultiplier").filter(|m| !m.is_empty() && m != "1") {
+        put("accessorycostmultiplier", m);
+    }
     put("weight", e.get("weight"));
     put("included", bool_str(false));
     put("equipped", bool_str(true));
@@ -648,13 +654,6 @@ fn rebuild_natural(ch: &Character, store: &DataStore, saved: &Element) -> Option
 // Cost
 // ---------------------------------------------------------------------------
 
-/// Shared data store for lookups that only have a saved element at hand
-/// (accessory cost multipliers, ranges).
-fn shared_store() -> Option<&'static DataStore> {
-    static STORE: OnceLock<Option<DataStore>> = OnceLock::new();
-    STORE.get_or_init(DataStore::discover).as_ref()
-}
-
 /// `Weapon.ProcessRatingStringAsDec` for costs: FixedValues, `Rating`,
 /// evaluate.
 fn cost_value(s: &str, rating: i32) -> f64 {
@@ -697,13 +696,23 @@ pub fn own_cost(w: &Element, parent: Option<&Element>) -> f64 {
 }
 
 /// `Weapon.AccessoryMultiplier`: sum of non-1 `accessorycostmultiplier`s
-/// of equipped accessories, or 1. `WeaponAccessory.Load` reads the
-/// multiplier from the saved element (default 1) and `Save` never writes
-/// it, so a loaded Vintage accessory no longer doubles the others.
-// LIKELY-BUG(LB-04): `accessory_element` does not copy `accessorycostmultiplier`, so Vintage never doubles accessory costs. See docs/likely-bugs.md.
+/// of equipped accessories, or 1. Read from the accessory element
+/// (`accessory_element` copies it from the data), else from the data
+/// record, as a Chummer save has none (LB-04).
 fn accessory_multiplier(w: &Element) -> f64 {
-    let m: i32 = accessories(w).filter(|a| equipped(a)).map(|a| a.get_i32("accessorycostmultiplier").unwrap_or(1)).filter(|m| *m != 1).sum();
+    let of = |a: &Element| a.get_i32("accessorycostmultiplier").or_else(|| data_accessory_multiplier(a)).unwrap_or(1);
+    let m: i32 = accessories(w).filter(|a| equipped(a)).map(of).filter(|m| *m != 1).sum();
     if m == 0 { 1.0 } else { f64::from(m) }
+}
+
+/// The `accessorycostmultiplier` of a saved accessory's data record (by
+/// `sourceid`, else name).
+fn data_accessory_multiplier(a: &Element) -> Option<i32> {
+    let doc = data::shared_store()?.doc(FILE).ok()?;
+    let c = doc.child("accessories")?;
+    let id = a.get("sourceid");
+    let rec = c.children_named("accessory").find(|r| !id.is_empty() && r.get("id").eq_ignore_ascii_case(&id)).or_else(|| c.children_named("accessory").find(|r| r.get("name") == a.get("name")))?;
+    rec.get_i32("accessorycostmultiplier")
 }
 
 /// `WeaponAccessory.OwnCost`: `Weapon Cost` / `Weapon Total Cost` /
@@ -1088,7 +1097,7 @@ pub fn legacy_damage(w: &Element) -> Option<String> {
     if d.is_empty() || d.contains('{') || !expr::ATTRIBUTE_NAMES.iter().any(|a| d.contains(a)) {
         return None;
     }
-    let doc = shared_store()?.doc(FILE).ok()?;
+    let doc = data::shared_store()?.doc(FILE).ok()?;
     find_saved(&doc, "weapons", "weapon", w).map(|r| r.get("damage"))
 }
 
@@ -1137,6 +1146,8 @@ fn damage(c: &W<'_>) -> String {
         }
     }
     let mut improve = c.category_improvements("WeaponCategoryDV");
+    // LB-11: a weapon-specific DV bonus goes to the DV, not the pool.
+    improve += c.imps().val("WeaponSpecificDV", Some(&c.get("guid")));
     if c.get("name") == "Unarmed Attack" {
         if kind == "S" && c.imps().has("UnarmedDVPhysical") {
             kind = "P".into();
@@ -1225,6 +1236,7 @@ fn ap(c: &W<'_>) -> String {
         improve += c.imps().val_int("UnarmedAP", None);
     }
     improve += expr::standard_round(c.category_improvements("WeaponCategoryAP"));
+    improve += c.imps().val_int("WeaponSpecificAP", Some(&c.get("guid")));
     if ap == "-" {
         ap = "0".into();
     }
@@ -1318,6 +1330,8 @@ fn accuracy(c: &W<'_>) -> i32 {
     if !skill.is_empty() {
         improve += c.imps().val("WeaponSkillAccuracy", Some(&skill));
     }
+    // LB-11: a weapon-specific Accuracy bonus goes to the Accuracy.
+    improve += c.imps().val("WeaponSpecificAccuracy", Some(&c.get("guid")));
     let upper = name.to_uppercase();
     for i in c.imps().of_kind("WeaponAccuracy") {
         if let Some(part) = i.improved_name.strip_prefix("[contains]") {
@@ -1410,12 +1424,11 @@ fn dice_pool(c: &W<'_>) -> i32 {
             modifier += c.imps().val("Smartlink", None);
         }
         modifier += c.imps().val("WeaponCategoryDice", Some(&c.get("category")));
-        // LIKELY-BUG(LB-11): WeaponSpecificDV/AP/Accuracy/Range improvements are added to the dice pool. See docs/likely-bugs.md.
-        // Chummer adds all weapon-specific improvements here.
-        let guid = c.get("guid");
-        for k in ["WeaponSpecificDice", "WeaponSpecificDV", "WeaponSpecificAP", "WeaponSpecificAccuracy", "WeaponSpecificRange"] {
-            modifier += c.imps().val(k, Some(&guid));
-        }
+        // chummer-rs deviates from Chummer (LB-11): Chummer adds the
+        // WeaponSpecificDV/AP/Accuracy/Range improvements to the pool too
+        // (AP then counts twice). A DV, AP, Accuracy or range bonus is not
+        // extra dice (SR5 p. 178), so they go to their own stats.
+        modifier += c.imps().val("WeaponSpecificDice", Some(&c.get("guid")));
         pool += spec_bonus(c, sk);
     }
     let mut extra = String::new();
@@ -1542,7 +1555,8 @@ fn range_bonus(c: &W<'_>) -> f64 {
     if let Some(x) = c.ammo_bonus().map(|b| b.get("rangebonus")).as_deref().and_then(nonzero) {
         s.push_str(&format!("+({})", x.trim_start_matches('+')));
     }
-    c.value(s.trim_start_matches('+'), true).unwrap_or(0.0)
+    // LB-11: a weapon-specific range bonus is a percent, like `rangebonus`.
+    c.value(s.trim_start_matches('+'), true).unwrap_or(0.0) + c.imps().val("WeaponSpecificRange", Some(&c.get("guid")))
 }
 
 /// `Weapon.GetRangeStrings`.
@@ -1567,7 +1581,7 @@ fn ranges(c: &W<'_>, doc: &Element) -> Ranges {
 
 /// Final combat values of `weapon` with default house rules.
 pub fn stats(ch: &Character, sheet: &Sheet, weapon: &Element) -> WeaponStats {
-    stats_with(ch, sheet, shared_store(), weapon, &WeaponRules::default())
+    stats_with(ch, sheet, data::shared_store(), weapon, &WeaponRules::default())
 }
 
 /// Final combat values of `weapon`. `store` supplies ranges.xml; without
@@ -1595,8 +1609,25 @@ mod tests {
         let w = |vintage: &str| {
             crate::xml::parse(&format!("<weapon><cost>600</cost><accessories><accessory><name>Custom Look</name><cost>300</cost></accessory><accessory><name>Vintage</name><cost>0</cost>{vintage}</accessory></accessories></weapon>")).unwrap()
         };
-        // As loaded from a save: Save never writes the multiplier.
-        assert_eq!(cost(&w("")), 900.0);
+        // A Chummer save has no multiplier (its Save drops it): read from
+        // the data record (Chummer after a reload: 900).
+        assert_eq!(cost(&w("")), 1200.0);
         assert_eq!(cost(&w("<accessorycostmultiplier>2</accessorycostmultiplier>")), 1200.0);
+    }
+
+    #[test]
+    fn vintage_keeps_its_multiplier_through_save_and_reload() {
+        let doc = crate::xml::parse(
+            "<chummer><accessories><accessory><id>v</id><name>Vintage</name><mount /><avail>0</avail><cost>0</cost><source>GH3</source><page>3</page><accessorycostmultiplier>2</accessorycostmultiplier></accessory></accessories></chummer>",
+        )
+        .unwrap();
+        let rec = crate::data::Record(doc.child("accessories").unwrap().child("accessory").unwrap());
+        let vintage = accessory_element(rec, "g", "", "", 0, None);
+        assert_eq!(vintage.get("accessorycostmultiplier"), "2");
+        let mut w = crate::xml::parse("<weapon><cost>600</cost><accessories><accessory><name>Custom Look</name><cost>300</cost></accessory></accessories></weapon>").unwrap();
+        w.child_mut("accessories").unwrap().push(vintage);
+        // Reload: the element is written and read back as is.
+        let reloaded = crate::xml::parse(&w.to_xml_string()).unwrap();
+        assert_eq!(cost(&reloaded), 1200.0);
     }
 }

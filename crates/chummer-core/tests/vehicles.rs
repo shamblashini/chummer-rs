@@ -214,3 +214,23 @@ fn career_purchase_costs_nuyen() {
     chummer_core::career::pay_for_item(&mut ch, "vehicle", None, &g, cost).unwrap();
     assert_eq!(ch.nuyen, 50000.0 - 16000.0);
 }
+
+#[test]
+fn offroad_values_upgrade_from_their_own_base() {
+    // LB-08 (R5 p. 123): each rating is upgraded from its own value.
+    // Chummer: handling 6 (bonus read against off-road 2), off-road speed
+    // max(on-road 3, 1 + 1) = 3, off-road accel 1 + on-road 2 = 3.
+    let v = chummer_core::xml::parse(
+        "<vehicle><name>Test</name><category>Cars</category><handling>4/2</handling><speed>3/1</speed><accel>2/1</accel><body>10</body><armor>0</armor>\
+         <mods>\
+         <mod><name>H</name><bonus><handling>+Handling</handling></bonus></mod>\
+         <mod><name>S</name><bonus><offroadspeed>OffroadSpeed+1</offroadspeed></bonus></mod>\
+         <mod><name>A</name><bonus><offroadaccel>+OffroadAccel</offroadaccel></bonus></mod>\
+         </mods></vehicle>",
+    )
+    .unwrap();
+    let s = vehicle::stats(&v);
+    assert_eq!((s.handling, s.offroad_handling), (8, 2));
+    assert_eq!((s.speed, s.offroad_speed), (3, 2));
+    assert_eq!((s.accel, s.offroad_accel), (2, 2));
+}

@@ -230,15 +230,15 @@ pub fn gear(ctx: &Ctx, item: &Element, parent: GearParent) -> Element {
     add(&mut out, "rating", item.get_i32("rating").unwrap_or(0).to_string());
     add(&mut out, "qty", display_qty(ctx, item));
     ctx.add_avail(&mut out, gear_avail(ctx, item), true);
-    // LIKELY-BUG(LB-07): top-level gear prints an <owncost> of 1 / CostFor, not its cost. See docs/likely-bugs.md.
-    // `Gear.OwnCost` is `(pre * Parent?.ChildCostMultiplier ?? 1) / CostFor`:
-    // without a gear or armor parent the product is null, so Chummer
-    // prints `1 / CostFor`.
+    // chummer-rs deviates from Chummer (LB-07): `Gear.OwnCost` is
+    // `(pre * Parent?.ChildCostMultiplier ?? 1) / CostFor`; without a gear
+    // or armor parent the product is null, so Chummer prints `1 / CostFor`.
+    // The own cost is printed instead, with a child cost multiplier of 1.
     let own_cost = match parent {
         GearParent::CostParent(p) => {
             gear_calc::own_cost_pre_multipliers(item, Some(p)) * f64::from(p.get_i32("childcostmultiplier").unwrap_or(1)) / gear_calc::cost_for_units(item)
         }
-        _ => 1.0 / gear_calc::cost_for_units(item),
+        _ => gear_calc::own_cost_pre_multipliers(item, parent.element()) / gear_calc::cost_for_units(item),
     };
     let w = with_weight(ctx, item);
     let own_w = gear_calc::own_weight(&w, parent.element());
@@ -1170,7 +1170,7 @@ pub fn drug(ctx: &Ctx, item: &Element) -> Element {
     add(&mut out, "duration_english", item.get("duration"));
     add(&mut out, "crashdamage", item.get_i32("crashdamage").unwrap_or(0).to_string());
     ctx.add_avail(&mut out, own_avail(item), true);
-    add(&mut out, "cost", ctx.nuyen(crate::items::drug::cost(item)));
+    add(&mut out, "cost", ctx.nuyen(crate::items::drug::cost_with(Some(&*ctx.store), item)));
     ctx.notes(&mut out, item);
     out
 }

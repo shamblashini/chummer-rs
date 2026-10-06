@@ -524,9 +524,10 @@ impl<'a> Veh<'a> {
         let (mut bon, mut boff) = (0, 0);
         for (i, m) in self.active(ex) {
             for v in [m.bonus("handling"), m.wireless_only("handling")] {
-                // LIKELY-BUG(LB-08): the on-road handling bonus is evaluated against the off-road handling. See docs/likely-bugs.md.
-                // Chummer passes the off-road value here.
-                bon += self.parse_bonus(v.as_deref(), i, off, "Handling", true);
+                // chummer-rs deviates from Chummer (LB-08): Chummer evaluates
+                // the on-road bonus against the off-road handling. R5 p. 123
+                // upgrades each rating from its own value.
+                bon += self.parse_bonus(v.as_deref(), i, on, "Handling", true);
             }
             for v in [m.bonus("offroadhandling"), m.wireless_only("offroadhandling")] {
                 boff += self.parse_bonus(v.as_deref(), i, off, "OffroadHandling", true);
@@ -548,9 +549,11 @@ impl<'a> Veh<'a> {
         self.speed_like(ex, ("accel", "Accel", b.accel), ("offroadaccel", "OffroadAccel", b.offroad_accel), 6)
     }
 
-    // LIKELY-BUG(LB-08): an off-road speed/accel override is compared with the on-road total. See docs/likely-bugs.md.
-    /// Shared body of `GetTotalSpeed` and `GetTotalAccel`, including their
-    /// quirk: an off-road override is compared with the on-road total.
+    /// Shared body of `GetTotalSpeed` and `GetTotalAccel`.
+    // chummer-rs deviates from Chummer (LB-08): Chummer compares an
+    // off-road override with the on-road total and evaluates the off-road
+    // bonus against the on-road value. R5 p. 123 upgrades each rating from
+    // its own value, so the off-road side uses the off-road value.
     fn speed_like(&self, ex: Option<usize>, on_key: (&str, &str, i32), off_key: (&str, &str, i32), div: i32) -> (i32, i32, String) {
         let (mut on, mut off) = (on_key.2, off_key.2);
         for (i, m) in self.active(ex) {
@@ -558,7 +561,7 @@ impl<'a> Veh<'a> {
                 on = on.max(self.parse_bonus(Some(&s), i, on_key.2, on_key.1, false));
             }
             if let Some(s) = m.preferred(off_key.0).filter(|s| !s.is_empty()) {
-                off = on.max(self.parse_bonus(Some(&s), i, off_key.2, off_key.1, false));
+                off = off.max(self.parse_bonus(Some(&s), i, off_key.2, off_key.1, false));
             }
         }
         let (mut bon, mut boff) = (0, 0);
@@ -567,7 +570,7 @@ impl<'a> Veh<'a> {
                 bon += self.parse_bonus(v.as_deref(), i, on, on_key.1, true);
             }
             for v in [m.bonus(off_key.0), m.wireless_only(off_key.0)] {
-                boff += self.parse_bonus(v.as_deref(), i, on, off_key.1, true);
+                boff += self.parse_bonus(v.as_deref(), i, off, off_key.1, true);
             }
         }
         let p = self.penalty(ex, div);

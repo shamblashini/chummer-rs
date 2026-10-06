@@ -194,6 +194,30 @@ fn kit_round_trip_through_the_packs_folder() {
 }
 
 #[test]
+fn kit_export_writes_each_quality_list_it_has() {
+    // LB-06: Chummer drops the negative list when there are no positive
+    // qualities, and writes an empty <negative/> when there are no negative.
+    let engine = Engine::load().unwrap();
+    let base = new_runner(&engine);
+    let store = engine.store_for_character(&base);
+    let settings = engine.settings.resolve(STANDARD);
+    let qdoc = store.doc("qualities.xml").unwrap();
+    let kit_with = |quality: &str| {
+        let mut ch = base.clone();
+        let rec = chummer_core::data::find(&qdoc, "qualities", "quality", quality).unwrap();
+        chargen::add_quality(&mut ch, &store, rec, None);
+        let s = sheet(&engine, &ch);
+        packs::from_character(&ch, &s, settings, "Q", packs::KitParts::default())
+    };
+    let neg = kit_with("Bad Luck");
+    assert!(neg.path("qualities/positive").is_none());
+    assert_eq!(neg.path("qualities/negative/quality").map(|q| q.text()), Some("Bad Luck".to_owned()));
+    let pos = kit_with("Ambidextrous");
+    assert_eq!(pos.path("qualities/positive/quality").map(|q| q.text()), Some("Ambidextrous".to_owned()));
+    assert!(pos.path("qualities/negative").is_none());
+}
+
+#[test]
 fn file_names_follow_chummer() {
     assert_eq!(packs::normalize_file_name("foo"), "custom_foo_packs.xml");
     assert_eq!(packs::normalize_file_name("custom_foo_packs.xml"), "custom_foo_packs.xml");

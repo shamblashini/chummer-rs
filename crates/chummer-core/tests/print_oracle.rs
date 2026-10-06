@@ -225,6 +225,29 @@ fn printed_values_match_saved_totals() {
     }
 }
 
+/// LB-07: top-level gear prints its own cost (Chummer prints 1 / CostFor).
+#[test]
+fn top_level_gear_prints_its_own_cost() {
+    let engine = Engine::load().unwrap();
+    let lang = Language::load(&data::resource_dir("lang").unwrap(), "en-us");
+    let mut checked = 0;
+    for f in fixtures() {
+        let ch = Character::load(&f).unwrap();
+        let root = print::print_xml(&ch, &engine, &lang);
+        let printed = all(&root, "gear");
+        for g in ch.items("gears", "gear") {
+            let plain = g.child("children").is_none_or(|c| c.elements().next().is_none());
+            if !plain || g.get_f64("qty").unwrap_or(1.0) != 1.0 || g.get_f64("costfor").unwrap_or(1.0) != 1.0 {
+                continue;
+            }
+            let Some(p) = printed.iter().find(|p| p.get("guid") == g.get("guid")) else { continue };
+            assert_eq!(p.get("owncost"), nuyen(gear::cost(g)), "{} {}", f.display(), g.get("name"));
+            checked += 1;
+        }
+    }
+    assert!(checked > 50, "{checked}");
+}
+
 /// Spells print the display strings and the recalculated DV.
 #[test]
 fn spells_translate_codes() {

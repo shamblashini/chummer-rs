@@ -26,7 +26,10 @@ fn custom_drug_from_components() {
     let fx = drug::effects(&d);
     assert_eq!(fx.attributes, vec![("CHA".to_owned(), 1.0), ("AGI".to_owned(), -1.0)]);
     assert_eq!(fx.limits, vec![("Social".to_owned(), 1)]);
-    assert_eq!(drug::cost(&d), 75.0);
+    // CF p. 190 (LB-05): Street Cooked is half of the 75 components cost
+    // (Chummer: 75).
+    assert_eq!(drug::cost(&d), 37.5);
+    assert_eq!(drug::cost_with(Some(&store), &d), 37.5);
     let (imps, quals) = drug::generate_improvements(&d);
     assert!(quals.is_empty());
     assert_eq!(imps.len(), 3);
@@ -36,6 +39,15 @@ fn custom_drug_from_components() {
     assert_eq!(cha.custom_group, "Pep");
     assert_eq!(cha.custom_name, "Pep - CHA +1");
     assert!(imps.iter().any(|i| i.kind == "SocialLimit" && i.val == 1.0));
+}
+
+#[test]
+fn custom_drug_grade_multiplies_the_cost() {
+    let store = DataStore::discover().unwrap();
+    let cost = |grade: &str| drug::cost_with(Some(&store), &drug::custom_drug(&store, "Pep", grade, &[("Charmer", 0)], "g").unwrap());
+    assert_eq!(cost("Standard"), 75.0);
+    assert_eq!(cost("Pharmaceutical"), 150.0);
+    assert_eq!(cost("Designer"), 450.0);
 }
 
 #[test]
