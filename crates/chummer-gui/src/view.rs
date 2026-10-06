@@ -133,6 +133,9 @@ pub struct CharacterView {
     gear_tab: usize,
     /// Character Info sub-tab: the text field shown.
     info_text: &'static str,
+    /// Career mode: (essence, essence at special start) when essence loss
+    /// was last refreshed; Chummer refreshes when either changes.
+    essence_key: (f64, Option<f64>),
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -183,7 +186,9 @@ impl CharacterView {
         let store = engine.store_for_character(&ch);
         let sheet = calc::compute(&ch, &rules, Some(&store), Some(&engine.catalog));
         let settings = engine.settings.resolve(&ch.field("settings")).cloned();
+        let essence_key = (sheet.essence, chummer_core::essence_loss::essence_at_special_start(&ch));
         let mut v = CharacterView {
+            essence_key,
             store,
             ch,
             sheet,
@@ -276,6 +281,16 @@ impl CharacterView {
             chummer_core::essence_loss::refresh(&mut self.ch, &self.store, &self.rules);
         }
         self.sheet = calc::compute(&self.ch, &self.rules, Some(&self.store), Some(&engine.catalog));
+        if self.ch.created {
+            // Career mode: refresh (and maybe burn karma) only when essence
+            // or the essence at special start changed, as Chummer does.
+            let key = (self.sheet.essence, chummer_core::essence_loss::essence_at_special_start(&self.ch));
+            if key != self.essence_key {
+                self.essence_key = key;
+                chummer_core::essence_loss::refresh(&mut self.ch, &self.store, &self.rules);
+                self.sheet = calc::compute(&self.ch, &self.rules, Some(&self.store), Some(&engine.catalog));
+            }
+        }
         self.refresh_budget();
     }
 

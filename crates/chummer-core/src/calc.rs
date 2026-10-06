@@ -71,6 +71,8 @@ pub struct Rules {
     pub ess_loss_reduces_maximum_only: bool,
     /// `SpecialKarmaCostBasedOnShownValue`: essence loss as an augmented malus.
     pub special_karma_cost_based_on_shown_value: bool,
+    /// `MysAdeptSecondMAGAttribute`: mystic adepts have a separate MAGAdept.
+    pub mys_adept_second_mag_attribute: bool,
 }
 
 impl Default for Rules {
@@ -112,6 +114,7 @@ impl Default for Rules {
             limb_count: 6,
             ess_loss_reduces_maximum_only: false,
             special_karma_cost_based_on_shown_value: false,
+            mys_adept_second_mag_attribute: false,
         }
     }
 }
@@ -156,6 +159,7 @@ impl Rules {
             limb_count: s.int("limbcount", d.limb_count),
             ess_loss_reduces_maximum_only: s.flag("esslossreducesmaximumonly"),
             special_karma_cost_based_on_shown_value: s.flag("specialkarmacostbasedonshownvalue"),
+            mys_adept_second_mag_attribute: s.flag("mysadeptsecondmagattribute"),
         }
     }
 }
@@ -177,6 +181,11 @@ pub struct AttributeValues {
     pub base: i32,
     pub free_base: i32,
     pub karma: i32,
+    /// `RawMinimum`: metatype minimum plus modifiers (clamped at 0 unless
+    /// `UnclampAttributeMinimum`).
+    pub raw_min: i32,
+    /// `AttributeValueModifiers`: augmented `<name>Base` modifiers.
+    pub value_mods: i32,
     pub total_base: i32,
     /// Natural value (`Value`).
     pub value: i32,
@@ -376,6 +385,8 @@ pub fn attribute_values_with(ch: &Character, name: &str, rules: &Rules, store: O
         base,
         free_base,
         karma: a.karma,
+        raw_min,
+        value_mods,
         total_base,
         value,
         augment,

@@ -119,7 +119,7 @@ The calendar tracks in-game weeks.
 
 **Rules.** The following are computed:
 - Attributes, with improvement stacking and cyberlimbs.
-- Essence and essence loss.
+- Essence and essence loss, in creation and career mode (in career mode, loss beyond the minimum burns MAG/RES/DEP karma levels, as in Chummer).
 - Initiative, condition monitors and limits.
 - Derived pools and armor.
 - Skill dice pools.
@@ -332,7 +332,6 @@ cargo test --workspace
   - Enchantments, rituals and enhancements learned at a grade.
   - Binding stacked foci (undo of a stacked focus binding works).
   - The Living Persona's matrix bonuses.
-  - Essence loss under the RAW rules (career characters keep their essence-loss improvements).
 - PDF export needs a browser's Print to PDF; no converter is bundled.
 - Settings files:
   - "Change Settings File" in creation mode only offers presets with the same build method. Chummer re-runs metatype and priority selection to switch build methods.

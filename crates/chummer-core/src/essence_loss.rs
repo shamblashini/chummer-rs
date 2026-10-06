@@ -1,18 +1,19 @@
 //! Essence loss: the MAG/MAGAdept/RES/DEP reductions that follow lost
 //! essence (`Character.RefreshEssenceLossImprovements`).
 //!
-//! Ported: the RAW creation-mode branch, the
+//! Ported: the RAW creation-mode branch, the RAW career-mode branch, the
 //! `SpecialKarmaCostBasedOnShownValue` house rule (both modes), and the
-//! Cyberzombie attribute adjustment. Career mode under RAW is not ported
-//! (LIKELY-BUG(LB-33), see docs/likely-bugs.md):
-//! it burns karma levels and power points incrementally against the
-//! improvements from the previous call, so [`refresh`] leaves a career
-//! character's essence-loss improvements as they are.
+//! Cyberzombie attribute adjustment. In career mode under RAW (SR5 p. 95:
+//! every point or fraction of Essence lost lowers Magic/Resonance and its
+//! maximum by 1) the reduction beyond the one from creation becomes
+//! `EssenceLoss` improvements; once a minimum cannot drop further, karma
+//! levels (and a mystic adept's power points) are burnt, against the
+//! improvements from the previous call, so a repeated call burns nothing.
 //!
-//! Call [`refresh`] in creation mode after anything that changes essence
-//! (adding or removing ware, changing its grade, rating or essence
-//! discount, qualities with `EssencePenalty*`), and after MAG/RES/DEP
-//! become enabled or disabled. The trigger is `<essenceatspecialstart>`:
+//! Call [`refresh`] after anything that changes essence (adding or
+//! removing ware, changing its grade, rating or essence discount,
+//! qualities with `EssencePenalty*`), and after MAG/RES/DEP become
+//! enabled or disabled. The trigger is `<essenceatspecialstart>`:
 //! whoever enables a special attribute must set it to the current essence,
 //! and reset it to the sentinel when none is enabled.
 
@@ -81,22 +82,34 @@ fn attribute_improvement(name: &str, source: &str, min: i32, max: i32, aug: f64)
 }
 
 /// `CharacterAttrib.MinimumMaximumNoEssenceLoss`: metatype limits plus
-/// every non-essence-loss modifier of the attribute.
-pub fn minimum_maximum_no_essence_loss(ch: &Character, abbrev: &str) -> (i32, i32) {
+/// every non-essence-loss modifier of the attribute, plus the essence-loss
+/// modifiers where they raise it. With `use_start` the essence-loss part
+/// is at least `EssenceAtSpecialStart` − metatype maximum ESS.
+pub fn minimum_maximum_no_essence_loss(ch: &Character, abbrev: &str, use_start: Option<i32>) -> (i32, i32) {
     if ch.doc.get("metatypecategory") == "Cyberzombie" && abbrev.starts_with("MAG") {
         return (1, 1);
     }
     let a = ch.attribute(abbrev).cloned().unwrap_or(Attribute { metatype_min: 0, metatype_max: 0, ..Default::default() });
     let base = format!("{abbrev}Base");
     let (mut min, mut max) = (a.metatype_min, a.metatype_max);
+    let (mut min_loss, mut max_loss) = (0, 0);
     for i in ch.improvements.of_kind("Attribute") {
-        if (i.improved_name == abbrev || i.improved_name == base) && !matches!(i.source.as_str(), CHARGEN | CAREER | "CyberadeptDaemon") {
-            min += i.min as i32 * i.rating;
-            max += i.max as i32 * i.rating;
+        if i.improved_name == abbrev || i.improved_name == base {
+            if matches!(i.source.as_str(), CHARGEN | CAREER | "CyberadeptDaemon") {
+                min_loss += i.min as i32 * i.rating;
+                max_loss += i.max as i32 * i.rating;
+            } else {
+                min += i.min as i32 * i.rating;
+                max += i.max as i32 * i.rating;
+            }
         }
     }
+    let floor = use_start.unwrap_or(0);
+    min += min_loss.max(floor);
+    max += max_loss.max(floor);
     if min < 1 {
-        min = 0; // MAG, MAGAdept, RES and DEP may reach 0.
+        let zero = ch.flag("iscritter") || a.metatype_max == 0 || matches!(abbrev, "EDG" | "MAG" | "MAGAdept" | "RES" | "DEP");
+        min = if zero { 0 } else { 1 };
     }
     (min, max.max(min))
 }
@@ -116,13 +129,15 @@ pub fn refresh(ch: &mut Character, store: &DataStore, rules: &Rules) {
             let ess = attribute_essences(ch, sheet.essence, rules);
             let burn = burn_multiplier(ch);
             let max_red = ess.map(|e| round_reduction((ess_max - e) * burn));
+            let min_red = ess.map(|e| round_reduction((start - e) * burn));
             if rules.special_karma_cost_based_on_shown_value {
                 shown_value(ch, max_red, &sheet);
-            } else if !ch.created {
-                let min_red = ess.map(|e| round_reduction((start - e) * burn));
+            } else if ch.created {
+                let start_floor = standard_round(start) - ess_max as i32;
+                raw_career(ch, store, rules, max_red, min_red, start_floor);
+            } else {
                 raw_create(ch, rules, max_red, min_red);
             }
-            // RAW career mode: not ported, see the module docs.
         }
     }
     cyberzombie(ch, sheet.essence);
@@ -148,7 +163,7 @@ fn raw_create(ch: &mut Character, rules: &Rules, max_red: [i32; 3], min_red: [i3
     let [mag_min, res_min, dep_min] = min_red;
     let min_for = |abbrev: &str, red: i32| {
         if rules.ess_loss_reduces_maximum_only {
-            let (lo, hi) = minimum_maximum_no_essence_loss(ch, abbrev);
+            let (lo, hi) = minimum_maximum_no_essence_loss(ch, abbrev, None);
             (red + lo - hi).max(0)
         } else {
             red
@@ -168,6 +183,151 @@ fn raw_create(ch: &mut Character, rules: &Rules, max_red: [i32; 3], min_red: [i3
         add.push(attribute_improvement("DEP", CHARGEN, -dep, -dep_max, 0.0));
     }
     ch.improvements.list.extend(add);
+}
+
+/// One attribute's state for [`raw_career`], after the old `EssenceLoss`
+/// improvements are removed.
+struct CareerAttr {
+    total_max: i32,
+    total: i32,
+    /// `Base + FreeBase + RawMinimum + AttributeValueModifiers`.
+    floor: i32,
+    karma: i32,
+    /// `MaximumNoEssenceLoss()` and `MaximumNoEssenceLoss(true)`.
+    max_no_loss: i32,
+    max_no_loss_start: i32,
+}
+
+/// The legacy-shim burn: karma levels above the total maximum, measured
+/// before the old `EssenceLoss` improvements are removed.
+fn extra_burn(ch: &Character, store: &DataStore, rules: &Rules, abbrev: &str) -> i32 {
+    let v = calc::attribute_values_with(ch, abbrev, rules, Some(store));
+    ((v.base + v.free_base + v.raw_min + v.value_mods).max(v.total_min) + v.karma - v.total_max).max(0)
+}
+
+impl CareerAttr {
+    fn new(ch: &Character, store: &DataStore, rules: &Rules, abbrev: &str, start_floor: i32) -> Self {
+        let v = calc::attribute_values_with(ch, abbrev, rules, Some(store));
+        let floor = v.base + v.free_base + v.raw_min + v.value_mods;
+        CareerAttr {
+            total_max: v.total_max,
+            total: v.total,
+            floor,
+            karma: v.karma,
+            max_no_loss: minimum_maximum_no_essence_loss(ch, abbrev, None).1,
+            max_no_loss_start: minimum_maximum_no_essence_loss(ch, abbrev, Some(start_floor)).1,
+        }
+    }
+
+    /// The career minimum reduction before comparing with the old one.
+    fn min_reduction(&self, base: i32, max_only: bool) -> i32 {
+        if max_only {
+            (base + self.total - self.max_no_loss_start).max(0)
+        } else {
+            base + self.total_max - self.max_no_loss_start
+        }
+    }
+}
+
+/// RAW career mode (the `else if (Created)` branch of
+/// `RefreshEssenceLossImprovements`). Indexes of `max_red`/`min_red`:
+/// MAG, RES, DEP.
+fn raw_career(ch: &mut Character, store: &DataStore, rules: &Rules, max_red: [i32; 3], min_red: [i32; 3], start_floor: i32) {
+    let [mag_max, res_max, dep_max] = max_red;
+    let [mag_min, res_min, dep_min] = min_red;
+    // The old reductions: negative modifier = positive reduction; the
+    // augmented part counts for a switch from the shown-value house rule.
+    let old = |name: &str| -> i32 {
+        ch.improvements.of_kind("Attribute").filter(|i| i.source == CAREER && i.improved_name.eq_ignore_ascii_case(name)).map(|i| -(i.min as i32 + standard_round(i.aug))).sum()
+    };
+    let (old_mag, old_mag_adept, old_res, old_dep) = (old("MAG"), old("MAGAdept"), old("RES"), old("DEP"));
+    let mystic = ch.is_adept() && ch.is_magician();
+    // `MAGAdept` is MAG itself unless the second-MAG house rule applies.
+    let separate_adept = rules.mys_adept_second_mag_attribute && mystic;
+    let extra = |name: &str| extra_burn(ch, store, rules, name);
+    let (extra_mag, extra_mag_adept, extra_res, extra_dep) = (extra("MAG"), extra(if separate_adept { "MAGAdept" } else { "MAG" }), extra("RES"), extra("DEP"));
+    remove_sources(ch, &[CAREER]);
+    let use_mystic_pps = mystic && !rules.mys_adept_second_mag_attribute;
+    let max_only = rules.ess_loss_reduces_maximum_only;
+    let mag = CareerAttr::new(ch, store, rules, "MAG", start_floor);
+    let mag_adept = if separate_adept { CareerAttr::new(ch, store, rules, "MAGAdept", start_floor) } else { CareerAttr::new(ch, store, rules, "MAG", start_floor) };
+    let res = CareerAttr::new(ch, store, rules, "RES", start_floor);
+    let dep = CareerAttr::new(ch, store, rules, "DEP", start_floor);
+    let mut add = Vec::new();
+
+    let mag_max_red = mag_max + mag.total_max - mag.max_no_loss;
+    let mag_adept_max_red = mag_max + mag_adept.total_max - mag_adept.max_no_loss;
+    if mag_max > 0 || mag_min > 0 || mag_max_red != 0 || mag_adept_max_red != 0 {
+        let mut mag_red = mag.min_reduction(mag_min, max_only);
+        let mut mag_adept_red = mag_adept.min_reduction(mag_min, max_only);
+        let delta = mag_red - old_mag;
+        if delta > 0 {
+            // A minimum that cannot drop further burns karma levels. The
+            // reduction itself stays, so a repeated call burns nothing.
+            if mag_red > mag.floor {
+                burn_karma(ch, "MAG", extra_mag + delta.min(mag.karma));
+            }
+            if use_mystic_pps {
+                // Power points bought in creation first, then those from
+                // initiation (as an `EssenceLossChargen` improvement, so
+                // the next career refresh keeps it).
+                let pp = ch.doc.get_i32("magsplitadept").unwrap_or(0);
+                let chargen_burn = pp.min(delta);
+                let mag_total = calc::attribute_values_with(ch, "MAG", rules, Some(store)).total;
+                ch.doc.set_child_text("magsplitadept", (pp - chargen_burn).min(mag_total).to_string());
+                let pp_burn = f64::from(delta - chargen_burn).min(ch.improvements.val("AdeptPowerPoints", None));
+                if pp_burn != 0.0 {
+                    add.push(Improvement { source: CHARGEN.into(), kind: "AdeptPowerPoints".into(), rating: 1, val: -pp_burn, enabled: true, ..Default::default() });
+                }
+            }
+        } else {
+            mag_red = old_mag;
+        }
+        if separate_adept {
+            let delta = mag_adept_red - old_mag_adept;
+            if delta > 0 {
+                if mag_adept_red > mag_adept.floor {
+                    burn_karma(ch, "MAGAdept", extra_mag_adept + delta.min(mag_adept.karma));
+                }
+            } else {
+                mag_adept_red = old_mag_adept;
+            }
+        } else if mag_adept_red < old_mag_adept {
+            mag_adept_red = old_mag_adept;
+        }
+        if mag_red != 0 || mag_max_red != 0 {
+            add.push(attribute_improvement("MAG", CAREER, -mag_red, -mag_max_red, 0.0));
+        }
+        if mag_adept_red != 0 || mag_adept_max_red != 0 {
+            add.push(attribute_improvement("MAGAdept", CAREER, -mag_adept_red, -mag_adept_max_red, 0.0));
+        }
+    }
+    for (name, a, max, min, old, extra) in [("RES", &res, res_max, res_min, old_res, extra_res), ("DEP", &dep, dep_max, dep_min, old_dep, extra_dep)] {
+        let max_red = max + a.total_max - a.max_no_loss;
+        if max > 0 || min > 0 || max_red != 0 {
+            let mut red = a.min_reduction(min, max_only);
+            if red - old > 0 {
+                if red > a.floor {
+                    burn_karma(ch, name, extra + (red - old).min(a.karma));
+                }
+            } else {
+                red = old;
+            }
+            if red != 0 || max_red != 0 {
+                add.push(attribute_improvement(name, CAREER, -red, -max_red, 0.0));
+            }
+        }
+    }
+    ch.improvements.list.extend(add);
+}
+
+/// Lower an attribute's karma levels by `n` (Chummer does not stop at 0;
+/// chummer-rs does).
+fn burn_karma(ch: &mut Character, abbrev: &str, n: i32) {
+    if let Some(a) = ch.attribute_mut(abbrev) {
+        a.karma = (a.karma - n).max(0);
+        ch.dirty = true;
+    }
 }
 
 /// `SpecialKarmaCostBasedOnShownValue`: the reduction is an augmented
