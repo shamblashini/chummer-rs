@@ -30,7 +30,7 @@ pub const IGNORE: &[&str] = &[
 
 /// What the lifestyle dialog (`SelectLifestyle.AcceptForm`) sets on top of
 /// the data record.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Options {
     /// The player's name for this lifestyle; the record name when empty.
     pub name: String,

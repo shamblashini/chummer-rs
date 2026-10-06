@@ -739,7 +739,7 @@ fn learn_item(
 // ---------------------------------------------------------------------------
 
 /// Discounts chosen when joining a grade.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InitiationOptions {
     pub group: bool,
     pub ordeal: bool,

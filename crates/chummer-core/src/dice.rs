@@ -34,6 +34,61 @@ impl Rng {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Deterministic scope (see `command`)
+// ---------------------------------------------------------------------------
+
+/// What a change may generate while [`deterministic`] is in effect: random
+/// values (new GUIDs) from a seeded generator, and a fixed "now".
+struct Scope {
+    rng: Rng,
+    now: String,
+}
+
+thread_local! {
+    static SCOPE: std::cell::RefCell<Option<Scope>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Ends the scope set up by [`deterministic`] when dropped.
+pub struct ScopeGuard {
+    prev: Option<Scope>,
+}
+
+impl Drop for ScopeGuard {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        SCOPE.with(|s| *s.borrow_mut() = prev);
+    }
+}
+
+/// SplitMix64, to spread nearby seeds before they seed the xorshift.
+fn splitmix(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Until the guard drops, [`crate::items::new_guid`] draws from a generator
+/// seeded with `seed` and [`crate::chargen::now_iso`] returns `now`, on this
+/// thread. Used by `command::apply` so a change gives the same result on
+/// every machine.
+pub fn deterministic(seed: u64, now: String) -> ScopeGuard {
+    let scope = Scope { rng: Rng::seeded(splitmix(seed)), now };
+    let prev = SCOPE.with(|s| s.borrow_mut().replace(scope));
+    ScopeGuard { prev }
+}
+
+/// The next value of the deterministic scope's generator, if one is set.
+pub fn scoped_u64() -> Option<u64> {
+    SCOPE.with(|s| s.borrow_mut().as_mut().map(|sc| sc.rng.next_u64()))
+}
+
+/// The deterministic scope's "now", if one is set.
+pub fn scoped_now() -> Option<String> {
+    SCOPE.with(|s| s.borrow().as_ref().map(|sc| sc.now.clone()))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Glitch {
     None,

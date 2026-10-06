@@ -120,7 +120,7 @@ pub fn find_type(store: &DataStore, id: &str) -> Option<ImprovementType> {
 }
 
 /// What the Create Improvement form holds.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Form {
     pub type_id: String,
     pub name: String,
