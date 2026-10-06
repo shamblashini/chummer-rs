@@ -326,7 +326,10 @@ cargo test --workspace
 
 - Places where chummer-rs copies (or fixes) what looks like a Chummer5a
   bug are listed, with rules references, in
-  [docs/likely-bugs.md](docs/likely-bugs.md).
+  [docs/likely-bugs.md](docs/likely-bugs.md). Every place where
+  chummer-rs knowingly differs from Chummer5a (bug fixes, extra
+  features, omissions, file differences) is in
+  [docs/deviations.md](docs/deviations.md).
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
 - Some career-mode details:
   - Enchantments, rituals and enhancements learned at a grade.

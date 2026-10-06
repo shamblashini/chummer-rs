@@ -10,6 +10,9 @@ Each entry has an id. Open entries with a code site have a matching
 "chummer-rs deviates from Chummer (<id>)" comment instead. Rules references are to the printed page numbers
 (book code as in `books.xml`). The rules text is paraphrased.
 
+All the places where chummer-rs knowingly differs from Chummer, including
+the fixed entries here, are summarised in [deviations.md](deviations.md).
+
 Classes:
 
 - **(a)** Chummer bug that chummer-rs copies.
