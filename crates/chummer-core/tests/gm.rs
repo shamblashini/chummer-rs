@@ -318,3 +318,26 @@ fn witness_my_hate_skips_custom_area_spells() {
     assert_ne!(dv(&g1), saved(&g1), "the single-target spell gets the drain bonus");
     assert_eq!(dv(&g2), saved(&g2), "the area spell does not");
 }
+
+/// A constant in the critter data is kept: spirits have no RES/DEP and an
+/// ESS minimum of 0; sprites have no MAG or Edge. Force-derived values
+/// below 1 are still raised to 1 (LB-10; Chummer raises all of them).
+#[test]
+fn critter_constant_limits_are_not_raised() {
+    let engine = Engine::load().unwrap();
+    let limits = |ch: &Character, a: &str| {
+        let x = ch.attribute(a).unwrap();
+        (x.metatype_min, x.metatype_max)
+    };
+    let air = critter(&engine, "Spirit of Air", 1, &[]);
+    assert_eq!(limits(&air, "RES"), (0, 0));
+    assert_eq!(limits(&air, "DEP"), (0, 0));
+    assert_eq!(limits(&air, "ESS").0, 0);
+    assert_eq!(limits(&air, "ESS").1, 1, "ESS max is F");
+    assert_eq!(limits(&air, "STR"), (1, 1), "F-3 at Force 1 is raised to 1");
+    let sprite = critter(&engine, "Courier Sprite", 3, &[]);
+    assert_eq!(limits(&sprite, "MAG"), (0, 0));
+    assert_eq!(limits(&sprite, "EDG"), (0, 0));
+    assert_eq!(limits(&sprite, "BOD"), (0, 0));
+    assert_eq!(limits(&sprite, "RES"), (3, 3));
+}

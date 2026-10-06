@@ -7,16 +7,23 @@ pub mod custom_spell;
 pub mod packs;
 
 /// `CommonFunctions.ExpressionToInt`: replace `F`, `1D6` and `2D6` with the
-/// force, evaluate, round, add `offset`. With a force, the result is at
-/// least `min_from_force`; without one, at least 0.
+/// force, evaluate, round, add `offset`. With a force, a value that depends
+/// on the force is at least `min_from_force`; anything else is at least 0.
 pub fn expression_to_int(s: Option<&str>, force: i32, offset: i32, min_from_force: i32) -> i32 {
     let Some(s) = s.filter(|s| !s.trim().is_empty()) else { return offset };
     let f = force.to_string();
     let replaced = s.replace('F', &f).replace("1D6", &f).replace("2D6", &f);
-    // LIKELY-BUG(LB-10): with a Force, every limit is at least 1, so spirits get RES/DEP/ESS limits of 1 where the data says 0. See docs/likely-bugs.md.
     // A failed evaluation leaves Chummer's starting value of 1.
     let v = crate::expr::evaluate_num(&replaced).map_or(1, crate::expr::standard_round) + offset;
-    if force > 0 {
+    // chummer-rs deviates from Chummer here (LB-10): Chummer raises every
+    // value to `min_from_force` when there is a force, also a literal "0",
+    // so spirits get RES/DEP and an ESS minimum of 1 and sprites MAG/EDG 1.
+    // A constant in the data is the stat block's value (SR5 p. 303: spirits
+    // have no RES; p. 254: sprites are Matrix entities with no physical
+    // attributes, MAG or Edge); only an attribute that follows the force
+    // (F-3 at Force 1) is raised to 1.
+    let follows_force = s.contains('F') || s.contains("D6");
+    if force > 0 && follows_force {
         v.max(min_from_force)
     } else {
         v.max(0)
@@ -42,7 +49,9 @@ mod tests {
         assert_eq!(expression_to_int(Some("F/2"), 5, 0, 1), 3, "2.5 rounds away from zero");
         assert_eq!(expression_to_int(Some("(F*2)+4"), 3, 0, 1), 10);
         assert_eq!(expression_to_int(Some("F-3"), 1, 0, 1), 1, "at least 1 with a force");
-        assert_eq!(expression_to_int(Some("0"), 4, 0, 1), 1, "even a 0 limit is raised to 1");
+        assert_eq!(expression_to_int(Some("0"), 4, 0, 1), 0, "a constant 0 stays 0 (LB-10)");
+        assert_eq!(expression_to_int(Some("2"), 4, 0, 1), 2);
+        assert_eq!(expression_to_int(Some("1D6-6"), 1, 0, 1), 1, "dice follow the force");
         assert_eq!(expression_to_int(Some("0"), 4, 0, 0), 0);
         assert_eq!(expression_to_int(Some("3"), 0, 0, 1), 3);
         assert_eq!(expression_to_int(Some("F-3"), 0, 0, 1), 0, "no force: at least 0");

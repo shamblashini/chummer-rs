@@ -38,7 +38,7 @@ judgement call).
 |---|---|---|---|---|---|---|
 | LB-08 | Vehicle handling/speed/accel totals | `GetTotalHandling` evaluates the on-road handling bonus against the off-road handling. `GetTotalSpeed`/`GetTotalAccel` compare an off-road override with the on-road total (`off = max(on, override)`). | Same. | R5 p. 123: the drone mods set Handling/Speed/Acceleration to the upgraded rating. No stock vehicle has a different off-road speed or accel, and no handling bonus refers to `Handling`, so there is no visible effect with stock data. | (a) | ask (latent; fix changes nothing today) |
 | LB-09 | PACKS kits: attributes and skills | `AddPACKSKit` lists the kit's attributes, skills, knowledge skills and powers in the dialog but does not apply them. | Same; reported as skipped. Listed in README "Not done yet". | Kits are a Chummer feature; no rules. Data has kits that set attributes and skills, which now do nothing. | (a) | ask (a fix makes kits differ from Chummer 5.226) |
-| LB-10 | Critter attribute limits at a Force | `ExpressionToInt` gives at least `intMinValueFromForce` (1) when Force > 0, also for a literal "0". Spirits get RES and DEP limits and an ESS minimum of 1 where the data says 0. A failed expression also gives 1. | Same (`gm::expression_to_int`). | SR5 p. 303: spirit stat blocks have no Resonance or Depth. The floor of 1 for real attributes (F−3 at Force 1) is fine. | (a) | ask (only RES/DEP of spirits change; not shown for spirits) |
+| LB-10 | Critter attribute limits at a Force | `ExpressionToInt` gives at least `intMinValueFromForce` (1) when Force > 0, also for a literal "0". Spirits get RES and DEP limits and an ESS minimum of 1 where the data says 0. A failed expression also gives 1. | Fixed: only a value that depends on the Force (`F`, `1D6`, `2D6`) is raised to 1; a constant such as "0" stays (spirit RES/DEP/ESS minimum, sprite MAG/EDG/physical attributes). A failed expression still gives 1. | SR5 p. 303: spirit stat blocks have no Resonance or Depth. The floor of 1 for real attributes (F−3 at Force 1) is fine. | (b) — fixed | fixed |
 | LB-11 | Weapon dice pool | `Weapon.DicePool` adds the `WeaponSpecificDV`, `WeaponSpecificAP`, `WeaponSpecificAccuracy` and `WeaponSpecificRange` improvements to the pool, not only `WeaponSpecificDice`. | Same. | A DV/AP/Accuracy bonus is not a dice pool bonus. No stock data or custom improvement type creates these four, so there is no effect today. | (a) | ask (latent) |
 | LB-12 | Print: spell drain "Special" | `Spell.CalculatedDv` sends a non-numeric DV through XPath; it fails and the text is appended: "Special(Special)". | Fixed: when the DV does not evaluate, only the modifiers are appended: "Special" prints as "Special", a limited one as "Special-2". | n/a (cosmetic). | (b) — fixed | fixed |
 
@@ -88,7 +88,7 @@ Tests that pin the current behaviour change with a fix.
 | LB-07 | `print/items.rs:233` | — |
 | LB-08 | `items/vehicle/stats.rs:527`, `:551` | — |
 | LB-09 | `gm/packs.rs:203` | — |
-| LB-10 | `gm/mod.rs:16` | `gm/mod.rs` tests ("even a 0 limit is raised to 1") |
+| LB-10 | `gm/mod.rs` `expression_to_int` | `gm/mod.rs` tests ("a constant 0 stays 0"), `tests/gm.rs` `critter_constant_limits_are_not_raised` |
 | LB-11 | `items/weapon.rs:1413` | — |
 | LB-12 | `print/magic.rs` `calculated_dv` | `tests/print_oracle.rs` `special_dv_prints_as_is`, `limited_special_dv_appends_the_modifier` |
 | LB-20 | `play/ammo.rs:644` | — |
