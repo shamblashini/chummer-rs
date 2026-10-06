@@ -157,6 +157,8 @@ pub struct CharacterView {
     gear_tab: usize,
     /// Character Info sub-tab: the text field shown.
     info_text: &'static str,
+    /// The campaign member this tab edits (`gm_screen`), if any.
+    pub campaign_member: Option<chummer_core::campaign::MemberId>,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -223,16 +225,22 @@ impl CharacterView {
     }
 
     pub fn new(ch: Character, engine: &Arc<Engine>) -> Self {
-        let rules = engine.rules_for(&ch);
-        let store = engine.store_for_character(&ch);
-        let sheet = calc::compute(&ch, &rules, Some(&store), Some(&engine.catalog));
-        let settings_key = ch.field("settings");
+        CharacterView::from_doc(Doc::new(ch, engine.clone()), engine)
+    }
+
+    /// A tab for an open document (a campaign member lent by the GM
+    /// screen, with its history).
+    pub fn from_doc(doc: Doc, engine: &Arc<Engine>) -> Self {
+        let rules = engine.rules_for(&doc);
+        let store = engine.store_for_character(&doc);
+        let sheet = calc::compute(&doc, &rules, Some(&store), Some(&engine.catalog));
+        let settings_key = doc.field("settings");
         let settings = engine.settings.resolve(&settings_key).cloned();
         let mut v = CharacterView {
             settings_key,
-            seen_revision: 0,
+            seen_revision: doc.session().revision(),
             store,
-            doc: Doc::new(ch, engine.clone()),
+            doc,
             sheet,
             rules,
             tab: Tab::Common,
@@ -264,6 +272,7 @@ impl CharacterView {
             counterspelling: 0,
             gear_tab: 0,
             info_text: "description",
+            campaign_member: None,
         };
         v.refresh_budget();
         v.set_guided(guided_preference());
@@ -304,6 +313,17 @@ impl CharacterView {
 
     pub fn doc(&self) -> &Doc {
         &self.doc
+    }
+
+    /// For the GM screen's edits to a member open in this tab; the sheet
+    /// follows on the next frame (the session's revision changes).
+    pub fn doc_mut(&mut self) -> &mut Doc {
+        &mut self.doc
+    }
+
+    /// Close the tab, keeping the document.
+    pub fn into_doc(self) -> Doc {
+        self.doc
     }
 
     /// Edit → Undo. Returns what was undone.

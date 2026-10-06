@@ -164,13 +164,76 @@ Implemented (local part):
   live session's log (with undos and merged edits) onto the original
   file and get the same hash.
 
+## Campaigns
+
+Implemented in `chummer_core::campaign` (work-order step 4, local only)
+and shown by the GUI's GM screen (`gm_screen.rs`, `campaign_ui.rs`).
+
+### Model
+
+- `Campaign { id, name, created, gm_notes, members, encounters, log }`.
+  `id` is a `CampaignId`: 128 bits as 32 lower-case hex digits, the
+  same text form as `chummer_net::invite::CampaignId`, so the two convert
+  with `to_string()` / `parse()` (core does not depend on chummer-net).
+- `Member { id: MemberId, kind, name, character, player, owner, group,
+  notes, visible_to_players }`. `kind` is Player, NPC, Enemy, Critter,
+  Spirit, Drone, or any other name (kept as `Other`). `character` is
+  `Embedded { xml }` (the canonical form, `command::canonical`) or
+  `Linked { path }` (a `.chum5`/`.chum5lz`; a relative path is resolved
+  against the campaign file's folder). `owner` is the owning player's
+  node id (hex) for online campaigns; `visible_to_players` is stored for
+  later and not used locally.
+- `Encounter { id, name, combatants, round, pass, notes }`. A `Combatant`
+  is a member (`member: Some(MemberId)`) or a quick one with its own
+  `AdHocTrack` (physical and stun boxes). It keeps the stats of its last
+  roll (base, dice, Edge, Reaction, Intuition), the score, the rolled
+  dice and the acted, delayed, seized and blitzed flags. Initiative and
+  damage math (`campaign::initiative`, `campaign::damage`) run outside
+  commands: dice are rolled by the GM's app and the results reach a
+  character as commands with fixed values (`SetPhysicalDamage`,
+  `SetStunDamage`, `SpendEdge`).
+- `log: Vec<LogItem { at, author, member, description }>` is the GM's
+  activity feed. Locally it is filled from each member's `Session` log
+  by `Campaign::absorb` with a `FeedCursor` per member: new entries are
+  added, an edit merged into the last entry (a burst of typing) rewrites
+  that line, and undone entries add "Undone: …". GM awards read "GM
+  gave Ghost 100 karma: note" (`feed_text`). The GM's commands carry
+  `author: "GM"`.
+
+### File
+
+A `.chummercampaign` file is one LZMA stream (the `.chum5lz`
+container) holding one JSON document: `{"format": "chummer-rs
+campaign", "version": 1, ...the Campaign's fields...}`. Every field has
+a default and unknown fields are ignored, so newer and older files load;
+only a different `format` is refused. A plain (uncompressed) JSON file
+also loads. Saving writes a temporary file and renames it. Loading an
+embedded member and hashing it gives the `state_hash` it had when saved.
+
+### What the sync (steps 5–7, `chummer-sync`) builds on
+
+- Member ids are stable for a member's life and are the key for
+  per-member versions, command logs, snapshots and hashes. Those live in
+  chummer-sync, not in the campaign file: the file holds the members'
+  current characters only.
+- The GM's app is the authority for every member. Each open member is a
+  `Session` (in the GUI a `Doc` with author "GM"), so its log of
+  envelopes, its version and `state_hash` are what a replica needs; a
+  player's commands would arrive as envelopes with the player as author
+  and go through `Session::apply_envelope`.
+- `owner` (node id) is where "players see and edit only their own
+  characters" will be checked; `visible_to_players` is for showing NPCs
+  to players.
+- Encounters and the feed are GM-side state. A later step may send the
+  feed (filtered by owner) to players.
+
 ## Work order
 
 1. Persistent creation warnings and guided creation.
 2. macOS builds.
 3. The command layer, with undo/redo (done).
 4. Local GM screen and campaign file (players, NPCs, critters,
-   initiative, damage), using commands.
+   initiative, damage), using commands (done; see Campaigns).
 5. Sync between two local instances: rebasing, hashes, snapshots.
 6. iroh connections, the relay, invite links.
 7. Outbox and mailbox.

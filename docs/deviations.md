@@ -96,6 +96,7 @@ Each table has these columns:
 | A kit weapon goes into the first vehicle mod that is a weapon mount. Drones with built-in weapon mounts lose it. | Falls back to a free built-in weapon mount; with none, the weapon goes to the character and the report says so. (LB-23) | Nothing is lost. | yes |
 | Custom kits are read from and written to Chummer's `packs` folder. | Uses `~/.local/share/chummer-rs/packs` (`$XDG_DATA_HOME`). Copy the file to use a kit in both programs. | Separate user data directory. | no |
 | Editing a custom improvement opens the form with Augmented empty, so saving the edit loses it. | Restores Augmented from the improvement's AugmentedMaximum for Attribute and ReplaceAttribute types. | The value is not lost on edit. | yes (Augmented kept) |
+| No campaign or GM screen (only a simple initiative tracker). | File → New Campaign: a GM screen with a roster of players, NPCs, enemies and critters, encounters (initiative passes, Seize the Initiative, Blitz), condition monitors, dice pools, quick damage and GM awards, saved as a `.chummercampaign` file. | Extra (community request); groundwork for online campaigns (docs/online-design.md). | new format; `.chum5` unchanged |
 
 ## Settings and rulesets
 

@@ -255,6 +255,12 @@ impl Session {
         std::mem::replace(&mut self.ch, state)
     }
 
+    /// Mark the character as saved somewhere other than its own file (a
+    /// campaign file holding it). The state and the log are unchanged.
+    pub fn mark_saved(&mut self) {
+        self.ch.dirty = false;
+    }
+
     /// Save to `path` (with the export totals refreshed, as
     /// [`Engine::save`] does) and remember it as the character's file.
     /// The character itself is not changed: the totals go into a copy.
