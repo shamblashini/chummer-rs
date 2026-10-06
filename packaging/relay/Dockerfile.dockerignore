@@ -1,0 +1,5 @@
+# BuildKit uses this file for packaging/relay/Dockerfile.
+target
+.git
+**/*.chum5
+**/*.chum5lz

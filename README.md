@@ -266,6 +266,14 @@ Chummer 5.225.
   - Special → Create PACKS Kit… saves the character's things as a Custom kit in `~/.local/share/chummer-rs/packs/custom_*_packs.xml`. Custom kits can also be deleted there.
   - Spells & Spirits tab → Create Spell… designs a custom spell (Street Grimoire). Chummer's rules compute its drain value and descriptors. In career mode it costs spell karma.
 - **Languages:** English, German, French, Japanese, Portuguese and Chinese data names and sheets.
+- **Online campaigns (networking foundation, not in the app yet):** the
+  `chummer-net` library and the `chummer-relay` server; see
+  [docs/online-design.md](docs/online-design.md) and [docs/relay.md](docs/relay.md).
+  - A persistent node key per installation (`node.key` in the config folder) is the user's identity.
+  - Peer-to-peer QUIC connections with [iroh](https://www.iroh.computer/), found by node id through our relays only.
+  - The campaign protocol (hello and invite check, submit and ack, push from the GM, ping) and `chummer-rs://join/...` invite links.
+  - A relay mailbox for offline peers: messages are sealed to the recipient and signed by the sender, with size, count, daily and expiry limits.
+  - `chummer-relay` runs the relay and the mailbox, with Docker and systemd files in `packaging/relay/`.
 
 ### Layout and themes
 
@@ -376,6 +384,11 @@ cargo test --workspace
   features, omissions, file differences) is in
   [docs/deviations.md](docs/deviations.md).
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
+- Online campaigns: only the networking layer exists. The command sync
+  (versions, rebasing, snapshots), the outbox, "Host campaign" and "Join"
+  in the GUI, and the headless authority are not done. The project's
+  public relay is not running yet; its URL and mailbox id in
+  `chummer_net::config` are placeholders.
 - Some career-mode details:
   - Enchantments, rituals and enhancements learned at a grade.
   - Binding stacked foci (undo of a stacked focus binding works).
@@ -428,6 +441,8 @@ cargo test --workspace
 | `tree.rs` | Item lists as Chummer's trees (root nodes, locations, nesting) |
 | `crates/chummer-gui` | egui desktop application |
 | `crates/chummer-cli` | Command-line tool |
+| `crates/chummer-net` | Online campaigns: iroh endpoints, campaign protocol, invites, mailbox client, sealing |
+| `crates/chummer-relay` | Relay server and mailbox (`packaging/relay/`, [docs/relay.md](docs/relay.md)) |
 | `tools/gen_bonus_table.py` | Generates simple bonus handlers from Chummer5a's C# |
 | `resources/` | Data, translations, custom data, sheets and export templates from Chummer5a |
 

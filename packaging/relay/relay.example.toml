@@ -1,0 +1,31 @@
+# chummer-relay configuration. Every key is optional except `hostname`;
+# the values shown are the defaults. See docs/relay.md.
+
+# Public DNS name of this server. Must resolve (A and/or AAAA) to it.
+hostname = "relay.example.org"
+
+# Mailbox database, mailbox node key, ACME account and certificate cache.
+data_dir = "/var/lib/chummer-relay"
+
+http_bind = "[::]:80"      # TCP: captive-portal probe (iroh-relay always serves it)
+https_bind = "[::]:443"    # TCP: the relay, and Let's Encrypt TLS-ALPN-01 challenges
+qad_bind = "[::]:7842"     # UDP: QUIC address discovery (helps hole punching)
+qad_enabled = true
+mailbox_port = 7843        # UDP: direct connections to the mailbox node (0 = any port)
+mailbox_enabled = true
+# metrics_bind = "127.0.0.1:9090"   # Prometheus metrics; keep on localhost
+# relay_rate_limit = 1048576        # bytes/second per client through the relay
+
+[tls]
+cert_mode = "lets-encrypt"  # or "manual" (cert_path/key_path) or "self-signed"
+contact_email = "you@example.org"
+acme_production = true
+# cert_path = "/etc/letsencrypt/live/relay.example.org/fullchain.pem"
+# key_path = "/etc/letsencrypt/live/relay.example.org/privkey.pem"
+
+[limits]
+max_blob_bytes = 262144                  # 256 KiB per sealed message
+max_messages_per_recipient = 1000        # waiting for one recipient
+max_messages_per_sender_per_day = 2000   # uploads per sender per UTC day
+max_bytes_per_sender_per_day = 67108864  # 64 MiB per sender per UTC day
+expiry_secs = 2592000                    # 30 days; uncollected mail is deleted

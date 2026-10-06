@@ -1,0 +1,34 @@
+[package]
+name = "chummer-relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "chummer-rs public relay: an iroh relay server plus an end-to-end encrypted mailbox"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "chummer-relay"
+path = "src/main.rs"
+
+[dependencies]
+chummer-net.workspace = true
+iroh.workspace = true
+iroh-relay = { workspace = true, features = ["server"] }
+rustls = { workspace = true, features = ["ring"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+serde.workspace = true
+postcard.workspace = true
+redb.workspace = true
+clap.workspace = true
+toml.workspace = true
+rcgen.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

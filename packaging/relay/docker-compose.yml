@@ -1,0 +1,19 @@
+# Run from this directory:  docker compose up -d
+# Edit relay.toml first (copy relay.example.toml): hostname, contact_email.
+services:
+  chummer-relay:
+    build:
+      context: ../..
+      dockerfile: packaging/relay/Dockerfile
+    image: chummer-relay
+    restart: unless-stopped
+    # Host networking: the relay sees clients' real addresses (QUIC address
+    # discovery reports them back) and IPv6 works without extra setup.
+    network_mode: host
+    volumes:
+      - ./relay.toml:/etc/chummer-relay/relay.toml:ro
+      - chummer-relay-data:/var/lib/chummer-relay
+    environment:
+      RUST_LOG: info,iroh=warn
+volumes:
+  chummer-relay-data:

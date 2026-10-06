@@ -1,0 +1,163 @@
+# The chummer-rs relay
+
+`chummer-relay` is one small binary with two jobs:
+
+1. **Relay.** An [iroh relay server](https://docs.rs/iroh-relay) (iroh-relay
+   1.3). It helps peers find a path to each other (hole punching) and
+   forwards their traffic when no direct path exists. That traffic is
+   end-to-end encrypted QUIC: the relay cannot read it.
+2. **Mailbox.** An iroh endpoint beside the relay that serves the
+   `chummer-rs/mailbox/1` protocol. It keeps sealed messages for peers who
+   are offline (play-by-post, a GM who is not online). The messages are
+   encrypted to the recipient's key and signed by the sender before they
+   leave the app, so the operator cannot read them or see who wrote them.
+
+The relay keeps no accounts and no personal data. It stores only sealed
+blobs, keyed by the recipient's node id, until they are collected or expire.
+
+The project's public relay is the default in the app
+(`chummer_net::config::DEFAULT_RELAY_URL`). Anyone can run their own one and
+point their app at it.
+
+## What you need
+
+- A server with a public IPv4 address (IPv6 too, if you have it).
+- A DNS name for it, for example `relay.example.org`: an `A` record (and
+  `AAAA` for IPv6) that points at the server.
+- These ports open in the firewall:
+
+  | Port | Protocol | Used for |
+  |---|---|---|
+  | 443 | TCP | The relay (HTTPS/WebSocket), and Let's Encrypt TLS-ALPN-01 challenges |
+  | 80 | TCP | Captive-portal probe (iroh-relay always serves it on plain HTTP) |
+  | 7842 | UDP | QUIC address discovery: tells clients their public address, for hole punching |
+  | 7843 | UDP | Direct connections to the mailbox node (optional: without it, mail goes through the relay) |
+
+  Metrics (`metrics_bind`, off by default) should stay on `127.0.0.1`.
+
+- A certificate. The default is Let's Encrypt: the relay gets and renews
+  it by itself over port 443 (TLS-ALPN-01). It needs the DNS name to point at
+  the server first, and a contact email. Certificates are cached in
+  `<data_dir>/acme`. You can instead give it a certificate you already
+  have (`cert_mode = "manual"`, PEM files, e.g. from certbot; restart the
+  relay after renewal).
+
+A small VPS is enough. The mailbox database is bounded by the limits
+below (per recipient: 1000 messages of at most 256 KiB, deleted after 30
+days). Most traffic is the hole-punching handshake; traffic is relayed in
+full only when two peers cannot connect directly.
+
+## Configuration
+
+Copy [`packaging/relay/relay.example.toml`](../packaging/relay/relay.example.toml)
+to `/etc/chummer-relay/relay.toml` and set at least `hostname` and
+`tls.contact_email`. Every other key has a default (shown in the example).
+`chummer-relay --print-config` prints the defaults.
+
+Command-line flags override the file: `--config`, `--hostname`,
+`--data-dir`, `--cert-mode lets-encrypt|manual|self-signed`,
+`--contact-email`. `--dev` starts a local test relay (self-signed
+certificate for `localhost`, HTTP 3340, HTTPS 3443).
+
+### Mailbox limits
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_blob_bytes` | 262144 (256 KiB) | Largest sealed message |
+| `max_messages_per_recipient` | 1000 | Messages waiting for one recipient |
+| `max_messages_per_sender_per_day` | 2000 | Uploads per sender per UTC day |
+| `max_bytes_per_sender_per_day` | 67108864 (64 MiB) | Upload bytes per sender per UTC day |
+| `expiry_secs` | 2592000 (30 days) | Uncollected messages are deleted after this |
+
+Senders and recipients are identified by the node id that the QUIC
+handshake proves. A connection can only fetch and delete its own mail.
+Expired mail is purged every hour.
+
+`relay_rate_limit` (bytes per second per client, off by default) limits
+relayed traffic.
+
+## Deploy with Docker
+
+```bash
+git clone https://github.com/shamblashini/chummer-rs
+cd chummer-rs/packaging/relay
+cp relay.example.toml relay.toml     # edit hostname and contact_email
+docker compose up -d
+docker compose logs chummer-relay    # shows the mailbox node id
+```
+
+The compose file uses host networking, so the relay sees clients' real
+addresses (QUIC address discovery reports them back) and IPv6 works. The
+data directory is the `chummer-relay-data` volume; back it up (see below).
+
+## Deploy with systemd
+
+```bash
+cargo build --release -p chummer-relay
+sudo install -m755 target/release/chummer-relay /usr/local/bin/
+sudo install -Dm644 packaging/relay/relay.example.toml /etc/chummer-relay/relay.toml
+sudoedit /etc/chummer-relay/relay.toml    # hostname, contact_email
+sudo install -m644 packaging/relay/chummer-relay.service /etc/systemd/system/
+sudo systemctl enable --now chummer-relay
+journalctl -u chummer-relay               # shows the mailbox node id
+```
+
+The unit runs as a dynamic user with only `CAP_NET_BIND_SERVICE` and keeps
+its data in `/var/lib/chummer-relay`.
+
+## The mailbox node id
+
+On start-up the relay logs two lines like:
+
+```text
+mailbox node id: a14cbbf284e289ed5ba9475d0456881cb34b58006174e7376b6a879cfb79a7b4
+give users this relay entry: https://relay.example.org/#a14cbbf2...a7b4
+```
+
+The mailbox is an iroh endpoint, so clients dial it by its node id. The id
+comes from `<data_dir>/mailbox.key`, which is made on the first start.
+**Keep this file and back it up.** If it is lost, the relay gets a new id
+and every app that knows the old one can no longer reach the mailbox
+(mail already stored is lost too, as it is in `mailbox.redb` in the same
+directory).
+
+The relay entry (`<url>#<mailbox-id>`) is what an app needs to use this
+relay and its mailbox.
+
+## Point the app at a relay
+
+The app's network settings are a list of relay entries
+(`chummer_net::config::NetConfig`). The default list is the project's
+public relay. A user can add their own relay entry, or replace the list
+with it. The app uses the relay with the lowest latency as its home relay
+and looks peers up on all of them.
+
+A GM on a private relay can put it into invite links
+(`&relay=<url>`), so players who do not have it in their list can still
+connect.
+
+For a `self-signed` relay, clients must also trust its certificate
+(`<data_dir>/self-signed-cert.pem`, `NetConfig::extra_ca_roots`). Use this
+only for testing or a private group; with a public name, use Let's
+Encrypt.
+
+## How peers find each other
+
+There is no directory of users. A player dials the GM by the node id in
+the invite link. The app tries that id on every relay in its list (and the
+link's relay hint); a relay forwards packets to any endpoint connected to
+it, so the first packets go through the GM's home relay and iroh then
+punches a direct path. iroh's own lookup services (pkarr and DNS on
+number 0's `dns.iroh.link`) are not used, so no third-party servers are
+involved.
+
+## Backups and privacy
+
+- Back up `<data_dir>/mailbox.key` (the mailbox identity). `mailbox.redb`
+  holds only sealed, expiring messages; losing it loses undelivered mail.
+- The relay logs connection events at `info` level without message
+  contents. It never sees plaintext: campaign traffic is end-to-end
+  encrypted QUIC, and mailbox blobs are sealed boxes (X25519 +
+  XSalsa20-Poly1305) to the recipient, signed (ed25519) by the sender.
+- The relay can see which node ids are connected, and for the mailbox,
+  which id sent how many bytes to which id, and when.

@@ -1,0 +1,24 @@
+[package]
+name = "chummer-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Networking for chummer-rs online campaigns: iroh endpoints, campaign protocol, invite links, relay mailbox client, sealed blobs"
+
+[dependencies]
+iroh.workspace = true
+iroh-relay.workspace = true
+rustls = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "io-util", "macros"] }
+serde.workspace = true
+postcard.workspace = true
+crypto_box.workspace = true
+dirs.workspace = true
+url.workspace = true
+n0-future.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util"] }
