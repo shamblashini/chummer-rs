@@ -240,6 +240,11 @@ impl ImprovementsPanel {
         changed
     }
 
+    /// Whether the Create Improvement dialog or a confirmation is open.
+    pub fn is_open(&self) -> bool {
+        self.dialog.is_some() || self.confirm.is_some()
+    }
+
     /// The Create Improvement dialog and delete confirmations.
     pub fn window(&mut self, ctx: &egui::Context, ch: &mut Doc, store: &DataStore, settings: Option<&CharacterSettings>, lang: &Language) -> bool {
         let mut changed = self.confirm_window(ctx, ch, lang);

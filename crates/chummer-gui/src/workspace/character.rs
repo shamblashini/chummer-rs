@@ -114,6 +114,33 @@ impl CharacterView {
         self.begin_frame()
     }
 
+    /// Whether a dialog drawn at the end of the frame is open.
+    pub fn ws_has_dialog(&self) -> bool {
+        self.confirm_remove.is_some() || self.select.is_some() || self.confirm_finish || self.drug_builder.open || self.custom_improvements.is_open() || self.packs.is_open() || self.spell_designer.open
+    }
+
+    /// Note a press in the window `ctx` draws: with no dialog open, the
+    /// next one opens in that window.
+    pub fn ws_track_dialogs(&mut self, ctx: &egui::Context) {
+        let open = self.ws_has_dialog();
+        self.ws_dialogs.track(ctx, open);
+    }
+
+    /// Which window the dialogs show in.
+    pub fn ws_dialog_home(&mut self) -> &mut crate::workspace::popout::DialogHome {
+        &mut self.ws_dialogs
+    }
+
+    /// The dialogs, when they belong to the window `ctx` draws (a
+    /// pop-out of a character whose frame ran in another window).
+    pub fn ws_dialogs_in(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) {
+        // Embedded (one window): the main frame drew them.
+        if self.ws_dialogs.here(ctx) && ctx.viewport_id() != egui::ViewportId::ROOT {
+            let changed = self.frame_dialogs(ctx, engine, lang, pdfs, status);
+            self.finish_frame(engine, status, changed);
+        }
+    }
+
     /// End of a frame: dialogs, purchases, recomputing.
     pub fn ws_end(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, changed: bool) {
         self.end_frame(ctx, engine, lang, pdfs, status, changed);

@@ -186,6 +186,10 @@ pub struct NavGroup {
     pub items: Vec<NavItem>,
 }
 
+/// The eframe storage key of the pop-outs kept between sessions
+/// ([`popout::PopOuts::to_text`]).
+pub const POPOUTS_KEY: &str = "workspace_popouts";
+
 /// The Workspace's state (in `App`).
 #[derive(Default)]
 pub struct Workspace {
