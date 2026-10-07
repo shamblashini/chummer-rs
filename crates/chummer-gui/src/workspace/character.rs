@@ -24,6 +24,10 @@ use crate::workspace::widgets::{self, Look, Tone};
 use crate::workspace::popout::PopOuts;
 use crate::workspace::{icons, NavGroup, NavItem, Section};
 
+// The rebuilt pages and their inspector sections (children of `view`, so
+// they can use the view's state).
+pub(super) mod build;
+
 /// The label of Street Gear sub-tab `i`.
 pub fn gear_label(i: usize) -> &'static str {
     STREET_GEAR.get(i).map_or("", |(l, _)| l)
@@ -226,7 +230,10 @@ impl CharacterView {
                 Chip { label: lang.tr("Limits"), value: format!("{} / {} / {}", s.limit_physical, s.limit_mental, s.limit_social), fill: None, tone: Tone::Normal },
                 Chip { label: lang.tr("Initiative"), value: format!("{} + {}d6", s.initiative, s.initiative_dice), fill: None, tone: Tone::Normal },
                 Chip { label: lang.tr("Armor"), value: s.armor.to_string(), fill: None, tone: Tone::Normal },
-            ];
+            ]
+            .into_iter()
+            .chain(chummer_core::calendar::weeks(&self.doc).into_iter().max_by_key(|w| (w.year, w.week)).map(|w| Chip { label: lang.tr("Calendar"), value: w.label(), fill: None, tone: Tone::Normal }))
+            .collect();
         };
         let points = |label: &str, (total, used): (i32, i32)| {
             let tone = if used > total {
@@ -286,16 +293,9 @@ impl CharacterView {
                 if let Some(key) = crate::ruleset_ui::banner(ui, &self.doc, engine, lang, tab == Tab::Common) {
                     changed |= self.switch_settings(&key, status);
                 }
-                if self.guide_shown() {
-                    let ws = theme::ws(ui);
-                    widgets::card_frame(&ws).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        self.guide_inner(ui, lang, pdfs, status);
-                    });
-                    ui.add_space(6.0);
-                }
-                self.issue_panel(ui, lang, tab);
-                changed |= self.tab_page(ui, tab, engine, lang, pdfs, status, roll);
+                self.ws_guide(ui, lang, pdfs, status);
+                self.ws_issue_strip(ui, lang, tab);
+                changed |= self.ws_tab_page(ui, tab, engine, lang, pdfs, status, roll);
             }
             _ => {}
         }
@@ -371,6 +371,8 @@ impl CharacterView {
     /// Inspector: this session's changes (the inspector scrolls; a
     /// nested scroll area would widen the side panel every frame).
     pub fn ws_history(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
+        // Long entries wrap instead of widening the inspector.
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         crate::history_ui::panel(ui, &mut self.doc, lang)
     }
 

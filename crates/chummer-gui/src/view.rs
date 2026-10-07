@@ -169,6 +169,8 @@ pub struct CharacterView {
     ws_id: u64,
     /// The Workspace's Play screen: rolls, initiative, ammunition choices.
     play: play::PlayState,
+    /// The Workspace pages' own state (selection, ledger filter).
+    ws_build: workspace::build::State,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -288,6 +290,7 @@ impl CharacterView {
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             },
             play: Default::default(),
+            ws_build: Default::default(),
         };
         v.refresh_budget();
         v.set_guided(guided_preference());
@@ -816,20 +819,7 @@ impl CharacterView {
         let mut changed = false;
         let career = self.doc.created;
         let priority = chummer_core::character::uses_priority_tables(&self.doc.field("buildmethod"));
-        let shown: Vec<&str> = attributes::PHYSICAL
-            .iter()
-            .chain(attributes::MENTAL)
-            .chain(attributes::SPECIAL)
-            .copied()
-            .filter(|n| match *n {
-                "ESS" => false,
-                "MAG" => self.doc.mag_enabled(),
-                "MAGAdept" => self.doc.mag_enabled() && self.doc.is_adept() && self.doc.is_magician(),
-                "RES" => self.doc.res_enabled(),
-                "DEP" => self.doc.dep_enabled(),
-                _ => true,
-            })
-            .collect();
+        let shown = self.shown_attributes();
         let accent = crate::theme::accent(ui);
         // Scrolls sideways instead of clipping the Raise buttons when the
         // window is narrow; cells never wrap.
@@ -859,7 +849,7 @@ impl CharacterView {
                         row.col(|ui| {
                             if let Some(a) = self.doc.attribute(name) {
                                 let (mut base, karma) = (a.base, a.karma);
-                                let max = (v.total_max - v.total_min - v.free_base - karma).max(base);
+                                let max = attribute_base_max(&v, base, karma);
                                 let r = ui.add_enabled(priority && !career, egui::DragValue::new(&mut base).range(0..=max));
                                 if r.changed() {
                                     changed |= self.doc.set(Command::SetAttributeBase { attribute: name.to_owned(), value: base });
@@ -869,7 +859,7 @@ impl CharacterView {
                         row.col(|ui| {
                             if let Some(a) = self.doc.attribute(name) {
                                 let mut karma = a.karma;
-                                let max = (v.total_max - v.total_base).max(karma);
+                                let max = attribute_karma_max(&v, karma);
                                 if ui.add_enabled(!career, egui::DragValue::new(&mut karma).range(0..=max)).changed() {
                                     changed |= self.doc.set(Command::SetAttributeKarma { attribute: name.to_owned(), value: karma });
                                 }
@@ -944,8 +934,7 @@ impl CharacterView {
         });
         ui.add_space(4.0);
         let marks = self.item_marks(lang);
-        let needle = self.skill_filter.to_lowercase();
-        let filter = |name: &str, rating: i32| (needle.is_empty() || name.to_lowercase().contains(&needle)) && (!self.only_rated || rating > 0);
+        let filter = |name: &str, rating: i32| skill_matches(&self.skill_filter, self.only_rated, name, rating);
         let rows: Vec<(usize, calc::SkillValues)> =
             self.sheet.skills.iter().cloned().enumerate().filter(|(_, s)| filter(&s.name, s.rating)).collect();
         let kno: Vec<(usize, calc::SkillValues)> =
@@ -1308,23 +1297,7 @@ impl CharacterView {
 
     /// "Add …" buttons for the kinds that live in a section's container.
     fn add_buttons(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, container: &str) {
-        let tags: &[&str] = match container {
-            "gears" => &["gear"],
-            "cyberwares" => &["cyberware", "bioware"],
-            "armors" => &["armor", "armormod"],
-            "weapons" => &["weapon", "accessory"],
-            "vehicles" => &["vehicle", "mod"],
-            "lifestyles" => &["lifestyle"],
-            "spells" => &[], // magic_ui: spell options and career karma
-            "powers" => &["power"],
-            "complexforms" => &["complexform"],
-            "spirits" => &["spirit"],
-            "metamagics" => &[], // magic_ui: one per grade, echoes for technomancers
-            "martialarts" => &["martialart"],
-            "critterpowers" => &["critterpower"],
-            "aiprograms" => &["aiprogram"],
-            _ => &[],
-        };
+        let tags = add_tags(container);
         ui.horizontal(|ui| {
             for t in tags {
                 let label = chummer_core::items::kind(t).map_or(*t, |k| k.label);
@@ -1742,23 +1715,18 @@ impl CharacterView {
                 ui.add(egui::DragValue::new(&mut self.manual.1).range(0.0..=1_000_000.0).max_decimals(2));
                 ui.add(egui::TextEdit::singleline(&mut self.manual.2).hint_text(lang.tr("Reason (e.g. run payout)")).desired_width(240.0));
                 let ok = self.manual.1 > 0.0;
-                let entry = career::ManualExpense { amount: self.manual.1, reason: self.manual.2.clone(), ..Default::default() };
-                let mut result = None;
+                let mut gain = None;
                 if ui.add_enabled(ok, egui::Button::new(lang.tr("Gain"))).clicked() {
-                    result = Some(self.doc.apply(Command::ManualExpense { karma: self.manual.0, gain: true, expense: entry.clone() }));
+                    gain = Some(true);
                 }
                 if ui.add_enabled(ok, egui::Button::new(lang.tr("Spend"))).clicked() {
-                    result = Some(self.doc.apply(Command::ManualExpense { karma: self.manual.0, gain: false, expense: entry }));
+                    gain = Some(false);
                 }
-                if let Some(r) = result {
-                    match r {
-                        Ok(_) => {
-                            self.manual.1 = 0.0;
-                            self.manual.2.clear();
-                            changed = true;
-                        }
+                if let Some(g) = gain {
+                    match self.apply_manual(g) {
+                        Ok(()) => changed = true,
                         Err(e) => {
-                            ui.colored_label(ui.visuals().error_fg_color, e.to_string());
+                            ui.colored_label(ui.visuals().error_fg_color, e);
                         }
                     }
                 }
@@ -1800,6 +1768,35 @@ impl CharacterView {
         changed
     }
 
+    /// The attributes the attribute table lists: the special ones only
+    /// when the character has them, Essence never.
+    fn shown_attributes(&self) -> Vec<&'static str> {
+        attributes::PHYSICAL
+            .iter()
+            .chain(attributes::MENTAL)
+            .chain(attributes::SPECIAL)
+            .copied()
+            .filter(|n| match *n {
+                "ESS" => false,
+                "MAG" => self.doc.mag_enabled(),
+                "MAGAdept" => self.doc.mag_enabled() && self.doc.is_adept() && self.doc.is_magician(),
+                "RES" => self.doc.res_enabled(),
+                "DEP" => self.doc.dep_enabled(),
+                _ => true,
+            })
+            .collect()
+    }
+
+    /// Log the manual karma or nuyen entry being typed (`self.manual`)
+    /// as a gain or an expense, and clear it.
+    fn apply_manual(&mut self, gain: bool) -> Result<(), String> {
+        let expense = career::ManualExpense { amount: self.manual.1, reason: self.manual.2.clone(), ..Default::default() };
+        self.doc.apply(Command::ManualExpense { karma: self.manual.0, gain, expense }).map_err(|e| e.to_string())?;
+        self.manual.1 = 0.0;
+        self.manual.2.clear();
+        Ok(())
+    }
+
     fn notes_tab(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
         let mut changed = false;
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1816,11 +1813,49 @@ impl CharacterView {
     }
 }
 
+/// The kinds the "Add …" buttons of a section's container offer (select
+/// dialog tags).
+fn add_tags(container: &str) -> &'static [&'static str] {
+    match container {
+        "gears" => &["gear"],
+        "cyberwares" => &["cyberware", "bioware"],
+        "armors" => &["armor", "armormod"],
+        "weapons" => &["weapon", "accessory"],
+        "vehicles" => &["vehicle", "mod"],
+        "lifestyles" => &["lifestyle"],
+        "spells" => &[], // magic_ui: spell options and career karma
+        "powers" => &["power"],
+        "complexforms" => &["complexform"],
+        "spirits" => &["spirit"],
+        "metamagics" => &[], // magic_ui: one per grade, echoes for technomancers
+        "martialarts" => &["martialart"],
+        "critterpowers" => &["critterpower"],
+        "aiprograms" => &["aiprogram"],
+        _ => &[],
+    }
+}
+
 /// An item kind's label for use inside a sentence ("Add weapon…"). Only
 /// English lowercases it; other languages (German nouns) keep their case.
 pub fn kind_noun(lang: &Language, label: &str) -> String {
     let t = lang.tr(label);
     if lang.code.starts_with("en") { t.to_lowercase() } else { t }
+}
+
+/// Whether a skill passes the Skills tab's filter (name contains the
+/// text; with `only_rated`, a rating above 0).
+fn skill_matches(filter: &str, only_rated: bool, name: &str, rating: i32) -> bool {
+    (filter.is_empty() || name.to_lowercase().contains(&filter.to_lowercase())) && (!only_rated || rating > 0)
+}
+
+/// Creation: the highest base (attribute points) an attribute can take.
+fn attribute_base_max(v: &calc::AttributeValues, base: i32, karma: i32) -> i32 {
+    (v.total_max - v.total_min - v.free_base - karma).max(base)
+}
+
+/// Creation: the highest karma levels an attribute can take.
+fn attribute_karma_max(v: &calc::AttributeValues, karma: i32) -> i32 {
+    (v.total_max - v.total_base).max(karma)
 }
 
 fn fmt_opt(v: f64) -> String {

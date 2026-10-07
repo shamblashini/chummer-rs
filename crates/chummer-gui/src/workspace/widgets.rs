@@ -665,3 +665,250 @@ mod tests {
         assert_eq!(edge_click(0, 2), 2);
     }
 }
+
+// ----- build and career pages (tables, steppers, rating pips) -----
+
+/// Widths of a table's columns: `spec` gives fixed widths, with `0.0`
+/// for the one column that takes what is left of `total` (at least 80).
+pub fn columns(total: f32, spec: &[f32], gap: f32) -> Vec<f32> {
+    let fixed: f32 = spec.iter().sum::<f32>() + gap * spec.len().saturating_sub(1) as f32;
+    let flex = (total - fixed).max(80.0);
+    spec.iter().map(|w| if *w == 0.0 { flex } else { *w }).collect()
+}
+
+/// Gap between table columns.
+pub const COL_GAP: f32 = 10.0;
+/// Padding at the left and right of a table row.
+const ROW_PAD: f32 = 10.0;
+
+/// A table in a card: no inner margin, so rows run edge to edge.
+pub fn table_frame(ws: &WsPalette) -> egui::Frame {
+    egui::Frame::new().fill(ws.raised).stroke(Stroke::new(1.0_f32, ws.divider)).corner_radius(CornerRadius::same(6))
+}
+
+/// The column widths for a table drawn in `ui` (inside [`table_frame`]).
+pub fn table_columns(ui: &Ui, spec: &[f32]) -> Vec<f32> {
+    columns(ui.available_width() - 2.0 * ROW_PAD, spec, COL_GAP)
+}
+
+/// One cell `width` wide, its contents centred vertically.
+pub fn cell<R>(ui: &mut Ui, width: f32, height: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.allocate_ui_with_layout(egui::vec2(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_size(egui::vec2(width, height));
+        ui.set_max_width(width);
+        ui.spacing_mut().item_spacing.x = 6.0;
+        add(ui)
+    })
+    .inner
+}
+
+/// A table's header row: small uppercase captions, a line under it.
+pub fn table_header(ui: &mut Ui, captions: &[&str], widths: &[f32]) {
+    let ws = theme::ws(ui);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = COL_GAP;
+        ui.add_space(ROW_PAD);
+        for (c, w) in captions.iter().zip(widths) {
+            cell(ui, *w, 24.0, |ui| ui.label(overline(c, &ws)));
+        }
+    });
+    hline(ui, ws.divider);
+}
+
+/// A 1px line across the `ui`.
+pub fn hline(ui: &mut Ui, color: Color32) {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().rect_filled(r, CornerRadius::ZERO, color);
+}
+
+/// One table row `height` high: selected rows are filled, hovered ones
+/// lightly. `add` draws the cells (with [`cell`]); buttons in it take
+/// their own clicks. Returns the row's response: a click selects it.
+pub fn table_row(ui: &mut Ui, id: impl std::hash::Hash, selected: bool, height: f32, add: impl FnOnce(&mut Ui)) -> Response {
+    let ws = theme::ws(ui);
+    let width = ui.available_width();
+    let top = ui.cursor().min;
+    let rect = egui::Rect::from_min_size(top, egui::vec2(width, height));
+    let resp = ui.interact(rect, ui.id().with(("table row", id)), Sense::click());
+    let bg = ui.painter().add(egui::Shape::Noop);
+    ui.horizontal(|ui| {
+        ui.set_min_height(height);
+        // A click on the text selects the row, not the text.
+        ui.style_mut().interaction.selectable_labels = false;
+        ui.spacing_mut().item_spacing.x = COL_GAP;
+        ui.add_space(ROW_PAD);
+        add(ui);
+    });
+    let fill = if selected {
+        ws.selection
+    } else if resp.hovered() {
+        ws.hover
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().set(bg, egui::Shape::rect_filled(rect, CornerRadius::ZERO, fill));
+    resp
+}
+
+/// Rating pips: `max` small bars, the first `value` filled (6px wide, or
+/// 5px for 12-step skill ratings).
+pub fn pips(ui: &mut Ui, value: i32, max: i32) -> Response {
+    let ws = theme::ws(ui);
+    let w = if max > 8 { 5.0 } else { 6.0 };
+    let n = max.clamp(0, 30);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(n as f32 * (w + 2.0), 10.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        for i in 0..n {
+            let r = egui::Rect::from_min_size(egui::pos2(rect.left() + i as f32 * (w + 2.0), rect.top()), egui::vec2(w, 10.0));
+            if i < value {
+                ui.painter().rect(r, CornerRadius::same(1), ws.primary, Stroke::new(1.0_f32, ws.primary), StrokeKind::Inside);
+            } else {
+                ui.painter().rect_stroke(r, CornerRadius::same(1), Stroke::new(1.0_f32, ws.control), StrokeKind::Inside);
+            }
+        }
+    }
+    resp
+}
+
+/// An inline number field with − and + buttons (26px high), clamped to
+/// `min..=max`. The value can also be dragged or typed. Returns true if
+/// it changed.
+pub fn stepper(ui: &mut Ui, id: impl std::hash::Hash, value: &mut i32, min: i32, max: i32, lower_tip: &str, raise_tip: &str) -> bool {
+    let ws = theme::ws(ui);
+    let old = *value;
+    let enabled = ui.is_enabled();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(24.0 * 2.0 + 34.0 + 2.0, 26.0), Sense::hover());
+    ui.painter().rect(rect, CornerRadius::same(5), ws.well, Stroke::new(1.0_f32, if enabled { ws.control } else { ws.divider }), StrokeKind::Inside);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(1.0)).layout(egui::Layout::left_to_right(egui::Align::Center)).id_salt(("stepper", id)));
+    child.spacing_mut().item_spacing.x = 0.0;
+    let down = child.add_enabled_ui(*value > min, |ui| icon_button(ui, icons::MINUS, 24.0)).inner.on_hover_text(lower_tip);
+    if down.clicked() {
+        *value -= 1;
+    }
+    {
+        let v = child.visuals_mut();
+        for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active] {
+            w.bg_fill = Color32::TRANSPARENT;
+            w.weak_bg_fill = Color32::TRANSPARENT;
+            w.bg_stroke = Stroke::NONE;
+        }
+        v.override_text_color = Some(ws.text);
+    }
+    child.add_sized(egui::vec2(34.0, 24.0), egui::DragValue::new(value).range(min..=max.max(min)).speed(0.1));
+    let up = child.add_enabled_ui(*value < max, |ui| icon_button(ui, icons::PLUS, 24.0)).inner.on_hover_text(raise_tip);
+    if up.clicked() {
+        *value += 1;
+    }
+    *value = (*value).clamp(min, max.max(min));
+    *value != old
+}
+
+/// A career advance button: "+1 · 14 k" with an arrow; disabled when
+/// the karma is not there (the tooltip says why).
+pub fn cost_button(ui: &mut Ui, text: &str, affordable: bool, tip: &str, short_tip: &str) -> Response {
+    let r = ui.add_enabled_ui(affordable, |ui| button(ui, Some(icons::ARROW_UP), text, Look::Secondary, 24.0)).inner;
+    r.on_hover_text(tip).on_disabled_hover_text(short_tip)
+}
+
+/// An issue mark: a warning (or error) icon with the messages as tooltip.
+pub fn issue_mark(ui: &mut Ui, error: bool, tip: &str) -> Response {
+    let ws = theme::ws(ui);
+    let glyph = if error { icons::WARNING_OCTAGON } else { icons::WARNING };
+    ui.label(icons::icon(glyph, 13.0, if error { ws.error } else { ws.warning })).on_hover_text(tip)
+}
+
+/// A page or card heading: the title, a muted note after it, and
+/// `right` drawn from the right edge (buttons).
+pub fn heading(ui: &mut Ui, text: &str, note: &str, size: f32, right: impl FnOnce(&mut Ui)) {
+    let ws = theme::ws(ui);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.label(RichText::new(text).font(bold(size)).color(ws.text));
+        if !note.is_empty() {
+            ui.label(RichText::new(note).size(11.5).color(ws.muted));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.add_space(2.0);
+            right(ui);
+        });
+    });
+}
+
+/// A small card with an uppercase caption and label/value rows (the
+/// derived values under the attributes). `rows`: (label, value, accent).
+pub fn mini_card(ui: &mut Ui, caption: &str, rows: &[(String, String, bool)], width: f32) {
+    let ws = theme::ws(ui);
+    egui::Frame::new().fill(ws.raised).stroke(Stroke::new(1.0_f32, ws.divider)).corner_radius(CornerRadius::same(7)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+        ui.set_width(width - 22.0);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(overline(caption, &ws));
+            ui.add_space(2.0);
+            for (label, value, accent) in rows {
+                stat_row(ui, label, value, *accent);
+            }
+        });
+    });
+}
+
+/// A tile with a caption over a large value (the career karma summary).
+pub fn tile(ui: &mut Ui, caption: &str, value: &str, accent: bool, width: f32) {
+    let ws = theme::ws(ui);
+    egui::Frame::new().fill(ws.raised).stroke(Stroke::new(1.0_f32, ws.divider)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(9, 7)).show(ui, |ui| {
+        ui.set_width(width - 20.0);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.label(overline(caption, &ws));
+            ui.label(mono(value, 14.0, if accent { ws.accent } else { ws.text }));
+        });
+    });
+}
+
+/// A wide button with a title, a muted line under it and a value on the
+/// right (career "Other advances"); dimmed when not `enabled`.
+pub fn advance_card(ui: &mut Ui, glyph: &str, title: &str, detail: &str, value: &str, enabled: bool, width: f32) -> Response {
+    let ws = theme::ws(ui);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 40.0), if enabled { Sense::click() } else { Sense::hover() });
+    if ui.is_rect_visible(rect) {
+        let hovered = enabled && resp.hovered();
+        let painter = ui.painter();
+        painter.rect(rect, CornerRadius::same(6), if hovered { ws.hover } else { ws.raised }, Stroke::new(1.0_f32, if hovered { ws.control } else { ws.divider }), StrokeKind::Inside);
+        let ink = if enabled { ws.text } else { ws.muted };
+        icons::paint(painter, egui::Rect::from_min_size(egui::pos2(rect.left() + 10.0, rect.center().y - 7.0), Vec2::splat(14.0)), glyph, 14.0, if enabled { ws.accent } else { ws.muted });
+        let v = painter.layout_no_wrap(value.to_owned(), FontId::monospace(12.0), Color32::PLACEHOLDER);
+        let right = rect.right() - 10.0 - v.size().x - 8.0;
+        let left = rect.left() + 32.0;
+        let clip = egui::Rect::from_min_max(egui::pos2(left, rect.top()), egui::pos2(right, rect.bottom()));
+        let t = painter.layout_no_wrap(title.to_owned(), FontId::proportional(12.5), ink);
+        let d = painter.layout_no_wrap(detail.to_owned(), FontId::proportional(11.0), ws.muted);
+        let top = rect.center().y - (t.size().y + d.size().y) / 2.0;
+        painter.with_clip_rect(clip).galley(egui::pos2(left, top), t.clone(), ink);
+        painter.with_clip_rect(clip).galley(egui::pos2(left, top + t.size().y), d, ws.muted);
+        painter.galley(egui::pos2(rect.right() - 10.0 - v.size().x, rect.center().y - v.size().y / 2.0), v, if enabled { ws.accent } else { ws.muted });
+    }
+    if enabled {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp
+    }
+}
+
+/// A text field in the Workspace style (well, control border).
+pub fn text_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
+    let ws = theme::ws(ui);
+    let mut r = None;
+    egui::Frame::new().fill(ws.well).stroke(Stroke::new(1.0_f32, ws.control)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
+        r = Some(ui.add(egui::TextEdit::singleline(text).frame(false).hint_text(hint).desired_width(width - 14.0)));
+    });
+    r.expect("drawn")
+}
+
+#[cfg(test)]
+mod build_tests {
+    #[test]
+    fn columns_share_what_is_left() {
+        assert_eq!(super::columns(500.0, &[0.0, 100.0, 50.0], 10.0), vec![330.0, 100.0, 50.0]);
+        assert_eq!(super::columns(100.0, &[0.0, 100.0], 10.0)[0], 80.0, "the flexible column keeps a minimum");
+    }
+}

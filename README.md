@@ -379,8 +379,21 @@ was.
 - **Budget strip**: creation budgets (attributes, special, skills, skill
   groups, knowledge, contacts, karma, nuyen, essence) with bars, or in
   career karma, nuyen, essence, limits, initiative and armor.
-- **Page**: the section. Until each screen is redesigned, it is the
-  Classic tab page, with the guide and the tab's issues above it.
+- **Page**: the section, with the guide (a row of steps, the step's
+  rule and what is left in it) and the tab's issues above it. The build,
+  story and record pages are the Workspace's own: tables with steppers in
+  creation (points and karma), rating pips, pools you can click to roll,
+  issue marks on the rows, and in career a "+1 · cost" button on every
+  attribute, skill, skill group and knowledge skill, greyed when the
+  karma is not there. Attributes & Qualities adds the priorities (read
+  only), the derived values as cards and the qualities; Skills ends with
+  "Other advances" in career (the cheapest attribute raises, initiation,
+  new qualities and martial arts). Magic, resonance, critter, A.I. and
+  martial arts pages show their summary (tradition and drain, power
+  points, stream, initiation with its options and cost) above each
+  list. Character Info, Game Notes, Calendar, Improvements, Relationships
+  and Karma & Nuyen (with the whole ledger) are restyled the same way.
+  Gear, cyberware and vehicles still show the Classic pages.
 - **At the table** (career): the condition monitor as box grids (rows of
   the wound threshold, the wound modifier in the last box of a row,
   Physical and Stun side by side, overflow under Physical), damage taken
@@ -409,12 +422,20 @@ was.
   online campaign), the GM award and the GM's notes. The encounter, the
   card, the feed and the inspector sections pop out.
 - **Inspector**: creation issues with Finish creation, the selected
-  item's editor, the Karma Summary (creation) or Other Info and Spell
-  Defense (career), and this session's history.
+  item's editor, the selected attribute (range, what modifies it, the
+  skills and limits that use it, the raise button), skill (pool,
+  specializations, rule) or skill group, in career Karma & Nuyen (karma,
+  career karma, nuyen and street cred, Add entry, and the ledger
+  filtered All / Karma / Nuyen with Undo on the entries that can be
+  undone), the Karma Summary (creation) or Other Info and Spell Defense
+  (career), and this session's history.
 - **Command palette** (Ctrl+K or the search field): menu actions, the
   document's sections, the character's items, the open documents and
-  every game-data record (opens in the Master Index). Arrow keys
-  select, Enter runs; the line under the list says what it will do.
+  every game-data record (opens in the Master Index), and in career the
+  advances: "Raise Pistols 6 → 7", new specializations, with the karma
+  cost (greyed when not affordable). Arrow keys select, Enter runs; the
+  line under the list says what it will do ("Pistols 7 · karma 14 →
+  0").
 - **Pop-out windows**: the button in a panel's header (page, inspector
   section, every block of At the table and the GM screen, dice roller,
   initiative tracker) moves it into its own window; "Dock back" or
@@ -428,6 +449,12 @@ was.
 ![The GM screen with an encounter, dark](docs/screenshots/workspace-gm-dark.png)
 ![The GM screen, light](docs/screenshots/workspace-gm-light.png)
 ![Workspace, light, Skills during creation](docs/screenshots/workspace-light-creation.png)
+![Workspace, dark, Attributes & Qualities during creation with the guide](docs/screenshots/workspace-build-dark.png)
+![Workspace, light, Skills during creation, a skill in the inspector](docs/screenshots/workspace-build-light.png)
+![Workspace, career, Skills with the +1 buttons and the ledger](docs/screenshots/workspace-career-skills.png)
+![Workspace, career, knowledge skills and other advances](docs/screenshots/workspace-career-advances.png)
+![Workspace, light, career attributes, Agility in the inspector](docs/screenshots/workspace-career-light.png)
+![Workspace, the palette offering advances](docs/screenshots/workspace-career-palette.png)
 
 ### Command line
 
@@ -651,16 +678,21 @@ cargo test --workspace
   grades whose requirements are not met, and Friends in High Places
   contact limits. A missing technomancer stream is only a warning,
   because there is no stream picker yet.
-- Workspace layout: At the table and the GM screen are new; the other
-  sections show the Classic tab pages (with Phosphor icons in place of
-  emoji). The creation, career, gear and home screens of the design are
-  still to come. The window positions of popped-out panels are not saved
-  between sessions. At the table: rolls and the rolled initiative are
-  kept for the session only; gear at hand is listed, not used up (career
-  mode has no quantity change); the design's situational modifiers,
-  Edge actions (Push the Limit, Second Chance) and "Share to GM" are not
-  there because the app has no such rules or messages. GM screen: the
-  design's scene notes and activity filters are left out.
+- Workspace layout: the gear, cyberware and vehicle sections still show
+  the Classic tab pages (with Phosphor icons in place of emoji), and the
+  gear and home screens of the design are still to come. In the build
+  pages the priorities cannot be swapped (pick them in the New Character
+  wizard), there is no "Change metatype", and the editors of the magic
+  pages (spell picker, mentor, foci, spirits, metamagic) and of
+  Relationships and custom improvements keep their Classic controls
+  inside Workspace cards. The design's training time and "Saving for"
+  goals are not there. The window positions of popped-out panels are not
+  saved between sessions. At the table: rolls and the rolled initiative
+  are kept for the session only; gear at hand is listed, not used up
+  (career mode has no quantity change); the design's situational
+  modifiers, Edge actions (Push the Limit, Second Chance) and "Share to
+  GM" are not there because the app has no such rules or messages. GM
+  screen: the design's scene notes and activity filters are left out.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute
   and tab flags; objects it created (a free spell, say) stay until it is

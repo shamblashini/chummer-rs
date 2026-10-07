@@ -64,6 +64,18 @@ fn badge<'a>(issues: impl Iterator<Item = &'a Issue>) -> Option<Badge> {
 #[derive(Default)]
 pub(super) struct Dismissed(HashMap<Tab, u64>);
 
+impl Dismissed {
+    /// Whether the user closed a tab's panel while it showed `issues`.
+    pub(super) fn is(&self, tab: Tab, issues: &[Issue]) -> bool {
+        self.0.get(&tab) == Some(&fingerprint(&issues.iter().collect::<Vec<_>>()))
+    }
+
+    /// Close a tab's panel until its issues change.
+    pub(super) fn dismiss(&mut self, tab: Tab, issues: &[Issue]) {
+        self.0.insert(tab, fingerprint(&issues.iter().collect::<Vec<_>>()));
+    }
+}
+
 fn fingerprint(issues: &[&Issue]) -> u64 {
     let mut h = DefaultHasher::new();
     for i in issues {
