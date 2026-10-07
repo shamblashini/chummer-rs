@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/chummer-core", "crates/chummer-gui", "crates/chummer-cli", "crates/chummer-net", "crates/chummer-relay", "crates/chummer-sync", "crates/chummer-authority"]
+members = ["crates/chummer-core", "crates/chummer-gui", "crates/chummer-cli", "crates/chummer-net", "crates/chummer-relay", "crates/chummer-sync", "crates/chummer-authority", "crates/chummer-testpeer"]
 
 [workspace.package]
 version = "0.4.0"
@@ -39,3 +39,9 @@ blake3 = "1"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# The snapshot compressor is ~30x slower unoptimised; tests make many.
+[profile.dev.package.lzma-rust2]
+opt-level = 3
+[profile.dev.package.blake3]
+opt-level = 3
