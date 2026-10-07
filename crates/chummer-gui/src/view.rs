@@ -135,7 +135,7 @@ pub struct CharacterView {
     budget: Option<chargen::Budget>,
     /// Creation issues (`chargen::issues`), recomputed with the budget.
     issues: Vec<chargen::issues::Issue>,
-    /// Issue panels closed until their issues change.
+    /// Issue hint lines closed until their issues change.
     dismissed: issues_ui::Dismissed,
     /// Guided creation, when on.
     guide: Option<guide_ui::Guide>,
