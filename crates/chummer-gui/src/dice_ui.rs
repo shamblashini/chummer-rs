@@ -33,7 +33,7 @@ impl DiceRoller {
             ui.add_enabled(self.use_limit, egui::DragValue::new(&mut self.limit).range(0..=50));
             ui.checkbox(&mut self.rule_of_six, lang.tr("Rule of Six (Edge)"));
         });
-        if ui.button(format!("🎲 {}", lang.tr("Roll"))).clicked() {
+        if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("🎲")), lang.tr("Roll"))).clicked() {
             let r = dice::roll(&mut self.rng, self.pool, self.rule_of_six, self.use_limit.then_some(self.limit));
             self.history.insert(0, format!("{}d6 → {}", self.pool, hits_text(lang, r.hits, r.glitch)));
             self.history.truncate(30);

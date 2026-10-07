@@ -37,7 +37,7 @@ pub fn actions_ui(ui: &mut egui::Ui, ch: &mut Doc, engine: &Engine, lang: &Langu
             if ui.button(lang.tr("Cancel")).clicked() {
                 ui.data_mut(|d| d.insert_temp(confirm_id, false));
             }
-        } else if ui.add_enabled(edge.value > 0, egui::Button::new(format!("🔥 {}", lang.tr("Burn a point of Edge")))).clicked() {
+        } else if ui.add_enabled(edge.value > 0, egui::Button::new(format!("{} {}", crate::theme::glyph(crate::theme::glyph("🔥")), lang.tr("Burn a point of Edge")))).clicked() {
             ui.data_mut(|d| d.insert_temp(confirm_id, true));
         }
         ui.separator();

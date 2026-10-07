@@ -31,7 +31,7 @@ pub fn edge_track(ui: &mut egui::Ui, ch: &mut Doc, sheet: &Sheet, lang: &Languag
     ui.horizontal(|ui| {
         ui.label(RichText::new(lang.tr("Edge")).strong());
         ui.weak(format!("{} / {}", total - spent, total));
-        if ui.small_button("⟲").on_hover_text(lang.tr("Reset")).clicked() {
+        if ui.small_button(crate::theme::glyph("⟲")).on_hover_text(lang.tr("Reset")).clicked() {
             changed |= ch.set(Command::RefreshEdge);
         }
     });

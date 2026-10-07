@@ -189,7 +189,7 @@ impl CharacterView {
                             ui.add_space(8.0);
                         }
                     }
-                    close = ui.small_button("✖").on_hover_text(lang.tr("Hide until something changes")).clicked();
+                    close = ui.small_button(crate::theme::glyph("✖")).on_hover_text(lang.tr("Hide until something changes")).clicked();
                 });
                 if !inline {
                     for i in &mine {

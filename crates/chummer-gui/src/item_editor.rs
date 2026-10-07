@@ -236,7 +236,7 @@ impl ItemEditor {
         }
         ui.horizontal_wrapped(|ui| {
             for k in &kinds {
-                if ui.button(format!("➕ {}…", lang.tr(k.label))).clicked() {
+                if ui.button(format!("{} {}…", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr(k.label))).clicked() {
                     res.add_child = Some((k.tag.to_owned(), guid.to_owned()));
                 }
             }
@@ -251,7 +251,7 @@ impl ItemEditor {
                         crate::combo::selectable_value(ui, &mut self.mount_size, id.clone(), n);
                     }
                 });
-                if ui.add_enabled(!self.mount_size.is_empty(), egui::Button::new(format!("➕ {}", lang.tr("Add Weapon Mount")))).clicked() {
+                if ui.add_enabled(!self.mount_size.is_empty(), egui::Button::new(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add Weapon Mount")))).clicked() {
                     res.changed |= ch.run(Command::AddWeaponMount { vehicle: guid.to_owned(), size: self.mount_size.clone() }, &mut res.status).is_some();
                 }
             });
@@ -278,7 +278,7 @@ impl ItemEditor {
             });
             return;
         }
-        let text = if self.confirm_remove { lang.tr("Click again to delete") } else { format!("🗑 {}", lang.tr("Delete")) };
+        let text = if self.confirm_remove { lang.tr("Click again to delete") } else { format!("{} {}", crate::theme::glyph(crate::theme::glyph("🗑")), lang.tr("Delete")) };
         let b = ui.button(RichText::new(text).color(if self.confirm_remove { crate::theme::warn(ui) } else { ui.visuals().text_color() }));
         if b.on_hover_text(lang.tr("Also removes its improvements and everything inside it")).clicked() {
             if self.confirm_remove {

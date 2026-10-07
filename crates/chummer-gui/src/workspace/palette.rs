@@ -386,13 +386,16 @@ impl Palette {
                         ui.label(icons::icon(icons::MAGNIFYING_GLASS, 15.0, ws.muted));
                         let field = egui::TextEdit::singleline(&mut self.query).frame(false).font(FontId::proportional(14.0)).hint_text(lang.tr("Search or run a command")).desired_width(width - 90.0).id(egui::Id::new("palette query"));
                         let r = ui.add(field);
-                        if self.focus {
+                        // The palette is modal: typing always goes to it.
+                        if self.focus || !r.has_focus() {
                             r.request_focus();
                             self.focus = false;
                         }
                         if r.changed() {
                             self.selected = 0;
                             moved = true;
+                            // The list was drawn for the old text.
+                            ui.ctx().request_repaint();
                         }
                         widgets::kbd(ui, "Esc");
                     });

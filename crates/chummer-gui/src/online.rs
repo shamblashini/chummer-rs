@@ -222,7 +222,7 @@ impl Online {
         let mut out = None;
         ui.horizontal(|ui| {
             ui.label(crate::theme::strong(ui, lang.tr("Campaigns")));
-            if ui.small_button(format!("➕ {}", lang.tr("Join Campaign…"))).clicked() {
+            if ui.small_button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Join Campaign…"))).clicked() {
                 self.join = Some((String::new(), self.display_name()));
             }
         });
@@ -252,7 +252,7 @@ impl Online {
                 if refused > 0 {
                     ui.colored_label(ui.visuals().error_fg_color, lang.tr_fmt("{0} refused", &[&refused]));
                 }
-                if ui.small_button("⟳").on_hover_text(lang.tr("Sync now")).clicked() {
+                if ui.small_button(crate::theme::glyph("⟳")).on_hover_text(lang.tr("Sync now")).clicked() {
                     c.session.sync_soon();
                 }
                 ui.menu_button("…", |ui| {

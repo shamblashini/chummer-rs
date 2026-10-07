@@ -156,7 +156,7 @@ impl LifestyleEditor {
         let quals: Vec<Element> = l.child("lifestylequalities").map(|q| q.children_named("lifestylequality").cloned().collect()).unwrap_or_default();
         ui.horizontal(|ui| {
             ui.strong(format!("{} ({})", lang.tr("Lifestyle qualities"), quals.len()));
-            if ui.button(format!("➕ {}", lang.tr("Add Quality…"))).clicked() {
+            if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add Quality…"))).clicked() {
                 self.picker = Some((guid.clone(), Picker::new(lang.tr("Add lifestyle quality"), "lifestyles.xml", "qualities", "quality", cx.books())));
             }
             ui.checkbox(&mut self.free_quality, lang.tr("Free"));
@@ -185,7 +185,7 @@ impl LifestyleEditor {
                     ui.label(cost);
                     if builtin {
                         ui.weak(lang.tr("built in"));
-                    } else if ui.small_button("🗑").on_hover_text(lang.tr("Remove")).clicked() {
+                    } else if ui.small_button(crate::theme::glyph("🗑")).on_hover_text(lang.tr("Remove")).clicked() {
                         changed |= ch.set(Command::RemoveLifestyleQuality { lifestyle: guid.clone(), quality: q.get("guid") });
                     }
                     ui.end_row();

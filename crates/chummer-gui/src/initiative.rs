@@ -81,7 +81,7 @@ impl Tracker {
         }
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button(format!("🎲 {}", lang.tr("Roll initiative"))).clicked() {
+            if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("🎲")), lang.tr("Roll initiative"))).clicked() {
                 self.roll_all();
             }
             let any_left = self.list.iter().any(|c| c.score - 10 > 0);

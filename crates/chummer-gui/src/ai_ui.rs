@@ -52,12 +52,12 @@ pub fn tab(ui: &mut egui::Ui, ch: &mut crate::doc::Doc, engine: &Engine, lang: &
             let can_delete = p.get_bool("candelete").unwrap_or(true);
             // Chummer greys out programs granted by an improvement.
             ui.label(if can_delete { RichText::new(name) } else { RichText::new(name).weak() });
-            ui.label(if aiprogram::is_advanced(p) { "✔" } else { "" });
+            ui.label(if aiprogram::is_advanced(p) { crate::theme::glyph("✔") } else { "" });
             let req = p.get("requiresprogram");
             ui.label(if req.is_empty() { lang.tr("None") } else { req });
             ui.label(format!("{} {}", p.get("source"), p.get("page")));
             if can_delete {
-                if ui.small_button("✖").on_hover_text(lang.tr("Delete")).clicked() {
+                if ui.small_button(crate::theme::glyph("✖")).on_hover_text(lang.tr("Delete")).clicked() {
                     remove = Some(p.get("guid"));
                 }
             } else {

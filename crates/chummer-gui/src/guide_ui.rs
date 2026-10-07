@@ -169,8 +169,8 @@ impl CharacterView {
                 ui.add_space(6.0);
                 for (i, s) in statuses.iter().enumerate() {
                     let mark = match s.state {
-                        State::Done if s.errors == 0 => "✔ ",
-                        _ => "",
+                        State::Done if s.errors == 0 => format!("{} ", crate::theme::glyph("✔")),
+                        _ => String::new(),
                     };
                     let text = format!("{mark}{}. {}", i + 1, lang.tr(s.step.title()));
                     let rich = match s.state {

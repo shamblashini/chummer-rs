@@ -338,7 +338,7 @@ impl GmScreen {
             ui.add(egui::Label::new(RichText::new(file).weak()).truncate()).on_hover_text(p.display().to_string());
         }
         ui.horizontal_wrapped(|ui| {
-            ui.menu_button(format!("➕ {}", lang.tr("Add")), |ui| {
+            ui.menu_button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add")), |ui| {
                 if ui.button(lang.tr("Character file (copy into the campaign)…")).clicked() {
                     ui.close();
                     for p in campaign_ui::pick_characters() {
@@ -696,7 +696,7 @@ impl GmScreen {
         let stats: BTreeMap<MemberId, InitStats> = self.live.keys().filter_map(|id| Some((*id, self.initiative_stats(views, *id)?))).collect();
         let e = &mut self.campaign.encounters[self.encounter];
         ui.horizontal_wrapped(|ui| {
-            if ui.add(crate::theme::primary_button(ui, format!("🎲 {}", lang.tr("Roll initiative")))).on_hover_text(lang.tr("Start the next combat round: everyone rolls")).clicked() {
+            if ui.add(crate::theme::primary_button(ui, format!("{} {}", crate::theme::glyph(crate::theme::glyph("🎲")), lang.tr("Roll initiative")))).on_hover_text(lang.tr("Start the next combat round: everyone rolls")).clicked() {
                 e.new_round(&mut self.rng, |c| c.member.and_then(|m| stats.get(&m).copied()));
                 self.dirty = true;
             }
@@ -1014,7 +1014,7 @@ impl GmScreen {
                     award.note.clear();
                 }
             }
-            if ui.button(format!("➕ {}", lang.tr("Add Improvement"))).on_hover_text(lang.tr("A custom improvement: the GM allows it")).clicked() {
+            if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add Improvement"))).on_hover_text(lang.tr("A custom improvement: the GM allows it")).clicked() {
                 let store = engine.store_for_character(doc);
                 improvements.open_create(&store, lang, "GM");
                 *improvement_for = Some(id);

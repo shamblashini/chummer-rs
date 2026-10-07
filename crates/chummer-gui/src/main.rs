@@ -822,15 +822,15 @@ impl App {
                 ui.label(RichText::new("chummer-rs").size(40.0).color(crate::theme::accent(ui)).strong());
                 ui.label(self.lang.tr("Shadowrun 5th Edition character manager"));
                 ui.add_space(20.0);
-                if ui.add(crate::theme::primary_button(ui, format!("✨  {}", self.lang.tr("Create New Character…")))).clicked() {
+                if ui.add(crate::theme::primary_button(ui, format!("{}  {}", crate::theme::glyph(crate::theme::glyph("✨")), self.lang.tr("Create New Character…")))).clicked() {
                     self.wizard = Some(wizard::Wizard::new());
                 }
-                if ui.button(format!("📂  {}", self.lang.tr("Open Character…"))).clicked() {
+                if ui.button(format!("{}  {}", crate::theme::glyph(crate::theme::glyph("📂")), self.lang.tr("Open Character…"))).clicked() {
                     self.open_dialog();
                 }
                 ui.weak(self.lang.tr("or drop .chum5 or .chum5lz files onto this window"));
                 ui.add_space(16.0);
-                if self.pdfs.linked_count() == 0 && ui.button(format!("📖 {}", self.lang.tr("Link your sourcebook PDFs…"))).clicked() {
+                if self.pdfs.linked_count() == 0 && ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("📖")), self.lang.tr("Link your sourcebook PDFs…"))).clicked() {
                     self.show_sources = true;
                 }
                 if ui.button(self.lang.tr("Master Index")).clicked() {

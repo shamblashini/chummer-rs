@@ -114,7 +114,7 @@ impl RelationshipsPanel {
                 ContactType::Enemy => "Add Enemy",
                 ContactType::Pet => "Add Pet",
             };
-            if ui.button(format!("➕ {}", lang.tr(add))).clicked() {
+            if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr(add))).clicked() {
                 changed |= ch.set(Command::AddContact { kind });
             }
             if kind == ContactType::Contact {
@@ -130,7 +130,7 @@ impl RelationshipsPanel {
                     }
                 }
             }
-            if ui.small_button("⟳").on_hover_text(lang.tr("Reload")).clicked() {
+            if ui.small_button(crate::theme::glyph("⟳")).on_hover_text(lang.tr("Reload")).clicked() {
                 self.linked.clear();
             }
         });
@@ -302,7 +302,7 @@ impl RelationshipsPanel {
             ui.spacing_mut().item_spacing.y = 0.0;
             let id = egui::Id::new(("contact_drag", guid));
             ui.dnd_drag_source(id, DragContact(guid.to_owned()), |ui| {
-                ui.label(RichText::new("☰").weak());
+                ui.label(RichText::new(crate::theme::glyph("☰")).weak());
             })
             .response
             .on_hover_text(lang.tr("Drag to reorder"));
@@ -324,7 +324,7 @@ impl RelationshipsPanel {
                 ui.image((t.id(), s * scale));
             }
             Some(Linked { state: Err(e), .. }) => {
-                ui.colored_label(crate::theme::warn(ui), "⚠").on_hover_text(e);
+                ui.colored_label(crate::theme::warn(ui), crate::theme::glyph("⚠")).on_hover_text(e);
             }
             _ => {}
         }
@@ -341,7 +341,7 @@ impl RelationshipsPanel {
             (_, true) => "Open the linked Contact save file.",
             (_, false) => "Link this Contact to a Chummer save file.",
         };
-        let link_icon = if contacts::is_linked(c) { "🔗" } else { "📎" };
+        let link_icon = if contacts::is_linked(c) { crate::theme::glyph("🔗") } else { crate::theme::glyph("📎") };
         ui.menu_button(link_icon, |ui| {
             if contacts::is_linked(c) {
                 if ui.button(lang.tr("Open Character")).clicked() {
@@ -376,11 +376,11 @@ impl RelationshipsPanel {
         let note_tip = if notes.is_empty() { note_tip } else { format!("{note_tip}\n\n{notes}") };
         // With notes, the button shows the notes colour (the colour
         // Chummer's tree nodes use for items with notes).
-        let label = if notes.is_empty() { RichText::new("📝") } else { RichText::new("📝").color(shown_color(ui, contacts::notes_color(c))) };
+        let label = if notes.is_empty() { RichText::new(crate::theme::glyph("📝")) } else { RichText::new(crate::theme::glyph("📝")).color(shown_color(ui, contacts::notes_color(c))) };
         if ui.small_button(label).on_hover_text(note_tip).clicked() {
             self.notes_edit = Some(NotesEdit { guid: guid.clone(), kind, text: notes.replace("\r\n", "\n"), color: contacts::notes_color(c), picking: false });
         }
-        if ui.add_enabled(!read_only, egui::Button::new("🗑").small()).clicked() {
+        if ui.add_enabled(!read_only, egui::Button::new(crate::theme::glyph("🗑")).small()).clicked() {
             self.confirm = Some(Confirm::Delete(guid, kind));
         }
         changed

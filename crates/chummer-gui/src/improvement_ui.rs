@@ -89,7 +89,7 @@ impl ImprovementsPanel {
         let mut changed = false;
         let groups = custom::groups(ch);
         ui.horizontal(|ui| {
-            if ui.button(format!("➕ {}", lang.tr("Add Improvement"))).clicked() {
+            if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add Improvement"))).clicked() {
                 self.dialog = Some(Dialog::new(store, lang, ""));
             }
             ui.add(egui::TextEdit::singleline(&mut self.new_group).hint_text(lang.tr("Group")).desired_width(160.0));
@@ -135,7 +135,7 @@ impl ImprovementsPanel {
                                 if ui.add(egui::TextEdit::multiline(&mut text).desired_rows(2).desired_width(480.0)).changed() {
                                     changed |= ch.set(Command::SetImprovementNotes { at: at(ch, n), notes: text });
                                 }
-                                if ui.small_button("✔").clicked() {
+                                if ui.small_button(crate::theme::glyph("✔")).clicked() {
                                     self.notes = None;
                                 }
                             });
@@ -151,7 +151,7 @@ impl ImprovementsPanel {
     fn group_bar(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, g: &str) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
-            if !g.is_empty() && ui.small_button(format!("➕ {}", lang.tr("Add Improvement"))).clicked() {
+            if !g.is_empty() && ui.small_button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add Improvement"))).clicked() {
                 self.dialog = Some(Dialog::new(store, lang, g));
             }
             if ui.small_button(lang.tr("Enable All")).clicked() {
@@ -166,12 +166,12 @@ impl ImprovementsPanel {
             match &mut self.renaming {
                 Some((old, new)) if old == g => {
                     ui.add(egui::TextEdit::singleline(new).desired_width(140.0));
-                    if ui.small_button("✔").clicked() {
+                    if ui.small_button(crate::theme::glyph("✔")).clicked() {
                         let (old, new) = (old.clone(), new.clone());
                         changed |= ch.set(Command::RenameImprovementGroup { old, new });
                         self.renaming = None;
                     }
-                    if ui.small_button("✖").clicked() {
+                    if ui.small_button(crate::theme::glyph("✖")).clicked() {
                         self.renaming = None;
                     }
                 }
@@ -181,7 +181,7 @@ impl ImprovementsPanel {
                     }
                 }
             }
-            if ui.small_button("🗑").on_hover_text(lang.tr("Remove")).clicked() {
+            if ui.small_button(crate::theme::glyph("🗑")).on_hover_text(lang.tr("Remove")).clicked() {
                 self.confirm = Some(Confirm::Group(g.to_owned()));
             }
         });
@@ -209,18 +209,18 @@ impl ImprovementsPanel {
         ui.label(summary(lang, &i));
         ui.horizontal(|ui| {
             let head = is_head(ch, n);
-            if head && i.custom && i.source == custom::SOURCE && t.is_some() && ui.small_button("✏").on_hover_text(lang.tr("Edit Improvement")).clicked() {
+            if head && i.custom && i.source == custom::SOURCE && t.is_some() && ui.small_button(crate::theme::glyph("✏")).on_hover_text(lang.tr("Edit Improvement")).clicked() {
                 let mut d = Dialog::new(store, lang, &i.custom_group);
                 d.pick = d.types.iter().position(|x| x.id == i.custom_id);
                 d.form = Form::from_improvement(&i, t.as_ref());
                 d.edit = Some(i.source_name.clone());
                 self.dialog = Some(d);
             }
-            if head && ui.small_button("📝").on_hover_text(lang.tr("Notes")).clicked() {
+            if head && ui.small_button(crate::theme::glyph("📝")).on_hover_text(lang.tr("Notes")).clicked() {
                 self.notes = if self.notes.as_deref() == Some(i.source_name.as_str()) { None } else { Some(i.source_name.clone()) };
             }
             if i.custom && !groups.is_empty() {
-                ui.menu_button("📁", |ui| {
+                ui.menu_button(crate::theme::glyph("📁"), |ui| {
                     for g in std::iter::once(String::new()).chain(groups.iter().cloned()) {
                         let label = if g.is_empty() { lang.tr("Selected Improvements") } else { g.clone() };
                         if crate::combo::selectable_label(ui, i.custom_group == g, label).clicked() {
@@ -232,7 +232,7 @@ impl ImprovementsPanel {
                 .response
                 .on_hover_text(lang.tr("Group"));
             }
-            if ui.small_button("🗑").on_hover_text(lang.tr("Remove")).clicked() {
+            if ui.small_button(crate::theme::glyph("🗑")).on_hover_text(lang.tr("Remove")).clicked() {
                 self.confirm = Some(Confirm::Improvement(i.source_name.clone(), name.clone()));
             }
         });

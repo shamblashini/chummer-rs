@@ -587,7 +587,7 @@ impl CharacterView {
             stat(ui, &lang.tr("Memory"), s.memory.to_string());
         });
         ui.add_space(6.0);
-        if ui.button(format!("🎲 {}", lang.tr("Open Dice Roller"))).clicked() {
+        if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("🎲")), lang.tr("Open Dice Roller"))).clicked() {
             *roll = Some(6);
         }
         changed
@@ -707,7 +707,7 @@ impl CharacterView {
     fn common_tab(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let mut changed = false;
         egui::SidePanel::left("common_qualities").resizable(true).default_width(280.0).min_width(200.0).show_inside(ui, |ui| {
-            if ui.button(format!("➕ {}", lang.tr("Add Quality…"))).clicked() {
+            if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add Quality…"))).clicked() {
                 self.open_select("quality", engine);
             }
             egui::ScrollArea::both().id_salt("qualities_scroll").auto_shrink(false).show(ui, |ui| {
@@ -1010,7 +1010,7 @@ impl CharacterView {
                                 });
                                 ui.strong(s.pool.to_string());
                             }
-                            if ui.small_button("🗑").on_hover_text(lang.tr("Remove")).clicked() {
+                            if ui.small_button(crate::theme::glyph("🗑")).on_hover_text(lang.tr("Remove")).clicked() {
                                 remove_kno = Some(s.guid.clone());
                             }
                             ui.end_row();
@@ -1226,7 +1226,7 @@ impl CharacterView {
             ui.separator();
             let cx = crate::magic_ui::Ctx { store: &self.store, engine, sheet: &self.sheet, settings: self.settings.as_ref(), lang, pdfs };
             changed |= self.magic_editor.ui(ui, &mut self.doc, &cx, sec.container, status);
-            if sec.container == "spells" && ui.button(format!("✨ {}", lang.tr("Create Spell…"))).clicked() {
+            if sec.container == "spells" && ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("✨")), lang.tr("Create Spell…"))).clicked() {
                 self.spell_designer.open = true;
             }
             self.add_buttons(ui, engine, lang, sec.container);
@@ -1322,7 +1322,7 @@ impl CharacterView {
         ui.horizontal(|ui| {
             for t in tags {
                 let label = chummer_core::items::kind(t).map_or(*t, |k| k.label);
-                if ui.button(format!("➕ {}", lang.tr_fmt("Add {0}…", &[&kind_noun(lang, label)]))).clicked() {
+                if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr_fmt("Add {0}…", &[&kind_noun(lang, label)]))).clicked() {
                     self.open_select(t, engine);
                 }
             }
@@ -1338,7 +1338,7 @@ impl CharacterView {
             changed = match STREET_GEAR.get(self.gear_tab).and_then(|(_, s)| *s) {
                 Some(sec) => self.gear_page(ui, engine, lang, pdfs, status, sec),
                 None => {
-                    if ui.button(format!("🧪 {}", lang.tr("Build custom drug…"))).clicked() {
+                    if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("🧪")), lang.tr("Build custom drug…"))).clicked() {
                         self.drug_builder.open = true;
                     }
                     crate::drug_ui::existing_drugs(ui, &mut self.doc, lang)
@@ -1385,7 +1385,7 @@ impl CharacterView {
         let out = crate::tree_table::TreeTable::new(sec.container, &headers).selected(selected).show(ui, &tree, |n| tree_row(sec, n, lang, &marks), |ui, n| {
             let Entry::Item { el, top } = n.value else { return };
             pdf_ui::source_icon(ui, pdfs, SourceRef::of(el), status);
-            if top && ui.small_button("🗑").on_hover_text(lang.tr("Remove (also removes its improvements)")).clicked() {
+            if top && ui.small_button(crate::theme::glyph("🗑")).on_hover_text(lang.tr("Remove (also removes its improvements)")).clicked() {
                 remove = Some((sec.container.to_owned(), el.get("guid"), display_name(sec, el, lang)));
             }
         });
@@ -1420,7 +1420,7 @@ impl CharacterView {
         if header {
             ui.horizontal(|ui| {
                 ui.strong(lang.tr("Item"));
-                close = ui.small_button("✖").on_hover_text(lang.tr("Close")).clicked();
+                close = ui.small_button(crate::theme::glyph("✖")).on_hover_text(lang.tr("Close")).clicked();
             });
         }
         egui::ScrollArea::vertical().id_salt("item_pane").show(ui, |ui| res = ed.ui(ui, &mut self.doc, &store, engine, lang, &guid));
@@ -1684,7 +1684,7 @@ impl CharacterView {
         use chummer_core::calendar;
         let mut changed = false;
         ui.vertical(|ui| {
-            if ui.button(format!("➕ {}", lang.tr("Add Week"))).clicked() {
+            if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add Week"))).clicked() {
                 changed |= self.doc.set(Command::AddWeek);
             }
             let mut weeks = calendar::weeks(&self.doc);
@@ -1697,7 +1697,7 @@ impl CharacterView {
                     if ui.add(egui::TextEdit::singleline(&mut notes).desired_width(420.0)).changed() {
                         changed |= self.doc.set(Command::SetWeekNotes { week: w.guid.clone(), notes });
                     }
-                    if ui.small_button("🗑").clicked() {
+                    if ui.small_button(crate::theme::glyph("🗑")).clicked() {
                         remove = Some(w.guid.clone());
                     }
                     ui.end_row();

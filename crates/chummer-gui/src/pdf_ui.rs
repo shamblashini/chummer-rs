@@ -14,7 +14,7 @@ pub type Status = Option<(String, bool)>;
 pub fn source_link(ui: &mut egui::Ui, lib: &SourcebookLibrary, lang: &Language, r: Option<SourceRef>, status: &mut Status) {
     let Some(r) = r else { return };
     let linked = lib.is_linked(&r.book);
-    let text = RichText::new(format!("📖 {r}")).small();
+    let text = RichText::new(format!("{} {r}", crate::theme::glyph(crate::theme::glyph("📖")))).small();
     let text = if linked { text } else { text.weak() };
     let hover = if linked { lang.tr("Open the sourcebook at this page") } else { lang.tr("No PDF linked for this book — Tools → Sourcebooks") };
     if ui.add(egui::Button::new(text).frame(false)).on_hover_text(hover).clicked() {
@@ -29,7 +29,7 @@ pub fn source_icon(ui: &mut egui::Ui, lib: &SourcebookLibrary, r: Option<SourceR
         return;
     };
     let linked = lib.is_linked(&r.book);
-    let icon = if linked { RichText::new("📖") } else { RichText::new("📖").weak() };
+    let icon = if linked { RichText::new(crate::theme::glyph("📖")) } else { RichText::new(crate::theme::glyph("📖")).weak() };
     if ui.add(egui::Button::new(icon).frame(false)).on_hover_text(format!("{r}")).clicked() {
         open(lib, &r, status);
     }

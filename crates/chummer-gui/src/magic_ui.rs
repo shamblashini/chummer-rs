@@ -270,7 +270,7 @@ impl MagicEditor {
         let mut changed = false;
         let lang = cx.lang;
         ui.horizontal(|ui| {
-            if ui.button(format!("➕ {}", lang.tr("Add Spell…"))).clicked() {
+            if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add Spell…"))).clicked() {
                 let max_avail = cx.settings.map_or(12, |s| s.max_availability());
                 self.spell_dialog = SelectDialog::new("spell", cx.store, cx.books(), max_avail, None);
                 self.pending_spell = None;
@@ -489,7 +489,7 @@ impl MagicEditor {
                 self.metamagic_grade = Some(pick);
             }
             let can = if ch.created { grade > 0 && ch.karma >= career_cost } else { free > 0 };
-            let mut text = format!("➕ {}", lang.tr_fmt("Add {0}…", &[&what_label]));
+            let mut text = format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr_fmt("Add {0}…", &[&what_label]));
             if career_cost > 0 {
                 text += &format!(" ({})", lang.tr_fmt("{0} karma", &[&career_cost]));
             }

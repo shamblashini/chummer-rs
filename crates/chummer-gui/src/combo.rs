@@ -73,7 +73,7 @@ impl Combo {
             let mut pick_first = false;
             if state.total > SEARCH_FROM || !state.text.is_empty() {
                 let field = ui.add(
-                    egui::TextEdit::singleline(&mut state.text).hint_text("🔍").desired_width(f32::INFINITY),
+                    egui::TextEdit::singleline(&mut state.text).hint_text(crate::theme::glyph("🔍")).desired_width(f32::INFINITY),
                 );
                 if !state.focused {
                     field.request_focus();

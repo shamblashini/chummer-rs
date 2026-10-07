@@ -164,7 +164,7 @@ impl DrugBuilder {
                 ui.label(n);
                 ui.weak(lang.data_name(FILE, "", &category(doc, n)));
                 ui.label(if levels.len() > 1 { lang.tr_fmt("level {0}", &[&(index_of(&levels, *l) + 1)]) } else { String::new() });
-                if ui.small_button("🗑").clicked() {
+                if ui.small_button(crate::theme::glyph("🗑")).clicked() {
                     remove = Some(i);
                 }
                 ui.end_row();
@@ -231,7 +231,7 @@ pub(crate) fn existing_drugs(ui: &mut egui::Ui, ch: &mut Doc, lang: &Language) -
                 ui.label(d.get("name"));
                 ui.weak(d.get("grade"));
                 ui.label(format!("×{}", d.get("quantity")));
-                if ui.small_button("🗑").on_hover_text(lang.tr("Remove (no refund)")).clicked() {
+                if ui.small_button(crate::theme::glyph("🗑")).on_hover_text(lang.tr("Remove (no refund)")).clicked() {
                     changed |= ch.set(Command::RemoveItem { container: "drugs".into(), guid: d.get("guid") });
                 }
                 ui.end_row();

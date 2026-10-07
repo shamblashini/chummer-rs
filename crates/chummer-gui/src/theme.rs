@@ -650,9 +650,52 @@ fn theme_id() -> egui::Id {
     egui::Id::new("chummer-rs-theme")
 }
 
+/// Whether [`glyph`] gives Phosphor icons (the Workspace layout).
+static PHOSPHOR_GLYPHS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// An icon of the Classic views: the emoji itself in the Classic layout,
+/// the matching Phosphor icon in the Workspace layout (which uses no
+/// emoji).
+pub fn glyph(emoji: &'static str) -> &'static str {
+    if !PHOSPHOR_GLYPHS.load(std::sync::atomic::Ordering::Relaxed) {
+        return emoji;
+    }
+    phosphor_for(emoji)
+}
+
+/// The Phosphor icon standing in for an emoji (the emoji when none does).
+fn phosphor_for(emoji: &'static str) -> &'static str {
+    use egui_phosphor::regular as ph;
+    match emoji {
+        "➕" => ph::PLUS,
+        "🗑" => ph::TRASH,
+        "📖" => ph::BOOK_OPEN,
+        "🎲" => ph::DICE_FIVE,
+        "✖" => ph::X,
+        "✨" => ph::SPARKLE,
+        "📂" => ph::FOLDER_OPEN,
+        "📝" => ph::NOTE_PENCIL,
+        "🔍" => ph::MAGNIFYING_GLASS,
+        "💾" => ph::FLOPPY_DISK,
+        "⟲" => ph::ARROW_COUNTER_CLOCKWISE,
+        "⟳" => ph::ARROWS_CLOCKWISE,
+        "✏" => ph::PENCIL_SIMPLE,
+        "🔗" => ph::LINK,
+        "📎" => ph::PAPERCLIP,
+        "📁" => ph::FOLDER,
+        "🔥" => ph::FIRE,
+        "🧪" => ph::FLASK,
+        "☰" => ph::DOTS_SIX_VERTICAL,
+        "⚠" => ph::WARNING,
+        "✔" => ph::CHECK,
+        other => other,
+    }
+}
+
 /// Make `theme` the active one: style for both egui themes (so a system
 /// light/dark switch changes nothing), fonts, and the copy in ctx data.
 pub fn apply(ctx: &egui::Context, theme: &Theme) {
+    PHOSPHOR_GLYPHS.store(theme.workspace_layout(), std::sync::atomic::Ordering::Relaxed);
     ctx.set_theme(if theme.dark() { egui::Theme::Dark } else { egui::Theme::Light });
     let style = Arc::new(theme.style());
     ctx.set_style_of(egui::Theme::Dark, style.clone());
@@ -1012,6 +1055,16 @@ mod tests {
             // Empty boxes also have a `control` border.
             assert!(contrast(w.primary, w.well) >= 2.5, "filled Edge box against an empty one");
         }
+    }
+
+    #[test]
+    fn glyphs_have_phosphor_icons() {
+        for e in ["➕", "🗑", "📖", "🎲", "✖", "✨", "📂", "📝", "🔍", "💾", "⟲", "⟳", "✏", "🔗", "📎", "📁", "🔥", "🧪", "☰", "⚠", "✔"] {
+            let p = phosphor_for(e);
+            assert_ne!(p, e, "{e} has no Phosphor icon");
+            assert!(p.chars().all(|c| ('\u{E000}'..='\u{F8FF}').contains(&c)), "{e} maps outside the icon font");
+        }
+        assert_eq!(phosphor_for("x"), "x");
     }
 
     #[test]
