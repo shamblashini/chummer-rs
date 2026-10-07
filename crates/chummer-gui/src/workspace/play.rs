@@ -111,6 +111,38 @@ pub struct PlayState {
     /// The weapon whose reload choices are open.
     reloading: Option<String>,
     damage: DamageForm,
+    /// What the weapon cards show of each weapon's ammunition, by guid,
+    /// once per revision.
+    ammo_info: crate::memo::Memo<String, AmmoInfo>,
+}
+
+/// A weapon's ammunition as its card shows it.
+#[derive(Clone)]
+struct AmmoInfo {
+    capacity: i32,
+    modes: Vec<ammo::FireMode>,
+    loaded: Option<String>,
+    loose: f64,
+}
+
+impl CharacterView {
+    pub(super) fn play_memo_clear(&self) {
+        self.play.ammo_info.clear();
+    }
+
+    fn ammo_info(&self, w: &Element) -> AmmoInfo {
+        let work = || AmmoInfo {
+            capacity: ammo::capacity(&self.doc, w),
+            modes: ammo::FireMode::ALL.into_iter().filter(|m| ammo::allows(&self.doc, w, *m)).collect(),
+            loaded: ammo::loaded(&self.doc, w).map(|g| g.get("name")),
+            loose: ammo::reloadable(&self.doc, Some(&self.store), &w.get("guid")).iter().map(|c| c.2).sum(),
+        };
+        let guid = w.get("guid");
+        if guid.is_empty() {
+            return work();
+        }
+        self.play.ammo_info.get(self.doc.revision(), guid, work)
+    }
 }
 
 /// Gear categories shown "at hand": what is used up at the table.
@@ -270,6 +302,7 @@ impl CharacterView {
     /// A block's contents (docked or in its own window). Returns true if
     /// the character changed.
     fn ws_play_body(&mut self, ui: &mut egui::Ui, p: Panel, lang: &Language, status: &mut Status, ask: &mut Option<Ask>) -> bool {
+        let _s = crate::trace::span(p.title());
         match p {
             Panel::Condition => self.play_condition(ui, lang, ask),
             Panel::Initiative => {
@@ -476,7 +509,7 @@ impl CharacterView {
             })
             .collect();
         for w in self.doc.items("weapons", "weapon").into_iter().take(4) {
-            let st = chummer_core::items::weapon::stats(&self.doc, &self.sheet, w);
+            let st = self.weapon_stats(w, false);
             out.push((super::display_name(&sections::WEAPONS, w, lang), st.dice_pool, st.dice_pool.to_string()));
         }
         out
@@ -526,7 +559,7 @@ impl CharacterView {
     fn play_weapon(&mut self, ui: &mut egui::Ui, lang: &Language, status: &mut Status, w: &Element) -> bool {
         let ws = theme::ws(ui);
         let guid = w.get("guid");
-        let st = chummer_core::items::weapon::stats(&self.doc, &self.sheet, w);
+        let st = self.weapon_stats(w, false);
         let name = super::display_name(&sections::WEAPONS, w, lang);
         let selected = self.play.weapon.as_deref() == Some(guid.as_str());
         let melee = st.ranges.short.is_empty();
@@ -576,7 +609,8 @@ impl CharacterView {
         let guid = w.get("guid");
         let mut changed = false;
         let left = ammo::remaining(w);
-        let capacity = ammo::capacity(&self.doc, w).max(left);
+        let info = self.ammo_info(w);
+        let capacity = info.capacity.max(left);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             if capacity > 0 && capacity <= 48 {
@@ -584,7 +618,7 @@ impl CharacterView {
             }
             ui.label(widgets::mono(format!("{left}/{capacity}"), 11.5, ws.muted));
         });
-        let modes: Vec<ammo::FireMode> = ammo::FireMode::ALL.into_iter().filter(|m| ammo::allows(&self.doc, w, *m)).collect();
+        let modes = info.modes;
         let mode = self.play.modes.get(&guid).copied().filter(|m| modes.contains(m)).or_else(|| modes.first().copied());
         let asking = self.play.ammo.is_for(&guid) && self.play.ammo.asking();
         ui.horizontal(|ui| {
@@ -626,9 +660,9 @@ impl CharacterView {
         }
         // What is loaded and what is left to load.
         let slot = ammo::active_slot(w);
-        let loaded = ammo::loaded(&self.doc, w).map(|g| g.get("name")).unwrap_or_else(|| lang.tr(if left > 0 { "External Source" } else { "None" }));
+        let loaded = info.loaded.unwrap_or_else(|| lang.tr(if left > 0 { "External Source" } else { "None" }));
         let spare = ammo::clips(w).iter().enumerate().filter(|(i, c)| i + 1 != slot && c.count > 0).count();
-        let loose: f64 = ammo::reloadable(&self.doc, Some(&self.store), &guid).iter().map(|c| c.2).sum();
+        let loose = info.loose;
         let mut line = vec![loaded];
         if spare > 0 {
             line.push(lang.tr_fmt("{0} spare clips", &[&spare]));

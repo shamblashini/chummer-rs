@@ -131,7 +131,7 @@ impl CharacterView {
                 } else {
                     self.doc.skills.iter().find(|x| x.guid == s.guid).map_or((0, 0), |x| (x.base, x.karma))
                 };
-                let cost = if career_mode && !s.disabled && !s.native { career::skill_upgrade_karma_cost(engine, &self.doc, &s.guid) } else { None };
+                let cost = if career_mode && !s.disabled && !s.native { self.career_costs(engine).skill(&self.doc, &s.guid) } else { None };
                 let mut w = widths.iter().copied();
                 let mut next = || w.next().unwrap_or(40.0);
                 let ink = if s.disabled { ws.muted } else { ws.text };
@@ -233,7 +233,7 @@ impl CharacterView {
         let career_mode = self.doc.created;
         let r = widgets::icon_button(ui, icons::PLUS, 22.0).on_hover_text(lang.tr("Add a specialization"));
         let suid = self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| x.suid.clone()).unwrap_or_default();
-        let cost = if career_mode { career::specialization_karma_cost(engine, &self.doc, &s.guid) } else { None };
+        let cost = if career_mode { self.career_costs(engine).specialization(&self.doc, &s.guid) } else { None };
         egui::Popup::menu(&r).show(|ui| {
             let opts = engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default();
             let opts: Vec<String> = opts.into_iter().filter(|o| !s.specs.contains(o)).collect();
@@ -272,7 +272,7 @@ impl CharacterView {
             widgets::table_header(ui, &caps, &widths);
             for g in &self.doc.skill_groups {
                 let selected = self.ws_build.sel.as_ref() == Some(&Selected::Group(g.name.clone()));
-                let cost = if career_mode { career::skill_group_upgrade_karma_cost(engine, &self.doc, &g.name) } else { None };
+                let cost = if career_mode { self.career_costs(engine).group(&self.doc, &g.name) } else { None };
                 let mut w = widths.iter().copied();
                 let mut next = || w.next().unwrap_or(40.0);
                 let row = widgets::table_row(ui, ("group", &g.name), selected, ROW, |ui| {
@@ -325,7 +325,7 @@ impl CharacterView {
         let mut raises: Vec<(i32, &str, i32)> = self
             .shown_attributes()
             .into_iter()
-            .filter_map(|a| Some((career::attribute_upgrade_karma_cost(engine, &self.doc, a)?, a, self.sheet.attr_values(a)?.value)))
+            .filter_map(|a| Some((self.career_costs(engine).attribute(&self.doc, a)?, a, self.sheet.attr_values(a)?.value)))
             .collect();
         raises.sort();
         for (c, a, v) in raises.into_iter().take(3) {

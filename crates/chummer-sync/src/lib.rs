@@ -28,6 +28,7 @@ pub mod feed;
 pub mod host;
 pub mod hosted;
 pub mod joined;
+pub mod lockwatch;
 pub mod mail;
 pub mod msg;
 pub mod node;

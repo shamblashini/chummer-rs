@@ -452,6 +452,26 @@ impl Replica {
 
     // ----- persistence -----
 
+    /// The snapshots [`Replica::to_bytes`] would have to make: (character,
+    /// version and hash of the confirmed state, a copy of it). The session
+    /// makes them without holding its lock (compressing a character takes
+    /// up to seconds) and hands them back with [`Replica::put_snapshots`].
+    pub fn snapshot_work(&self) -> Vec<(CharacterId, (u64, Hash), Character)> {
+        self.copies.iter().filter(|(_, c)| c.snapshot.get().is_none()).map(|(id, c)| (id.clone(), (c.version, c.hash), c.confirmed.clone())).collect()
+    }
+
+    /// Takes snapshots made by [`Replica::snapshot_work`] (those of a
+    /// confirmed state that changed meanwhile are dropped).
+    pub fn put_snapshots(&mut self, made: Vec<(CharacterId, (u64, Hash), Vec<u8>)>) {
+        for (id, at, bytes) in made {
+            if let Some(c) = self.copies.get_mut(&id) {
+                if (c.version, c.hash) == at {
+                    let _ = c.snapshot.set(bytes);
+                }
+            }
+        }
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let file = ReplicaFile {
             origin: self.origin,

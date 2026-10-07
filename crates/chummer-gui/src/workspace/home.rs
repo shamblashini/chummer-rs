@@ -124,20 +124,32 @@ enum Do {
     Initiative,
 }
 
+/// The job reading the recent files' summaries (`bg`).
+const HOME_RECENT: &str = "home-recent";
+
 impl App {
     /// Refresh the cached file summaries when the lists changed.
     fn ws_home_cache(&mut self) {
         let h = &mut self.ws.home_page;
-        if h.recent_for != self.recent {
+        // Reading the recent files takes a while (each is parsed): on
+        // another thread.
+        type Recent = (Vec<Entry>, Vec<(PathBuf, Option<std::time::SystemTime>)>);
+        if let Some((recent, modified)) = crate::bg::take::<Recent>(HOME_RECENT) {
+            h.recent = recent;
+            h.modified.extend(modified);
+        }
+        if h.recent_for != self.recent && !crate::bg::busy(HOME_RECENT) {
             h.recent_for = self.recent.clone();
-            // Campaign files are in the list too; Continue shows characters.
-            let campaign = |p: &PathBuf| p.extension().is_some_and(|e| e.eq_ignore_ascii_case(chummer_core::campaign::EXTENSION));
-            // The same file may be in the list as a relative and an absolute path.
-            let mut seen = std::collections::HashSet::new();
-            h.recent = self.recent.iter().filter(|p| p.exists() && !campaign(p) && seen.insert(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()))).take(CONTINUE).map(|p| roster::summarize(p)).collect();
-            for p in &self.recent {
-                h.modified.insert(p.clone(), std::fs::metadata(p).and_then(|m| m.modified()).ok());
-            }
+            let list = self.recent.clone();
+            crate::bg::spawn(&self.ctx, HOME_RECENT, self.lang.tr("Reading recent files…"), move || -> Recent {
+                // Campaign files are in the list too; Continue shows characters.
+                let campaign = |p: &PathBuf| p.extension().is_some_and(|e| e.eq_ignore_ascii_case(chummer_core::campaign::EXTENSION));
+                // The same file may be in the list as a relative and an absolute path.
+                let mut seen = std::collections::HashSet::new();
+                let recent = list.iter().filter(|p| p.exists() && !campaign(p) && seen.insert(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()))).take(CONTINUE).map(|p| roster::summarize(p)).collect();
+                let modified = list.iter().map(|p| (p.clone(), std::fs::metadata(p).and_then(|m| m.modified()).ok())).collect();
+                (recent, modified)
+            });
         }
         if h.roster_for != self.roster.len() || self.roster.iter().any(|e| !h.modified.contains_key(&e.path)) {
             h.roster_for = self.roster.len();
@@ -169,17 +181,12 @@ impl App {
                 Do::Run(c) => self.ws_run(ctx, c),
                 Do::Section(s) => self.ws_go(DocKey::Home, s),
                 Do::Campaign => self.home = Some(crate::Home::Campaign),
-                Do::AddFolder => {
-                    if let Some(d) = rfd::FileDialog::new().pick_folder() {
-                        self.roster_folders.push(d);
-                        self.roster = roster::scan(&self.roster_folders);
-                    }
-                }
-                Do::Refresh => self.roster = roster::scan(&self.roster_folders),
+                Do::AddFolder => self.add_roster_folder(),
+                Do::Refresh => self.rescan_roster(),
                 Do::RemoveFolder(i) => {
                     if i < self.roster_folders.len() {
                         self.roster_folders.remove(i);
-                        self.roster = roster::scan(&self.roster_folders);
+                        self.rescan_roster();
                     }
                 }
                 Do::Join(link) => self.online.join = Some((link, self.online.display_name())),

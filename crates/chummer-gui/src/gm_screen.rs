@@ -116,6 +116,16 @@ pub(crate) enum Card {
     None,
 }
 
+/// The campaign's Save As dialog job (`bg`).
+pub const SAVE_DIALOG: &str = "dialog:campaign-save";
+
+/// Linked members a campaign save wrote: (member, file, `Doc::revision`
+/// when the copy was taken).
+pub type SavedLinked = Vec<(MemberId, PathBuf, u64)>;
+
+/// The file writing of a campaign save ([`GmScreen::save_job`]).
+pub type SaveJob = Box<dyn FnOnce() -> Result<SavedLinked, String> + Send>;
+
 pub struct GmScreen {
     pub campaign: Campaign,
     pub path: Option<PathBuf>,
@@ -147,6 +157,8 @@ pub struct GmScreen {
     /// Why an online campaign opened without its online state.
     online_error: Option<String>,
     check_mail_later: bool,
+    /// Start hosting once going online is done (`go_online`).
+    serve_when_online: bool,
 }
 
 /// The member's document, wherever it is.
@@ -187,6 +199,7 @@ impl GmScreen {
             online: None,
             online_error: None,
             check_mail_later: false,
+            serve_when_online: false,
         }
     }
 
@@ -207,7 +220,7 @@ impl GmScreen {
         if chummer_sync::hosted::is_online(path) {
             // Still open the file when its online state cannot be used
             // (another machine's key): the GM can look at it.
-            if let Err(e) = s.go_online(net, engine, &mut []) {
+            if let Err(e) = s.go_online(net, engine, &[], false) {
                 s.online_error = Some(e);
             }
         }
@@ -269,25 +282,38 @@ impl GmScreen {
     }
 
     /// Save to `path`: embedded members store their character, linked
-    /// members are saved to their own files.
-    pub fn save_to(&mut self, path: &Path, views: &mut [CharacterView]) -> Result<(), String> {
-        if self.path.as_deref() == Some(path) && self.write_back()? {
-            for m in &self.campaign.members {
-                if let Some(d) = doc_mut(&mut self.live, views, m.id) {
-                    d.mark_saved();
+    /// members are saved to their own files. What is quick (taking the
+    /// characters into the campaign) happens now; the returned job writes
+    /// the files (seconds: the campaign file is compressed) and runs on
+    /// another thread. Hand its answer to [`GmScreen::saved`].
+    pub fn save_job(&mut self, path: &Path, views: &mut [CharacterView]) -> SaveJob {
+        let file = path.to_owned();
+        if self.path.as_deref() == Some(path) {
+            if let Some(o) = &self.online {
+                let linked = o.hosted.write_back_embedded(&mut self.campaign);
+                for m in &self.campaign.members {
+                    if let Some(d) = doc_mut(&mut self.live, views, m.id) {
+                        d.mark_saved();
+                    }
                 }
+                self.dirty = false;
+                let (host, campaign) = (o.hosted.host.clone(), self.campaign.clone());
+                return Box::new(move || {
+                    chummer_sync::hosted::save_linked(host.engine(), linked)?;
+                    host.save().map_err(|e| e.to_string())?;
+                    campaign.save(&file).map_err(|e| e.to_string())?;
+                    Ok(Vec::new())
+                });
             }
-            self.campaign.save(path).map_err(|e| e.to_string())?;
-            self.dirty = false;
-            return Ok(());
         }
         let base = path.parent().map(Path::to_owned);
+        let mut linked = Vec::new();
         for m in &mut self.campaign.members {
             let Some(doc) = doc_mut(&mut self.live, views, m.id) else { continue };
             match m.linked_path(base.as_deref()) {
                 Some(p) => {
                     if doc.dirty {
-                        doc.save(&p).map_err(|e| format!("Could not save {}: {e}", p.display()))?;
+                        linked.push((m.id, p.clone(), doc.revision(), doc.save_job(p)));
                     }
                     m.name = doc.display_name();
                 }
@@ -297,28 +323,62 @@ impl GmScreen {
                 }
             }
         }
-        self.campaign.save(path).map_err(|e| e.to_string())?;
+        let campaign = self.campaign.clone();
         self.path = Some(path.to_owned());
         self.dirty = false;
-        Ok(())
+        Box::new(move || {
+            let mut saved = Vec::new();
+            for (id, p, revision, job) in linked {
+                job().map_err(|e| format!("Could not save {}: {e}", p.display()))?;
+                saved.push((id, p, revision));
+            }
+            campaign.save(&file).map_err(|e| e.to_string())?;
+            Ok(saved)
+        })
     }
 
-    /// Save (asking for a file the first time or with `save_as`). Returns
-    /// the file, or `None` when cancelled.
-    pub fn save(&mut self, views: &mut [CharacterView], save_as: bool) -> Result<Option<PathBuf>, String> {
+    /// A [`GmScreen::save_job`] finished: linked members it saved are no
+    /// longer modified; on an error the campaign stays modified.
+    pub fn saved(&mut self, views: &mut [CharacterView], r: Result<SavedLinked, String>) -> Result<(), String> {
+        match r {
+            Ok(saved) => {
+                for (id, p, revision) in saved {
+                    if let Some(d) = doc_mut(&mut self.live, views, id) {
+                        d.saved(&p, revision);
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => {
+                self.dirty = true;
+                Err(e)
+            }
+        }
+    }
+
+    /// Where Save writes: the campaign's file, or `None` when a file must
+    /// be asked for (the first time, or with `save_as`; see
+    /// [`GmScreen::ask_file`]).
+    pub fn save_target(&self, save_as: bool) -> Result<Option<PathBuf>, String> {
         if save_as && self.is_online() {
             // The authority file belongs to this file name; a copy under
             // another name would come back as a new campaign.
             return Err("An online campaign keeps its file name. To move it, copy the .chummercampaign and .authority files together.".into());
         }
-        let path = match (&self.path, save_as) {
+        Ok(match (&self.path, save_as) {
             (Some(p), false) => Some(p.clone()),
-            _ => rfd::FileDialog::new().add_filter("chummer-rs campaign", &[campaign::EXTENSION]).set_file_name(format!("{}.{}", self.campaign.name, campaign::EXTENSION)).save_file(),
-        };
-        let Some(path) = path else { return Ok(None) };
-        self.save_to(&path, views)?;
-        Ok(Some(path))
+            _ => None,
+        })
     }
+
+    /// The Save As dialog, on its own thread: the answer is
+    /// `bg::take::<Option<PathBuf>>(SAVE_DIALOG)`.
+    pub fn ask_file(&self, ctx: &egui::Context) {
+        let name = format!("{}.{}", self.campaign.name, campaign::EXTENSION);
+        crate::bg::dialog(ctx, SAVE_DIALOG, move || rfd::FileDialog::new().add_filter("chummer-rs campaign", &[campaign::EXTENSION]).set_file_name(name).save_file());
+    }
+
+
 
     /// Recompute sheets and take new log entries into the feed for
     /// members whose character changed.
@@ -360,6 +420,7 @@ impl GmScreen {
     #[allow(clippy::too_many_arguments)]
     pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status, net: &mut crate::online::Online, feed: bool) -> Option<Action> {
         self.begin_frame(engine, views, net);
+        self.take_picked(engine, status);
         let mut action = None;
         egui::SidePanel::left("gm_roster").resizable(true).default_width(340.0).min_width(260.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("gm_roster_scroll").auto_shrink(false).show(ui, |ui| self.roster(ui, engine, lang, views, status, &mut action));
@@ -377,9 +438,9 @@ impl GmScreen {
     /// Start of a frame (both layouts): what arrived online, the mailbox,
     /// sheets and the feed of members that changed.
     pub fn begin_frame(&mut self, engine: &Arc<Engine>, views: &mut [CharacterView], net: &mut crate::online::Online) {
-        self.online_tick(engine, views);
-        self.take_mail_request(net);
-        self.sync(engine, views);
+        crate::trace::time("gm online tick", || self.online_tick(net, engine, views));
+        crate::trace::time("gm mail request", || self.take_mail_request(net));
+        crate::trace::time("gm sheets + feed", || self.sync(engine, views));
     }
 
     /// The online panel and the activity feed (the right-hand panel).
@@ -494,8 +555,17 @@ impl GmScreen {
         }
     }
 
-    fn add_file(&mut self, path: &Path, link: bool, engine: &Arc<Engine>, status: &mut Status) {
-        match Character::load(path) {
+    /// Add the character files picked in the Add menu, once loaded.
+    pub(crate) fn take_picked(&mut self, engine: &Arc<Engine>, status: &mut Status) {
+        for link in [false, true] {
+            for (p, ch) in crate::campaign_ui::picked_characters(link) {
+                self.add_loaded(&p, ch, link, engine, status);
+            }
+        }
+    }
+
+    fn add_loaded(&mut self, path: &Path, ch: Result<Character, String>, link: bool, engine: &Arc<Engine>, status: &mut Status) {
+        match ch {
             Ok(ch) => {
                 let m = if link { Member::linked(MemberKind::Player, path, &ch) } else { Member::embedded(MemberKind::Player, &ch) };
                 self.add_member(m, ch, engine);
@@ -1330,7 +1400,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("chummer-rs-gm-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("t.chummercampaign");
-        gm.save_to(&path, &mut views).unwrap();
+        // The files are written by the job (another thread in the app).
+        let written = gm.save_job(&path, &mut views)();
+        gm.saved(&mut views, written).unwrap();
         assert!(!gm.is_dirty(&views));
         let hash = views[0].doc().session().unwrap().state_hash();
         gm.give_back(id, views.pop().unwrap().into_doc());

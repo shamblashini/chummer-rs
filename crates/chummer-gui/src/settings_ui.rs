@@ -77,9 +77,9 @@ impl SettingsEditor {
 
     /// Start importing a settings file (from a character's missing-preset
     /// warning). Returns true when the library must be reloaded.
-    pub fn start_import(&mut self, engine: &Engine, lang: &Language) -> bool {
-        let done = self.import.start(engine);
-        self.finish_import(done, lang)
+    /// Start an import (the file dialog; the window's `ui` finishes it).
+    pub fn start_import(&mut self, ctx: &egui::Context) {
+        self.import.start(ctx);
     }
 
     fn finish_import(&mut self, done: Option<Result<settings::Imported, String>>, lang: &Language) -> bool {
@@ -142,16 +142,18 @@ impl SettingsEditor {
             ui.separator();
             if ui.button(lang.tr("Export")).on_hover_text(lang.tr("Save this preset as a settings file to share, e.g. with your players. Chummer5a reads it too.")).clicked() {
                 let file = if preset.file.is_some() { preset.key() } else { format!("{}.xml", settings::file_stem_for(&preset.name())) };
-                if let Some(out) = rfd::FileDialog::new().add_filter("Chummer settings", &["xml"]).set_file_name(file).save_file() {
-                    self.message = Some(match settings::export(preset, &out) {
-                        Ok(()) => format!("Saved {}", out.display()),
-                        Err(e) => format!("Could not save: {e}"),
-                    });
-                }
+                // The dialog and the write on their own thread.
+                let preset = preset.clone();
+                crate::bg::spawn(ui.ctx(), format!("{}settings-export", crate::app_io::STATUS), lang.tr("Exporting…"), move || {
+                    let out = rfd::FileDialog::new().add_filter("Chummer settings", &["xml"]).set_file_name(file).save_file()?;
+                    Some(match settings::export(&preset, &out) {
+                        Ok(()) => (format!("Saved {}", out.display()), false),
+                        Err(e) => (format!("Could not save: {e}"), true),
+                    })
+                });
             }
             if ui.button(lang.tr("Import settings file…")).on_hover_text(lang.tr("Install a settings file someone shared, e.g. your GM's house rules.")).clicked() {
-                let done = self.import.start(engine);
-                saved |= self.finish_import(done, lang);
+                self.import.start(ui.ctx());
             }
         });
         let done = self.import.ui(ui, engine, lang);

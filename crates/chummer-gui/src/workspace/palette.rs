@@ -339,6 +339,12 @@ impl Palette {
         self.open && self.records.is_none() && self.query.trim().chars().count() >= RECORDS_FROM
     }
 
+    /// Whether the record index should be built (the palette is open and
+    /// has none yet).
+    pub fn needs_records(&self) -> bool {
+        self.open && self.records.is_none()
+    }
+
     pub fn set_records(&mut self, records: Vec<Entry>) {
         self.records = Some(Arc::new(records));
         self.cache = None;
@@ -351,6 +357,7 @@ impl Palette {
                 return r.clone();
             }
         }
+        let _s = crate::trace::span("palette search");
         let mut r = search(entries, &self.query, SHOWN);
         if self.query.trim().chars().count() >= RECORDS_FROM {
             if let Some(recs) = &self.records {

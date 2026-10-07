@@ -21,7 +21,7 @@ use chummer_core::lang::Language;
 use chummer_core::sections::Section as Sec;
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
 use chummer_core::tree::Entry;
-use chummer_core::{calc, career, format};
+use chummer_core::{calc, format};
 use eframe::egui::{self, RichText};
 
 use crate::pdf_ui::Status;
@@ -458,7 +458,7 @@ impl CharacterView {
                 let selected = self.ws_build.sel.as_ref() == Some(&Selected::Attribute(name.to_owned()));
                 let long = attr_long(lang, name);
                 let sources = self.attribute_sources(name).join(", ");
-                let career_cost = if career_mode { career::attribute_upgrade_karma_cost(engine, &self.doc, name) } else { None };
+                let career_cost = if career_mode { self.career_costs(engine).attribute(&self.doc, name) } else { None };
                 let karma_left = self.doc.karma;
                 let mut w = widths.iter().copied();
                 let mut next = || w.next().unwrap_or(40.0);

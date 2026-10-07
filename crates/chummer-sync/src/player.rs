@@ -9,7 +9,7 @@
 //! [`PlayerSession::edit`]; [`PlayerSession::events`] says what changed.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chummer_core::command::{Command, Rejected, Report};
@@ -23,6 +23,7 @@ use tokio::sync::mpsc;
 
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
 use crate::msg::{self, CharacterId, ClientMessage, MailMessage, ServerMessage};
+use crate::lockwatch::{self, Guard};
 use crate::replica::{Event, Replica};
 
 /// How a player reaches their campaign.
@@ -75,6 +76,13 @@ struct Inner {
     wake: tokio::sync::Notify,
     last_mode: Mutex<Option<SyncMode>>,
     closed: std::sync::atomic::AtomicBool,
+    /// The runtime the session was made in: saves asked for by a UI
+    /// thread run on its blocking threads.
+    rt: Option<tokio::runtime::Handle>,
+    /// A background save is asked for and has not started yet.
+    save_queued: std::sync::atomic::AtomicBool,
+    /// One save at a time (they write the same file).
+    saving: Mutex<()>,
 }
 
 /// A player's session. Cheap to clone.
@@ -126,6 +134,9 @@ impl PlayerSession {
                 wake: tokio::sync::Notify::new(),
                 last_mode: Mutex::new(None),
                 closed: std::sync::atomic::AtomicBool::new(false),
+                rt: tokio::runtime::Handle::try_current().ok(),
+                save_queued: std::sync::atomic::AtomicBool::new(false),
+                saving: Mutex::new(()),
             }),
             events: Arc::new(tokio::sync::Mutex::new(rx)),
         }
@@ -205,12 +216,13 @@ impl PlayerSession {
     }
 
     /// As [`PlayerSession::edit`], without waiting: applied to the local
-    /// copy and saved at once (for a UI thread); sent by a background task
+    /// copy and saved right after on a background thread (for a UI
+    /// thread); sent by a background task
     /// when online, else kept for the next [`PlayerSession::sync`]. Must be
     /// called after the session was made inside a tokio runtime.
     pub fn edit_now(&self, id: &CharacterId, cmd: Command) -> Result<Report, Rejected> {
         let report = self.replica().edit(&self.inner.engine, id, cmd)?;
-        self.save_logged();
+        self.save_soon();
         if report.changed {
             self.inner.flush.notify_one();
         }
@@ -220,7 +232,7 @@ impl PlayerSession {
     /// Takes the refused commands out of the list (the player saw them).
     pub fn dismiss_refused(&self) -> Vec<crate::replica::Refused> {
         let r = self.replica().dismiss_refused();
-        self.save_logged();
+        self.save_soon();
         r
     }
 
@@ -244,8 +256,14 @@ impl PlayerSession {
     }
 
     /// The local copies, locked. Do not hold across an `.await`.
-    pub fn replica(&self) -> MutexGuard<'_, Replica> {
-        self.inner.replica.lock().expect("replica lock poisoned")
+    pub fn replica(&self) -> Guard<'_, Replica> {
+        lockwatch::lock(&self.inner.replica, "replica")
+    }
+
+    /// The local copies, when no other thread holds them (a UI thread
+    /// polls with this so it never waits for a network task).
+    pub fn try_replica(&self) -> Option<Guard<'_, Replica>> {
+        lockwatch::try_lock(&self.inner.replica, "replica")
     }
 
     pub fn engine(&self) -> &Arc<Engine> {
@@ -278,15 +296,37 @@ impl PlayerSession {
         self.events.lock().await.recv().await
     }
 
-    /// Saves the replica (when the session has a path).
+    /// Saves the replica (when the session has a path). The snapshots
+    /// (slow) are made without holding the replica's lock.
     pub fn save(&self) -> std::io::Result<()> {
         match &self.inner.cfg.path {
             Some(p) => {
+                let _one = self.inner.saving.lock().unwrap_or_else(|e| e.into_inner());
+                let work = self.replica().snapshot_work();
+                if !work.is_empty() {
+                    let made = work.into_iter().map(|(id, at, ch)| (id, at, chummer_core::command::snapshot(&ch))).collect();
+                    self.replica().put_snapshots(made);
+                }
                 let bytes = self.replica().to_bytes();
                 crate::persist::write_atomic(p, &bytes)
             }
             None => Ok(()),
         }
+    }
+
+    /// [`PlayerSession::save`] on a blocking thread of the session's
+    /// runtime (a UI thread must not wait for the disk); saves asked for
+    /// while one waits to start are one save.
+    fn save_soon(&self) {
+        let Some(rt) = self.inner.rt.clone() else { return self.save_logged() };
+        if self.inner.save_queued.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return;
+        }
+        let me = self.clone();
+        rt.spawn_blocking(move || {
+            me.inner.save_queued.store(false, std::sync::atomic::Ordering::Release);
+            me.save_logged();
+        });
     }
 
     fn save_logged(&self) {

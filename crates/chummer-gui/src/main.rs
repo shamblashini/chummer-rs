@@ -2,6 +2,8 @@
 //! chummer-rs desktop application.
 
 mod ai_ui;
+mod app_io;
+mod bg;
 mod browser;
 mod campaign_ui;
 mod career_ui;
@@ -16,6 +18,7 @@ mod improvement_ui;
 mod initiative;
 mod lifestyle_ui;
 mod magic_ui;
+mod memo;
 mod item_editor;
 mod online;
 mod pdf_ui;
@@ -25,6 +28,7 @@ mod ruleset_ui;
 mod select;
 mod settings_ui;
 mod theme;
+mod trace;
 mod tree_table;
 mod view;
 mod wizard;
@@ -35,7 +39,6 @@ mod tr_coverage;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chummer_core::character::Character;
 use chummer_core::data;
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
@@ -113,6 +116,10 @@ struct App {
     online: online::Online,
     /// The Workspace layout's state.
     ws: workspace::Workspace,
+    /// For starting background jobs (`bg`) outside a frame.
+    ctx: egui::Context,
+    /// Loads, saves and file dialogs in flight (`app_io`).
+    io: app_io::Io,
 }
 
 impl App {
@@ -125,6 +132,7 @@ impl App {
             appearance = appearance.with_layout(l);
         }
         theme::apply(&cc.egui_ctx, &theme::Theme::of(appearance.kind()));
+        bg::set_context(&cc.egui_ctx);
         let lang_dir = data::resource_dir("lang").unwrap_or_default();
         let storage = cc.storage;
         let code = storage.and_then(|s| s.get_string(LANG_KEY)).unwrap_or_else(|| "en-us".into());
@@ -169,6 +177,8 @@ impl App {
             appearance,
             online: online::Online::new(),
             ws: Default::default(),
+            ctx: cc.egui_ctx.clone(),
+            io: Default::default(),
         };
         app.online.start_joined(&app.engine);
         if let Some(link) = join {
@@ -178,14 +188,10 @@ impl App {
             .and_then(|s| s.get_string(ROSTER_KEY))
             .map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect())
             .unwrap_or_default();
-        app.roster = chummer_core::roster::scan(&app.roster_folders);
+        app.rescan_roster();
+        app.io.start_tab = tab;
         for f in files {
             app.open(&f);
-        }
-        if let Some(t) = tab {
-            for v in &mut app.views {
-                v.set_tab(t);
-            }
         }
         app
     }
@@ -207,78 +213,10 @@ impl App {
         }
     }
 
-    fn open(&mut self, path: &Path) {
-        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(chummer_core::campaign::EXTENSION)) {
-            self.open_campaign(path);
-            return;
-        }
-        if let Some(i) = self.views.iter().position(|v| v.path().as_deref() == Some(path)) {
-            self.active = i;
-            self.home = None;
-            return;
-        }
-        match Character::load(path) {
-            Ok(ch) => {
-                self.views.push(CharacterView::new(ch, &self.engine));
-                self.active = self.views.len() - 1;
-                self.home = None;
-                self.remember(path);
-                self.status = Some((format!("Opened {}", path.display()), false));
-            }
-            Err(e) => self.status = Some((e.to_string(), true)),
-        }
-    }
-
     fn remember(&mut self, path: &Path) {
         self.recent.retain(|p| p != path);
         self.recent.insert(0, path.to_owned());
         self.recent.truncate(MAX_RECENT);
-    }
-
-    fn open_dialog(&mut self) {
-        let files = rfd::FileDialog::new()
-            .add_filter("Chummer character", &["chum5", "chum5lz"])
-            .add_filter("Raw Chummer5 Saves", &["chum5"])
-            .add_filter("Compressed Chummer5 Saves", &["chum5lz"])
-            .add_filter("All files", &["*"])
-            .pick_files();
-        for f in files.unwrap_or_default() {
-            self.open(&f);
-        }
-    }
-
-    fn save(&mut self, idx: usize, save_as: bool) -> bool {
-        if self.views.get(idx).is_some_and(|v| v.campaign_member.is_some()) {
-            // A campaign member is saved with its campaign.
-            return self.save_campaign(false);
-        }
-        let Some(v) = self.views.get_mut(idx) else { return false };
-        let path = match (save_as, v.path()) {
-            (false, Some(p)) => Some(p),
-            _ => {
-                // Keep the current file's format; Chummer's Save As offers
-                // both (`DialogFilter_Chum5` / `DialogFilter_Chum5lz`).
-                let compressed = v.path().is_some_and(|p| chummer_core::chum5lz::is_chum5lz(&p));
-                let (first, second) = if compressed { (("Compressed Chummer5 Saves", "chum5lz"), ("Raw Chummer5 Saves", "chum5")) } else { (("Raw Chummer5 Saves", "chum5"), ("Compressed Chummer5 Saves", "chum5lz")) };
-                rfd::FileDialog::new()
-                    .add_filter(first.0, &[first.1])
-                    .add_filter(second.0, &[second.1])
-                    .set_file_name(format!("{}.{}", v.ch().display_name(), first.1))
-                    .save_file()
-            }
-        };
-        let Some(path) = path else { return false };
-        match v.save(&path) {
-            Ok(()) => {
-                self.status = Some((format!("Saved {}", path.display()), false));
-                self.remember(&path);
-                true
-            }
-            Err(e) => {
-                self.status = Some((format!("Could not save {}: {e}", path.display()), true));
-                false
-            }
-        }
     }
 
     fn close_tab(&mut self, idx: usize, force: bool) {
@@ -342,9 +280,8 @@ impl App {
     }
 
     fn open_campaign_dialog(&mut self) {
-        if let Some(p) = rfd::FileDialog::new().add_filter("chummer-rs campaign", &[chummer_core::campaign::EXTENSION]).add_filter("All files", &["*"]).pick_file() {
-            self.open_campaign(&p);
-        }
+        // Picked on its own thread; `poll_io` opens it.
+        bg::dialog(&self.ctx, app_io::OPEN_CAMPAIGN, || rfd::FileDialog::new().add_filter("chummer-rs campaign", &[chummer_core::campaign::EXTENSION]).add_filter("All files", &["*"]).pick_file());
     }
 
     fn open_campaign(&mut self, path: &Path) {
@@ -356,7 +293,7 @@ impl App {
             self.status = Some(("Save or close the open campaign first.".into(), true));
             return;
         }
-        match gm_screen::GmScreen::open(path, &self.engine, &mut self.online) {
+        match trace::time("open campaign", || gm_screen::GmScreen::open(path, &self.engine, &mut self.online)) {
             Ok(gm) => {
                 self.gm = Some(gm);
                 self.home = Some(Home::Campaign);
@@ -367,15 +304,17 @@ impl App {
         }
     }
 
+    /// Save the campaign (on another thread, after asking for a file
+    /// when it has none or with `save_as`). Returns whether the save or
+    /// its dialog started; `io.campaign_then` says what follows a save.
     fn save_campaign(&mut self, save_as: bool) -> bool {
         let Some(gm) = self.gm.as_mut() else { return false };
-        match gm.save(&mut self.views, save_as) {
-            Ok(Some(p)) => {
-                self.status = Some((format!("Saved {}", p.display()), false));
-                self.remember(&p);
+        match gm.save_target(save_as) {
+            Ok(Some(p)) => self.save_campaign_to(&p),
+            Ok(None) => {
+                gm.ask_file(&self.ctx);
                 true
             }
-            Ok(None) => false,
             Err(e) => {
                 self.status = Some((e, true));
                 false
@@ -790,13 +729,10 @@ impl App {
                 ui.label(crate::theme::strong(ui, self.lang.tr("Character Roster")));
                 ui.horizontal(|ui| {
                     if ui.button(self.lang.tr("Add folder…")).clicked() {
-                        if let Some(d) = rfd::FileDialog::new().pick_folder() {
-                            self.roster_folders.push(d);
-                            self.roster = chummer_core::roster::scan(&self.roster_folders);
-                        }
+                        self.add_roster_folder();
                     }
                     if !self.roster_folders.is_empty() && ui.button(self.lang.tr("Refresh")).clicked() {
-                        self.roster = chummer_core::roster::scan(&self.roster_folders);
+                        self.rescan_roster();
                     }
                     if !self.roster_folders.is_empty() && ui.button(self.lang.tr("Clear folders")).clicked() {
                         self.roster_folders.clear();
@@ -867,12 +803,16 @@ impl App {
                 "XML" => "xml",
                 _ => "txt",
             };
-            if let Some(out) = rfd::FileDialog::new().set_file_name(format!("{}.{ext}", v.ch().display_name())).save_file() {
-                self.status = Some(match chummer_core::export::export(v.ch(), &self.engine, &self.lang, &self.export_format, &out) {
+            // The dialog and the export run on their own thread.
+            let (ch, engine, lang, format) = (v.ch().clone(), self.engine.clone(), self.lang.clone(), self.export_format.clone());
+            let name = format!("{}.{ext}", ch.display_name());
+            bg::spawn(ui.ctx(), format!("{}export", app_io::STATUS), self.lang.tr("Exporting…"), move || {
+                let out = rfd::FileDialog::new().set_file_name(name).save_file()?;
+                Some(match chummer_core::export::export(&ch, &engine, &lang, &format, &out) {
                     Ok(()) => (format!("Exported to {}", out.display()), false),
                     Err(e) => (e.to_string(), true),
-                });
-            }
+                })
+            });
         }
     }
 
@@ -899,19 +839,20 @@ impl App {
                 return;
             };
             let opts = chummer_core::print::PrintOptions { notes: self.print_notes, ..Default::default() };
-            let xml = chummer_core::print::print_xml_with(v.ch(), &self.engine, &self.lang, opts);
-            let name: String = v.ch().display_name().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
-            let out = std::env::temp_dir().join(format!("chummer-rs-{name}.html"));
-            match chummer_core::print::render(&xml, path, &out) {
-                Ok(()) => {
-                    let opened = std::process::Command::new("xdg-open").arg(&out).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
-                    self.status = Some(match opened {
+            // The print data and the stylesheet run on their own thread.
+            let (ch, engine, lang, path) = (v.ch().clone(), self.engine.clone(), self.lang.clone(), path.clone());
+            bg::spawn(ui.ctx(), format!("{}print", app_io::STATUS), self.lang.tr("Rendering the sheet…"), move || {
+                let xml = trace::time("print xml", || chummer_core::print::print_xml_with(&ch, &engine, &lang, opts));
+                let name: String = ch.display_name().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+                let out = std::env::temp_dir().join(format!("chummer-rs-{name}.html"));
+                Some(match trace::time("print render (xslt)", || chummer_core::print::render(&xml, &path, &out)) {
+                    Ok(()) => match std::process::Command::new("xdg-open").arg(&out).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
                         Ok(_) => (format!("Opened {}", out.display()), false),
                         Err(e) => (format!("Sheet written to {} (could not open it: {e})", out.display()), true),
-                    });
-                }
-                Err(e) => self.status = Some((e.to_string(), true)),
-            }
+                    },
+                    Err(e) => (e.to_string(), true),
+                })
+            });
         }
     }
 
@@ -942,8 +883,10 @@ impl App {
         });
         match (choice, idx) {
             (Some(0), None) if campaign => {
-                if self.save_campaign(false) {
-                    self.close_campaign(true);
+                // Closes once the campaign is written.
+                self.io.campaign_then = app_io::Then::CloseTab;
+                if !self.save_campaign(false) {
+                    self.io.campaign_then = app_io::Then::Nothing;
                 }
                 self.pending = None;
             }
@@ -952,9 +895,8 @@ impl App {
                 self.pending = None;
             }
             (Some(0), Some(i)) => {
-                if self.save(i, false) {
-                    self.close_tab(i, true);
-                }
+                // The tab closes once the save is written.
+                self.save_then(i, false, app_io::Then::CloseTab);
                 self.pending = None;
             }
             (Some(1), Some(i)) => {
@@ -962,12 +904,8 @@ impl App {
                 self.pending = None;
             }
             (Some(0), None) => {
-                let gm_ok = !self.gm.as_ref().is_some_and(|g| g.is_dirty(&self.views)) || self.save_campaign(false);
-                let dirty: Vec<usize> = (0..self.views.len()).filter(|&i| self.views[i].ch().dirty && self.views[i].campaign_member.is_none()).collect();
-                if gm_ok && dirty.into_iter().all(|i| self.save(i, false)) {
-                    self.allow_close = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
+                // The window closes once the saves are written.
+                self.save_all_and_quit();
                 self.pending = None;
             }
             (Some(1), None) => {
@@ -982,24 +920,18 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let gm_dirty = self.gm.as_ref().is_some_and(|g| g.is_dirty(&self.views));
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && (gm_dirty || self.views.iter().any(|v| v.ch().dirty)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.pending = Some(Pending::Quit);
-        }
-        if self.appearance.layout == theme::Layout::Workspace {
-            self.workspace_update(ctx);
-        } else {
-            self.classic_update(ctx);
-        }
-        self.windows(ctx);
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        trace::begin_frame(frame.info().cpu_usage);
+        self.frame(ctx);
+        trace::end_frame();
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(gm) = self.gm.as_mut() {
             gm.close_online(&mut self.online);
         }
+        // Saves still writing (and the campaign's last one) finish first.
+        self.finish_io();
         self.online.shutdown();
     }
 
@@ -1013,6 +945,24 @@ impl eframe::App for App {
 }
 
 impl App {
+    /// One frame of either layout.
+    fn frame(&mut self, ctx: &egui::Context) {
+        self.poll_io();
+        let gm_dirty = self.gm.as_ref().is_some_and(|g| g.is_dirty(&self.views));
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && (gm_dirty || self.views.iter().any(|v| v.ch().dirty)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.pending = Some(Pending::Quit);
+        }
+        if self.appearance.layout == theme::Layout::Workspace {
+            let _s = trace::span("workspace layout");
+            self.workspace_update(ctx);
+        } else {
+            let _s = trace::span("classic layout");
+            self.classic_update(ctx);
+        }
+        let _s = trace::span("windows");
+        self.windows(ctx);
+    }
     /// A frame of the Classic layout: menu, toolbar, MDI tabs, status
     /// strip and the selected tab.
     fn classic_update(&mut self, ctx: &egui::Context) {
@@ -1032,6 +982,7 @@ impl App {
                         ui.separator();
                     }
                 }
+                bg::status_ui(ui);
                 match &self.status {
                     Some((msg, true)) => {
                         ui.colored_label(ui.visuals().error_fg_color, msg);
@@ -1097,6 +1048,7 @@ impl App {
         }
         let mut open = self.show_sources;
         egui::Window::new(self.lang.tr("Sourcebooks")).id(egui::Id::new("sourcebooks")).open(&mut open).default_size([820.0, 620.0]).show(ctx, |ui| {
+            let _s = trace::span("sourcebooks window");
             if self.sources_window.ui(ui, &mut self.pdfs, &self.lang) {
                 if let Err(e) = self.pdfs.save() {
                     self.status = Some((format!("Could not save sourcebook settings: {e}"), true));
@@ -1126,7 +1078,7 @@ impl App {
         let mut reload = false;
         if ruleset_ui::take_import_request(ctx) {
             open = true;
-            reload = self.settings_editor.start_import(&self.engine, &self.lang);
+            self.settings_editor.start_import(ctx);
         }
         egui::Window::new(self.lang.tr("Character Settings")).id(egui::Id::new("character_settings")).open(&mut open).default_size([820.0, 680.0]).show(ctx, |ui| {
             reload |= self.settings_editor.ui(ui, &self.engine, &self.lang);
@@ -1181,7 +1133,7 @@ impl App {
             }
         }
         let engine = self.engine.clone();
-        self.online.windows(ctx, &engine, &self.lang, &mut self.status);
+        trace::time("online windows", || self.online.windows(ctx, &engine, &self.lang, &mut self.status));
         self.dialogs(ctx);
     }
 
@@ -1237,7 +1189,8 @@ fn main() -> anyhow::Result<()> {
             _ => files.push(PathBuf::from(a)),
         }
     }
-    let engine = match Engine::load() {
+    trace::init();
+    let engine = match trace::time("engine load", Engine::load) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("chummer-rs: {e}");
@@ -1257,7 +1210,7 @@ fn main() -> anyhow::Result<()> {
         options.viewport = options.viewport.with_icon(icon);
     }
     eframe::run_native("chummer-rs", options, Box::new(move |cc| {
-        let mut app = App::new(cc, engine, files, tab, (theme_arg, layout_arg), join);
+        let mut app = trace::time("startup (App::new)", || App::new(cc, engine, files, tab, (theme_arg, layout_arg), join));
         match window.as_deref() {
             Some("sources") => app.show_sources = true,
             Some("browser") => app.home = Some(Home::MasterIndex),

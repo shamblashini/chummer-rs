@@ -219,18 +219,14 @@ impl GmScreen {
 
     /// The Add menu (both layouts): character files, a critter, PACKS
     /// NPCs, open characters.
-    pub(super) fn add_menu(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status) {
+    pub(super) fn add_menu(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], _status: &mut Status) {
         if ui.button(lang.tr("Character file (copy into the campaign)…")).clicked() {
             ui.close();
-            for p in crate::campaign_ui::pick_characters() {
-                self.add_file(&p, false, engine, status);
-            }
+            crate::campaign_ui::pick_characters(ui.ctx(), false);
         }
         if ui.button(lang.tr("Character file (link to the file)…")).clicked() {
             ui.close();
-            for p in crate::campaign_ui::pick_characters() {
-                self.add_file(&p, true, engine, status);
-            }
+            crate::campaign_ui::pick_characters(ui.ctx(), true);
         }
         if ui.button(lang.tr("New Critter…")).clicked() {
             ui.close();
@@ -260,6 +256,7 @@ impl GmScreen {
     pub fn ws_ui(&mut self, ctx: &egui::Context, env: &mut Env) -> Option<Action> {
         let ws = theme::current(ctx).ws;
         let mut action = None;
+        self.take_picked(env.engine, env.status);
         if self.campaign.encounters.is_empty() {
             self.campaign.encounters.push(chummer_core::campaign::Encounter::new("Encounter 1"));
         }

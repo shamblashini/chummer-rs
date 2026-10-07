@@ -267,8 +267,18 @@ impl Session {
     pub fn save(&mut self, engine: &Engine, path: &Path) -> std::io::Result<()> {
         let mut copy = self.ch.clone();
         engine.save(&mut copy, path)?;
-        self.ch.file = Some(path.to_owned());
-        self.ch.dirty = false;
+        self.saved_as(path, true);
         Ok(())
+    }
+
+    /// After a copy of the character was written to `path` elsewhere (a
+    /// save on another thread, with [`Engine::save`]): remember the file,
+    /// and with `unchanged` (nothing happened since the copy was taken)
+    /// clear the modified flag.
+    pub fn saved_as(&mut self, path: &Path, unchanged: bool) {
+        self.ch.file = Some(path.to_owned());
+        if unchanged {
+            self.ch.dirty = false;
+        }
     }
 }

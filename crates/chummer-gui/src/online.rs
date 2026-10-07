@@ -21,6 +21,9 @@ use chummer_sync::joined::{Joined, JoinedList};
 use chummer_sync::{CharacterId, Node, PlayerConfig, PlayerSession, SyncMode};
 use eframe::egui::{self, RichText};
 
+/// The Online Settings window's certificate dialog (`bg`).
+const PEM_DIALOG: &str = "dialog:pem";
+
 /// How often a player's app tries the GM again (and the mailbox) while
 /// not connected.
 pub const PLAYER_SYNC_EVERY: Duration = Duration::from_secs(60);
@@ -83,9 +86,9 @@ impl Online {
         Online { rt, settings: OnlineSettings::load(), secret: None, node: None, node_settings: None, joined: Vec::new(), list, dir, show_settings: false, form: SettingsForm::default(), join: None, error: None }
     }
 
-    /// Inside the runtime (to make hosts and sessions, which start tasks).
-    pub fn enter(&self) -> tokio::runtime::EnterGuard<'_> {
-        self.rt.enter()
+    /// The runtime, for entering it on another thread.
+    pub fn handle(&self) -> tokio::runtime::Handle {
+        self.rt.handle().clone()
     }
 
     pub fn spawn<F>(&self, f: F) -> tokio::task::JoinHandle<F::Output>
@@ -113,7 +116,7 @@ impl Online {
         }
         let secret = self.secret()?;
         let cfg = self.settings.net_config()?;
-        let node = self.rt.block_on(Node::bind(secret, cfg)).map_err(|e| e.to_string())?;
+        let node = crate::trace::time("network node bind", || self.rt.block_on(Node::bind(secret, cfg))).map_err(|e| e.to_string())?;
         let node = Arc::new(node);
         self.node = Some(node.clone());
         self.node_settings = Some(self.settings.clone());
@@ -162,6 +165,7 @@ impl Online {
         cfg.mailbox = node.mailbox_id();
         cfg.path = Some(JoinedList::replica_path(&dir, j));
         let session = {
+            let _s = crate::trace::span("player session start (replica load)");
             let _g = self.rt.enter();
             PlayerSession::new(node.endpoint().clone(), node.secret().clone(), engine.clone(), cfg).map_err(|e| e.to_string())?
         };
@@ -344,6 +348,9 @@ impl Online {
     }
 
     fn settings_ui(&mut self, ui: &mut egui::Ui, lang: &Language) {
+        if let Some(Some(p)) = crate::bg::take::<Option<PathBuf>>(PEM_DIALOG) {
+            self.form.ca_files.push(p);
+        }
         egui::Grid::new("online_settings_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label(lang.tr("Your name"));
             ui.add(egui::TextEdit::singleline(&mut self.form.name).hint_text(whoami()).desired_width(260.0));
@@ -393,9 +400,7 @@ impl Online {
             self.form.ca_files.remove(i);
         }
         if ui.button(lang.tr("Add certificate…")).clicked() {
-            if let Some(p) = rfd::FileDialog::new().add_filter("PEM", &["pem", "crt"]).add_filter("All files", &["*"]).pick_file() {
-                self.form.ca_files.push(p);
-            }
+            crate::bg::dialog(ui.ctx(), PEM_DIALOG, || rfd::FileDialog::new().add_filter("PEM", &["pem", "crt"]).add_filter("All files", &["*"]).pick_file());
         }
         #[cfg(windows)]
         {

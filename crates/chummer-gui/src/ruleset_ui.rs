@@ -17,10 +17,16 @@ pub struct ImportFlow {
 }
 
 impl ImportFlow {
-    /// Ask for a file and install it unless it clashes. `Some` when done
+    /// Ask for a file (the dialog runs on its own thread; [`ImportFlow::ui`]
+    /// goes on when it is picked).
+    pub fn start(&mut self, ctx: &egui::Context) {
+        crate::bg::dialog(ctx, IMPORT_DIALOG, || rfd::FileDialog::new().add_filter("Chummer settings", &["xml"]).add_filter("All files", &["*"]).pick_file());
+    }
+
+    /// The picked file: installed unless it clashes. `Some` when done
     /// (the library must then be reloaded on `Ok`).
-    pub fn start(&mut self, engine: &Engine) -> Option<Result<Imported, String>> {
-        let src = rfd::FileDialog::new().add_filter("Chummer settings", &["xml"]).add_filter("All files", &["*"]).pick_file()?;
+    fn picked(&mut self, engine: &Engine) -> Option<Result<Imported, String>> {
+        let src = crate::bg::take::<Option<std::path::PathBuf>>(IMPORT_DIALOG)??;
         let Some(dir) = settings::user_settings_dir() else { return Some(Err("no settings directory".into())) };
         let plan = match engine.settings.plan_import(&src, &dir) {
             Ok(p) => p,
@@ -33,8 +39,12 @@ impl ImportFlow {
         Some(install(&plan, engine, &dir, &ImportMode::New))
     }
 
-    /// The clash prompt, while one is open.
+    /// The picked file, then the clash prompt while one is open. `Some`
+    /// when an import is done.
     pub fn ui(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language) -> Option<Result<Imported, String>> {
+        if let Some(done) = self.picked(engine) {
+            return Some(done);
+        }
         let file_name = self.pending.as_ref()?.file_name.clone();
         let mut mode = None;
         let mut cancel = false;
@@ -65,6 +75,7 @@ fn install(plan: &ImportPlan, engine: &Engine, dir: &std::path::Path, mode: &Imp
 }
 
 const IMPORT_REQUEST: &str = "ruleset_import_request";
+const IMPORT_DIALOG: &str = "dialog:settings-import";
 
 /// Ask the app to open the settings window and start an import.
 fn request_import(ctx: &egui::Context) {

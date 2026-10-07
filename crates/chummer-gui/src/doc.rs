@@ -23,7 +23,7 @@
 //! History panel offers on GM characters.
 
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chummer_core::character::Character;
@@ -52,6 +52,9 @@ struct Online {
     /// version, hash and outbox length (player).
     seen: (u64, Hash, usize),
     revision: u64,
+    /// The last sync state read (shown while a network task holds the
+    /// replica).
+    last_sync: std::cell::RefCell<Option<SyncState>>,
 }
 
 #[allow(clippy::large_enum_variant)] // one per open character; boxing the session buys nothing
@@ -120,7 +123,7 @@ impl Doc {
     /// have it.
     pub fn online(backend: Backend, engine: Arc<Engine>) -> Option<Doc> {
         let (ch, seen) = pull(&backend)?;
-        Some(Doc { kind: Kind::Online(Box::new(Online { backend, ch, seen, revision: 0 })), engine })
+        Some(Doc { kind: Kind::Online(Box::new(Online { backend, ch, seen, revision: 0, last_sync: Default::default() })), engine })
     }
 
     pub fn ch(&self) -> &Character {
@@ -168,14 +171,17 @@ impl Doc {
     /// Take the backend's newest state, if it changed. Returns whether it
     /// did.
     pub fn refresh(&mut self) -> bool {
+        let _s = crate::trace::span("online refresh");
         let Kind::Online(o) = &mut self.kind else { return false };
+        // Never wait for a network task holding the lock: what arrived is
+        // taken on a later frame.
         let now = match &o.backend {
             Backend::Gm { host, id } => {
-                let a = host.authority();
+                let Some(a) = host.try_authority() else { return false };
                 (a.version(id), a.hash(id), 0)
             }
             Backend::Player { session, id } => {
-                let r = session.replica();
+                let Some(r) = session.try_replica() else { return false };
                 (r.version(id), r.confirmed_hash(id), r.outbox(id).len())
             }
         };
@@ -183,7 +189,7 @@ impl Doc {
         if (v, h, n) == o.seen {
             return false;
         }
-        let Some((mut ch, seen)) = pull(&o.backend) else { return false };
+        let Some((mut ch, seen)) = try_pull(&o.backend) else { return false };
         ch.file = o.ch.file.clone();
         // A GM's copy is saved into the campaign file; a player's is the
         // campaign's to keep.
@@ -196,6 +202,7 @@ impl Doc {
 
     /// Run a command; the only way the GUI changes a character.
     pub fn apply(&mut self, cmd: Command) -> Result<Report, Rejected> {
+        let _s = crate::trace::span("command apply");
         let engine = self.engine.clone();
         let r = match &mut self.kind {
             Kind::Local(s) => return s.apply(&engine, cmd),
@@ -268,29 +275,47 @@ impl Doc {
         }
     }
 
-    /// Save to `path` (an online character: a copy of it).
-    pub fn save(&mut self, path: &Path) -> std::io::Result<()> {
+    /// A save to `path` (an online character: a copy of it) as a job for
+    /// another thread: a copy of the character is taken now and written
+    /// by the returned closure.
+    /// Then call [`Doc::saved`] with [`Doc::revision`] as it was here.
+    pub fn save_job(&self, path: PathBuf) -> impl FnOnce() -> std::io::Result<()> + Send + 'static {
         let engine = self.engine.clone();
+        let mut copy = self.ch().clone();
+        move || {
+            let _s = crate::trace::span("save file");
+            engine.save(&mut copy, &path)
+        }
+    }
+
+    /// A [`Doc::save_job`] to `path` succeeded; `revision` is what
+    /// [`Doc::revision`] was when it started (a later change keeps the
+    /// character modified).
+    pub fn saved(&mut self, path: &Path, revision: u64) {
+        let unchanged = self.revision() == revision;
         match &mut self.kind {
-            Kind::Local(s) => s.save(&engine, path),
+            Kind::Local(s) => s.saved_as(path, unchanged),
             Kind::Online(o) => {
-                let mut copy = o.ch.clone();
-                engine.save(&mut copy, path)?;
                 if matches!(o.backend, Backend::Gm { .. }) {
                     o.ch.file = Some(path.to_owned());
-                    o.ch.dirty = false;
+                    if unchanged {
+                        o.ch.dirty = false;
+                    }
                 }
-                Ok(())
             }
         }
     }
 
     /// An online character's sync state (players only).
     pub fn sync_state(&self) -> Option<SyncState> {
-        match self.backend()? {
+        let Kind::Online(o) = &self.kind else { return None };
+        match &o.backend {
             Backend::Player { session, id } => {
-                let r = session.replica();
-                Some(SyncState { mode: session.last_mode(), pending: r.outbox(id).len(), refused: r.refused().iter().filter(|x| x.character == *id).count() })
+                // While a network task holds the replica: the last state.
+                let Some(r) = session.try_replica() else { return o.last_sync.borrow().clone() };
+                let s = SyncState { mode: session.last_mode(), pending: r.outbox(id).len(), refused: r.refused().iter().filter(|x| x.character == *id).count() };
+                *o.last_sync.borrow_mut() = Some(s.clone());
+                Some(s)
             }
             Backend::Gm { .. } => None,
         }
@@ -343,6 +368,20 @@ impl Doc {
 pub fn gm_line(a: &chummer_sync::Authority, f: &FeedEntry) -> LogLine {
     let revert = f.version.filter(|v| a.can_revert(&f.character, *v));
     LogLine { at: f.at, text: f.to_string(), revert, refused: f.rejected.is_some() }
+}
+
+/// [`pull`] when no other thread holds the lock.
+fn try_pull(b: &Backend) -> Option<(Character, (u64, Hash, usize))> {
+    match b {
+        Backend::Gm { host, id } => {
+            let a = host.try_authority()?;
+            Some((a.character(id)?.clone(), (a.version(id)?, a.hash(id)?, 0)))
+        }
+        Backend::Player { session, id } => {
+            let r = session.try_replica()?;
+            Some((r.character(id)?.clone(), (r.version(id)?, r.confirmed_hash(id)?, r.outbox(id).len())))
+        }
+    }
 }
 
 fn pull(b: &Backend) -> Option<(Character, (u64, Hash, usize))> {

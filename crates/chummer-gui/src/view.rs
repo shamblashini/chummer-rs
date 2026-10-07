@@ -180,6 +180,11 @@ pub struct CharacterView {
     ws_build: workspace::build::State,
     /// The Workspace's item pages: the inline catalog and item inspector.
     ws_gear: ws_items::GearState,
+    /// Career upgrade costs (each takes a whole sheet; see
+    /// [`CharacterView::career_costs`]).
+    career_costs: crate::memo::Memo<(), Arc<career::SkillCosts>>,
+    /// Weapon stats by (guid, with the character's house rules).
+    weapon_stats: crate::memo::Memo<(String, bool), chummer_core::items::weapon::WeaponStats>,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -301,6 +306,8 @@ impl CharacterView {
             play: Default::default(),
             ws_build: Default::default(),
             ws_gear: Default::default(),
+            career_costs: Default::default(),
+            weapon_stats: Default::default(),
         };
         v.refresh_budget();
         v.set_guided(guided_preference());
@@ -308,6 +315,7 @@ impl CharacterView {
     }
 
     fn refresh_budget(&mut self) {
+        let _s = crate::trace::span("budget + issues");
         match (&self.settings, self.doc.created) {
             (Some(st), false) => {
                 let b = chargen::budget_with(&self.doc, &self.sheet, &self.rules, st, Some(&self.store));
@@ -349,7 +357,42 @@ impl CharacterView {
     /// For the GM screen's edits to a member open in this tab; the sheet
     /// follows on the next frame (the session's revision changes).
     pub fn doc_mut(&mut self) -> &mut Doc {
+        self.career_costs.clear();
+        self.weapon_stats.clear();
+        self.play_memo_clear();
         &mut self.doc
+    }
+
+    /// Career upgrade costs of attributes, skills, groups and
+    /// specializations, worked out once per revision of the character
+    /// (asking `career::skill_upgrade_karma_cost` for every row of a
+    /// page computed a sheet per row, every frame).
+    pub(crate) fn career_costs(&self, engine: &Engine) -> Arc<career::SkillCosts> {
+        self.career_costs.get(self.doc.revision(), (), || Arc::new(crate::trace::time("career costs", || career::SkillCosts::new(engine, &self.doc))))
+    }
+
+    /// A weapon's final stats, once per revision: with the character's
+    /// house rules and ranges (`full`), or Chummer's defaults
+    /// (`weapon::stats`).
+    pub(crate) fn weapon_stats(&self, w: &Element, full: bool) -> chummer_core::items::weapon::WeaponStats {
+        use chummer_core::items::weapon;
+        let work = || {
+            crate::trace::time("weapon stats", || {
+                if full {
+                    let rules = self.settings.as_ref().map(weapon::WeaponRules::from_settings).unwrap_or_default();
+                    weapon::stats_with(&self.doc, &self.sheet, Some(&self.store), w, &rules)
+                } else {
+                    weapon::stats(&self.doc, &self.sheet, w)
+                }
+            })
+        };
+        let guid = w.get("guid");
+        if guid.is_empty() {
+            return work();
+        }
+        // Keyed by the revision the sheet is for: within the frame of a
+        // change the sheet is still the old one.
+        self.weapon_stats.get(self.seen_revision, (guid, full), work)
     }
 
     /// Close the tab, keeping the document.
@@ -370,8 +413,10 @@ impl CharacterView {
         r
     }
 
-    pub fn save(&mut self, path: &std::path::Path) -> std::io::Result<()> {
-        self.doc.save(path)
+    /// A background save of this character (`Doc::save_job`) to `path`
+    /// succeeded.
+    pub fn doc_saved(&mut self, path: &std::path::Path, revision: u64) {
+        self.doc.saved(path, revision);
     }
 
     /// Show the History side tab.
@@ -398,12 +443,15 @@ impl CharacterView {
     /// is refreshed by the commands themselves (`command::apply`).
     fn recompute(&mut self, engine: &Engine) {
         self.seen_revision = self.doc.revision();
+        // Settings may have changed without a new revision.
+        self.career_costs.clear();
+        self.weapon_stats.clear();
         if self.doc.field("settings") != self.settings_key {
             // Switched (or undone back to) another preset.
             self.refresh_settings(engine);
             return;
         }
-        self.sheet = calc::compute(&self.doc, &self.rules, Some(&self.store), Some(&engine.catalog));
+        self.sheet = crate::trace::time("recompute (calc::compute)", || calc::compute(&self.doc, &self.rules, Some(&self.store), Some(&engine.catalog)));
         self.refresh_budget();
     }
 
@@ -432,10 +480,11 @@ impl CharacterView {
         let mut changed = self.begin_frame();
         let mut roll: Option<u32> = None;
         egui::SidePanel::right("sheet_panel").resizable(true).default_width(310.0).min_width(220.0).show(ctx, |ui| {
+            let _s = crate::trace::span("side panel");
             changed |= self.side_panel(ui, lang, &mut roll);
         });
-        changed |= self.item_editor_panel(ctx, engine, lang, status);
-        self.guide_bar(ctx, lang, pdfs, status);
+        changed |= crate::trace::time("item editor", || self.item_editor_panel(ctx, engine, lang, status));
+        crate::trace::time("guide bar", || self.guide_bar(ctx, lang, pdfs, status));
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(key) = crate::ruleset_ui::banner(ui, &self.doc, engine, lang, self.tab == Tab::Common) {
                 changed |= self.switch_settings(&key, status);
@@ -443,10 +492,11 @@ impl CharacterView {
             let tabs: Vec<(Tab, String)> = TABS.iter().filter(|(t, _)| self.visible(*t)).map(|(t, l)| (*t, lang.tr(l))).collect();
             let tabs = self.decorated_tabs(tabs);
             crate::theme::tab_strip_with(ui, &mut self.tab, &tabs);
-            self.issue_panel(ui, lang, self.tab);
+            crate::trace::time("issue panel", || self.issue_panel(ui, lang, self.tab));
+            let _s = crate::trace::span(TABS.iter().find(|(t, _)| *t == self.tab).map_or("tab", |(_, l)| *l));
             changed |= self.tab_page(ui, self.tab, engine, lang, pdfs, status, &mut roll);
         });
-        self.end_frame(ctx, engine, lang, pdfs, status, changed);
+        crate::trace::time("end (dialogs, recompute)", || self.end_frame(ctx, engine, lang, pdfs, status, changed));
         roll
     }
 
@@ -891,7 +941,7 @@ impl CharacterView {
                         });
                         row.col(|ui| {
                             if career {
-                                match career::attribute_upgrade_karma_cost(engine, &self.doc, name) {
+                                match self.career_costs(engine).attribute(&self.doc, name) {
                                     Some(c) => {
                                         let r = ui.add_enabled(self.doc.karma >= c, egui::Button::new(lang.tr_fmt("Raise ({0} karma)", &[&c])));
                                         if r.clicked() {
@@ -1006,7 +1056,7 @@ impl CharacterView {
                                 ui.horizontal(|ui| {
                                     ui.label(s.rating.to_string());
                                     if career {
-                                        if let Some(c) = career::skill_upgrade_karma_cost(engine, &self.doc, &s.guid) {
+                                        if let Some(c) = self.career_costs(engine).skill(&self.doc, &s.guid) {
                                             if ui.add_enabled(self.doc.karma >= c, egui::Button::new(format!("↑ {c}"))).clicked() {
                                                 self.action = Some(CareerAction::RaiseSkill(s.guid.clone()));
                                             }
@@ -1041,7 +1091,7 @@ impl CharacterView {
                                 .doc
                                 .skill_groups
                                 .iter()
-                                .map(|g| if career { career::skill_group_upgrade_karma_cost(engine, &self.doc, &g.name) } else { None })
+                                .map(|g| if career { self.career_costs(engine).group(&self.doc, &g.name) } else { None })
                                 .collect();
                             let karma = self.doc.karma;
                             let groups = self.doc.skill_groups.clone();
@@ -1110,7 +1160,7 @@ impl CharacterView {
                             }
                             ui.horizontal(|ui| {
                                 if career && !s.disabled {
-                                    if let Some(c) = career::skill_upgrade_karma_cost(engine, &self.doc, &s.guid) {
+                                    if let Some(c) = self.career_costs(engine).skill(&self.doc, &s.guid) {
                                         if ui.add_enabled(self.doc.karma >= c, egui::Button::new(format!("↑ {c}"))).on_hover_text(lang.tr("Raise for karma")).clicked() {
                                             self.action = Some(CareerAction::RaiseSkill(s.guid.clone()));
                                         }
@@ -1246,7 +1296,6 @@ impl CharacterView {
         if weapons.is_empty() {
             return;
         }
-        let rules = self.settings.as_ref().map(chummer_core::items::weapon::WeaponRules::from_settings).unwrap_or_default();
         egui::CollapsingHeader::new(RichText::new(lang.tr("Combat stats")).strong()).id_salt("combat_stats").default_open(true).show(ui, |ui| {
             egui::Grid::new("weapon_stats").striped(true).num_columns(8).spacing([14.0, 3.0]).show(ui, |ui| {
                 for h in lang.tr_all(["Weapon", "Pool", "Damage", "AP", "Acc", "RC", "Reach", "Ranges"]) {
@@ -1254,7 +1303,7 @@ impl CharacterView {
                 }
                 ui.end_row();
                 for w in weapons {
-                    let st = chummer_core::items::weapon::stats_with(&self.doc, &self.sheet, Some(&self.store), w, &rules);
+                    let st = self.weapon_stats(w, true);
                     ui.label(w.get("name"));
                     ui.strong(st.dice_pool.to_string()).on_hover_text(&st.skill);
                     ui.label(&st.damage);

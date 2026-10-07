@@ -7,7 +7,7 @@ use chummer_core::command::Command;
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
-use chummer_core::{calc, career};
+use chummer_core::calc;
 use eframe::egui::{self, RichText};
 
 use super::{attr_long, k, source_button, Selected};
@@ -106,7 +106,7 @@ impl CharacterView {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             if self.doc.created {
-                match career::attribute_upgrade_karma_cost(engine, &self.doc, name) {
+                match self.career_costs(engine).attribute(&self.doc, name) {
                     Some(c) => {
                         let tip = lang.tr_fmt("Raise {0} to {1} for {2} karma", &[&long, &(v.value + 1), &c]);
                         if widgets::cost_button(ui, &format!("{} · {}", lang.tr_fmt("Raise to {0}", &[&(v.value + 1)]), k(c)), self.doc.karma >= c, &tip, &lang.tr("Not enough karma")).clicked() {
@@ -192,7 +192,7 @@ impl CharacterView {
         let mut book = None;
         ui.horizontal_wrapped(|ui| {
             if self.doc.created && !s.disabled && !s.native {
-                match career::skill_upgrade_karma_cost(engine, &self.doc, &s.guid) {
+                match self.career_costs(engine).skill(&self.doc, &s.guid) {
                     Some(c) => {
                         let tip = lang.tr_fmt("Raise {0} to {1} for {2} karma", &[&s.name, &(s.rating + 1), &c]);
                         if widgets::cost_button(ui, &format!("{} · {}", lang.tr_fmt("Raise to {0}", &[&(s.rating + 1)]), k(c)), self.doc.karma >= c, &tip, &lang.tr("Not enough karma")).clicked() {
@@ -237,7 +237,7 @@ impl CharacterView {
         }
         if self.doc.created {
             ui.add_space(4.0);
-            if let Some(c) = career::skill_group_upgrade_karma_cost(engine, &self.doc, name) {
+            if let Some(c) = self.career_costs(engine).group(&self.doc, name) {
                 let tip = lang.tr_fmt("Raise {0} to {1} for {2} karma", &[&name, &(g.rating() + 1), &c]);
                 if widgets::cost_button(ui, &format!("{} · {}", lang.tr_fmt("Raise to {0}", &[&(g.rating() + 1)]), k(c)), self.doc.karma >= c, &tip, &lang.tr("Not enough karma")).clicked() {
                     self.action = Some(CareerAction::RaiseGroup(name.to_owned()));

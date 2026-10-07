@@ -16,6 +16,8 @@ use crate::view::CharacterView;
 use crate::{App, Home, Mdi};
 
 const SIDEBAR_WIDTH: f32 = 200.0;
+/// The palette's game-data index job (`bg`).
+const PALETTE_INDEX: &str = "palette-index";
 /// The undo/redo/settings/theme row under the sidebar, with its line.
 const CLUSTER_HEIGHT: f32 = 43.0;
 
@@ -47,19 +49,20 @@ impl App {
         if doc == DocKey::Campaign {
             let engine = self.engine.clone();
             if let Some(gm) = self.gm.as_mut() {
+                let _s = crate::trace::span("gm screen begin_frame");
                 gm.begin_frame(&engine, &mut self.views, &mut self.online);
             }
         }
-        self.ws_top_bar(ctx, doc);
-        self.ws_status_bar(ctx, doc);
-        self.ws_sidebar(ctx, doc);
+        crate::trace::time("top bar", || self.ws_top_bar(ctx, doc));
+        crate::trace::time("status bar", || self.ws_status_bar(ctx, doc));
+        crate::trace::time("sidebar", || self.ws_sidebar(ctx, doc));
         match doc {
-            DocKey::Character(id) => self.ws_character(ctx, id),
-            DocKey::Campaign => self.ws_campaign(ctx),
-            DocKey::Home => self.ws_home(ctx),
+            DocKey::Character(id) => crate::trace::time("character page", || self.ws_character(ctx, id)),
+            DocKey::Campaign => crate::trace::time("gm screen", || self.ws_campaign(ctx)),
+            DocKey::Home => crate::trace::time("home", || self.ws_home(ctx)),
         }
-        self.ws_popped(ctx);
-        self.ws_palette(ctx);
+        crate::trace::time("pop-outs", || self.ws_popped(ctx));
+        crate::trace::time("palette", || self.ws_palette(ctx));
     }
 
     // ----- documents -----
@@ -304,6 +307,7 @@ impl App {
                 if !left.is_empty() {
                     ui.label(small(left, ws.muted));
                 }
+                crate::bg::status_ui(ui);
                 match &self.status {
                     Some((msg, true)) => ui.label(small(msg.clone(), ws.error)),
                     Some((msg, false)) => ui.label(small(msg.clone(), ws.muted)),
@@ -511,10 +515,10 @@ impl App {
         let Some(i) = self.ws_index(id) else { return };
         let ws = theme::current(ctx).ws;
         let engine = self.engine.clone();
-        let mut changed = self.views[i].ws_begin();
+        let mut changed = crate::trace::time("begin (online refresh)", || self.views[i].ws_begin());
         let mut roll = None;
         // Budget strip.
-        let chips = self.views[i].ws_budgets(&self.lang);
+        let chips = crate::trace::time("budget chips", || self.views[i].ws_budgets(&self.lang));
         egui::TopBottomPanel::top("ws_budget").exact_height(44.0).frame(egui::Frame::new().fill(ws.ground).inner_margin(Margin::symmetric(16, 0))).show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 18.0;
@@ -526,7 +530,7 @@ impl App {
         // Inspector.
         egui::SidePanel::right("ws_inspector").default_width(320.0).min_width(240.0).max_width(560.0).resizable(true).frame(egui::Frame::new().fill(ws.chrome)).show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("ws_inspector_scroll").auto_shrink(false).show(ui, |ui| {
-                changed |= self.ws_inspector(ui, i, &mut roll);
+                changed |= crate::trace::time("inspector", || self.ws_inspector(ui, i, &mut roll));
             });
         });
         // The page.
@@ -550,13 +554,14 @@ impl App {
                 });
             } else {
                 let page = ui.max_rect();
+                let _s = crate::trace::span(section.label());
                 changed |= widgets::clip_to(ui, page, |ui| self.views[i].ws_page(ui, section, &engine, &self.lang, &self.pdfs, &mut self.status, &mut roll, &mut self.ws.pops));
             }
         });
         if toggle {
             self.ws.pops.toggle(key, ctx);
         }
-        self.views[i].ws_end(ctx, &engine, &self.lang, &self.pdfs, &mut self.status, changed);
+        crate::trace::time("end (dialogs, recompute)", || self.views[i].ws_end(ctx, &engine, &self.lang, &self.pdfs, &mut self.status, changed));
         self.ws_after_character(ctx, i, roll);
     }
 
@@ -858,11 +863,16 @@ impl App {
         if !self.ws.palette.open {
             return;
         }
-        if self.ws.palette.wants_records() {
-            let records = palette::record_entries(&self.engine.store, &self.lang);
+        // The game-data index is built on another thread when the palette
+        // opens; searches use it once it is there.
+        if let Some(records) = crate::bg::take::<Vec<Entry>>(PALETTE_INDEX) {
             self.ws.palette.set_records(records);
         }
-        let entries = self.ws_entries();
+        if self.ws.palette.needs_records() && !crate::bg::busy(PALETTE_INDEX) {
+            let (engine, lang) = (self.engine.clone(), self.lang.clone());
+            crate::bg::spawn(ctx, PALETTE_INDEX, self.lang.tr("Indexing game data…"), move || crate::trace::time("palette index build", || palette::record_entries(&engine.store, &lang)));
+        }
+        let entries = crate::trace::time("palette entries", || self.ws_entries());
         let picked = self.ws.palette.ui(ctx, &entries, &self.lang);
         if self.ws.palette.wants_records() {
             ctx.request_repaint();

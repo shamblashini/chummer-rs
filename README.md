@@ -622,6 +622,39 @@ instance its own `XDG_CONFIG_HOME` (another node key), and in Online
 Settings enter `https://127.0.0.1:3443#<mailbox id>` and its
 `self-signed-cert.pem`.
 
+## Troubleshooting
+
+### "chummer-rs is not responding"
+
+The desktop shows this when the window does not answer for a few
+seconds. Saving, opening, printing, file dialogs, going online, mailbox
+rounds and campaign saves run on their own threads (the status bar shows
+a spinner and what is running), and the window only reads the online
+campaign's state when no network task holds it. If the window still
+stalls, start chummer-rs from a terminal with frame timing on:
+
+```bash
+CHUMMER_TRACE_FRAMES=1 chummer-rs 2>trace.log
+```
+
+Every frame slower than 50 ms is then written to stderr with the phases
+that ran in it (sheet recompute, issues, catalog preview, palette index,
+page drawing, online refresh and so on), time spent painting outside the
+frame, waits for the online locks, long holds of those locks by network
+tasks, and slow background jobs:
+
+```
+[trace    93.208] slow frame #240: update 93.5 ms (worst so far 93.5 ms)
+    workspace layout: 93.5 ms
+      character page: 93.4 ms
+        At the table: 93.2 ms
+          Weapons: 79.7 ms
+[trace] background job save:3 took 1333.6 ms
+[trace   167.842] held the authority lock 34.4 ms (thread chummer-net)
+```
+
+Attach the log to a bug report. Without the variable nothing is timed.
+
 ## How it is checked
 
 The 34 test characters from Chummer5a's own test suite are oracles. Chummer
@@ -659,6 +692,12 @@ cargo test --workspace
 
 ## Not done yet
 
+- Still on the UI thread, though short: opening a campaign file
+  (~0.4 s for four big characters), a joined campaign's local copies at
+  start (~0.2 s per big character), the first frame of the Play page
+  with many weapons (~0.1 s). Compressing a character for the online
+  sync (LZMA, ~2 s for one with big mugshots) runs on network and
+  background threads, but costs that CPU on every change that is saved.
 - Places where chummer-rs copies (or fixes) what looks like a Chummer5a
   bug are listed, with rules references, in
   [docs/likely-bugs.md](docs/likely-bugs.md). Every place where

@@ -187,20 +187,39 @@ pub fn adopt_owners(auth: &Authority, campaign: &mut Campaign) -> bool {
 /// store theirs, linked members are saved to their own file when it
 /// differs. The roster names follow.
 pub fn write_back(auth: &Authority, campaign: &mut Campaign, base: Option<&Path>, engine: &Engine) -> Result<(), String> {
+    let linked = write_back_embedded(auth, campaign, base);
+    save_linked(engine, linked)
+}
+
+/// The quick half of [`write_back`]: owners, names and embedded
+/// characters go into the campaign; the linked members' characters are
+/// returned with their files, for [`save_linked`] (reading and writing
+/// files: run it where waiting does no harm).
+pub fn write_back_embedded(auth: &Authority, campaign: &mut Campaign, base: Option<&Path>) -> Vec<(std::path::PathBuf, Character)> {
+    let mut linked = Vec::new();
     for m in &mut campaign.members {
         let id = character_id(m.id);
         let Some(ch) = auth.character(&id) else { continue };
         m.owner = auth.owner(&id).map(|o| o.to_string());
         match m.linked_path(base) {
             Some(p) => {
-                let same = Character::load(&p).is_ok_and(|on_disk| command::state_hash(&on_disk) == command::state_hash(ch));
-                if !same {
-                    let mut copy = ch.clone();
-                    engine.save(&mut copy, &p).map_err(|e| format!("could not save {}: {e}", p.display()))?;
-                }
                 m.name = ch.display_name();
+                linked.push((p, ch.clone()));
             }
             None => m.store_character(ch),
+        }
+    }
+    linked
+}
+
+/// The slow half of [`write_back`]: each linked character is saved to
+/// its file when that differs.
+pub fn save_linked(engine: &Engine, linked: Vec<(std::path::PathBuf, Character)>) -> Result<(), String> {
+    for (p, ch) in linked {
+        let same = Character::load(&p).is_ok_and(|on_disk| command::state_hash(&on_disk) == command::state_hash(&ch));
+        if !same {
+            let mut copy = ch;
+            engine.save(&mut copy, &p).map_err(|e| format!("could not save {}: {e}", p.display()))?;
         }
     }
     Ok(())
@@ -296,6 +315,11 @@ impl HostedCampaign {
     /// [`adopt_owners`] into `campaign`.
     pub fn adopt_owners(&self, campaign: &mut Campaign) -> bool {
         adopt_owners(&self.host.authority(), campaign)
+    }
+
+    /// [`write_back_embedded`] into `campaign`.
+    pub fn write_back_embedded(&self, campaign: &mut Campaign) -> Vec<(std::path::PathBuf, Character)> {
+        write_back_embedded(&self.host.authority(), campaign, self.campaign_path.parent())
     }
 
     /// [`write_back`] into `campaign`.

@@ -59,7 +59,22 @@ pub struct RelationshipsPanel {
     notes_edit: Option<NotesEdit>,
     confirm: Option<Confirm>,
     lists: Option<std::rc::Rc<Lists>>,
+    /// Linked files loading on another thread: contact guid → the key
+    /// being loaded.
+    loading: HashMap<String, (String, String)>,
+    /// The guid of the contact an Attach Character dialog is for.
+    attaching: Option<String>,
+    /// An Add from File dialog is open for this panel.
+    importing: bool,
 }
+
+/// A linked file, loaded on another thread: the character and its
+/// decoded mugshot.
+type Loaded = (Result<LinkedCharacter, String>, Option<egui::ColorImage>);
+
+/// The panel's file dialogs (`bg`).
+const ATTACH: &str = "dialog:contact-attach";
+const IMPORT: &str = "dialog:contacts-import";
 
 /// The notes dialog: the text and colour being edited for one entry.
 struct NotesEdit {
@@ -97,6 +112,7 @@ impl RelationshipsPanel {
 
     /// The tab's contents; true when the character changed.
     pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, status: &mut Status) -> bool {
+        let dialogs = self.take_dialogs(ch, status);
         if self.lists.is_none() {
             self.lists = Some(std::rc::Rc::new(Lists {
                 fields: contacts::CHOICE_LISTS.iter().map(|(f, _, _)| (*f, contacts::choices(store, f))).collect(),
@@ -118,8 +134,8 @@ impl RelationshipsPanel {
                 changed |= ch.set(Command::AddContact { kind });
             }
             if kind == ContactType::Contact {
-                if ui.button(lang.tr("Add from File")).clicked() {
-                    changed |= add_from_file(ch, status);
+                if ui.button(lang.tr("Add from File")).clicked() && add_from_file(ui.ctx()) {
+                    self.importing = true;
                 }
                 if ui.button(lang.tr("Expand/Collapse All")).clicked() {
                     let all: Vec<String> = contacts::of_type(ch, kind).iter().map(|c| c.get("guid")).collect();
@@ -136,7 +152,7 @@ impl RelationshipsPanel {
         });
         ui.separator();
         let entries: Vec<Element> = contacts::of_type(ch, kind).into_iter().cloned().collect();
-        self.refresh_linked(ui.ctx(), ch.file.as_deref(), &entries);
+        crate::trace::time("linked contacts", || self.refresh_linked(ui.ctx(), ch.file.as_deref(), &entries));
         egui::ScrollArea::both().id_salt(("relationships", self.tab)).auto_shrink(false).show(ui, |ui| {
             if entries.is_empty() {
                 ui.weak(lang.tr("None."));
@@ -172,11 +188,47 @@ impl RelationshipsPanel {
         if changed || ui.input(|i| i.pointer.any_released()) {
             ui.ctx().request_repaint();
         }
+        changed || dialogs
+    }
+
+    /// The answers of this panel's file dialogs, once there. Returns true
+    /// if the character changed.
+    fn take_dialogs(&mut self, ch: &mut Doc, status: &mut Status) -> bool {
+        let mut changed = false;
+        if self.attaching.is_some() {
+            if let Some(f) = crate::bg::take::<Option<PathBuf>>(ATTACH) {
+                if let (Some(guid), Some(f)) = (self.attaching.take(), f) {
+                    let startup = contacts::startup_dir();
+                    changed |= ch.set(Command::LinkContact { contact: guid, file: f.to_string_lossy().into_owned(), startup: startup.to_string_lossy().into_owned() });
+                }
+                self.attaching = None;
+            }
+        }
+        if self.importing {
+            if let Some(r) = crate::bg::take::<Option<(PathBuf, Result<String, String>)>>(IMPORT) {
+                self.importing = false;
+                if let Some((f, xml)) = r {
+                    changed |= import_contacts(ch, &f, xml, status);
+                }
+            }
+        }
         changed
     }
 
-    /// Load the linked files of `entries` whose link is new or changed.
+    /// Load the linked files of `entries` whose link is new or changed
+    /// (on another thread: a linked save is a whole character file).
     fn refresh_linked(&mut self, ctx: &egui::Context, owner: Option<&Path>, entries: &[Element]) {
+        for (guid, key) in std::mem::take(&mut self.loading) {
+            match crate::bg::take::<Loaded>(&format!("linked:{guid}")) {
+                Some((state, img)) => {
+                    let mugshot = img.map(|i| ctx.load_texture(format!("mugshot_{guid}"), i, egui::TextureOptions::LINEAR));
+                    self.linked.insert(guid, Linked { key, state, mugshot });
+                }
+                None => {
+                    self.loading.insert(guid, key);
+                }
+            }
+        }
         let mut startup = None;
         for c in entries {
             let guid = c.get("guid");
@@ -185,17 +237,26 @@ impl RelationshipsPanel {
                 self.linked.remove(&guid);
                 continue;
             }
-            if self.linked.get(&guid).is_some_and(|l| l.key == key) {
+            if self.linked.get(&guid).is_some_and(|l| l.key == key) || self.loading.get(&guid) == Some(&key) {
                 continue;
             }
             let startup = startup.get_or_insert_with(contacts::startup_dir);
-            let state = match contacts::resolve(c, startup, owner) {
-                Some(LinkedPath::Found(p)) => LinkedCharacter::load(&p),
-                Some(LinkedPath::Missing(f)) => Err(missing(&f)),
+            let found = match contacts::resolve(c, startup, owner) {
+                Some(f) => f,
                 None => continue,
             };
-            let mugshot = state.as_ref().ok().and_then(|l| l.mugshot.as_deref()).and_then(|b| texture(ctx, &guid, b));
-            self.linked.insert(guid, Linked { key, state, mugshot });
+            let job = move || -> Loaded {
+                let state = match found {
+                    LinkedPath::Found(p) => LinkedCharacter::load(&p),
+                    LinkedPath::Missing(f) => Err(missing(&f)),
+                };
+                let img = state.as_ref().ok().and_then(|l| l.mugshot.as_deref()).and_then(decode_mugshot);
+                (state, img)
+            };
+            // A load of an older link still running: try again next frame.
+            if crate::bg::spawn(ctx, format!("linked:{guid}"), "Loading linked characters…", job) {
+                self.loading.insert(guid, key);
+            }
         }
     }
 
@@ -334,7 +395,7 @@ impl RelationshipsPanel {
     #[allow(clippy::too_many_arguments)]
     fn buttons(&mut self, ui: &mut egui::Ui, ch: &mut Doc, c: &Element, kind: ContactType, lang: &Language, status: &mut Status, read_only: bool) -> bool {
         let guid = c.get("guid");
-        let mut changed = false;
+        let changed = false;
         let tip = match (kind, contacts::is_linked(c)) {
             (ContactType::Enemy, true) => "Open the linked Enemy save file.",
             (ContactType::Enemy, false) => "Link this Enemy to a Chummer save file.",
@@ -357,15 +418,17 @@ impl RelationshipsPanel {
                 }
             } else if ui.button(lang.tr("Attach Character")).clicked() {
                 ui.close();
-                let mut dlg = rfd::FileDialog::new()
-                    .add_filter("Chummer character", &["chum5", "chum5lz"])
-                    .add_filter("All files", &["*"]);
-                if let Some(dir) = ch.file.as_deref().and_then(Path::parent) {
-                    dlg = dlg.set_directory(dir);
-                }
-                if let Some(f) = dlg.pick_file() {
-                    let startup = contacts::startup_dir();
-                    changed |= ch.set(Command::LinkContact { contact: guid.clone(), file: f.to_string_lossy().into_owned(), startup: startup.to_string_lossy().into_owned() });
+                let dir = ch.file.as_deref().and_then(Path::parent).map(Path::to_owned);
+                let open = crate::bg::dialog(ui.ctx(), ATTACH, move || {
+                    let mut dlg = rfd::FileDialog::new().add_filter("Chummer character", &["chum5", "chum5lz"]).add_filter("All files", &["*"]);
+                    if let Some(dir) = dir {
+                        dlg = dlg.set_directory(dir);
+                    }
+                    dlg.pick_file()
+                });
+                if open {
+                    // Linked when the file is picked (`take_dialogs`).
+                    self.attaching = Some(guid.clone());
                 }
             }
         })
@@ -502,19 +565,27 @@ fn missing(file: &str) -> String {
     format!("The save file {file} could not be found.")
 }
 
-/// A texture from a base64 PNG/JPEG mugshot.
-fn texture(ctx: &egui::Context, guid: &str, b64: &str) -> Option<egui::TextureHandle> {
+/// A base64 PNG/JPEG mugshot, decoded.
+fn decode_mugshot(b64: &str) -> Option<egui::ColorImage> {
     let bytes = contacts::decode_base64(b64)?;
     let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
     let size = [img.width() as usize, img.height() as usize];
-    let color = egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw());
-    Some(ctx.load_texture(format!("mugshot_{guid}"), color, egui::TextureOptions::LINEAR))
+    Some(egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()))
 }
 
-/// "Add from File": contacts from a Chummer contacts XML file.
-fn add_from_file(ch: &mut Doc, status: &mut Status) -> bool {
-    let Some(f) = rfd::FileDialog::new().add_filter("XML", &["xml"]).add_filter("All files", &["*"]).pick_file() else { return false };
-    match std::fs::read_to_string(&f).map_err(|e| e.to_string()).and_then(|xml| ch.apply(Command::ImportContacts { xml }).map_err(|e| e.reason)) {
+/// "Add from File": the dialog and the read, on another thread; the
+/// contacts are added by [`RelationshipsPanel::take_dialogs`].
+fn add_from_file(ctx: &egui::Context) -> bool {
+    crate::bg::dialog(ctx, IMPORT, || {
+        let f = rfd::FileDialog::new().add_filter("XML", &["xml"]).add_filter("All files", &["*"]).pick_file()?;
+        let xml = std::fs::read_to_string(&f).map_err(|e| e.to_string());
+        Some((f, xml))
+    })
+}
+
+/// Contacts from a Chummer contacts XML file read by [`add_from_file`].
+fn import_contacts(ch: &mut Doc, f: &Path, xml: Result<String, String>, status: &mut Status) -> bool {
+    match xml.and_then(|xml| ch.apply(Command::ImportContacts { xml }).map_err(|e| e.reason)) {
         Ok(r) => {
             let n = r.count.unwrap_or(0);
             *status = Some((format!("Added {n} contacts from {}", f.display()), false));

@@ -19,6 +19,12 @@ use eframe::egui::{self, RichText};
 
 use super::{FeedRow, GmScreen, Live, AUTHOR};
 
+/// The job making the campaign online (`bg`).
+const GO_ONLINE: &str = "gm-go-online";
+
+/// What [`GmScreen::go_online`] made on its thread.
+type GoneOnline = Result<(HostedCampaign, hosted::Reconciled), String>;
+
 /// A player of an online campaign.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlayerRow {
@@ -72,7 +78,12 @@ impl Drop for GmOnline {
         if let Some(h) = self.mail_loop.take() {
             h.abort();
         }
-        let _ = self.hosted.host.save();
+        // The last save on another thread (it may compress characters);
+        // the app waits for it at exit.
+        let host = self.hosted.host.clone();
+        if !crate::bg::run(format!("save:authority:{}", self.name), "Saving the campaign's online state…", move || host.save().map_err(|e| e.to_string())) {
+            let _ = self.hosted.host.save();
+        }
     }
 }
 
@@ -87,25 +98,56 @@ impl GmScreen {
 
     /// Make the campaign online (or reopen its sidecar): its characters
     /// move into the authority and every member's document is backed by it.
-    pub fn go_online(&mut self, net: &mut Online, engine: &Arc<Engine>, views: &mut [CharacterView]) -> Result<(), String> {
+    /// Starts making the campaign online on another thread (loading or
+    /// making the authority compresses every character: seconds); the
+    /// next frames take it in ([`GmScreen::online_tick`]). With `serve`,
+    /// hosting starts once it is there.
+    pub fn go_online(&mut self, net: &mut Online, engine: &Arc<Engine>, views: &[CharacterView], serve: bool) -> Result<(), String> {
         if self.online.is_some() {
+            return Ok(());
+        }
+        if crate::bg::busy(GO_ONLINE) {
+            self.serve_when_online |= serve;
             return Ok(());
         }
         let path = self.path.clone().ok_or_else(|| hosted::HostedError::NoFile.to_string())?;
         let secret = net.secret()?;
+        let engine = engine.clone();
         let current: std::collections::BTreeMap<MemberId, chummer_core::character::Character> =
             self.campaign.members.iter().filter_map(|m| super::doc_ref(&self.live, views, m.id).filter(|d| !d.is_online()).map(|d| (m.id, d.ch().clone()))).collect();
-        let (h, rec) = {
-            let _g = net.enter();
-            HostedCampaign::open(&self.campaign, &path, engine.clone(), secret, AUTHOR, |m| current.get(&m).cloned()).map_err(|e| e.to_string())?
+        let campaign = self.campaign.clone();
+        let rt = net.handle();
+        crate::bg::run(GO_ONLINE, "Going online…", move || -> GoneOnline {
+            let _g = rt.enter();
+            let _s = crate::trace::span("go online (HostedCampaign::open)");
+            HostedCampaign::open(&campaign, &path, engine, secret, AUTHOR, |m| current.get(&m).cloned()).map_err(|e| e.to_string())
+        });
+        self.serve_when_online = serve;
+        Ok(())
+    }
+
+    /// The authority made by [`GmScreen::go_online`], once there.
+    fn take_online(&mut self, net: &mut Online, engine: &Arc<Engine>, views: &mut [CharacterView]) {
+        let Some(r) = crate::bg::take::<GoneOnline>(GO_ONLINE) else { return };
+        let serve = std::mem::take(&mut self.serve_when_online);
+        let (h, rec) = match r {
+            Ok(x) => x,
+            Err(e) => {
+                self.online_error = Some(e);
+                return;
+            }
         };
         for (m, e) in rec.failed {
             self.errors.insert(m, e);
         }
         h.adopt_owners(&mut self.campaign);
         self.online = Some(GmOnline { hosted: h, mail: Default::default(), mail_loop: None, invite: None, signature: self.signature(), name: self.campaign.name.clone() });
-        self.online_docs(engine, views);
-        Ok(())
+        crate::trace::time("online docs", || self.online_docs(engine, views));
+        if serve {
+            if let Err(e) = self.set_hosting(net, engine, views, true) {
+                self.online_error = Some(e);
+            }
+        }
     }
 
     /// Every member's document backed by the authority.
@@ -144,7 +186,8 @@ impl GmScreen {
 
     /// Each frame: take roster and owner changes into the authority, and
     /// let documents not on screen take what arrived.
-    pub(super) fn online_tick(&mut self, engine: &Arc<Engine>, views: &mut [CharacterView]) {
+    pub(super) fn online_tick(&mut self, net: &mut Online, engine: &Arc<Engine>, views: &mut [CharacterView]) {
+        self.take_online(net, engine, views);
         let sig = self.signature();
         let Some(o) = &mut self.online else { return };
         if sig != o.signature || self.campaign.name != o.name {
@@ -185,9 +228,11 @@ impl GmScreen {
             }
             return Ok(());
         }
-        self.go_online(net, engine, views)?;
+        let Some(o) = self.online.as_mut() else {
+            // Hosting starts once the authority is ready.
+            return self.go_online(net, engine, views, true);
+        };
         let node = net.node()?;
-        let o = self.online.as_mut().expect("online");
         node.serve(&o.hosted.host);
         // A mailbox round now and every few minutes.
         let (host, mail) = (o.hosted.host.clone(), o.mail.clone());
@@ -370,14 +415,6 @@ impl GmScreen {
         });
         ui.end_row();
         changed
-    }
-
-    /// Save: the authority's characters go into the campaign file.
-    pub(super) fn write_back(&mut self) -> Result<bool, String> {
-        let Some(o) = &self.online else { return Ok(false) };
-        o.hosted.write_back(&mut self.campaign)?;
-        o.hosted.host.save().map_err(|e| e.to_string())?;
-        Ok(true)
     }
 
     /// The activity feed of an online campaign: the authority's (every

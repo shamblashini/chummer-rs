@@ -180,6 +180,34 @@ impl CharState {
     }
 }
 
+/// A snapshot to make without holding the authority's lock
+/// ([`Authority::save_snapshot_work`]).
+#[derive(Debug, Clone)]
+pub struct SnapshotJob {
+    id: CharacterId,
+    /// The log window's base (else the current state).
+    base: bool,
+    /// The version it is of.
+    version: u64,
+    ch: Character,
+}
+
+/// A made [`SnapshotJob`], for [`Authority::put_snapshots`].
+#[derive(Debug, Clone)]
+pub struct MadeSnapshot {
+    id: CharacterId,
+    base: bool,
+    version: u64,
+    bytes: Vec<u8>,
+}
+
+impl SnapshotJob {
+    /// Compresses the character (slow: call it without the lock).
+    pub fn make(self) -> MadeSnapshot {
+        MadeSnapshot { bytes: command::snapshot(&self.ch), id: self.id, base: self.base, version: self.version }
+    }
+}
+
 /// What a submission did, for the transport to deliver.
 #[derive(Debug, Clone)]
 pub struct Submitted {
@@ -390,7 +418,9 @@ impl Authority {
     /// is exactly what a client restores from a snapshot. Returns the
     /// members to send it to.
     pub fn add_character(&mut self, id: CharacterId, owner: Option<EndpointId>, ch: Character) -> Result<Vec<EndpointId>, command::RestoreError> {
-        let ch = command::restore(&command::snapshot(&ch))?;
+        // `restore(snapshot(ch))` without the compression (seconds for a
+        // character with big mugshots): the same canonical text, parsed.
+        let ch = Character::from_str(&command::canonical(&ch)).map_err(command::RestoreError::Load)?;
         let name = ch.display_name();
         self.chars.insert(id.clone(), CharState::new(name, owner, ch));
         self.delivered.retain(|(_, c), _| *c != id);
@@ -778,6 +808,72 @@ impl Authority {
     /// Members (other than this GM) with something not yet sent.
     pub fn members_behind(&self) -> Vec<EndpointId> {
         self.members.keys().copied().filter(|p| self.has_outgoing(p)).collect()
+    }
+
+    // ----- snapshots outside the lock -----
+
+    /// The snapshots [`Authority::to_bytes`] would have to make. A host
+    /// makes them ([`SnapshotJob::make`]) without holding its lock, then
+    /// hands them back with [`Authority::put_snapshots`]: compressing a
+    /// character takes up to seconds, and everything else waits for the
+    /// lock meanwhile.
+    pub fn save_snapshot_work(&self) -> Vec<SnapshotJob> {
+        let mut out = Vec::new();
+        for (id, c) in &self.chars {
+            if c.base_snapshot.is_none() {
+                out.push(SnapshotJob { id: id.clone(), base: true, version: c.window_base(), ch: c.base.clone() });
+            }
+            if !matches!(&c.snapshot, Some((v, _)) if *v == c.version) {
+                out.push(SnapshotJob { id: id.clone(), base: false, version: c.version, ch: c.ch.clone() });
+            }
+        }
+        out
+    }
+
+    /// The snapshots a push to `peer` would make: of the characters it
+    /// sees (or only `only`) that it has no usable base for. `have` is
+    /// what it says it has (a join); `None` goes by what it was sent.
+    /// `force`: a snapshot in any case (a resync).
+    pub fn push_snapshot_work(&self, peer: &EndpointId, only: Option<&CharacterId>, have: Option<&[Have]>, force: bool) -> Vec<SnapshotJob> {
+        let mut out = Vec::new();
+        for id in self.visible(peer) {
+            if only.is_some_and(|o| *o != id) {
+                continue;
+            }
+            let Some(c) = self.chars.get(&id) else { continue };
+            if matches!(&c.snapshot, Some((v, _)) if *v == c.version) {
+                continue;
+            }
+            let from = match have {
+                Some(have) => have.iter().find(|h| h.character == id).map(|h| (h.version, Some(h.hash))),
+                None => self.delivered.get(&(*peer, id.clone())).map(|v| (*v, None)),
+            };
+            let needs = force
+                || match from {
+                    None => true,
+                    Some((v, _)) if v >= c.version => false,
+                    Some((v, h)) => !c.hash_at(v).is_some_and(|x| h.is_none_or(|h| h == x)),
+                };
+            if needs {
+                out.push(SnapshotJob { id: id.clone(), base: false, version: c.version, ch: c.ch.clone() });
+            }
+        }
+        out
+    }
+
+    /// Takes snapshots made outside the lock (those of a state that is
+    /// gone meanwhile are dropped).
+    pub fn put_snapshots(&mut self, made: Vec<MadeSnapshot>) {
+        for m in made {
+            let Some(c) = self.chars.get_mut(&m.id) else { continue };
+            if m.base {
+                if c.base_snapshot.is_none() && c.window_base() == m.version {
+                    c.base_snapshot = Some(m.bytes);
+                }
+            } else if c.version == m.version {
+                c.snapshot = Some((m.version, m.bytes));
+            }
+        }
     }
 
     // ----- persistence -----

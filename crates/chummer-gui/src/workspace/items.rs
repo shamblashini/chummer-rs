@@ -183,11 +183,10 @@ impl CharacterView {
         if weapons.is_empty() {
             return;
         }
-        let rules = self.settings.as_ref().map(chummer_core::items::weapon::WeaponRules::from_settings).unwrap_or_default();
         let rows: Vec<Vec<String>> = weapons
             .iter()
             .map(|w| {
-                let st = chummer_core::items::weapon::stats_with(&self.doc, &self.sheet, Some(&self.store), w, &rules);
+                let st = self.weapon_stats(w, true);
                 let r = &st.ranges;
                 let bands: Vec<&str> = [&r.short, &r.medium, &r.long, &r.extreme].into_iter().map(String::as_str).filter(|b| !b.is_empty()).collect();
                 vec![w.get("name"), st.dice_pool.to_string(), st.damage.clone(), st.ap.clone(), st.accuracy.to_string(), st.rc.clone(), if st.reach != 0 { st.reach.to_string() } else { String::new() }, bands.join(" / ")]

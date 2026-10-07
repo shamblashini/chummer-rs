@@ -385,6 +385,7 @@ impl CharacterView {
 
     /// Recompute the rows when the filters or the character changed.
     fn ws_catalog_rows(&mut self, lang: &Language) {
+        let _s = crate::trace::span("catalog rows");
         let Some(c) = self.ws_gear.catalog.as_ref() else { return };
         let key = hash_of((
             &c.search,
@@ -1057,7 +1058,7 @@ impl CharacterView {
         if c.preview.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
         }
-        let result = preview(&self.doc, self.settings.as_ref(), engine, slot.kind.tag, r.el(), p);
+        let result = crate::trace::time("catalog preview (clone+apply+compute)", || preview(&self.doc, self.settings.as_ref(), engine, slot.kind.tag, r.el(), p));
         if let Some(c) = self.ws_gear.catalog.as_mut() {
             c.preview = Some((key, result));
         }
