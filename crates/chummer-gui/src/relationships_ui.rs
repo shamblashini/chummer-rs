@@ -109,7 +109,7 @@ impl RelationshipsPanel {
         if wsl {
             // Sub-tabs as a segmented switch with the number of entries.
             let labels: Vec<String> = SUB_TABS.iter().map(|(k, l)| format!("{}  {}", lang.tr(l), contacts::of_type(ch, *k).len())).collect();
-            let items: Vec<(&str, &str)> = labels.iter().map(|l| (l.as_str(), "")).collect();
+            let items: Vec<(&str, &str)> = labels.iter().map(|l| (l.as_str(), l.as_str())).collect();
             if let Some(i) = ui.push_id("relationship_tabs", |ui| widgets::segmented(ui, &items, self.tab.min(2), 26.0)).inner {
                 self.tab = i;
             }
@@ -315,7 +315,7 @@ impl RelationshipsPanel {
                 ui.horizontal(|ui| changed |= combo_field(ui, ch, &guid, c, "contacttype", &lists.fields["contacttype"], "contacts.xml", lang, 140.0, true));
                 caption(ui, &lang.tr("Metatype:"));
                 ui.horizontal(|ui| match &linked {
-                    Some(l) => read_only_field(ui, &l.display_metatype(), 158.0),
+                    Some(l) => read_only_field(ui, "metatype", &l.display_metatype(), 158.0),
                     None => changed |= metatype_field(ui, ch, &guid, c, &lists.metatypes, lang, 140.0),
                 });
                 ui.end_row();
@@ -349,7 +349,7 @@ impl RelationshipsPanel {
             changed |= name_field(ui, ch, c, linked.as_ref(), lang, 180.0);
             caption(ui, &lang.tr("Metatype:"));
             match &linked {
-                Some(l) => read_only_field(ui, &l.display_metatype(), 198.0),
+                Some(l) => read_only_field(ui, "metatype", &l.display_metatype(), 198.0),
                 None => {
                     let lists = self.lists.clone().expect("lists loaded");
                     changed |= metatype_field(ui, ch, &guid, c, &lists.critters, lang, 180.0);
@@ -665,7 +665,7 @@ fn name_field(ui: &mut egui::Ui, ch: &mut Doc, c: &Element, linked: Option<&Link
     match linked {
         Some(l) => {
             if ws_layout(ui) {
-                ui.add_enabled_ui(false, |ui| widgets::preset_input(ui, "name", &mut l.name.clone(), &[], "", width + 14.0)).response.on_disabled_hover_text(l.path.display().to_string());
+                ui.add_enabled_ui(false, |ui| widgets::preset_input(ui, "name", &mut l.name.clone(), &[], "", width + 14.0)).inner.on_disabled_hover_text(l.path.display().to_string());
             } else {
                 ui.add_enabled(false, egui::TextEdit::singleline(&mut l.name.clone()).desired_width(width)).on_disabled_hover_text(l.path.display().to_string());
             }
@@ -743,9 +743,9 @@ fn rule(ui: &mut egui::Ui) {
 }
 
 /// A disabled text box showing a linked character's value.
-fn read_only_field(ui: &mut egui::Ui, text: &str, width: f32) {
+fn read_only_field(ui: &mut egui::Ui, key: &str, text: &str, width: f32) {
     if ws_layout(ui) {
-        ui.add_enabled_ui(false, |ui| widgets::preset_input(ui, "read_only", &mut text.to_owned(), &[], "", width));
+        ui.add_enabled_ui(false, |ui| widgets::preset_input(ui, key, &mut text.to_owned(), &[], "", width));
     } else {
         ui.add_enabled(false, egui::TextEdit::singleline(&mut text.to_owned()).desired_width(width - 18.0));
     }
@@ -792,7 +792,7 @@ fn preset_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &
 fn linked_or_combo(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &str, linked: Option<String>, choices: &[String], lang: &Language) -> bool {
     match linked {
         Some(v) => {
-            read_only_field(ui, &v, 158.0);
+            read_only_field(ui, key, &v, 158.0);
             false
         }
         None => combo_field(ui, ch, guid, c, key, choices, "contacts.xml", lang, 140.0, true),
