@@ -43,6 +43,7 @@
 mod home;
 pub mod icons;
 pub mod palette;
+pub mod pool_diff;
 pub mod popout;
 mod shell;
 pub mod widgets;
