@@ -579,6 +579,8 @@ pub fn table_row(ui: &mut Ui, id: impl std::hash::Hash, selected: bool, height: 
     let bg = ui.painter().add(egui::Shape::Noop);
     ui.horizontal(|ui| {
         ui.set_min_height(height);
+        // A click on the text selects the row, not the text.
+        ui.style_mut().interaction.selectable_labels = false;
         ui.spacing_mut().item_spacing.x = COL_GAP;
         ui.add_space(ROW_PAD);
         add(ui);
@@ -673,6 +675,7 @@ pub fn heading(ui: &mut Ui, text: &str, note: &str, size: f32, right: impl FnOnc
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
+            ui.add_space(2.0);
             right(ui);
         });
     });

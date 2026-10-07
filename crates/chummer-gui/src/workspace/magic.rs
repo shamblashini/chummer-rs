@@ -72,15 +72,21 @@ impl CharacterView {
         }
         let ws = theme::ws(ui);
         let mut changed = false;
-        widgets::card_frame(&ws).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
+        // The card only shows when the editor drew something.
+        let mut card = widgets::card_frame(&ws).inner_margin(egui::Margin::symmetric(12, 8)).begin(ui);
+        {
+            let ui = &mut card.content_ui;
+            ui.set_min_width(ui.available_width());
             let cx = crate::magic_ui::Ctx { store: &self.store, engine, sheet: &self.sheet, settings: self.settings.as_ref(), lang, pdfs };
             changed |= match container {
                 None => self.magic_editor.shared_ui(ui, &mut self.doc, &cx, status),
                 Some("aiprograms") => crate::ai_ui::tab(ui, &mut self.doc, engine, lang, status),
                 Some(c) => self.magic_editor.ui(ui, &mut self.doc, &cx, c, status),
             };
-        });
+        }
+        if card.content_ui.min_rect().height() > 1.0 {
+            card.end(ui);
+        }
         changed
     }
 

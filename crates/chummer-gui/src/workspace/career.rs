@@ -167,6 +167,11 @@ impl CharacterView {
     /// Inspector, career: the karma and nuyen tiles, Add entry, and the
     /// ledger. Returns true if the character changed.
     pub fn ws_ledger_panel(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language) -> bool {
+        // Its own ids: the Karma & Nuyen page draws the same widgets.
+        ui.push_id("ws_ledger_panel", |ui| self.ledger_panel_inner(ui, engine, lang)).inner
+    }
+
+    fn ledger_panel_inner(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language) -> bool {
         let mut changed = false;
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
         self.ws_karma_tiles(ui, engine, lang, 2);

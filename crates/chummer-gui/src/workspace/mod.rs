@@ -15,6 +15,10 @@
 //!   (characters) or the shell (`App::ws_home`, `App::ws_campaign`).
 //!   Until a screen is rebuilt, `Section::Page(tab)` draws the Classic
 //!   tab page; [`Section::Play`] is the first rebuilt one.
+//!   `CharacterView::ws_tab_page` (`build.rs`) draws the rebuilt tab pages
+//!   (attributes, skills, magic, story and records; the selected-stat
+//!   inspector and the career ledger and palette advances are its
+//!   sibling files) and falls back to the Classic page for the rest.
 //! * A **panel** that can pop out is drawn with [`popout::Panel`]
 //!   (`Panel::card` in a page, `Panel::inspector` in the inspector); give
 //!   it a [`PanelId`] and draw the same contents in `App::ws_panel`

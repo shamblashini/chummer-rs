@@ -231,7 +231,10 @@ impl CharacterView {
                 Chip { label: lang.tr("Limits"), value: format!("{} / {} / {}", s.limit_physical, s.limit_mental, s.limit_social), fill: None, tone: Tone::Normal },
                 Chip { label: lang.tr("Initiative"), value: format!("{} + {}d6", s.initiative, s.initiative_dice), fill: None, tone: Tone::Normal },
                 Chip { label: lang.tr("Armor"), value: s.armor.to_string(), fill: None, tone: Tone::Normal },
-            ];
+            ]
+            .into_iter()
+            .chain(chummer_core::calendar::weeks(&self.doc).into_iter().max_by_key(|w| (w.year, w.week)).map(|w| Chip { label: lang.tr("Calendar"), value: w.label(), fill: None, tone: Tone::Normal }))
+            .collect();
         };
         let points = |label: &str, (total, used): (i32, i32)| {
             let tone = if used > total {

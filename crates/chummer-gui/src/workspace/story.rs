@@ -76,21 +76,25 @@ impl CharacterView {
             ui.set_width(ui.available_width());
             ui.label(widgets::title(&lang.tr("Personal details"), &ws));
             ui.add_space(4.0);
-            let per_row = ((ui.available_width() + 12.0) / 260.0).floor().clamp(1.0, 4.0) as usize;
-            egui::Grid::new("ws_info").num_columns(per_row * 2).spacing([10.0, 6.0]).show(ui, |ui| {
-                for (i, (key, label)) in INFO_FIELDS.iter().enumerate() {
-                    ui.label(RichText::new(lang.tr(label)).size(12.0).color(ws.muted));
-                    let mut v = self.doc.field(key);
-                    let editable = !matches!(*key, "metatype" | "metavariant");
-                    let r = ui.add_enabled_ui(editable, |ui| widgets::text_field(ui, &mut v, "", 160.0)).inner;
-                    if r.changed() {
-                        changed |= self.doc.set(Command::SetField { key: (*key).to_owned(), value: v });
+            let gap = 16.0;
+            let per_row = ((ui.available_width() + gap) / (280.0 + gap)).floor().clamp(1.0, 4.0) as usize;
+            let col = (ui.available_width() - gap * (per_row - 1) as f32) / per_row as f32;
+            for chunk in INFO_FIELDS.chunks(per_row) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = gap;
+                    for (key, label) in chunk {
+                        widgets::cell(ui, col, 30.0, |ui| {
+                            widgets::cell(ui, 90.0, 30.0, |ui| ui.label(RichText::new(lang.tr(label)).size(12.0).color(ws.muted)));
+                            let mut v = self.doc.field(key);
+                            let editable = !matches!(*key, "metatype" | "metavariant");
+                            let r = ui.add_enabled_ui(editable, |ui| widgets::text_field(ui, &mut v, "", col - 100.0)).inner;
+                            if r.changed() {
+                                changed |= self.doc.set(Command::SetField { key: (*key).to_owned(), value: v });
+                            }
+                        });
                     }
-                    if i % per_row == per_row - 1 {
-                        ui.end_row();
-                    }
-                }
-            });
+                });
+            }
         });
         widgets::card_frame(&ws).show(ui, |ui| {
             ui.set_width(ui.available_width());

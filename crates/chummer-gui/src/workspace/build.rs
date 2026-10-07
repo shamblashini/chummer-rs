@@ -129,7 +129,7 @@ impl CharacterView {
             Tab::Calendar => page(ui, tab, |ui| self.ws_calendar(ui, lang)),
             Tab::Improvements => page(ui, tab, |ui| self.ws_improvements(ui, lang)),
             Tab::Relationships => self.ws_relationships(ui, lang, status),
-            Tab::Karma => page(ui, tab, |ui| self.ws_karma_page(ui, engine, lang)),
+            Tab::Karma => page(ui, tab, |ui| ui.push_id("ws_karma_page", |ui| self.ws_karma_page(ui, engine, lang)).inner),
             Tab::Cyberware | Tab::StreetGear | Tab::Vehicles => self.tab_page(ui, tab, engine, lang, pdfs, status, roll),
         }
     }
