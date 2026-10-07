@@ -48,29 +48,45 @@ impl CharacterView {
     }
 
     /// The manual karma or nuyen entry: kind, amount, reason, Gain or
-    /// Spend. Returns true if the character changed.
-    pub(crate) fn ws_manual_entry(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
+    /// Spend; `compact` stacks it for the inspector. Returns true if the
+    /// character changed.
+    pub(crate) fn ws_manual_entry(&mut self, ui: &mut egui::Ui, lang: &Language, compact: bool) -> bool {
         let ws = theme::ws(ui);
         let mut gain = None;
         widgets::card_frame(&ws).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                let karma_tip = lang.tr("Karma");
-                let nuyen_tip = lang.tr("Nuyen");
-                if let Some(i) = widgets::segmented(ui, &[(&karma_tip, &karma_tip), (&nuyen_tip, &nuyen_tip)], usize::from(!self.manual.0), 24.0) {
+            let karma_tip = lang.tr("Karma");
+            let nuyen_tip = lang.tr("Nuyen");
+            let reason_hint = lang.tr("Reason (e.g. run payout)");
+            let ok = self.manual.1 > 0.0;
+            let mut kind_and_amount = |ui: &mut egui::Ui| {
+                // Segmented switches take their ids from the `ui`: give each its own.
+                if let Some(i) = ui.push_id("manual_kind", |ui| widgets::segmented(ui, &[(&karma_tip, &karma_tip), (&nuyen_tip, &nuyen_tip)], usize::from(!self.manual.0), 24.0)).inner {
                     self.manual.0 = i == 0;
                 }
                 ui.add(egui::DragValue::new(&mut self.manual.1).range(0.0..=1_000_000.0).max_decimals(2));
-                widgets::text_field(ui, &mut self.manual.2, &lang.tr("Reason (e.g. run payout)"), 220.0);
-                let ok = self.manual.1 > 0.0;
+            };
+            let mut buttons = |ui: &mut egui::Ui| {
                 if ui.add_enabled_ui(ok, |ui| widgets::button(ui, Some(icons::PLUS), &lang.tr("Gain"), Look::Primary, 24.0)).inner.clicked() {
                     gain = Some(true);
                 }
                 if ui.add_enabled_ui(ok, |ui| widgets::button(ui, Some(icons::MINUS), &lang.tr("Spend"), Look::Secondary, 24.0)).inner.clicked() {
                     gain = Some(false);
                 }
-            });
+            };
+            if compact {
+                ui.horizontal(|ui| kind_and_amount(ui));
+                let w = ui.available_width();
+                widgets::text_field(ui, &mut self.manual.2, &reason_hint, w);
+                ui.horizontal(|ui| buttons(ui));
+            } else {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    kind_and_amount(ui);
+                    widgets::text_field(ui, &mut self.manual.2, &reason_hint, 260.0);
+                    buttons(ui);
+                });
+            }
         });
         let Some(g) = gain else { return false };
         match self.apply_manual(g) {
@@ -92,7 +108,7 @@ impl CharacterView {
         let karma = lang.tr("Karma");
         let nuyen = lang.tr("Nuyen");
         widgets::heading(ui, &lang.tr("Ledger"), "", 13.0, |ui| {
-            if let Some(i) = widgets::segmented(ui, &[(&all, &all), (&karma, &karma), (&nuyen, &nuyen)], self.ws_build.ledger, 22.0) {
+            if let Some(i) = ui.push_id("ledger_filter", |ui| widgets::segmented(ui, &[(&all, &all), (&karma, &karma), (&nuyen, &nuyen)], self.ws_build.ledger, 22.0)).inner {
                 self.ws_build.ledger = i;
             }
         });
@@ -182,7 +198,7 @@ impl CharacterView {
         }
         self.ws_build.adding = open;
         if open {
-            changed |= self.ws_manual_entry(ui, lang);
+            changed |= self.ws_manual_entry(ui, lang, true);
         }
         ui.add_space(4.0);
         changed |= self.ws_ledger(ui, lang, true);

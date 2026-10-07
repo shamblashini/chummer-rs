@@ -124,7 +124,7 @@ impl CharacterView {
             ui.set_width(ui.available_width());
             let items: Vec<(&str, &str)> = subs.iter().map(|(_, l)| (l.as_str(), l.as_str())).collect();
             let current = subs.iter().position(|(k, _)| *k == self.info_text).unwrap_or(0);
-            if let Some(i) = widgets::segmented(ui, &items, current, 26.0) {
+            if let Some(i) = ui.push_id("info_text", |ui| widgets::segmented(ui, &items, current, 26.0)).inner {
                 self.info_text = subs[i].0;
             }
             ui.add_space(6.0);
@@ -263,7 +263,7 @@ impl CharacterView {
                 ui.set_width(ui.available_width());
                 changed |= crate::career_ui::actions_ui(ui, &mut self.doc, engine, lang);
             });
-            changed |= self.ws_manual_entry(ui, lang);
+            changed |= self.ws_manual_entry(ui, lang, false);
         }
         ui.add_space(4.0);
         changed |= self.ws_ledger(ui, lang, false);
