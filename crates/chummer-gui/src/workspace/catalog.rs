@@ -476,7 +476,7 @@ impl CharacterView {
         let key_f = |v: Option<f64>| v.unwrap_or(f64::MAX);
         match c.sort {
             Sort::Match => out.list.sort_by_key(|r| r.rank),
-            Sort::Name => out.list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+            Sort::Name => out.list.sort_by_key(|a| a.name.to_lowercase()),
             Sort::Cost => out.list.sort_by(|a, b| key_f(a.cost).total_cmp(&key_f(b.cost))),
             Sort::Avail => out.list.sort_by_key(|r| r.avail.as_ref().map_or(i32::MAX, |a| a.value)),
             Sort::Essence => out.list.sort_by(|a, b| key_f(a.ess).total_cmp(&key_f(b.ess))),

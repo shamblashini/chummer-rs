@@ -616,7 +616,7 @@ impl App {
                 feed.push((e.at, name.clone(), chummer_sync::feed::for_owner(e), e.rejected.is_some()));
             }
         }
-        feed.sort_by(|a, b| b.0.cmp(&a.0));
+        feed.sort_by_key(|a| std::cmp::Reverse(a.0));
         if feed.is_empty() {
             ui.label(RichText::new(lang.tr("Nothing yet. Changes in your campaigns show here.")).size(11.5).color(ws.muted));
         }
