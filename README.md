@@ -213,7 +213,8 @@ and Pets & Cohorts sub-tabs. Contacts and enemies have name, location,
 archetype, connection, loyalty, the Free/Group/Blackmail/Family flags and
 an expandable stat block (type, metatype, gender, age, personal life,
 preferred payment, hobbies/vice) with `contacts.xml`'s lists; pets have a
-name and a `critters.xml` metatype. Contacts can also be added from a
+name and a `critters.xml` metatype. Those fields take free text, with the
+list behind a chevron inside the field; typing filters the list. Contacts can also be added from a
 Chummer contacts XML file (Add from File). Any entry can be linked to
 another `.chum5` or `.chum5lz` (Attach Character): its name, metatype,
 gender, age and mugshot then come from that file, on screen and on
@@ -391,8 +392,28 @@ was.
   new qualities and martial arts). Magic, resonance, critter, A.I. and
   martial arts pages show their summary (tradition and drain, power
   points, stream, initiation with its options and cost) above each
-  list. Character Info, Game Notes, Calendar, Improvements, Relationships
-  and Karma & Nuyen (with the whole ledger) are restyled the same way.
+  list, and their editors (the spell picker and quickening, the mentor
+  spirit and its choices, foci, adept powers, spirits and sprites,
+  metamagics and echoes, martial art techniques) use Workspace buttons,
+  check boxes, steppers and tables. Character Info, Game Notes,
+  Calendar, Improvements (custom improvements as group headings over
+  tables), Relationships (a segmented switch for Contacts, Enemies and
+  Pets, icon buttons for link, notes and delete) and Karma & Nuyen (with
+  the whole ledger) are restyled the same way, and so is the warning for
+  a missing settings file.
+- **Number steppers**: a small − and + inside the border and a value
+  field as wide as the range needs (up to four digits; a longer value
+  widens it), so nothing spills out at any value. Drag the value, or
+  click it and type (arrow keys step while typing). Used for points,
+  karma, ratings, quantities, connection and loyalty, spirit force and
+  services, power levels and lifestyle months.
+- **Text with presets**: a free-text field with a chevron inside its
+  right edge that opens the presets (contact archetype, type, metatype,
+  gender, age and the other contact fields, a custom improvement's
+  selected value, the PDF viewer command, a new knowledge skill, whose
+  type is set from the preset picked). Typing filters the presets, Up,
+  Down and Enter pick one, Esc closes the list; any other text is kept.
+  Classic uses the same field.
 - **At the table** (career): the condition monitor as box grids (rows of
   the wound threshold, the wound modifier in the last box of a row,
   Physical and Stun side by side, overflow under Physical), damage taken
@@ -498,6 +519,16 @@ was.
 ![Weapons with a weapon in the item inspector, dark](docs/screenshots/workspace-gear-inspector-dark.png)
 ![Cyberware with an item in the inspector, light](docs/screenshots/workspace-gear-inspector-light.png)
 ![Home, dark](docs/screenshots/workspace-home-dark.png)
+![Steppers at 1, 12 and 128, dark](docs/screenshots/workspace-stepper-dark.png)
+![Steppers at 1, 12 and 128, light](docs/screenshots/workspace-stepper-light.png)
+![A contact's archetype: the presets opened with the chevron, and filtered by typing, dark](docs/screenshots/workspace-preset-input-dark.png)
+![The same, light](docs/screenshots/workspace-preset-input-light.png)
+![Relationships, dark](docs/screenshots/workspace-relationships-dark.png)
+![Relationships, light](docs/screenshots/workspace-relationships-light.png)
+![Spells & Spirits with the spirits editor, dark](docs/screenshots/workspace-magic-dark.png)
+![Spells & Spirits with the spirits editor, light](docs/screenshots/workspace-magic-light.png)
+![Improvements with a custom improvement, dark](docs/screenshots/workspace-improvements-dark.png)
+![Improvements with a custom improvement, light](docs/screenshots/workspace-improvements-light.png)
 ![Home, light](docs/screenshots/workspace-home-light.png)
 
 ### Command line
@@ -724,9 +755,9 @@ cargo test --workspace
   because there is no stream picker yet.
 - Workspace layout: in the build pages the priorities cannot be swapped
   (pick them in the New Character wizard), there is no "Change
-  metatype", and the editors of the magic pages (spell picker, mentor,
-  foci, spirits, metamagic) and of Relationships and custom improvements
-  keep their Classic controls inside Workspace cards. The design's
+  metatype", and the dialogs these pages open (the spell, mentor and
+  metamagic pickers, Create Improvement, contact notes) are Classic
+  windows with Workspace buttons. The design's
   training time and "Saving for" goals are not there. The catalog's
   preview does not show changes to skills or dice pools, and its table
   shows essence, cost and availability from the data at the chosen
@@ -739,7 +770,8 @@ cargo test --workspace
   actions (Push the Limit, Second Chance) and "Share to GM" are not there
   because the app has no such rules or messages. GM screen: the design's
   scene notes and activity filters are left out.
-- Custom improvements: no drag and drop between groups (use the 📁 menu),
+- Custom improvements: no drag and drop between groups (use the 📁 menu,
+  a folder icon in the Workspace),
   and disabling one only switches its modifiers and the special attribute
   and tab flags; objects it created (a free spell, say) stay until it is
   deleted.

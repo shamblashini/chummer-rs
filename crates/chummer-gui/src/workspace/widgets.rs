@@ -1234,14 +1234,19 @@ pub fn preset_input(ui: &mut Ui, id: impl std::hash::Hash, text: &mut String, pr
     }
     if state.open && has_list && pick.is_none() {
         let shown = preset_matches(presets, text, state.filter);
+        // As wide as the field, or as the longest entry (up to 380px).
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let widest = shown.iter().map(|(_, l)| ui.painter().layout_no_wrap(l.clone(), font.clone(), Color32::PLACEHOLDER).size().x).fold(0.0_f32, f32::max);
+        let list_w = (widest + 36.0).clamp(width, width.max(380.0));
         let mut open = true;
         let popup = egui::Popup::new(id.with("popup"), ui.ctx().clone(), &frame_resp, ui.layer_id())
             .open_bool(&mut open)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .width(list_w)
             .gap(2.0);
         popup.show(|ui| {
-            ui.set_min_width(width - 12.0);
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            ui.set_width(list_w - 12.0);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
             egui::ScrollArea::vertical().max_height(260.0).auto_shrink([false, true]).show(ui, |ui| {
                 if shown.is_empty() {
                     ui.weak("—");
