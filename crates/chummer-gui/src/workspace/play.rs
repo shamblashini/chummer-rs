@@ -166,7 +166,7 @@ impl CharacterView {
             for p in [Panel::Condition, Panel::Initiative, Panel::Rolls] {
                 changed |= self.play_block(&mut l, p, lang, status, pops);
             }
-            let side: Vec<Panel> = [Panel::AtHand, Panel::Matrix].into_iter().filter(|p| self.play_has(*p)).collect();
+            let side: Vec<Panel> = [Panel::AtHand, Panel::Matrix].into_iter().filter(|p| self.play_has(*p, lang)).collect();
             if !side.is_empty() {
                 let w = ((left - 12.0 * (side.len() as f32 - 1.0)) / side.len() as f32).floor();
                 let row_top = l.cursor().min;
@@ -183,7 +183,7 @@ impl CharacterView {
             changed |= self.play_block(&mut l, Panel::Notes, lang, status, pops);
             let mut r = column(ui, left + 12.0, right, 8.0);
             changed |= self.play_block(&mut r, Panel::Weapons, lang, status, pops);
-            if self.play_has(Panel::Vehicles) {
+            if self.play_has(Panel::Vehicles, lang) {
                 r.add_space(4.0);
                 changed |= self.play_block(&mut r, Panel::Vehicles, lang, status, pops);
             }
@@ -194,9 +194,9 @@ impl CharacterView {
     }
 
     /// Whether a block has something to show.
-    fn play_has(&self, p: Panel) -> bool {
+    fn play_has(&self, p: Panel, lang: &Language) -> bool {
         match p {
-            Panel::AtHand => !self.at_hand(&Language::default()).is_empty(),
+            Panel::AtHand => !self.at_hand(lang).is_empty(),
             Panel::Matrix => self.play_device().is_some(),
             Panel::Vehicles => !self.doc.items("vehicles", "vehicle").is_empty(),
             _ => true,

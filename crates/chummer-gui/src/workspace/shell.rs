@@ -777,6 +777,11 @@ impl App {
             DocKey::Campaign => {
                 let mut action = None;
                 if let Some(gm) = self.gm.as_mut() {
+                    // Behind another document, the first popped panel
+                    // runs the campaign's frame (new log lines, sheets).
+                    if own_frame {
+                        gm.begin_frame(&engine, &mut self.views, &mut self.online);
+                    }
                     let panel = match key.panel {
                         PanelId::Gm(p) => Some(p),
                         _ => None,
