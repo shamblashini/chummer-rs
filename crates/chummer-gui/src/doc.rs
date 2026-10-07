@@ -171,17 +171,24 @@ impl Doc {
     /// Take the backend's newest state, if it changed. Returns whether it
     /// did.
     pub fn refresh(&mut self) -> bool {
+        self.refresh_with(false)
+    }
+
+    /// [`Doc::refresh`]; `wait`: for the lock (after this app's own
+    /// change, which must show at once), else a lock a network task holds
+    /// means trying again on a later frame.
+    fn refresh_with(&mut self, wait: bool) -> bool {
         let _s = crate::trace::span("online refresh");
         let Kind::Online(o) = &mut self.kind else { return false };
-        // Never wait for a network task holding the lock: what arrived is
-        // taken on a later frame.
         let now = match &o.backend {
             Backend::Gm { host, id } => {
-                let Some(a) = host.try_authority() else { return false };
+                let a = if wait { Some(host.authority()) } else { host.try_authority() };
+                let Some(a) = a else { return false };
                 (a.version(id), a.hash(id), 0)
             }
             Backend::Player { session, id } => {
-                let Some(r) = session.try_replica() else { return false };
+                let r = if wait { Some(session.replica()) } else { session.try_replica() };
+                let Some(r) = r else { return false };
                 (r.version(id), r.confirmed_hash(id), r.outbox(id).len())
             }
         };
@@ -189,7 +196,8 @@ impl Doc {
         if (v, h, n) == o.seen {
             return false;
         }
-        let Some((mut ch, seen)) = try_pull(&o.backend) else { return false };
+        let pulled = if wait { pull(&o.backend) } else { try_pull(&o.backend) };
+        let Some((mut ch, seen)) = pulled else { return false };
         ch.file = o.ch.file.clone();
         // A GM's copy is saved into the campaign file; a player's is the
         // campaign's to keep.
@@ -214,7 +222,7 @@ impl Doc {
                 Backend::Player { session, id } => session.edit_now(id, cmd)?,
             },
         };
-        self.refresh();
+        self.refresh_with(true);
         Ok(r)
     }
 
@@ -359,7 +367,7 @@ impl Doc {
             Some(Backend::Gm { host, id }) => host.gm_revert(id, version)?,
             _ => return Err("only the GM can revert changes".into()),
         };
-        self.refresh();
+        self.refresh_with(true);
         Ok(r.applied.accepted.description)
     }
 }

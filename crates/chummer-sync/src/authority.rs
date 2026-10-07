@@ -851,7 +851,6 @@ impl Authority {
             let needs = force
                 || match from {
                     None => true,
-                    Some((v, _)) if v >= c.version => false,
                     Some((v, h)) => !c.hash_at(v).is_some_and(|x| h.is_none_or(|h| h == x)),
                 };
             if needs {

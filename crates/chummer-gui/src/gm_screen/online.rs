@@ -19,8 +19,10 @@ use eframe::egui::{self, RichText};
 
 use super::{FeedRow, GmScreen, Live, AUTHOR};
 
-/// The job making the campaign online (`bg`).
-const GO_ONLINE: &str = "gm-go-online";
+/// The job making the campaign at `path` online (`bg`).
+fn go_online_id(path: &std::path::Path) -> String {
+    format!("gm-go-online:{}", path.display())
+}
 
 /// What [`GmScreen::go_online`] made on its thread.
 type GoneOnline = Result<(HostedCampaign, hosted::Reconciled), String>;
@@ -106,18 +108,18 @@ impl GmScreen {
         if self.online.is_some() {
             return Ok(());
         }
-        if crate::bg::busy(GO_ONLINE) {
+        let path = self.path.clone().ok_or_else(|| hosted::HostedError::NoFile.to_string())?;
+        if crate::bg::busy(&go_online_id(&path)) {
             self.serve_when_online |= serve;
             return Ok(());
         }
-        let path = self.path.clone().ok_or_else(|| hosted::HostedError::NoFile.to_string())?;
         let secret = net.secret()?;
         let engine = engine.clone();
         let current: std::collections::BTreeMap<MemberId, chummer_core::character::Character> =
             self.campaign.members.iter().filter_map(|m| super::doc_ref(&self.live, views, m.id).filter(|d| !d.is_online()).map(|d| (m.id, d.ch().clone()))).collect();
         let campaign = self.campaign.clone();
         let rt = net.handle();
-        crate::bg::run(GO_ONLINE, "Going online…", move || -> GoneOnline {
+        crate::bg::run(go_online_id(&path), "Going online…", move || -> GoneOnline {
             let _g = rt.enter();
             let _s = crate::trace::span("go online (HostedCampaign::open)");
             HostedCampaign::open(&campaign, &path, engine, secret, AUTHOR, |m| current.get(&m).cloned()).map_err(|e| e.to_string())
@@ -126,9 +128,14 @@ impl GmScreen {
         Ok(())
     }
 
-    /// The authority made by [`GmScreen::go_online`], once there.
-    fn take_online(&mut self, net: &mut Online, engine: &Arc<Engine>, views: &mut [CharacterView]) {
-        let Some(r) = crate::bg::take::<GoneOnline>(GO_ONLINE) else { return };
+    /// The authority made by [`GmScreen::go_online`], once there (the app
+    /// asks every frame, whatever page is in front).
+    pub(crate) fn take_online(&mut self, net: &mut Online, engine: &Arc<Engine>, views: &mut [CharacterView]) {
+        if self.online.is_some() {
+            return;
+        }
+        let Some(path) = self.path.clone() else { return };
+        let Some(r) = crate::bg::take::<GoneOnline>(&go_online_id(&path)) else { return };
         let serve = std::mem::take(&mut self.serve_when_online);
         let (h, rec) = match r {
             Ok(x) => x,
@@ -218,6 +225,7 @@ impl GmScreen {
     /// Host online on or off.
     pub fn set_hosting(&mut self, net: &mut Online, engine: &Arc<Engine>, views: &mut [CharacterView], on: bool) -> Result<(), String> {
         if !on {
+            self.serve_when_online = false;
             if let Some(n) = net.node_if_started() {
                 n.stop_serving();
             }
@@ -263,6 +271,11 @@ impl GmScreen {
 
     /// The campaign closes: stop serving it.
     pub fn close_online(&mut self, net: &mut Online) {
+        if let Some(p) = &self.path {
+            // Going online still: its authority is dropped when it lands
+            // (saved, not served).
+            let _ = crate::bg::take::<GoneOnline>(&go_online_id(p));
+        }
         if self.online.is_some() {
             if let Some(n) = net.node_if_started() {
                 n.stop_serving();

@@ -52,13 +52,20 @@ pub fn run<T: Send + 'static>(id: impl Into<String>, label: impl Into<String>, f
     spawn(&ctx, id, label, f)
 }
 
+/// A job's thread panicked (its result, in place of the value).
+struct Panicked(String);
+
 /// Runs `f` on a new thread under `id`. Returns false (and runs nothing)
-/// while a job with that id is still running or its result not taken.
+/// while a job with that id is still running. A finished job whose
+/// result nobody took (its window closed meanwhile) is dropped.
 pub fn spawn<T: Send + 'static>(ctx: &egui::Context, id: impl Into<String>, label: impl Into<String>, f: impl FnOnce() -> T + Send + 'static) -> bool {
     let id = id.into();
     let mut jobs = lock();
-    if jobs.contains_key(&id) {
-        return false;
+    if let Some(j) = jobs.get(&id) {
+        if j.done.lock().map(|d| d.is_none()).unwrap_or(true) {
+            return false;
+        }
+        jobs.remove(&id);
     }
     let done: Arc<Mutex<Option<Box<dyn Any + Send>>>> = Arc::default();
     let slot = done.clone();
@@ -69,11 +76,17 @@ pub fn spawn<T: Send + 'static>(ctx: &egui::Context, id: impl Into<String>, labe
         .name(format!("bg {name}"))
         .spawn(move || {
             let start = Instant::now();
-            let v = f();
+            let v: Box<dyn Any + Send> = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+                Ok(v) => Box::new(v),
+                Err(e) => {
+                    let msg = e.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| e.downcast_ref::<String>().cloned()).unwrap_or_default();
+                    Box::new(Panicked(msg))
+                }
+            };
             if crate::trace::enabled() {
                 eprintln!("[trace] background job {trace_name} took {:.1} ms", start.elapsed().as_secs_f64() * 1000.0);
             }
-            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(v));
+            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(v);
             ctx.request_repaint();
         })
         .expect("a thread");
@@ -90,11 +103,20 @@ pub fn dialog<T: Send + 'static>(ctx: &egui::Context, id: impl Into<String>, f: 
 
 /// The result of job `id`, once it finished (then the id is free again).
 /// `None` while it runs, when there is no such job, or when the result
-/// is not a `T`.
+/// is not a `T`. A job that panicked is dropped (`None`, and [`busy`] is
+/// false again: callers waiting for it treat that as a failure).
 pub fn take<T: 'static>(id: &str) -> Option<T> {
     let mut jobs = lock();
     let job = jobs.get(id)?;
     let v = job.done.lock().unwrap_or_else(|e| e.into_inner()).take()?;
+    let v = match v.downcast::<Panicked>() {
+        Ok(p) => {
+            eprintln!("chummer-rs: background job {id} failed: {}", p.0);
+            jobs.remove(id);
+            return None;
+        }
+        Err(v) => v,
+    };
     match v.downcast::<T>() {
         Ok(v) => {
             if let Some(mut j) = jobs.remove(id) {
@@ -182,6 +204,26 @@ mod tests {
         assert_eq!(v, 42);
         assert!(take::<i32>("test:once").is_none());
         assert!(!busy("test:once"));
+    }
+
+    #[test]
+    fn a_panic_frees_the_id() {
+        let ctx = egui::Context::default();
+        assert!(spawn(&ctx, "test:panic", "Testing", || -> i32 { panic!("boom") }));
+        wait("test:panic", Duration::from_secs(5));
+        assert!(take::<i32>("test:panic").is_none());
+        assert!(!busy("test:panic"));
+        assert!(running().iter().all(|l| l != "Testing panic"));
+    }
+
+    #[test]
+    fn an_untaken_result_does_not_block_the_id() {
+        let ctx = egui::Context::default();
+        assert!(spawn(&ctx, "test:untaken", "Testing", || 1));
+        wait("test:untaken", Duration::from_secs(5));
+        assert!(spawn(&ctx, "test:untaken", "Testing", || 2));
+        wait("test:untaken", Duration::from_secs(5));
+        assert_eq!(take::<i32>("test:untaken"), Some(2));
     }
 
     #[test]

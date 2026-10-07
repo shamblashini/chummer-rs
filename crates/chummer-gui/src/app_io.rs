@@ -54,11 +54,20 @@ pub struct Io {
     pub campaign_then: Then,
     /// Scan the roster again when the running scan is done.
     rescan: bool,
+    /// The files from the command line are loading.
+    pub startup: bool,
 }
 
 const ROSTER_SCAN: &str = "roster-scan";
 const CAMPAIGN_SAVE: &str = "save:campaign";
 
+
+impl Io {
+    /// Whether characters are still loading.
+    pub fn has_loads(&self) -> bool {
+        !self.loading.is_empty()
+    }
+}
 
 fn load_id(path: &Path) -> String {
     format!("load:{}", path.display())
@@ -229,6 +238,11 @@ impl App {
         // In the order they were opened (tabs keep that order).
         while let Some(path) = self.io.loading.first().cloned() {
             match bg::take::<Result<Character, String>>(&load_id(&path)) {
+                // The job failed outright.
+                None if !bg::busy(&load_id(&path)) => {
+                    self.io.loading.remove(0);
+                    self.status = Some((format!("Could not open {}", path.display()), true));
+                }
                 None => break,
                 Some(r) => {
                     self.io.loading.remove(0);
@@ -240,15 +254,17 @@ impl App {
             }
         }
         for (view, then) in std::mem::take(&mut self.io.asking) {
-            match bg::take::<Option<PathBuf>>(&format!("dialog:saveas:{view}")) {
-                None => self.io.asking.push((view, then)),
+            let id = format!("dialog:saveas:{view}");
+            match bg::take::<Option<PathBuf>>(&id) {
+                None if bg::busy(&id) => self.io.asking.push((view, then)),
                 Some(Some(path)) => {
                     if !self.start_save(view, path, then) && then == Then::Quit {
                         self.io.quitting = false;
                     }
                 }
-                // Cancelled: quitting waits for the user again.
-                Some(None) => {
+                // Cancelled (or the dialog failed): quitting waits for the
+                // user again.
+                Some(None) | None => {
                     if then == Then::Quit {
                         self.io.quitting = false;
                     }
@@ -256,8 +272,10 @@ impl App {
             }
         }
         for s in std::mem::take(&mut self.io.saving) {
-            match bg::take::<std::io::Result<()>>(&format!("save:{}", s.view)) {
-                None => self.io.saving.push(s),
+            let id = format!("save:{}", s.view);
+            match bg::take::<std::io::Result<()>>(&id) {
+                None if bg::busy(&id) => self.io.saving.push(s),
+                None => self.saved(s, Err(std::io::Error::other("the save failed"))),
                 Some(r) => self.saved(s, r),
             }
         }
@@ -274,7 +292,23 @@ impl App {
         }
         if self.io.quitting && self.io.saving.iter().all(|s| s.then != Then::Quit) && self.io.asking.iter().all(|(_, t)| *t != Then::Quit) {
             self.io.quitting = false;
-            self.quit_now();
+            // Edited while saving: ask again rather than lose the edit.
+            let dirty = self.views.iter().any(|v| v.ch().dirty && v.campaign_member.is_none()) || self.gm.as_ref().is_some_and(|g| g.is_dirty(&self.views));
+            if dirty {
+                self.pending = Some(crate::Pending::Quit);
+            } else {
+                self.quit_now();
+            }
+        }
+        if self.io.campaign_then != Then::Nothing && !bg::busy(CAMPAIGN_SAVE) && !bg::busy(crate::gm_screen::SAVE_DIALOG) {
+            // The save or its dialog went away without an answer.
+            self.io.campaign_then = Then::Nothing;
+        }
+        let engine = self.engine.clone();
+        if let Some(gm) = self.gm.as_mut() {
+            // Taken in whichever page is in front: a member tab must not
+            // edit the local copy the online one is about to replace.
+            gm.take_online(&mut self.online, &engine, &mut self.views);
         }
         bg::keep_painting(&self.ctx);
     }
@@ -292,11 +326,15 @@ impl App {
         }
         self.views.push(v);
         self.active = self.views.len() - 1;
-        self.home = None;
+        // Files from the command line keep the page `--window` chose.
+        if !self.io.startup {
+            self.home = None;
+        }
         self.remember(path);
         self.status = Some((format!("Opened {}", path.display()), false));
         if self.io.loading.is_empty() {
             self.io.start_tab = None;
+            self.io.startup = false;
         }
     }
 
@@ -363,6 +401,13 @@ impl App {
             Ok((p, saved)) => (Some(p), Ok(saved)),
             Err(e) => (None, Err(e)),
         };
+        if path.as_ref().is_some_and(|p| gm.path.as_ref() != Some(p)) {
+            // Another campaign is open now; that one was written.
+            if let Some(p) = path {
+                self.status = Some((format!("Saved {}", p.display()), false));
+            }
+            return;
+        }
         match (gm.saved(&mut self.views, r), path) {
             (Ok(()), Some(p)) => {
                 self.status = Some((format!("Saved {}", p.display()), false));
@@ -386,5 +431,6 @@ impl App {
     /// Wait for saves still writing (at exit).
     pub(crate) fn finish_io(&mut self) {
         bg::wait("save:", std::time::Duration::from_secs(120));
+        bg::wait(STATUS, std::time::Duration::from_secs(30));
     }
 }

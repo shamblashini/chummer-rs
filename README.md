@@ -629,9 +629,9 @@ Settings enter `https://127.0.0.1:3443#<mailbox id>` and its
 The desktop shows this when the window does not answer for a few
 seconds. Saving, opening, printing, file dialogs, going online, mailbox
 rounds and campaign saves run on their own threads (the status bar shows
-a spinner and what is running), and the window only reads the online
-campaign's state when no network task holds it. If the window still
-stalls, start chummer-rs from a terminal with frame timing on:
+a spinner and what is running), and the online sync no longer
+compresses characters while it holds the campaign's state. If the window
+still stalls, start chummer-rs from a terminal with frame timing on:
 
 ```bash
 CHUMMER_TRACE_FRAMES=1 chummer-rs 2>trace.log

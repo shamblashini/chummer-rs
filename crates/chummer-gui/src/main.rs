@@ -69,7 +69,7 @@ enum Mdi {
     Character(usize),
 }
 
-enum Pending {
+pub(crate) enum Pending {
     CloseTab(usize),
     CloseCampaign,
     Quit,
@@ -190,9 +190,11 @@ impl App {
             .unwrap_or_default();
         app.rescan_roster();
         app.io.start_tab = tab;
+        app.io.startup = true;
         for f in files {
             app.open(&f);
         }
+        app.io.startup = app.io.has_loads();
         app
     }
 
