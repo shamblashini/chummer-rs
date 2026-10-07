@@ -94,6 +94,20 @@ fn all_fixtures() -> Vec<PathBuf> {
     v
 }
 
+/// A copy of `path` for this thread only: background jobs are keyed by
+/// file path across the process, so two tests opening the same file at
+/// once would take each other's results.
+fn own_copy(path: &Path) -> PathBuf {
+    let tid = format!("{:?}", std::thread::current().id()).replace(['(', ')'], "");
+    let dir = scratch().join(format!("own-{tid}"));
+    let _ = std::fs::create_dir_all(&dir);
+    let p = dir.join(path.file_name().expect("a file"));
+    if !p.exists() {
+        std::fs::copy(path, &p).expect("copy fixture");
+    }
+    p
+}
+
 fn fixture(name: &str) -> PathBuf {
     let p = scratch().join("fixtures").join(name);
     assert!(p.exists(), "no fixture {name}");
@@ -287,11 +301,25 @@ impl Harness {
         self.click_at(r.center());
     }
 
+    /// Opens a character (it loads on a background thread) and waits for
+    /// its tab.
     fn open(&mut self, path: &Path) -> usize {
+        let path = own_copy(path);
         let before = self.app.views.len();
-        self.app.open(path);
+        self.app.open(&path);
+        self.wait_loaded(before + 1);
         assert_eq!(self.app.views.len(), before + 1, "opening {}: {:?}", path.display(), self.app.status);
         self.app.views.len() - 1
+    }
+
+    /// Draws frames until `n` characters are open (loads finish on other
+    /// threads) or a minute passed.
+    fn wait_loaded(&mut self, n: usize) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while self.app.views.len() < n && std::time::Instant::now() < end {
+            self.frame(Vec::new());
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     /// Close everything a click may have opened, and every character.
@@ -322,6 +350,14 @@ impl Harness {
         assert!(self.app.ws.palette.open, "Ctrl+K opens the palette");
         self.frame(Vec::new());
         self.type_text(query);
+        self.frames(2);
+        // The game-data entries are built on another thread.
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while self.app.ws.palette.needs_records() && std::time::Instant::now() < end {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            self.frame(Vec::new());
+        }
+        self.frame(Vec::new());
         self.key(Key::Enter, Modifiers::NONE);
         assert!(!self.app.ws.palette.open, "Enter runs the entry and closes the palette");
     }
@@ -416,7 +452,7 @@ fn go_special(h: &mut Harness, s: Section) {
 /// Go to `s` on character `i` and draw it in every pass.
 fn draw_page(h: &mut Harness, i: usize, s: Section, m: Matrix) {
     match s {
-        Section::Page(_) | Section::Gear(_) => h.app.views[i].ws_go(s),
+        Section::Page(_) | Section::Gear(_) | Section::Review => h.app.views[i].ws_go(s),
         Section::Play | Section::History => go_special(h, s),
         _ => unreachable!("not a character section: {s:?}"),
     }
@@ -929,7 +965,7 @@ fn switching_and_closing_documents() {
             h.frames(1);
         }
         // Opening an open file brings it to the front instead.
-        h.app.open(&fixture("Munin.chum5"));
+        h.app.open(&own_copy(&fixture("Munin.chum5")));
         assert_eq!((h.app.views.len(), h.app.active), (4, 0));
         for k in [3, 1, 2, 0] {
             h.app.select(crate::Mdi::Character(k));
@@ -1263,10 +1299,6 @@ fn tiny_windows() {
                 if h.app.views[i].ch().created && s == Section::Page(Tab::Skills) {
                     continue;
                 }
-                if kind.layout() == Layout::Workspace && s == Section::Page(Tab::Relationships) {
-                    // Known GUI bug: see workspace_relationships_short_window.
-                    continue;
-                }
                 let r = guarded(|| draw_page(&mut h, i, s, Matrix { passes }));
                 if let Err(e) = r {
                     failures.push(format!("{f} [{:?}] {}: {e}", kind.layout(), s.label()));
@@ -1309,7 +1341,6 @@ fn tiny_windows() {
 /// asks for a 500 px minimum, which tiling window managers may ignore.
 /// Fix: `.max(0.0)`.
 #[test]
-#[ignore = "GUI BUG: workspace/story.rs:249 set_min_height(height - 26.0) is negative in a short window (debug_assert in egui)"]
 fn workspace_relationships_short_window() {
     let mut h = Harness::new(ThemeKind::WorkspaceDark);
     let i = h.open(&fixture("Munin.chum5"));
@@ -1326,10 +1357,9 @@ fn command_line_tab_layout_theme() {
     for n in names.split('|') {
         assert!(Tab::parse(n).is_some(), "--tab {n}");
     }
-    // Full labels parse too, except that an "&" in the argument is kept
-    // while the labels lose theirs ("Spells & Spirits" does not parse,
-    // "Spells Spirits" does).
+    // Full labels parse too, with or without their "&".
     for (t, label) in TABS {
+        assert_eq!(Tab::parse(label), Some(*t), "--tab {label:?}");
         let arg = label.replace('&', "");
         assert_eq!(Tab::parse(&arg), Some(*t), "--tab {arg:?}");
     }
@@ -1344,9 +1374,10 @@ fn command_line_tab_layout_theme() {
     for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark] {
         let ctx = egui::Context::default();
         let cc = eframe::CreationContext::_new_kittest(ctx.clone());
-        let files = vec![fixture("Munin.chum5"), fixture("fixer-chummer.chum5lz")];
+        let files = vec![own_copy(&fixture("Munin.chum5")), own_copy(&fixture("fixer-chummer.chum5lz"))];
         let app = App::new(&cc, Engine::load().unwrap(), files, Tab::parse("skills"), (Some(kind), None), None);
         let mut h = Harness { ctx, app, size: WIDE, time: 0.0, texts: Vec::new() };
+        h.wait_loaded(2);
         assert_eq!(h.app.appearance.layout, kind.layout(), "--theme picks its layout");
         assert_eq!(h.app.views.len(), 2);
         h.frames(2);
@@ -1360,7 +1391,6 @@ fn command_line_tab_layout_theme() {
 /// but only clamps `active` when it runs past the end: with tabs A B C
 /// and B in front, closing A leaves `active` = 1, which is now C.
 #[test]
-#[ignore = "GUI BUG: main.rs App::close_tab does not shift `active` when a tab before it closes; the front character changes"]
 fn closing_a_background_tab_keeps_the_front_one() {
     let mut h = Harness::new(ThemeKind::Graphite);
     for f in ["Munin.chum5", "Soma.chum5", "Rez0luti0n2.0.chum5"] {
@@ -1372,4 +1402,29 @@ fn closing_a_background_tab_keeps_the_front_one() {
     h.app.close_tab(0, false);
     h.frames(1);
     assert_eq!(h.app.views[h.app.active].ws_id(), front, "the character in front stays in front");
+}
+
+/// Closing a campaign drops its member tabs; the plain character in front
+/// stays in front, and closing a member tab before it does not move it.
+#[test]
+fn closing_member_tabs_and_the_campaign_keeps_the_front_one() {
+    let mut h = Harness::new(ThemeKind::Graphite);
+    h.app.open_campaign(&campaign_file());
+    let ids: Vec<_> = h.app.gm.as_ref().unwrap().campaign.members.iter().map(|m| m.id).take(2).collect();
+    h.app.open_member(ids[0]);
+    h.open(&fixture("Munin.chum5"));
+    h.app.open_member(ids[1]);
+    h.open(&fixture("Soma.chum5"));
+    // Tabs: member0, Munin, member1, Soma. Munin in front.
+    h.app.select(crate::Mdi::Character(1));
+    h.frames(1);
+    let munin = h.app.views[1].ws_id();
+    h.app.close_tab(0, false);
+    assert_eq!(h.app.views[h.app.active].ws_id(), munin, "closing a member tab before it");
+    h.app.home = None;
+    h.frames(1);
+    assert!(h.app.close_campaign(true));
+    assert_eq!(h.app.views.len(), 2);
+    assert_eq!(h.app.views[h.app.active].ws_id(), munin, "closing the campaign");
+    h.frames(1);
 }

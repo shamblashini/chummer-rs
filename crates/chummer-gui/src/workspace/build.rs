@@ -241,7 +241,7 @@ impl CharacterView {
             ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
             for (letter, label, value) in rows {
                 egui::Frame::new().fill(ws.raised).stroke(egui::Stroke::new(1.0_f32, ws.divider)).corner_radius(5).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
-                    ui.set_width(w - 18.0);
+                    ui.set_width((w - 18.0).max(0.0));
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         ui.label(RichText::new(letter).size(14.0).color(ws.accent));

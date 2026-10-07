@@ -806,7 +806,7 @@ impl GmScreen {
             for (title, rows) in [(lang.tr("Skills"), &skills), (lang.tr("Gear"), &gear), (lang.tr("Qualities"), &qualities)] {
                 ui.allocate_ui_with_layout(egui::vec2(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     widgets::card_frame(&ws).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-                        ui.set_width(w - 22.0);
+                        ui.set_width((w - 22.0).max(0.0));
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.label(widgets::overline(&title, &ws));
                         ui.add_space(4.0);

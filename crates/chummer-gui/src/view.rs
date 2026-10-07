@@ -224,7 +224,7 @@ impl Tab {
     /// `--tab` argument: a tab label prefix ("skills", "street"), or one of
     /// the names of chummer-rs's older tabs.
     pub fn parse(s: &str) -> Option<Tab> {
-        let s = s.to_ascii_lowercase().replace(['-', '_', ' '], "");
+        let s = s.to_ascii_lowercase().replace(['-', '_', ' ', '&'], "");
         let old = match s.as_str() {
             "info" => Some(Tab::CharacterInfo),
             "attributes" | "qualities" => Some(Tab::Common),

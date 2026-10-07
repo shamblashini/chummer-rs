@@ -246,7 +246,7 @@ impl CharacterView {
         let height = ui.available_height();
         widgets::card_frame(&ws).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.set_min_height(height - 26.0);
+            ui.set_min_height((height - 26.0).max(0.0));
             changed = self.relationships.ui(ui, &mut self.doc, &self.store, lang, status);
         });
         changed

@@ -792,7 +792,7 @@ impl CharacterView {
                 }
                 let value = if ware { format!("{} {}", super::cell(el, "ess"), lang.tr("Ess")) } else { super::cell(el, "cost") };
                 egui::Frame::new().fill(ws.raised).stroke(egui::Stroke::new(1.0_f32, ws.divider)).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
-                    ui.set_width(card_w - 20.0);
+                    ui.set_width((card_w - 20.0).max(0.0));
                     ui.spacing_mut().item_spacing.y = 1.0;
                     ui.add(egui::Label::new(RichText::new(&name).size(12.5).color(ws.text)).truncate());
                     bits.push(value.trim().to_owned());
@@ -817,7 +817,7 @@ impl CharacterView {
             // The combo adds its padding and arrow to `sort_w`.
             let field_w = (ui.available_width() - sort_w - 40.0).max(160.0);
             let field = egui::Frame::new().fill(ws.well).stroke(egui::Stroke::new(1.0_f32, ws.control)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
-                ui.set_width(field_w - 18.0);
+                ui.set_width((field_w - 18.0).max(0.0));
                 ui.horizontal(|ui| {
                     ui.label(icons::icon(icons::MAGNIFYING_GLASS, 14.0, ws.muted));
                     let r = ui.add(egui::TextEdit::singleline(&mut c.search).id(egui::Id::new("ws_catalog_search")).frame(false).hint_text(lang.tr_fmt("Search {0}", &[&kinds.join(" / ")])).desired_width(f32::INFINITY));

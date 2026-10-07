@@ -721,7 +721,7 @@ pub fn click_card<R>(ui: &mut Ui, id: impl std::hash::Hash, width: f32, add: imp
         .corner_radius(CornerRadius::same(7))
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
-            ui.set_width(width - 26.0);
+            ui.set_width((width - 26.0).max(0.0));
             ui.vertical(|ui| add(ui)).inner
         });
     let resp = ui.interact(inner.response.rect, id, Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -902,7 +902,7 @@ pub fn heading(ui: &mut Ui, text: &str, note: &str, size: f32, right: impl FnOnc
 pub fn mini_card(ui: &mut Ui, caption: &str, rows: &[(String, String, bool)], width: f32) {
     let ws = theme::ws(ui);
     egui::Frame::new().fill(ws.raised).stroke(Stroke::new(1.0_f32, ws.divider)).corner_radius(CornerRadius::same(7)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-        ui.set_width(width - 22.0);
+        ui.set_width((width - 22.0).max(0.0));
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.label(overline(caption, &ws));
@@ -918,7 +918,7 @@ pub fn mini_card(ui: &mut Ui, caption: &str, rows: &[(String, String, bool)], wi
 pub fn tile(ui: &mut Ui, caption: &str, value: &str, accent: bool, width: f32) {
     let ws = theme::ws(ui);
     egui::Frame::new().fill(ws.raised).stroke(Stroke::new(1.0_f32, ws.divider)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(9, 7)).show(ui, |ui| {
-        ui.set_width(width - 20.0);
+        ui.set_width((width - 20.0).max(0.0));
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.label(overline(caption, &ws));
@@ -1245,7 +1245,7 @@ pub fn preset_input(ui: &mut Ui, id: impl std::hash::Hash, text: &mut String, pr
             .width(list_w)
             .gap(2.0);
         popup.show(|ui| {
-            ui.set_width(list_w - 12.0);
+            ui.set_width((list_w - 12.0).max(0.0));
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
             egui::ScrollArea::vertical().max_height(260.0).auto_shrink([false, true]).show(ui, |ui| {
                 if shown.is_empty() {

@@ -235,7 +235,7 @@ impl App {
             if let Some(gm) = self.gm.as_mut() {
                 gm.give_back(id, doc);
             }
-            self.active = self.active.min(self.views.len().saturating_sub(1));
+            self.removed_before_active(idx);
             self.home = Some(Home::Campaign);
             return;
         } else {
@@ -245,12 +245,19 @@ impl App {
             }
             self.views.remove(idx);
         }
-        if self.active >= self.views.len() {
-            self.active = self.views.len().saturating_sub(1);
-        }
+        self.removed_before_active(idx);
         if self.views.is_empty() {
             self.home = Some(Home::Roster);
         }
+    }
+
+    /// After the view at `idx` was removed: the same character stays in
+    /// front (the one after it when the front one was removed).
+    fn removed_before_active(&mut self, idx: usize) {
+        if idx < self.active {
+            self.active -= 1;
+        }
+        self.active = self.active.min(self.views.len().saturating_sub(1));
     }
 
     /// The character in front, if any.
@@ -336,7 +343,12 @@ impl App {
             self.pending = Some(Pending::CloseCampaign);
             return false;
         }
+        // Keep the character in front when it stays; else the nearest
+        // one before it.
+        let before = self.views.iter().take(self.active).filter(|v| v.campaign_member.is_none()).count();
+        let front_stays = self.views.get(self.active).is_some_and(|v| v.campaign_member.is_none());
         self.views.retain(|v| v.campaign_member.is_none());
+        self.active = if front_stays { before } else { before.saturating_sub(1) };
         if let Some(gm) = self.gm.as_mut() {
             gm.close_online(&mut self.online);
         }

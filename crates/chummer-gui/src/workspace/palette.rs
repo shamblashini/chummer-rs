@@ -458,7 +458,7 @@ impl Palette {
                 if let Some(e) = results.get(self.selected) {
                     rule(ui);
                     egui::Frame::new().fill(ws.chrome).inner_margin(egui::Margin::symmetric(12, 9)).show(ui, |ui| {
-                        ui.set_width(width - 24.0);
+                        ui.set_width((width - 24.0).max(0.0));
                         ui.spacing_mut().item_spacing.y = 4.0;
                         ui.label(widgets::overline(&lang.tr("Preview"), &ws));
                         ui.horizontal_wrapped(|ui| {
