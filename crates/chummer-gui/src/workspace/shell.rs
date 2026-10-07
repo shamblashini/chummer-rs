@@ -182,7 +182,7 @@ impl App {
 
     /// The sidebar's sections for a document.
     fn ws_nav(&self, doc: DocKey) -> Vec<NavGroup> {
-        let item = |s: Section| NavItem { section: s, label: self.lang.tr(s.label()), badge: None };
+        let item = |s: Section| NavItem { section: s, label: self.lang.tr(s.label()), badge: None, check: None };
         match doc {
             DocKey::Home => vec![NavGroup { title: self.lang.tr("Library"), items: vec![item(Section::Home)] }, NavGroup { title: self.lang.tr("Reference"), items: vec![item(Section::DataBrowser)] }],
             DocKey::Campaign => vec![NavGroup { title: self.lang.tr("Campaign"), items: vec![item(Section::Campaign)] }],
@@ -352,7 +352,11 @@ impl App {
                                 }
                                 widgets::nav_heading(ui, &g.title);
                                 for it in &g.items {
-                                    if widgets::nav_item(ui, it.section == current, it.section.icon(), &it.label, it.badge).clicked() {
+                                    let r = widgets::nav_item(ui, it.section == current, it.section.icon(), &it.label, it.badge);
+                                    if let (Some(done), None) = (it.check, it.badge) {
+                                        crate::view::paint_step_mark(ui.painter(), egui::Rect::from_center_size(egui::pos2(r.rect.right() - 16.0, r.rect.center().y), egui::Vec2::splat(14.0)), done);
+                                    }
+                                    if r.clicked() {
                                         go = Some(it.section);
                                     }
                                 }
@@ -584,7 +588,8 @@ impl App {
         let lang = &self.lang;
         let mut changed = false;
         let v = &mut self.views[i];
-        if v.ws_creating() {
+        // Guided creation lists them on its Review & Finish page.
+        if v.ws_creating() && !v.guided() {
             let (errors, warnings) = v.ws_issue_counts();
             Panel::inspector(key(PanelId::Issues), &lang.tr("Issues")).show(
                 ui,

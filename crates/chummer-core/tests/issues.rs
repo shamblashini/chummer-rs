@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use chummer_core::calc;
-use chummer_core::chargen::guide::{self, State, Step};
+use chummer_core::chargen::guide::{self, Step};
 use chummer_core::chargen::issues::{self, Area, Issue, IssueKind, IssueTab, Severity};
 use chummer_core::chargen::{self, NewCharacter, Priorities};
 use chummer_core::character::Character;
@@ -236,31 +236,35 @@ fn step_status_tracks_issues() {
     let mut ch = new_char(&engine, STANDARD, "Human", ['D', 'E', 'A', 'B', 'C'], "Mundane");
     let steps = guide::steps_for("Priority", &ch);
     let list = issues_of(&engine, &ch);
-    // Fresh: the first step with something to do is the attributes.
+    // Fresh: the first step with something to do is the attributes; the
+    // concept (done in the wizard) counts as visited.
     let start = guide::suggested(&steps, &list);
     assert_eq!(steps[start], Step::Attributes);
-    let st = guide::status(&steps, start, start, &list);
-    assert_eq!(st[0].state, State::Done);
-    assert_eq!(st[start].state, State::Current);
-    assert_eq!(st[start + 1].state, State::Upcoming);
+    let mut visited = guide::visited_before(&steps, start);
+    visited.push(steps[start]);
+    let st = guide::status(&steps, &visited, &list);
+    assert!(st[0].done());
     assert_eq!(st[start].warnings, 1);
-    assert!(st[start].can_advance(), "warnings allow Next");
+    assert!(!st[start].done());
+    assert_eq!(guide::focus(&st, IssueTab::Common), Some(start));
+    // Next skips nothing yet: special attributes are next.
+    assert_eq!(guide::next(&st, start), Some(start + 1));
     let skills = steps.iter().position(|s| *s == Step::ActiveSkills).unwrap();
     assert_eq!(st[skills].warnings, 2, "skill points and skill group points");
+    assert_eq!(guide::focus(&st, IssueTab::Skills), Some(skills));
+    assert_eq!(guide::tab_done(&st, IssueTab::Common), Some(false));
+    assert_eq!(guide::progress(&st), (1, steps.len() - 1));
 
-    // Overspent attributes block Next and pull the suggestion back.
+    // Overspent attributes are errors, and pull the suggestion back.
     for a in ch.attributes.iter_mut().filter(|a| ["BOD", "AGI", "REA", "STR", "WIL"].contains(&a.name.as_str())) {
         a.base = 5;
     }
     let list = issues_of(&engine, &ch);
-    let st = guide::status(&steps, skills, skills, &list);
+    let st = guide::status(&steps, &steps, &list);
     let attrs = steps.iter().position(|s| *s == Step::Attributes).unwrap();
     assert_eq!(st[attrs].errors, 2);
-    assert!(!st[attrs].can_advance());
     assert_eq!(guide::suggested(&steps, &list), attrs);
-    // The review step collects every error.
+    // The review step collects every error, and its list has them first.
     assert_eq!(st.last().unwrap().errors, 2);
-    // Going back keeps later reached steps done.
-    let st = guide::status(&steps, attrs, skills + 1, &list);
-    assert_eq!((st[attrs].state, st[skills].state, st[skills + 1].state), (State::Current, State::Done, State::Upcoming));
+    assert!(Step::Review.todo(&list)[0].is_error());
 }

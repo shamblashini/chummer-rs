@@ -32,7 +32,7 @@ use egui_extras::{Column, TableBuilder};
 mod guide_ui;
 #[path = "issues_ui.rs"]
 mod issues_ui;
-pub use guide_ui::{guided_offer, guided_preference, save_guided_preference};
+pub use guide_ui::{guided_offer, guided_preference, paint_step_mark, save_guided_preference};
 // The Workspace layout's access to the view (`crate::workspace`).
 #[path = "workspace/character.rs"]
 pub(crate) mod workspace;
@@ -435,7 +435,6 @@ impl CharacterView {
             changed |= self.side_panel(ui, lang, &mut roll);
         });
         changed |= self.item_editor_panel(ctx, engine, lang, status);
-        self.guide_bar(ctx, lang, pdfs, status);
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(key) = crate::ruleset_ui::banner(ui, &self.doc, engine, lang, self.tab == Tab::Common) {
                 changed |= self.switch_settings(&key, status);
@@ -443,7 +442,7 @@ impl CharacterView {
             let tabs: Vec<(Tab, String)> = TABS.iter().filter(|(t, _)| self.visible(*t)).map(|(t, l)| (*t, lang.tr(l))).collect();
             let tabs = self.decorated_tabs(tabs);
             crate::theme::tab_strip_with(ui, &mut self.tab, &tabs);
-            self.issue_panel(ui, lang, self.tab);
+            self.page_hint(ui, lang, pdfs, status, self.tab, None, false);
             changed |= self.tab_page(ui, self.tab, engine, lang, pdfs, status, &mut roll);
         });
         self.end_frame(ctx, engine, lang, pdfs, status, changed);

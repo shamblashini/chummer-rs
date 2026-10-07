@@ -76,6 +76,8 @@ pub enum Section {
     Gear(usize),
     /// Character: this session's changes.
     History,
+    /// Character, guided creation: everything left, and Finish creation.
+    Review,
     /// Home: recent characters, the roster, online campaigns.
     Home,
     /// Home: the Master Index.
@@ -93,6 +95,7 @@ impl Section {
             Section::Page(t) => crate::view::TABS.iter().find(|(x, _)| *x == t).map_or("", |(_, l)| l),
             Section::Gear(i) => crate::view::workspace::gear_label(i),
             Section::History => "History",
+            Section::Review => "Review & Finish",
             Section::Home => "Home",
             Section::DataBrowser => "Master Index",
             Section::Campaign => "GM Screen",
@@ -132,6 +135,7 @@ impl Section {
                 _ => HOUSE_LINE,
             },
             Section::History => CLOCK_COUNTER_CLOCKWISE,
+            Section::Review => FLAG_CHECKERED,
             Section::Home => HOUSE,
             Section::DataBrowser => DATABASE,
             Section::Campaign => USERS_THREE,
@@ -175,6 +179,9 @@ pub struct NavItem {
     /// Translated.
     pub label: String,
     pub badge: Option<Badge>,
+    /// Guided creation's checklist mark, shown when there is no badge:
+    /// `Some(true)` done, `Some(false)` not visited yet.
+    pub check: Option<bool>,
 }
 
 /// A titled group of sidebar entries ("Build", "Story", "Records").

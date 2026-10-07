@@ -1,6 +1,6 @@
 //! The Workspace's own character pages (Main.dc.html, A-career.dc.html):
-//! Attributes & Qualities with the derived values, the guide as a row
-//! of steps, the tab's issues, and the item tables the other pages use.
+//! Attributes & Qualities with the derived values, and the item tables
+//! the other pages use (the guide's hint line is `view::guide_ui`).
 //! Skills are in `skills.rs`, magic and the other build pages in
 //! `magic.rs`, the story and record pages in `story.rs`, the career
 //! ledger and the palette's advances in `career.rs`, and the inspector
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chummer_core::attributes;
-use chummer_core::chargen::issues::{Area, Issue, Severity};
+use chummer_core::chargen::issues::{Area, Severity};
 use chummer_core::command::Command;
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
@@ -26,7 +26,7 @@ use eframe::egui::{self, RichText};
 
 use crate::pdf_ui::Status;
 use crate::theme;
-use crate::view::issues_ui::{message, tab_of};
+use crate::view::issues_ui::message;
 use crate::view::{CareerAction, CharacterView, Tab};
 use crate::workspace::icons;
 use crate::workspace::widgets::{self, Look};
@@ -131,159 +131,6 @@ impl CharacterView {
             Tab::Relationships => self.ws_relationships(ui, lang, status),
             Tab::Karma => page(ui, tab, |ui| ui.push_id("ws_karma_page", |ui| self.ws_karma_page(ui, engine, lang)).inner),
             Tab::Cyberware | Tab::StreetGear | Tab::Vehicles => self.tab_page(ui, tab, engine, lang, pdfs, status, roll),
-        }
-    }
-
-    // ----- guide and issues -----
-
-    /// Guided creation as a row of steps in a card, the step's rule and
-    /// what is left to do in it.
-    pub(crate) fn ws_guide(&mut self, ui: &mut egui::Ui, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) {
-        use chummer_core::chargen::guide;
-        if !self.guide_shown() {
-            return;
-        }
-        self.refresh_steps();
-        let method = self.build_method();
-        let Some(g) = self.guide.as_ref() else { return };
-        let statuses = guide::status(&g.steps, g.current, g.reached, &self.issues);
-        let current = g.current;
-        let cur = statuses[current];
-        let step = cur.step;
-        let last = current + 1 == statuses.len();
-        let any_error = self.issues.iter().any(Issue::is_error);
-        let ws = theme::ws(ui);
-        let (mut go, mut jump, mut finish, mut hide) = (None, None, false, false);
-        egui::Frame::new()
-            .fill(ws.raised)
-            .stroke(egui::Stroke::new(1.0_f32, ws.divider))
-            .corner_radius(6)
-            .inner_margin(egui::Margin { left: 10, right: 6, top: 5, bottom: 5 })
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.label(widgets::overline(&lang.tr("Guide"), &ws));
-                    ui.add_space(6.0);
-                    // The steps wrap before the buttons on the right.
-                    let room = (ui.available_width() - 200.0).max(120.0);
-                    ui.allocate_ui_with_layout(egui::vec2(room, 22.0), egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true), |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
-                        for (i, s) in statuses.iter().enumerate() {
-                            if guide_chip(ui, i == current, s, &lang.tr(s.step.title()), lang).clicked() && i != current {
-                                go = Some(i);
-                            }
-                            if i + 1 < statuses.len() {
-                                ui.label(icons::icon(icons::CARET_RIGHT, 11.0, ws.muted));
-                            }
-                        }
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        hide = widgets::icon_button(ui, icons::X, 24.0).on_hover_text(format!("{} · {}", lang.tr("Hide guide"), lang.tr("View → Guided creation turns it back on"))).clicked();
-                        if last {
-                            let r = ui.add_enabled_ui(!any_error, |ui| widgets::button(ui, Some(icons::CHECK), &lang.tr("Finish creation"), Look::Primary, 24.0)).inner;
-                            finish = r.on_disabled_hover_text(lang.tr("Fix the problems above first")).clicked();
-                        } else {
-                            let next = lang.tr(statuses[current + 1].step.title());
-                            let r = ui.add_enabled_ui(cur.can_advance(), |ui| widgets::button(ui, Some(icons::ARROW_RIGHT), &format!("{}: {next}", lang.tr("Next")), Look::Outline, 24.0)).inner;
-                            if r.on_disabled_hover_text(lang.tr("Fix the errors in this step first")).clicked() {
-                                go = Some(current + 1);
-                            }
-                        }
-                        if current > 0 && widgets::icon_button(ui, icons::ARROW_LEFT, 24.0).on_hover_text(lang.tr("Back")).clicked() {
-                            go = Some(current - 1);
-                        }
-                    });
-                });
-            });
-        // The step: its rule and what it asks for.
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            ui.label(RichText::new(lang.tr(step.title())).font(widgets::bold(13.0)).color(ws.text));
-            let (book, pg) = step.source(&method);
-            if let Some(r) = SourceRef::new(book, pg) {
-                if source_button(ui, pdfs, lang, &r) {
-                    crate::pdf_ui::open(pdfs, &r, status);
-                }
-            }
-            ui.label(RichText::new(lang.tr(step.explanation(&method))).size(12.0).color(ws.muted));
-        });
-        let todo: Vec<&Issue> = self.issues.iter().filter(|i| step.owns(i) && (step == guide::Step::Review || i.severity != Severity::Info || i.area == Area::CharacterInfo)).collect();
-        if !todo.is_empty() {
-            const SHOWN: usize = 4;
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                ui.label(RichText::new(lang.tr("Left to do:")).size(12.0).color(ws.muted));
-                for i in todo.iter().take(SHOWN) {
-                    if issue_line(ui, lang, i) {
-                        jump = Some((*i).clone());
-                    }
-                    ui.add_space(8.0);
-                }
-                if todo.len() > SHOWN {
-                    ui.label(RichText::new(lang.tr_fmt("and {0} more (Karma Summary)", &[&(todo.len() - SHOWN)])).size(12.0).color(ws.muted));
-                }
-            });
-        }
-        ui.add_space(4.0);
-        if let Some(i) = go {
-            self.go_to_step(i);
-        }
-        if let Some(i) = jump {
-            self.jump_to(&i);
-        }
-        if finish {
-            self.confirm_finish = true;
-        }
-        if hide {
-            self.guide = None;
-            self.guide_hidden = true;
-        }
-    }
-
-    /// The tab's issues above its page, until closed (creation only; the
-    /// guide lists its own step's).
-    pub(crate) fn ws_issue_strip(&mut self, ui: &mut egui::Ui, lang: &Language, tab: Tab) {
-        if self.budget.is_none() || self.guide_tab() == Some(tab) {
-            return;
-        }
-        let mine: Vec<Issue> = self.issues.iter().filter(|i| i.tab().map(tab_of) == Some(tab) && i.severity != Severity::Info).cloned().collect();
-        if mine.is_empty() || self.dismissed.is(tab, &mine) {
-            return;
-        }
-        let ws = theme::ws(ui);
-        let errors = mine.iter().any(Issue::is_error);
-        let (mut jump, mut close) = (None, false);
-        egui::Frame::new()
-            .fill(ws.raised)
-            .stroke(egui::Stroke::new(1.0_f32, if errors { ws.error } else { ws.warning }))
-            .corner_radius(6)
-            .inner_margin(egui::Margin::symmetric(10, 5))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let room = ui.available_width() - 30.0;
-                    ui.allocate_ui_with_layout(egui::vec2(room, 20.0), egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true), |ui| {
-                        ui.label(RichText::new(if errors { lang.tr("Blocks finishing creation:") } else { lang.tr("Still to do on this tab:") }).font(widgets::bold(12.0)).color(ws.text));
-                        for i in &mine {
-                            if issue_line(ui, lang, i) {
-                                jump = Some(i.clone());
-                            }
-                            ui.add_space(8.0);
-                        }
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        close = widgets::icon_button(ui, icons::X, 22.0).on_hover_text(lang.tr("Hide until something changes")).clicked();
-                    });
-                });
-            });
-        if close {
-            self.dismissed.dismiss(tab, &mine);
-        }
-        if let Some(i) = jump {
-            self.jump_to(&i);
         }
     }
 
@@ -685,54 +532,6 @@ impl CharacterView {
             }
         }
     }
-}
-
-/// One step of the guide row: done steps get a check, steps with
-/// problems a dot in the warning or error colour.
-fn guide_chip(ui: &mut egui::Ui, current: bool, s: &chummer_core::chargen::guide::StepStatus, title: &str, lang: &Language) -> egui::Response {
-    use chummer_core::chargen::guide::State;
-    let ws = theme::ws(ui);
-    let font = if current { widgets::bold(12.0) } else { egui::FontId::proportional(12.0) };
-    let ink = if current { ws.text } else { ws.muted };
-    let galley = ui.painter().layout_no_wrap(title.to_owned(), font, ink);
-    let done = s.state == State::Done && s.errors == 0;
-    let flagged = s.errors + s.warnings > 0;
-    let mark_w = if done || flagged { 16.0 } else { 0.0 };
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(galley.size().x + 14.0 + mark_w, 22.0), egui::Sense::click());
-    if ui.is_rect_visible(rect) {
-        let p = ui.painter();
-        if current {
-            p.rect_filled(rect, 4, ws.selection);
-        } else if resp.hovered() {
-            p.rect_filled(rect, 4, ws.hover);
-        }
-        let mut x = rect.left() + 7.0;
-        if done {
-            icons::paint(p, egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 6.0), egui::Vec2::splat(12.0)), icons::CHECK, 12.0, ws.accent);
-            x += mark_w;
-        } else if flagged {
-            p.circle_filled(egui::pos2(x + 4.0, rect.center().y), 3.5, if s.errors > 0 { ws.error } else { ws.warning });
-            x += mark_w;
-        }
-        p.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, ink);
-    }
-    let resp = if flagged { resp.on_hover_text(lang.tr_fmt("{0} error(s), {1} warning(s)", &[&s.errors, &s.warnings])) } else { resp };
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-/// An issue as a clickable line with its mark; true when clicked.
-pub(crate) fn issue_line(ui: &mut egui::Ui, lang: &Language, i: &Issue) -> bool {
-    let ws = theme::ws(ui);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        match i.severity {
-            Severity::Info => ui.label(icons::icon(icons::INFO, 13.0, ws.muted)),
-            _ => widgets::issue_mark(ui, i.is_error(), &lang.tr("Show")),
-        };
-        let color = if i.is_error() { ws.error } else { ws.text };
-        ui.add(egui::Label::new(RichText::new(message(lang, i)).size(12.0).color(color)).sense(egui::Sense::click())).on_hover_text(lang.tr("Show")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-    })
-    .inner
 }
 
 /// A sourcebook reference as a small ghost button ("SR5 p. 65"), dimmed

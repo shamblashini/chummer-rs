@@ -774,12 +774,13 @@ pub fn tab(ui: &mut egui::Ui, selected: bool, label: &str, close: bool) -> (egui
     tab_with(ui, selected, label, close, TabDeco::default())
 }
 
-/// Extra marks on a tab: an issue badge, and whether it is de-emphasised
-/// (still clickable) because the guided-creation step is elsewhere.
+/// Extra marks on a tab: an issue badge, and with guided creation its
+/// checklist mark when it has no badge (`Some(true)` done, `Some(false)`
+/// not visited yet).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TabDeco {
     pub badge: Option<Badge>,
-    pub dim: bool,
+    pub check: Option<bool>,
 }
 
 /// How many problems a tab (or row) has; `error` when any blocks
@@ -831,7 +832,7 @@ pub fn warning_mark(ui: &mut egui::Ui, error: bool) -> egui::Response {
     resp
 }
 
-/// [`tab`] with a badge and de-emphasis.
+/// [`tab`] with a badge or checklist mark.
 pub fn tab_with(ui: &mut egui::Ui, selected: bool, label: &str, close: bool, deco: TabDeco) -> (egui::Response, bool) {
     let t = current(ui.ctx());
     let p = t.palette;
@@ -843,6 +844,8 @@ pub fn tab_with(ui: &mut egui::Ui, selected: bool, label: &str, close: bool, dec
     let badge_font = FontId::proportional((font.size - 2.0).max(9.0));
     let badge_galley = deco.badge.map(|b| ui.painter().layout_no_wrap(b.count.to_string(), badge_font.clone(), Color32::PLACEHOLDER));
     let badge_w = badge_galley.as_ref().map_or(0.0, |g| 14.0 + g.size().x + 3.0);
+    let check = deco.check.filter(|_| deco.badge.is_none());
+    let badge_w = if check.is_some() { 16.0 } else { badge_w };
     let size = egui::vec2(galley.size().x + 2.0 * pad.x + close_w + badge_w, galley.size().y + 2.0 * pad.y);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let close_rect = egui::Rect::from_min_max(egui::pos2(rect.max.x - close_w - pad.x * 0.5, rect.min.y), egui::pos2(rect.max.x - pad.x * 0.5, rect.max.y));
@@ -871,7 +874,6 @@ pub fn tab_with(ui: &mut egui::Ui, selected: bool, label: &str, close: bool, dec
             }
             if selected || hovered { p.text } else { p.weak }
         };
-        let text_color = if deco.dim && !selected && !hovered { p.weak.gamma_multiply(if classic { 1.0 } else { 0.7 }) } else { text_color };
         let label_w = galley.size().x;
         painter.galley(rect.min + pad, galley, text_color);
         if let (Some(b), Some(g)) = (deco.badge, badge_galley) {
@@ -880,6 +882,10 @@ pub fn tab_with(ui: &mut egui::Ui, selected: bool, label: &str, close: bool, dec
             paint_mark(painter, mark, &t, b.error);
             let color = if classic { p.text } else { mark_color(&t, b.error) };
             painter.galley(egui::pos2(mark.max.x + 1.0, rect.center().y - g.size().y / 2.0), g, color);
+        }
+        if let Some(done) = check {
+            let mark = egui::Rect::from_min_size(egui::pos2(rect.min.x + pad.x + label_w + 3.0, rect.center().y - 6.0), egui::vec2(12.0, 12.0));
+            crate::view::paint_step_mark(painter, mark, done);
         }
         if close {
             let c = if over_close { p.bad } else { p.weak };
@@ -895,7 +901,7 @@ pub fn tab_strip<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, tabs: 
     tab_strip_with(ui, current, &decorated)
 }
 
-/// [`tab_strip`] with a badge and de-emphasis per tab.
+/// [`tab_strip`] with a badge or checklist mark per tab.
 pub fn tab_strip_with<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, tabs: &[(T, String, TabDeco)]) -> bool {
     let mut changed = false;
     strip_frame(ui, |ui| {

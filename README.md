@@ -100,16 +100,38 @@ not wait for a pop-up at the end:
   spirit not chosen yet, no technomancer stream.
 - Each tab with issues has a warning badge with the count (Classic: a
   yellow warning sign; Graphite: a coloured dot). The focused tab shows
-  its issues at the top; click one to go to the row or item. ✖ hides the
-  panel until something changes. Rows with a problem have a warning mark.
+  its first issue in one line at the top, with "+n" for the rest; click
+  one to go to the row or item. ✖ hides the line until something
+  changes. Rows with a problem have a warning mark.
 - The Karma Summary lists every issue, and Finish creation shows the
   full list before it switches to career mode, carrying over at most 7
   karma and 5,000¥.
 
-**Guided creation.** For new players, a guide bar walks through the build
-one step at a time. Turn it on in the New Character wizard or with
-View → Guided creation (saved in `gui.ini`). The steps follow the build
-method:
+**Guided creation.** For new players, the character's own tabs (Classic)
+or sidebar (Workspace) become the build checklist; there is no extra
+bar. Turn it on in the New Character wizard (checked by default) or with
+View → Guided creation, and off with ✕ (saved in `gui.ini`). A new
+character opens on its first real step, e.g. "Attributes · 24 Attribute
+points left to spend · Next: Special Attributes →".
+
+- **Checklist**: each tab or sidebar entry with steps shows a tick when
+  they are done (visited, no errors or warnings left), an empty ring when
+  not visited yet, or the usual issue count. The Workspace's Build
+  heading counts the steps done ("Build · 6/11") and ends with **Review
+  & Finish**.
+- **One hint line** at the top of the page, for the step the page is
+  about: its name, the first thing left (click to go there) and "+n" for
+  the rest, and **Next** to the next unfinished step. The step follows
+  wherever you go (sidebar, tabs, issue links), so nothing is locked.
+- **Rules on demand**: ⓘ opens the step's rule in plain words with a 📖
+  link to the rulebook page (SR5 or Run Faster); hovering the name shows
+  the progress.
+- **Review & Finish** lists everything Finish creation would, grouped by
+  tab, with Finish creation (Classic: on the Common tab, reached with
+  Next). Steps without checks (cyberware, vehicles) count as done once
+  visited.
+
+The steps follow the build method:
 
 | Build method | Steps |
 |---|---|
@@ -117,15 +139,14 @@ method:
 | Point Buy | Concept & metatype → qualities (magic and resonance are qualities here) → attributes → special attributes → skills → … as above |
 | Life Modules | Concept & metatype → life modules → qualities → attributes → … as above |
 
-Each step explains its rule in plain words, with a 📖 link to the
-rulebook page (SR5 or Run Faster), and lists what is still to do there.
-Next is allowed when the step has no errors; the step chips let you jump
-anywhere. Tabs outside the current step are dimmed, not locked. The
-current step is remembered per file in `~/.config/chummer-rs/guide.ini`,
-not in the .chum5.
+The current step and the steps visited are remembered per file in
+`~/.config/chummer-rs/guide.ini`, not in the .chum5.
 
-![Guided creation, Graphite theme](docs/screenshots/guided-creation-graphite.png)
-![Creation issues on the Skills tab, Classic theme](docs/screenshots/guided-creation-classic.png)
+| | Start | Mid-way | Review |
+|---|---|---|---|
+| Workspace, dark | ![Guided creation start, Workspace dark](docs/screenshots/guided-creation-dark-start.png) | ![Guided creation mid-way, Workspace dark](docs/screenshots/guided-creation-dark-mid.png) | ![Review & Finish, Workspace dark](docs/screenshots/guided-creation-dark-review.png) |
+| Workspace, light | ![Guided creation start, Workspace light](docs/screenshots/guided-creation-light-start.png) | ![Guided creation mid-way, Workspace light](docs/screenshots/guided-creation-light-mid.png) | ![Review & Finish, Workspace light](docs/screenshots/guided-creation-light-review.png) |
+| Classic | ![Guided creation start, Classic](docs/screenshots/guided-creation-classic-start.png) | ![Guided creation mid-way, Classic](docs/screenshots/guided-creation-classic-mid.png) | ![Review & Finish, Classic](docs/screenshots/guided-creation-classic-review.png) |
 
 **Career mode.**
 - Raise attributes, skills, skill groups and knowledge skills for karma at Chummer's costs.
@@ -379,8 +400,8 @@ was.
 - **Budget strip**: creation budgets (attributes, special, skills, skill
   groups, knowledge, contacts, karma, nuyen, essence) with bars, or in
   career karma, nuyen, essence, limits, initiative and armor.
-- **Page**: the section, with the guide (a row of steps, the step's
-  rule and what is left in it) and the tab's issues above it. The build,
+- **Page**: the section, with one hint line above it in creation (the
+  guide's step and what is left, or the tab's issues). The build,
   story and record pages are the Workspace's own: tables with steppers in
   creation (points and karma), rating pips, pools you can click to roll,
   issue marks on the rows, and in career a "+1 · cost" button on every
@@ -487,7 +508,7 @@ was.
 ![The GM screen with an encounter, dark](docs/screenshots/workspace-gm-dark.png)
 ![The GM screen, light](docs/screenshots/workspace-gm-light.png)
 ![Workspace, light, Skills during creation](docs/screenshots/workspace-light-creation.png)
-![Workspace, dark, Attributes & Qualities during creation with the guide](docs/screenshots/workspace-build-dark.png)
+![Workspace, dark, Attributes & Qualities during creation](docs/screenshots/workspace-build-dark.png)
 ![Workspace, light, Skills during creation, a skill in the inspector](docs/screenshots/workspace-build-light.png)
 ![Workspace, career, Skills with the +1 buttons and the ledger](docs/screenshots/workspace-career-skills.png)
 ![Workspace, career, knowledge skills and other advances](docs/screenshots/workspace-career-advances.png)

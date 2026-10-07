@@ -1158,7 +1158,10 @@ impl App {
                 wizard::WizardResult::Cancel => self.wizard = None,
                 wizard::WizardResult::Created(ch) => {
                     let mut v = CharacterView::new(*ch, &self.engine);
-                    v.set_tab(view::Tab::Common);
+                    // Guided: the guide already opened its first step.
+                    if !v.guided() {
+                        v.set_tab(view::Tab::Common);
+                    }
                     self.views.push(v);
                     self.active = self.views.len() - 1;
                     self.home = None;

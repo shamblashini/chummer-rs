@@ -56,7 +56,7 @@ fn table_labels() -> BTreeSet<String> {
     out.extend(crate::theme::ThemeKind::ALL.iter().map(|k| k.label().to_owned()).chain(crate::theme::Layout::ALL.iter().map(|l| l.label().to_owned())));
     out.extend(crate::settings_ui::LABELS.iter().map(|(_, l)| (*l).to_owned()));
     out.extend(chargen::issues::templates().into_iter().map(str::to_owned));
-    out.extend(chargen::guide::ALL.iter().flat_map(|s| [s.title(), s.explanation("Priority"), s.explanation("Karma"), s.explanation("LifeModule"), s.explanation("SumtoTen")]).map(str::to_owned));
+    out.extend(chargen::guide::ALL.iter().flat_map(|s| [s.title(), s.explanation("Priority"), s.explanation("Karma"), s.explanation("LifeModule"), s.explanation("SumtoTen"), s.prompt("Priority"), s.prompt("Karma")]).map(str::to_owned));
     out.remove("");
     out
 }
