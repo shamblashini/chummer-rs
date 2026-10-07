@@ -84,12 +84,18 @@ impl LifestyleEditor {
                 "Week" => (lang.tr("Weeks"), lang.tr("week")),
                 _ => (lang.tr("Months"), lang.tr("month")),
             };
-            ui.label(unit);
+            ui.label(&unit);
             ui.horizontal(|ui| {
                 if ch.created {
                     // Career: more months are paid for one at a time.
-                    ui.label(o.months.to_string());
-                    if ui.small_button("−").on_hover_text(lang.tr("No refund")).clicked() && o.months > 1 {
+                    let fewer = if ws_layout(ui) {
+                        ui.label(crate::workspace::widgets::mono(o.months.to_string(), 12.5, crate::theme::ws(ui).text));
+                        ui.add_enabled_ui(o.months > 1, |ui| crate::workspace::widgets::icon_button(ui, crate::workspace::icons::MINUS, 22.0)).inner
+                    } else {
+                        ui.label(o.months.to_string());
+                        ui.small_button("−")
+                    };
+                    if fewer.on_hover_text(lang.tr("No refund")).clicked() && o.months > 1 {
                         o.months -= 1;
                     }
                     let cost = lifestyle::monthly_cost(ch, l);
@@ -97,12 +103,12 @@ impl LifestyleEditor {
                         pay_month = true;
                     }
                 } else {
-                    ui.add(egui::DragValue::new(&mut o.months).range(1..=999));
+                    count(ui, "months", &mut o.months, 1, 999, &unit, lang);
                 }
             });
             ui.end_row();
             ui.label(lang.tr("Roommates"));
-            ui.add_enabled(!o.trust_fund, egui::DragValue::new(&mut o.roommates).range(0..=20));
+            ui.add_enabled_ui(!o.trust_fund, |ui| count(ui, "roommates", &mut o.roommates, 0, 20, &lang.tr("Roommates"), lang));
             ui.end_row();
             ui.label(lang.tr("Percentage paid"));
             ui.add(egui::DragValue::new(&mut o.percentage).range(0.0..=100.0).suffix(" %"));
@@ -118,16 +124,16 @@ impl LifestyleEditor {
                 (lang.tr("Neighborhood"), &mut o.area, max_area, l.get_i32("basearea").unwrap_or(0)),
                 (lang.tr("Security"), &mut o.security, max_security, l.get_i32("basesecurity").unwrap_or(0)),
             ] {
-                ui.label(label);
+                ui.label(&label);
                 ui.horizontal(|ui| {
-                    ui.add_enabled(advanced && max > 0, egui::DragValue::new(v).range(0..=max)).on_disabled_hover_text(if advanced { lang.tr("At the base lifestyle's limit") } else { lang.tr("Only advanced lifestyles buy points") });
+                    ui.add_enabled_ui(advanced && max > 0, |ui| count(ui, &label, v, 0, max, &label, lang)).response.on_disabled_hover_text(if advanced { lang.tr("At the base lifestyle's limit") } else { lang.tr("Only advanced lifestyles buy points") });
                     ui.weak(lang.tr_fmt("base {0}, up to +{1}", &[&base, &max]));
                 });
                 ui.end_row();
             }
             if l.get_bool("allowbonuslp").unwrap_or(false) {
                 ui.label(lang.tr("Bonus LP"));
-                ui.add_enabled(advanced, egui::DragValue::new(&mut o.bonus_lp).range(0..=20));
+                ui.add_enabled_ui(advanced, |ui| count(ui, "bonus_lp", &mut o.bonus_lp, 0, 20, &lang.tr("Bonus LP"), lang));
                 ui.end_row();
             }
             ui.label(lang.tr("Cost"));
@@ -242,4 +248,18 @@ fn same(a: &Options, b: &Options) -> bool {
         && a.trust_fund == b.trust_fund
         && a.split_cost_with_roommates == b.split_cost_with_roommates
         && a.style == b.style
+}
+
+/// Whether the Workspace layout is active.
+fn ws_layout(ui: &egui::Ui) -> bool {
+    crate::theme::current(ui.ctx()).workspace_layout()
+}
+
+/// A whole number: a stepper in the Workspace, a drag value in Classic.
+fn count(ui: &mut egui::Ui, id: &str, v: &mut i32, min: i32, max: i32, what: &str, lang: &Language) -> egui::Response {
+    if ws_layout(ui) {
+        crate::workspace::widgets::num_stepper(ui, ("lifestyle", id), v, min, max, &lang.tr_fmt("Lower {0}", &[&what]), &lang.tr_fmt("Raise {0}", &[&what]))
+    } else {
+        ui.add(egui::DragValue::new(v).range(min..=max))
+    }
 }

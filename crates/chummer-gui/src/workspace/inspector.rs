@@ -164,7 +164,7 @@ impl WsItemEditor {
                 caption(ui, &lang.tr("Quantity"));
                 let mut q = e.get_f64("qty").unwrap_or(1.0);
                 let step = e.get_f64("costfor").filter(|c| *c > 0.0).unwrap_or(1.0);
-                let resp = ui.add_enabled(!career && !included, egui::DragValue::new(&mut q).range(1.0..=100_000.0).speed(step).max_decimals(2));
+                let resp = ui.add_enabled_ui(!career && !included, |ui| widgets::qty_stepper(ui, ("ws_item_qty", guid), &mut q, 1.0, 100_000.0, step, 2, &lang.tr("Lower"), &lang.tr("Raise"))).inner;
                 if resp.changed() {
                     res.changed |= ch.set(Command::SetItemQuantity { guid: guid.to_owned(), qty: q });
                 }

@@ -92,6 +92,9 @@ pub fn take_import_request(ctx: &egui::Context) -> bool {
 /// the Info tab, the preset in use with Chummer's "Change Settings File".
 /// Returns the key of a preset the user picked.
 pub fn banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language, show_row: bool) -> Option<String> {
+    if crate::theme::current(ui.ctx()).workspace_layout() {
+        return ws_banner(ui, ch, engine, lang, show_row);
+    }
     let key = ch.field("settings");
     let lib = &engine.settings;
     let mut picked = None;
@@ -116,6 +119,53 @@ pub fn banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Languag
             picked = picker(ui, ch, engine, lang, lib.find(&key));
         });
         ui.add_space(4.0);
+    }
+    picked
+}
+
+/// [`banner`] in the Workspace style: a card with a warning border and
+/// icon, or a one-line settings row.
+fn ws_banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language, show_row: bool) -> Option<String> {
+    use crate::workspace::{icons, widgets};
+    let ws = crate::theme::ws(ui);
+    let key = ch.field("settings");
+    let lib = &engine.settings;
+    let mut picked = None;
+    if let Some(missing) = lib.missing_preset(&key) {
+        let fallback = lib.fallback().map(CharacterSettings::name).unwrap_or_default();
+        widgets::card_frame(&ws).stroke(egui::Stroke::new(1.0_f32, ws.warning)).inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.label(icons::icon(icons::WARNING, 18.0, ws.warning));
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 3.0;
+                    ui.label(RichText::new(lang.tr("Cannot Find Settings File")).font(widgets::bold(13.0)).color(ws.warning));
+                    let line = |ui: &mut egui::Ui, t: String| ui.add(egui::Label::new(RichText::new(t).size(12.0).color(ws.muted)).wrap());
+                    line(ui, lang.tr_fmt("The character's settings file ({0}) could not be found.", &[&missing]));
+                    line(ui, lang.tr_fmt("Costs and budgets shown use {0}. Saving keeps the character's settings file unless you pick another one.", &[&fallback]));
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let r = widgets::button(ui, Some(icons::FILE_ARROW_DOWN), &lang.tr("Import settings file…"), widgets::Look::Secondary, 24.0);
+                        if r.on_hover_text(lang.tr("Install a settings file someone shared, e.g. your GM's house rules.")).clicked() {
+                            request_import(ui.ctx());
+                        }
+                        picked = picker(ui, ch, engine, lang, None);
+                    });
+                });
+            });
+        });
+        ui.add_space(6.0);
+    } else if show_row {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.label(icons::icon(icons::SLIDERS_HORIZONTAL, 14.0, ws.muted));
+            ui.label(RichText::new(lang.tr("Settings File:")).size(12.0).color(ws.muted));
+            ui.label(RichText::new(lib.find(&key).or_else(|| lib.fallback()).map(CharacterSettings::name).unwrap_or_default()).font(widgets::bold(12.5)).color(ws.text));
+            picked = picker(ui, ch, engine, lang, lib.find(&key));
+        });
+        ui.add_space(6.0);
     }
     picked
 }

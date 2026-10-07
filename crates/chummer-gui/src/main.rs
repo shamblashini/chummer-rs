@@ -189,6 +189,9 @@ impl App {
             .map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect())
             .unwrap_or_default();
         app.rescan_roster();
+        if let Some(t) = storage.and_then(|s| s.get_string(workspace::POPOUTS_KEY)) {
+            app.ws.pops.restore(&t);
+        }
         app.io.start_tab = tab;
         app.io.startup = true;
         for f in files {
@@ -943,6 +946,7 @@ impl eframe::App for App {
         storage.set_string(LANG_KEY, self.lang.code.clone());
         let folders: Vec<String> = self.roster_folders.iter().map(|p| p.display().to_string()).collect();
         storage.set_string(ROSTER_KEY, folders.join("\n"));
+        storage.set_string(workspace::POPOUTS_KEY, self.ws_popouts_text());
     }
 }
 
@@ -1112,7 +1116,10 @@ impl App {
                 wizard::WizardResult::Cancel => self.wizard = None,
                 wizard::WizardResult::Created(ch) => {
                     let mut v = CharacterView::new(*ch, &self.engine);
-                    v.set_tab(view::Tab::Common);
+                    // Guided: the guide already opened its first step.
+                    if !v.guided() {
+                        v.set_tab(view::Tab::Common);
+                    }
                     self.views.push(v);
                     self.active = self.views.len() - 1;
                     self.home = None;

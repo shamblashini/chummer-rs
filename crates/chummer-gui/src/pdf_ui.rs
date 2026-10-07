@@ -97,15 +97,12 @@ impl SourcesWindow {
 
         ui.horizontal(|ui| {
             ui.label(lang.tr("PDF viewer"));
-            crate::combo::Combo::from_id_salt("viewer_preset").selected_text(lang.tr("Choose…")).show_ui(ui, |ui| {
-                for v in sources::installed_viewers() {
-                    if crate::combo::selectable_label(ui, lib.viewer == v.template, v.name).clicked() {
-                        lib.viewer = v.template.to_owned();
-                        changed = true;
-                    }
-                }
+            // The command line, with the viewers found installed as presets.
+            // (Looked up once: finding them searches the PATH.)
+            let presets: Vec<(String, String)> = ui.data_mut(|d| {
+                d.get_temp_mut_or_insert_with(egui::Id::new("installed_pdf_viewers"), || sources::installed_viewers().iter().map(|v| (v.template.to_owned(), v.name.to_owned())).collect::<Vec<(String, String)>>()).clone()
             });
-            changed |= ui.add(egui::TextEdit::singleline(&mut lib.viewer).desired_width(380.0)).changed();
+            changed |= crate::workspace::widgets::preset_input(ui, "viewer_preset", &mut lib.viewer, &presets, &lang.tr("Choose…"), 400.0).changed();
         });
         ui.weak(lang.tr("{page} and {path} are replaced. Chummer5a's {localpath} also works."));
         ui.separator();

@@ -148,6 +148,8 @@ pub struct GmScreen {
     improvements: crate::improvement_ui::ImprovementsPanel,
     /// Member the improvement dialog is for.
     improvement_for: Option<MemberId>,
+    /// Which window the dialogs show in (Workspace pop-outs).
+    ws_dialogs: crate::workspace::popout::DialogHome,
     /// Recent dice rolls (Unix ms, line), newest first.
     rolls: Vec<(i64, String)>,
     /// The Workspace roster's filter.
@@ -194,6 +196,7 @@ impl GmScreen {
             critter: None,
             improvements: Default::default(),
             improvement_for: None,
+            ws_dialogs: Default::default(),
             rolls: Vec::new(),
             filter: String::new(),
             online: None,

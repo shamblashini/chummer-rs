@@ -290,8 +290,34 @@ impl GmScreen {
                 });
             }
         });
-        self.windows(ctx, env.engine, env.lang, env.views, env.status);
+        if self.ws_dialogs.here(ctx) {
+            self.windows(ctx, env.engine, env.lang, env.views, env.status);
+        }
         action
+    }
+
+    /// Whether a dialog (new critter, PACKS kit, improvement) is open.
+    pub fn ws_has_dialog(&self) -> bool {
+        self.critter.is_some() || self.kit.is_some() || self.improvement_for.is_some()
+    }
+
+    /// Note a press in the window `ctx` draws (see
+    /// [`popout::DialogHome`]).
+    pub fn ws_track_dialogs(&mut self, ctx: &egui::Context) {
+        let open = self.ws_has_dialog();
+        self.ws_dialogs.track(ctx, open);
+    }
+
+    /// Which window the dialogs show in.
+    pub fn ws_dialog_home(&mut self) -> &mut popout::DialogHome {
+        &mut self.ws_dialogs
+    }
+
+    /// The dialogs, when they belong to the pop-out `ctx` draws.
+    pub fn ws_dialogs_in(&mut self, ctx: &egui::Context, env: &mut Env) {
+        if self.ws_dialogs.here(ctx) && ctx.viewport_id() != egui::ViewportId::ROOT {
+            self.windows(ctx, env.engine, env.lang, env.views, env.status);
+        }
     }
 
     /// A popped-out part's contents (`None`: the activity feed).

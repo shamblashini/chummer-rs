@@ -1,6 +1,6 @@
-//! Creation issues in the character view: badges on the tabs, a panel at
-//! the top of the focused tab, marks on rows, and the full list in the
-//! Karma Summary (see `chummer_core::chargen::issues`).
+//! Creation issues in the character view: badges on the tabs, the hint
+//! line at the top of the focused tab (`guide_ui`), marks on rows, and
+//! the full list in the Karma Summary (see `chummer_core::chargen::issues`).
 //!
 //! A child module of `view`, so it can work on the view's state.
 
@@ -32,6 +32,24 @@ pub(super) fn tab_of(t: IssueTab) -> Tab {
     }
 }
 
+/// The core tab of a GUI tab; `None` for tabs no issue or step is on.
+pub(super) fn issue_tab(t: Tab) -> Option<IssueTab> {
+    Some(match t {
+        Tab::Common => IssueTab::Common,
+        Tab::Skills => IssueTab::Skills,
+        Tab::MartialArts => IssueTab::MartialArts,
+        Tab::Magician => IssueTab::Magician,
+        Tab::Adept => IssueTab::Adept,
+        Tab::Technomancer => IssueTab::Technomancer,
+        Tab::Cyberware => IssueTab::Cyberware,
+        Tab::StreetGear => IssueTab::StreetGear,
+        Tab::Vehicles => IssueTab::Vehicles,
+        Tab::Relationships => IssueTab::Relationships,
+        Tab::CharacterInfo => IssueTab::CharacterInfo,
+        _ => return None,
+    })
+}
+
 /// The Street Gear sub-tab (index into `STREET_GEAR`) of an area.
 pub(super) fn gear_sub_tab(area: Area) -> Option<usize> {
     match area {
@@ -59,7 +77,7 @@ fn badge<'a>(issues: impl Iterator<Item = &'a Issue>) -> Option<Badge> {
     (count > 0).then_some(Badge { count, error })
 }
 
-/// Which tab panels the user closed, by a fingerprint of what they
+/// Which tabs' issue hints the user closed, by a fingerprint of what they
 /// showed; a panel comes back when its issues change. Not saved.
 #[derive(Default)]
 pub(super) struct Dismissed(HashMap<Tab, u64>);
@@ -106,13 +124,12 @@ fn issue_row(ui: &mut egui::Ui, lang: &Language, i: &Issue) -> bool {
 }
 
 impl CharacterView {
-    /// Tabs with their issue badges, and dimmed when the guide is on
-    /// another tab.
+    /// Tabs with their issue badges and, with the guide, their checklist
+    /// mark (done, or not visited yet).
     pub(super) fn decorated_tabs(&self, tabs: Vec<(Tab, String)>) -> Vec<(Tab, String, TabDeco)> {
-        let guide_tab = self.guide_tab();
         tabs.into_iter()
             .map(|(t, l)| {
-                let deco = TabDeco { badge: badge(self.issues.iter().filter(|i| i.tab().map(tab_of) == Some(t))), dim: guide_tab.is_some_and(|g| g != t) };
+                let deco = TabDeco { badge: badge(self.issues.iter().filter(|i| i.tab().map(tab_of) == Some(t))), check: self.tab_check(t) };
                 (t, l, deco)
             })
             .collect()
@@ -120,7 +137,7 @@ impl CharacterView {
 
     /// Badge for the Karma Summary side tab: every issue.
     pub(super) fn summary_badge(&self) -> TabDeco {
-        TabDeco { badge: badge(self.issues.iter()), dim: false }
+        TabDeco { badge: badge(self.issues.iter()), check: None }
     }
 
     /// Guids of rows with problems, with their messages and whether any is
@@ -143,6 +160,8 @@ impl CharacterView {
     /// Go to where an issue can be fixed: its tab and sub-tab, and its row
     /// or item when it has one.
     pub(super) fn jump_to(&mut self, i: &Issue) {
+        self.set_reviewing(false);
+        self.guide_follow(i);
         if let Some(t) = i.tab() {
             self.tab = tab_of(t);
         }
@@ -159,64 +178,6 @@ impl CharacterView {
             // Items the detail pane edits; others only get their tab.
             _ if chummer_core::items::edit::find(&self.doc, &guid).is_some_and(chummer_core::items::edit::is_item) => self.item_editor = Some((guid, crate::item_editor::ItemEditor::default())),
             _ => {}
-        }
-    }
-
-    /// A tab's issues, above its page, until closed. Creation mode only.
-    pub(super) fn issue_panel(&mut self, ui: &mut egui::Ui, lang: &Language, tab: Tab) {
-        if self.budget.is_none() {
-            return;
-        }
-        // The guide bar already lists what is left on its own tab.
-        if self.guide_tab() == Some(tab) {
-            return;
-        }
-        let mine: Vec<&Issue> = self.issues.iter().filter(|i| i.tab().map(tab_of) == Some(tab) && i.severity != Severity::Info).collect();
-        if mine.is_empty() {
-            return;
-        }
-        let fp = fingerprint(&mine);
-        if self.dismissed.0.get(&tab) == Some(&fp) {
-            return;
-        }
-        let p = crate::theme::palette(ui);
-        let errors = mine.iter().any(|i| i.is_error());
-        let mut jump: Option<Issue> = None;
-        let mut close = false;
-        egui::Frame::group(ui.style())
-            .fill(p.window)
-            .stroke(egui::Stroke::new(1.0_f32, if errors { p.bad } else { p.warning }))
-            .inner_margin(egui::Margin::symmetric(8, 4))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                // One line for a couple of issues, a list for more.
-                let inline = mine.len() <= 2;
-                ui.horizontal(|ui| {
-                    ui.label(crate::theme::strong(ui, if errors { lang.tr("Blocks finishing creation:") } else { lang.tr("Still to do on this tab:") }));
-                    if inline {
-                        for i in &mine {
-                            if issue_row(ui, lang, i) {
-                                jump = Some((*i).clone());
-                            }
-                            ui.add_space(8.0);
-                        }
-                    }
-                    close = ui.small_button(crate::theme::glyph("✖")).on_hover_text(lang.tr("Hide until something changes")).clicked();
-                });
-                if !inline {
-                    for i in &mine {
-                        if issue_row(ui, lang, i) {
-                            jump = Some((*i).clone());
-                        }
-                    }
-                }
-            });
-        ui.add_space(4.0);
-        if close {
-            self.dismissed.0.insert(tab, fp);
-        }
-        if let Some(i) = jump {
-            self.jump_to(&i);
         }
     }
 

@@ -32,7 +32,7 @@ use egui_extras::{Column, TableBuilder};
 mod guide_ui;
 #[path = "issues_ui.rs"]
 mod issues_ui;
-pub use guide_ui::{guided_offer, guided_preference, save_guided_preference};
+pub use guide_ui::{guided_offer, guided_preference, paint_step_mark, save_guided_preference};
 // The Workspace layout's access to the view (`crate::workspace`).
 #[path = "workspace/character.rs"]
 pub(crate) mod workspace;
@@ -135,7 +135,7 @@ pub struct CharacterView {
     budget: Option<chargen::Budget>,
     /// Creation issues (`chargen::issues`), recomputed with the budget.
     issues: Vec<chargen::issues::Issue>,
-    /// Issue panels closed until their issues change.
+    /// Issue hint lines closed until their issues change.
     dismissed: issues_ui::Dismissed,
     /// Guided creation, when on.
     guide: Option<guide_ui::Guide>,
@@ -185,6 +185,9 @@ pub struct CharacterView {
     career_costs: crate::memo::Memo<(), Arc<career::SkillCosts>>,
     /// Weapon stats by (guid, with the character's house rules).
     weapon_stats: crate::memo::Memo<(String, bool), chummer_core::items::weapon::WeaponStats>,
+    /// Which window the dialogs below show in (a pop-out's, when opened
+    /// from it).
+    ws_dialogs: crate::workspace::popout::DialogHome,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -308,6 +311,7 @@ impl CharacterView {
             ws_gear: Default::default(),
             career_costs: Default::default(),
             weapon_stats: Default::default(),
+            ws_dialogs: Default::default(),
         };
         v.refresh_budget();
         v.set_guided(guided_preference());
@@ -477,6 +481,8 @@ impl CharacterView {
     }
 
     pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<u32> {
+        // Classic has one window.
+        self.ws_dialogs = Default::default();
         let mut changed = self.begin_frame();
         let mut roll: Option<u32> = None;
         egui::SidePanel::right("sheet_panel").resizable(true).default_width(310.0).min_width(220.0).show(ctx, |ui| {
@@ -484,7 +490,6 @@ impl CharacterView {
             changed |= self.side_panel(ui, lang, &mut roll);
         });
         changed |= crate::trace::time("item editor", || self.item_editor_panel(ctx, engine, lang, status));
-        crate::trace::time("guide bar", || self.guide_bar(ctx, lang, pdfs, status));
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(key) = crate::ruleset_ui::banner(ui, &self.doc, engine, lang, self.tab == Tab::Common) {
                 changed |= self.switch_settings(&key, status);
@@ -492,7 +497,7 @@ impl CharacterView {
             let tabs: Vec<(Tab, String)> = TABS.iter().filter(|(t, _)| self.visible(*t)).map(|(t, l)| (*t, lang.tr(l))).collect();
             let tabs = self.decorated_tabs(tabs);
             crate::theme::tab_strip_with(ui, &mut self.tab, &tabs);
-            crate::trace::time("issue panel", || self.issue_panel(ui, lang, self.tab));
+            crate::trace::time("page hint", || self.page_hint(ui, lang, pdfs, status, self.tab, None, false));
             let _s = crate::trace::span(TABS.iter().find(|(t, _)| *t == self.tab).map_or("tab", |(_, l)| *l));
             changed |= self.tab_page(ui, self.tab, engine, lang, pdfs, status, &mut roll);
         });
@@ -541,13 +546,28 @@ impl CharacterView {
     /// End of a frame: the dialogs, a career purchase picked while
     /// drawing, and the sheet and budgets after a change.
     fn end_frame(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, mut changed: bool) {
-        changed |= self.confirm_dialog(ctx, lang);
+        if self.ws_dialogs.here(ctx) {
+            changed |= self.frame_dialogs(ctx, engine, lang, pdfs, status);
+        }
+        self.finish_frame(engine, status, changed);
+    }
+
+    /// The dialogs (in the window `ctx` draws). Returns true if the
+    /// character changed.
+    fn frame_dialogs(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+        let mut changed = self.confirm_dialog(ctx, lang);
         changed |= self.select_dialog(ctx, lang, pdfs, status);
         changed |= self.drug_builder.window(ctx, &mut self.doc, &self.store, lang, status);
         changed |= self.custom_improvements.window(ctx, &mut self.doc, &self.store, self.settings.as_ref(), lang);
         changed |= self.packs.window(ctx, &mut self.doc, &self.store, self.settings.as_ref(), &self.sheet, lang, status);
         changed |= self.spell_designer.window(ctx, &mut self.doc, engine, &self.store, lang, status);
         changed |= self.finish_dialog(ctx, lang);
+        changed
+    }
+
+    /// A career purchase picked while drawing, and the sheet and budgets
+    /// after a change.
+    fn finish_frame(&mut self, engine: &Arc<Engine>, status: &mut Status, mut changed: bool) {
         if let Some(a) = self.action.take() {
             changed |= self.run_action(a, status);
         }
@@ -1006,7 +1026,7 @@ impl CharacterView {
             egui::ScrollArea::vertical().id_salt("kno_scroll").auto_shrink(false).show(ui, |ui| {
                     ui.heading(lang.tr("Knowledge Skills"));
                     ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut self.new_kno.0).hint_text(lang.tr("New Knowledge Skill")).desired_width(200.0));
+                        workspace::build::skills::knowledge_name_input(ui, &self.store, lang, &mut self.new_kno, 220.0);
                         crate::combo::Combo::from_id_salt("kno_type").selected_text(lang.data_name("skills.xml", "", &self.new_kno.1)).show_ui(ui, |ui| {
                             for t in ["Academic", "Interest", "Language", "Professional", "Street"] {
                                 crate::combo::selectable_value(ui, &mut self.new_kno.1, t.to_owned(), lang.data_name("skills.xml", "", t));
