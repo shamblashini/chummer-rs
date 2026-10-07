@@ -360,7 +360,7 @@ layout for the same characters, campaigns and data. Classic stays as it
 was.
 
 ![Workspace, dark, a character in creation](docs/screenshots/workspace-dark-creation.png)
-![Workspace, light, a career character at the table](docs/screenshots/workspace-light-career.png)
+![Workspace, dark, a career character at the table](docs/screenshots/workspace-play-dark.png)
 
 - **Top bar**: the logo and the menu (☰: File, Edit, Tools, Special,
   View, Window and Help, with Print), one tab per open document (Home,
@@ -371,7 +371,7 @@ was.
   as Session (career: At the table), Build or Character, Story and
   Records, with the creation-issue counts as badges; Street Gear's
   sub-tabs are entries of their own. Home has the roster and the Master
-  Index; the campaign has the GM screen and its members. At the bottom:
+  Index; the campaign has its roster (see the GM screen below). At the bottom:
   Undo and Redo (the tooltip names the change; online characters keep
   Undo off with the usual explanation), Settings (character settings,
   sourcebooks, online settings, guided creation, back to Classic) and the
@@ -380,11 +380,34 @@ was.
   groups, knowledge, contacts, karma, nuyen, essence) with bars, or in
   career karma, nuyen, essence, limits, initiative and armor.
 - **Page**: the section. Until each screen is redesigned, it is the
-  Classic tab page, with the guide and the tab's issues above it. At the
-  table shows the condition monitor as box grids (rows of the wound
-  threshold, the wound modifier in the last box of a row, Physical and
-  Stun side by side, overflow under Physical) and Edge as boxes (filled
-  = available).
+  Classic tab page, with the guide and the tab's issues above it.
+- **At the table** (career): the condition monitor as box grids (rows of
+  the wound threshold, the wound modifier in the last box of a row,
+  Physical and Stun side by side, overflow under Physical), damage taken
+  by code (6P, 8P AP-2, soaked or not, as on the GM screen) and Edge as
+  boxes (filled = available); initiative rolled with its passes; quick
+  rolls (Defense, Damage Resistance, Composure, Judge Intentions, the
+  best skills with their specialization pool, the weapons); every weapon
+  with its stats, rounds as pips, fire modes, Fire and Reload (the item
+  pane's ammunition choices); the armor worn, ammunition carried, gear at
+  hand (drugs, slap patches and other consumables; Show opens the item),
+  the Matrix device (attributes, cold/hot-sim initiative, wireless,
+  active commlink, its condition monitor), vehicles with their damage
+  track, and the session notes (Game Notes). The inspector has the
+  character's dice roller (the last roll's dice, hits and glitch; pool,
+  limit, Rule of Six) and its recent rolls. Every block pops out.
+- **GM screen** (a campaign): the roster in the sidebar, grouped by kind
+  with Physical and Stun bars, a filter, Add (files, critters, PACKS
+  NPCs, open characters) and Invite; the encounter board (round and pass,
+  Roll initiative, each combatant's score and roll, a menu for acted,
+  delay, seize, blitz, interrupt, the score and remove; Next and Next
+  pass; add from the roster or by name); the combatant's card (condition
+  monitors, Edge, damage, Matrix and vehicle tracks, dice pools and
+  weapons to roll, skills, gear, qualities, notes, the campaign entry,
+  Open, Add Improvement); and in the inspector the players (host online,
+  relay, invite link, mailbox), the activity feed (with Revert for an
+  online campaign), the GM award and the GM's notes. The encounter, the
+  card, the feed and the inspector sections pop out.
 - **Inspector**: creation issues with Finish creation, the selected
   item's editor, the Karma Summary (creation) or Other Info and Spell
   Defense (career), and this session's history.
@@ -393,14 +416,17 @@ was.
   every game-data record (opens in the Master Index). Arrow keys
   select, Enter runs; the line under the list says what it will do.
 - **Pop-out windows**: the button in a panel's header (page, inspector
-  section, condition monitor, dice roller, initiative tracker, the GM
-  screen's activity feed) moves it into its own window; "Dock back" or
+  section, every block of At the table and the GM screen, dice roller,
+  initiative tracker) moves it into its own window; "Dock back" or
   closing the window puts it back. Which panels are out is kept for the
   session. On Wayland the system places new windows; on X11, Windows and
   macOS they open next to the main window.
 
 ![Command palette](docs/screenshots/workspace-palette.png)
-![The condition monitor in its own window](docs/screenshots/workspace-popout.png)
+![At the table, light](docs/screenshots/workspace-play-light.png)
+![The recent rolls in their own window](docs/screenshots/workspace-play-popout.png)
+![The GM screen with an encounter, dark](docs/screenshots/workspace-gm-dark.png)
+![The GM screen, light](docs/screenshots/workspace-gm-light.png)
 ![Workspace, light, Skills during creation](docs/screenshots/workspace-light-creation.png)
 
 ### Command line
@@ -625,11 +651,16 @@ cargo test --workspace
   grades whose requirements are not met, and Friends in High Places
   contact limits. A missing technomancer stream is only a warning,
   because there is no stream picker yet.
-- Workspace layout: only At the table is new so far; the other
+- Workspace layout: At the table and the GM screen are new; the other
   sections show the Classic tab pages (with Phosphor icons in place of
-  emoji). The Play, GM, creation, career, gear and home screens of the
-  design are still to come. The window positions of popped-out panels
-  are not saved between sessions.
+  emoji). The creation, career, gear and home screens of the design are
+  still to come. The window positions of popped-out panels are not saved
+  between sessions. At the table: rolls and the rolled initiative are
+  kept for the session only; gear at hand is listed, not used up (career
+  mode has no quantity change); the design's situational modifiers,
+  Edge actions (Push the Limit, Second Chance) and "Share to GM" are not
+  there because the app has no such rules or messages. GM screen: the
+  design's scene notes and activity filters are left out.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute
   and tab flags; objects it created (a free spell, say) stay until it is
@@ -654,7 +685,7 @@ cargo test --workspace
 | `print.rs`, `export.rs`, `roster.rs`, `calendar.rs` | Sheets, export, roster, calendar |
 | `tree.rs` | Item lists as Chummer's trees (root nodes, locations, nesting) |
 | `crates/chummer-gui` | egui desktop application |
-| `chummer-gui/src/workspace/` | The Workspace layout: shell, widgets, command palette, pop-out windows |
+| `chummer-gui/src/workspace/` | The Workspace layout: shell, widgets, command palette, pop-out windows, At the table (`play.rs`), GM screen (`gm.rs`) |
 | `crates/chummer-cli` | Command-line tool |
 | `crates/chummer-net` | Online campaigns: iroh endpoints, campaign protocol, invites, mailbox client, sealing |
 | `crates/chummer-sync` | Online campaigns: the GM's authority (with revert), player replicas with an outbox, mailbox play-by-post, the hosted campaign file (`hosted.rs`) and the app's node |

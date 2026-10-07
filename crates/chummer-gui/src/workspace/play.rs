@@ -515,7 +515,8 @@ impl CharacterView {
             ui.label(RichText::new(lang.tr("No weapons.")).size(12.0).color(ws.muted));
         }
         for w in &weapons {
-            changed |= self.play_weapon(ui, lang, status, w);
+            // Each card has its own ids (two of the same weapon look alike).
+            changed |= ui.push_id(("ws_weapon", w.get("guid")), |ui| self.play_weapon(ui, lang, status, w)).inner;
         }
         self.play_armor(ui, lang);
         self.play_ammunition(ui, lang);

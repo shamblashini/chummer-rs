@@ -1127,6 +1127,8 @@ fn encounter_row(ui: &mut egui::Ui, c: &chummer_core::campaign::Combatant, kind:
     let edge = if current || selected { ws.primary } else { ws.divider };
     ui.painter().rect(rect, egui::CornerRadius::same(5), fill, egui::Stroke::new(1.0_f32, edge), egui::StrokeKind::Inside);
     let mut row = ui.new_child(egui::UiBuilder::new().id_salt(("ws_gm_row_ui", c.id)).max_rect(rect.shrink2(egui::vec2(8.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    // A click anywhere on the row selects it: the labels must not take it.
+    row.style_mut().interaction.selectable_labels = false;
     if dim {
         row.set_opacity(0.6);
     }
