@@ -958,16 +958,9 @@ impl GmScreen {
             let ui = &mut cols[1];
             ui.label(RichText::new(lang.tr("Dice pools")).strong());
             let who = name.as_str();
-            let rea_int = sheet.attr("REA") + sheet.attr("INT") + sheet.wound_modifier;
-            let soak = chummer_core::calc::soak_body(doc, &sheet) + sheet.armor;
-            let fixed = [(lang.tr("Defense"), rea_int), (lang.tr("Damage Resistance"), soak), (lang.tr("Composure"), sheet.composure), (lang.tr("Judge Intentions"), sheet.judge_intentions)];
             egui::Grid::new(("gm_pools", id)).num_columns(2).spacing([16.0, 2.0]).show(ui, |ui| {
-                let mut cells: Vec<(String, i32)> = fixed.into_iter().collect();
-                let mut skills: Vec<_> = sheet.skills.iter().filter(|s| s.rating > 0 && !s.disabled).collect();
-                skills.sort_by(|a, b| b.pool.cmp(&a.pool).then(a.name.cmp(&b.name)));
-                cells.extend(skills.into_iter().take(6).map(|s| (lang.data_name("skills.xml", "", &s.name), s.pool)));
-                for (k, (label, pool)) in cells.into_iter().enumerate() {
-                    let line = campaign_ui::pool_roll(ui, rng, lang, who, &label, pool);
+                for (k, p) in campaign_ui::quick_pools(doc, &sheet, lang, 6).into_iter().enumerate() {
+                    let line = campaign_ui::pool_roll(ui, rng, lang, who, &p.label, p.pool);
                     roll_line(rolls, line);
                     if k % 2 == 1 {
                         ui.end_row();
@@ -990,21 +983,10 @@ impl GmScreen {
             ui.add_space(6.0);
             ui.label(RichText::new(lang.tr("Damage")).strong());
             if let Some(a) = damage.ui(ui, lang) {
-                let d = Defender { body: chummer_core::calc::soak_body(doc, &sheet), armor: sheet.armor, bonus: 0 };
-                let t = Tracks {
-                    physical: sheet.physical_cm,
-                    stun: sheet.stun_cm,
-                    overflow: sheet.cm_overflow,
-                    physical_filled: chummer_core::play::ai::physical_filled(doc),
-                    stun_filled: chummer_core::play::ai::stun_filled(doc),
-                };
-                let r = campaign_ui::resolve(rng, a, d, t, damage.soak_roll);
+                let (t, r) = campaign_ui::damage_character(rng, a, doc, &sheet, damage.soak_roll);
                 campaign.note(Some(id), AUTHOR, r.text.clone());
-                if r.physical_filled != t.physical_filled {
-                    doc.run(Command::SetPhysicalDamage { filled: r.physical_filled }, status);
-                }
-                if r.stun_filled != t.stun_filled {
-                    doc.run(Command::SetStunDamage { filled: r.stun_filled }, status);
+                for c in campaign_ui::damage_commands(&t, &r) {
+                    doc.run(c, status);
                 }
             }
             ui.add_space(6.0);

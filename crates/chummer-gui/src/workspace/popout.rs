@@ -101,6 +101,9 @@ pub enum Frame {
     Card,
     /// A section of the inspector: padding and a divider under it.
     Inspector,
+    /// A titled block straight on the page, without a card (the Play
+    /// screen's quick rolls and notes).
+    Bare,
 }
 
 /// A panel with a header (title, extra header widgets, the pop-out
@@ -118,6 +121,10 @@ impl<'a> Panel<'a> {
 
     pub fn inspector(key: PopKey, title: &'a str) -> Self {
         Panel { key, title, frame: Frame::Inspector }
+    }
+
+    pub fn bare(key: PopKey, title: &'a str) -> Self {
+        Panel { key, title, frame: Frame::Bare }
     }
 
     /// Draw the panel docked: `header` adds widgets right of the title
@@ -156,6 +163,10 @@ impl<'a> Panel<'a> {
             // No `set_width` here: in a resizable side panel, rounding
             // would widen the panel a little every frame.
             Frame::Inspector => egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 12)).show(ui, contents),
+            Frame::Bare => egui::Frame::new().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                contents(ui)
+            }),
         };
         if self.frame == Frame::Inspector {
             let y = r.response.rect.bottom();

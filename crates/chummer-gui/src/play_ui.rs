@@ -76,9 +76,7 @@ impl PlayPanel {
 
     fn weapon_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, w: &Element, status: &mut Option<(String, bool)>) -> bool {
         let guid = w.get("guid");
-        if self.weapon != guid {
-            *self = PlayPanel { weapon: guid.clone(), ..Default::default() };
-        }
+        self.for_weapon(&guid);
         let mut changed = false;
         let clips = ammo::clips(w);
         if clips.is_empty() {
@@ -131,19 +129,62 @@ impl PlayPanel {
                 let unit = lang.tr(if n == 1 { "Bullet" } else { "Bullets" });
                 let b = ui.add_enabled(left > 0 && self.confirm.is_none(), egui::Button::new(lang.tr_fmt(mode.label(), &[&n, &unit])));
                 if b.clicked() {
-                    match ch.apply(Command::Fire { weapon: guid.clone(), mode }) {
-                        Ok(_) => changed = true,
-                        Err(e) if e.confirm => self.confirm = Some(e.reason),
-                        Err(e) => *status = Some((lang.tr(&e.reason), true)),
-                    }
+                    changed |= self.fire(ch, lang, &guid, mode, status);
                 }
             }
         });
+        changed |= self.confirm_ui(ui, ch, lang, &guid);
+
+        if ammo::requires_ammo(w) {
+            changed |= self.reload_ui(ui, ch, store, lang, w, status);
+        } else {
+            changed |= self.charges_ui(ui, ch, lang, w);
+        }
+        changed
+    }
+
+    /// Start on weapon `guid`: the choices of another weapon are dropped.
+    pub(crate) fn for_weapon(&mut self, guid: &str) {
+        if self.weapon != guid {
+            *self = PlayPanel { weapon: guid.to_owned(), ..Default::default() };
+        }
+    }
+
+    /// A fire button (`cmsAmmoExpense`): fire, or ask when there are not
+    /// enough rounds ([`PlayPanel::confirm_ui`]). Returns true if the
+    /// character changed.
+    pub(crate) fn fire(&mut self, ch: &mut Doc, lang: &Language, guid: &str, mode: ammo::FireMode, status: &mut Option<(String, bool)>) -> bool {
+        match ch.apply(Command::Fire { weapon: guid.to_owned(), mode }) {
+            Ok(_) => true,
+            Err(e) if e.confirm => {
+                self.confirm = Some(e.reason);
+                false
+            }
+            Err(e) => {
+                *status = Some((lang.tr(&e.reason), true));
+                false
+            }
+        }
+    }
+
+    /// Whether a fire question waits for an answer.
+    pub(crate) fn asking(&self) -> bool {
+        self.confirm.is_some()
+    }
+
+    /// Whether the choices are for weapon `guid`.
+    pub(crate) fn is_for(&self, guid: &str) -> bool {
+        self.weapon == guid
+    }
+
+    /// The "Not enough Ammunition" question: OK empties the clip.
+    pub(crate) fn confirm_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, lang: &Language, guid: &str) -> bool {
+        let mut changed = false;
         if let Some(m) = self.confirm.clone() {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(crate::theme::warn(ui), lang.tr(&m));
                 if ui.button(lang.tr("OK")).clicked() {
-                    changed |= ch.set(Command::SetAmmoRemaining { weapon: guid.clone(), count: 0 });
+                    changed |= ch.set(Command::SetAmmoRemaining { weapon: guid.to_owned(), count: 0 });
                     self.confirm = None;
                 }
                 if ui.button(lang.tr("Cancel")).clicked() {
@@ -151,26 +192,29 @@ impl PlayPanel {
                 }
             });
         }
+        changed
+    }
 
-        if ammo::requires_ammo(w) {
-            changed |= self.reload_ui(ui, ch, store, lang, w, status);
-        } else {
-            let max = ammo::capacity(ch, w);
-            if self.charges < left {
-                self.charges = left;
-            }
-            ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut self.charges).range(left..=max.max(left)));
-                if ui.add_enabled(self.charges != left, egui::Button::new(lang.tr("Reload"))).on_hover_text(lang.tr_fmt("Select the new number of charges/ammo that {0} should have.", &[&w.get("name")])).clicked() {
-                    changed |= ch.set(Command::SetCharges { weapon: guid.clone(), count: self.charges });
-                }
-            });
+    /// Reload of a weapon without ammunition: the new number of charges.
+    pub(crate) fn charges_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, lang: &Language, w: &Element) -> bool {
+        let guid = w.get("guid");
+        let left = ammo::remaining(w);
+        let max = ammo::capacity(ch, w);
+        if self.charges < left {
+            self.charges = left;
         }
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut self.charges).range(left..=max.max(left)));
+            if ui.add_enabled(self.charges != left, egui::Button::new(lang.tr("Reload"))).on_hover_text(lang.tr_fmt("Select the new number of charges/ammo that {0} should have.", &[&w.get("name")])).clicked() {
+                changed |= ch.set(Command::SetCharges { weapon: guid.clone(), count: self.charges });
+            }
+        });
         changed
     }
 
     /// `Weapon.Reload` / `Unload` for a weapon that needs ammunition.
-    fn reload_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, w: &Element, status: &mut Option<(String, bool)>) -> bool {
+    pub(crate) fn reload_ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, w: &Element, status: &mut Option<(String, bool)>) -> bool {
         let guid = w.get("guid");
         let mut changed = false;
         let choices = ammo::reloadable(ch, Some(store), &guid);

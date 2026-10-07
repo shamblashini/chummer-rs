@@ -253,21 +253,140 @@ pub fn resolve(rng: &mut Rng, a: Attack, d: Defender, t: Tracks, roll_soak: bool
     DamageResult { physical_filled: p, stun_filled: s, text: format!("took {}{}{ap}{conv}{soak}: {result}", a.dv, if a.physical { "P" } else { "S" }) }
 }
 
+/// Damage to a character: soaked with its Body (an A.I.'s home node)
+/// and armor, onto its condition monitors. Returns the tracks before and
+/// what happened.
+pub fn damage_character(rng: &mut Rng, a: Attack, ch: &chummer_core::character::Character, sheet: &chummer_core::calc::Sheet, roll_soak: bool) -> (Tracks, DamageResult) {
+    let d = Defender { body: chummer_core::calc::soak_body(ch, sheet), armor: sheet.armor, bonus: 0 };
+    let t = Tracks {
+        physical: sheet.physical_cm,
+        stun: sheet.stun_cm,
+        overflow: sheet.cm_overflow,
+        physical_filled: chummer_core::play::ai::physical_filled(ch),
+        stun_filled: chummer_core::play::ai::stun_filled(ch),
+    };
+    let r = resolve(rng, a, d, t, roll_soak);
+    (t, r)
+}
+
+/// The commands that put a damage result on the condition monitors.
+pub fn damage_commands(before: &Tracks, r: &DamageResult) -> Vec<Command> {
+    let mut out = Vec::new();
+    if r.physical_filled != before.physical_filled {
+        out.push(Command::SetPhysicalDamage { filled: r.physical_filled });
+    }
+    if r.stun_filled != before.stun_filled {
+        out.push(Command::SetStunDamage { filled: r.stun_filled });
+    }
+    out
+}
+
 /// A pool as a chip; click rolls it. Returns a line for the roll log.
 pub fn pool_roll(ui: &mut egui::Ui, rng: &mut Rng, lang: &Language, who: &str, label: &str, pool: i32) -> Option<String> {
     let mut out = None;
     ui.horizontal(|ui| {
         ui.label(label);
         if crate::theme::pool_chip(ui, pool.to_string()).on_hover_text(lang.tr("Roll")).clicked() {
-            let r = dice::roll(rng, pool.max(0) as u32, false, None);
-            let glitch = match r.glitch {
-                dice::Glitch::None => String::new(),
-                dice::Glitch::Glitch => format!(" — {}", lang.tr("GLITCH")),
-                dice::Glitch::Critical => format!(" — {}", lang.tr("CRITICAL GLITCH")),
-            };
-            let dice: Vec<String> = r.dice.iter().map(u8::to_string).collect();
-            out = Some(format!("{who}: {label} {pool}d6 → {}{glitch}  [{}]", lang.tr_fmt("{0} hits", &[&r.hits]), dice.join(" ")));
+            out = Some(roll_pool(rng, lang, who, label, pool));
         }
     });
     out
+}
+
+/// Roll a pool for the GM's roll log: "Who: Label 9d6 → 3 hits  [6 5 …]".
+pub fn roll_pool(rng: &mut Rng, lang: &Language, who: &str, label: &str, pool: i32) -> String {
+    let r = dice::roll(rng, pool.max(0) as u32, false, None);
+    roll_line(lang, who, label, pool, &r)
+}
+
+/// The roll log line of a roll.
+pub fn roll_line(lang: &Language, who: &str, label: &str, pool: i32, r: &dice::Roll) -> String {
+    let glitch = match r.glitch {
+        dice::Glitch::None => String::new(),
+        dice::Glitch::Glitch => format!(" — {}", lang.tr("GLITCH")),
+        dice::Glitch::Critical => format!(" — {}", lang.tr("CRITICAL GLITCH")),
+    };
+    let dice: Vec<String> = r.dice.iter().map(u8::to_string).collect();
+    format!("{who}: {label} {pool}d6 → {}{glitch}  [{}]", lang.tr_fmt("{0} hits", &[&r.hits]), dice.join(" "))
+}
+
+// ---------------------------------------------------------------------------
+// Dice pools at the table
+// ---------------------------------------------------------------------------
+
+/// A dice pool to roll at the table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pool {
+    /// Translated.
+    pub label: String,
+    pub pool: i32,
+    /// The pool with a specialization, for skills that have one.
+    pub spec: Option<i32>,
+}
+
+/// The pools rolled most at the table (the GM screen's card, the
+/// Workspace's Play screen): Defense (REA + INT, wound modifier
+/// included), Damage Resistance (Body + armor), Composure, Judge
+/// Intentions, then the `skills` active skills with the biggest pools.
+pub fn quick_pools(ch: &chummer_core::character::Character, sheet: &chummer_core::calc::Sheet, lang: &Language, skills: usize) -> Vec<Pool> {
+    let rea_int = sheet.attr("REA") + sheet.attr("INT") + sheet.wound_modifier;
+    let soak = chummer_core::calc::soak_body(ch, sheet) + sheet.armor;
+    let fixed = [("Defense", rea_int), ("Damage Resistance", soak), ("Composure", sheet.composure), ("Judge Intentions", sheet.judge_intentions)];
+    let mut out: Vec<Pool> = fixed.into_iter().map(|(l, p)| Pool { label: lang.tr(l), pool: p, spec: None }).collect();
+    let mut best: Vec<_> = sheet.skills.iter().filter(|s| s.rating > 0 && !s.disabled).collect();
+    best.sort_by(|a, b| b.pool.cmp(&a.pool).then(a.name.cmp(&b.name)));
+    out.extend(best.into_iter().take(skills).map(|s| Pool {
+        label: lang.data_name("skills.xml", "", &s.name),
+        pool: s.pool,
+        spec: (!s.specs.is_empty() && s.spec_bonus > 0).then_some(s.pool + s.spec_bonus),
+    }));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_pools_lead_with_defense_and_soak() {
+        let Ok(engine) = Engine::load() else { return };
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../chummer-core/tests/fixtures/Munin_Career.chum5");
+        let ch = chummer_core::character::Character::load(&p).unwrap();
+        let sheet = engine.sheet(&ch);
+        let lang = Language::default();
+        let pools = quick_pools(&ch, &sheet, &lang, 6);
+        assert_eq!(pools[0], Pool { label: "Defense".into(), pool: sheet.attr("REA") + sheet.attr("INT") + sheet.wound_modifier, spec: None });
+        assert_eq!(pools[1].pool, sheet.attr("BOD") + sheet.armor);
+        assert_eq!((pools[2].pool, pools[3].pool), (sheet.composure, sheet.judge_intentions));
+        let skills = &pools[4..];
+        assert!(skills.len() <= 6 && !skills.is_empty());
+        assert!(skills.windows(2).all(|w| w[0].pool >= w[1].pool), "the biggest pools first");
+        assert!(skills.iter().all(|s| s.spec.is_none_or(|x| x > s.pool)));
+    }
+
+    #[test]
+    fn damage_goes_on_the_tracks() {
+        let Ok(engine) = Engine::load() else { return };
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../chummer-core/tests/fixtures/Munin_Career.chum5");
+        let ch = chummer_core::character::Character::load(&p).unwrap();
+        let sheet = engine.sheet(&ch);
+        let mut rng = Rng::from_time();
+        // Not rolled: no soak hits, so a big DV always does damage.
+        let (before, r) = damage_character(&mut rng, Attack::parse("30P").unwrap(), &ch, &sheet, false);
+        assert_eq!(before.physical, sheet.physical_cm);
+        assert!(r.physical_filled > before.physical_filled);
+        let cmds = damage_commands(&before, &r);
+        assert!(matches!(cmds.as_slice(), [Command::SetPhysicalDamage { filled }] if *filled == r.physical_filled), "{cmds:?}");
+        let (before, r) = damage_character(&mut rng, Attack::parse("0S").unwrap(), &ch, &sheet, false);
+        assert!(damage_commands(&before, &r).is_empty(), "no damage, no commands");
+    }
+
+    #[test]
+    fn roll_lines() {
+        let lang = Language::default();
+        let r = dice::evaluate(vec![6, 5, 1, 2], 5);
+        assert_eq!(roll_line(&lang, "Apex", "Pistols", 4, &r), "Apex: Pistols 4d6 → 2 hits  [6 5 1 2]");
+        let r = dice::evaluate(vec![1, 1, 3], 5);
+        assert_eq!(roll_line(&lang, "Apex", "Soak", 3, &r), "Apex: Soak 3d6 → 0 hits — CRITICAL GLITCH  [1 1 3]");
+    }
 }

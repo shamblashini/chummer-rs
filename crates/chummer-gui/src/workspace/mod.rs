@@ -14,7 +14,8 @@
 //!   and the campaign) and draw it in `CharacterView::ws_page`
 //!   (characters) or the shell (`App::ws_home`, `App::ws_campaign`).
 //!   Until a screen is rebuilt, `Section::Page(tab)` draws the Classic
-//!   tab page; [`Section::Play`] is the first rebuilt one.
+//!   tab page; [`Section::Play`] (`workspace/play.rs`, drawn by
+//!   `CharacterView::ws_play`) is the first rebuilt one.
 //! * A **panel** that can pop out is drawn with [`popout::Panel`]
 //!   (`Panel::card` in a page, `Panel::inspector` in the inspector); give
 //!   it a [`PanelId`] and draw the same contents in `App::ws_panel`
@@ -146,6 +147,8 @@ pub enum PanelId {
     Initiative,
     /// The GM screen's activity feed.
     Activity,
+    /// A block of the Play screen (`crate::view::play`).
+    Play(crate::view::play::Panel),
 }
 
 /// One sidebar entry.

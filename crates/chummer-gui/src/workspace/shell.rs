@@ -593,6 +593,10 @@ impl App {
                 v.ws_close_item();
             }
         }
+        if self.ws.special.get(&v.ws_id()).is_some_and(|(s, t)| *s == Section::Play && *t == v.ws_tab()) {
+            // At the table: the character's dice roller and its rolls.
+            return v.ws_play_inspector(ui, lang, &mut self.status, &mut self.ws.pops) || changed;
+        }
         let title = if v.ws_creating() { lang.tr("Karma Summary") } else { lang.tr("Other Info") };
         Panel::inspector(key(PanelId::Summary), &title).show(ui, &mut self.ws.pops, lang, |_| {}, |ui| changed |= v.ws_summary(ui, lang, roll));
         let undo = v.doc().undo_label().map(str::to_owned);
@@ -658,6 +662,7 @@ impl App {
             PanelId::Dice => self.lang.tr("Dice Roller"),
             PanelId::Initiative => self.lang.tr("Initiative tracker"),
             PanelId::Activity => self.lang.tr("Activity"),
+            PanelId::Play(p) => self.lang.tr(p.title()),
         };
         let doc = match key.doc {
             DocKey::Character(id) => self.ws_index(id).map(|i| self.views[i].doc().display_name()),
@@ -726,7 +731,8 @@ impl App {
                         changed |= v.ws_page(ui, s, &engine, lang, &self.pdfs, &mut self.status, &mut roll, &mut self.ws.pops);
                         v.ws_set_gear_tab(gear);
                     }
-                    PanelId::Condition => scroll(ui, &mut |ui| changed |= v.ws_condition(ui, lang, &mut roll)),
+                    PanelId::Condition => scroll(ui, &mut |ui| changed |= v.ws_play_panel(ui, crate::view::play::Panel::Condition, lang, &mut self.status)),
+                    PanelId::Play(p) => scroll(ui, &mut |ui| changed |= v.ws_play_panel(ui, p, lang, &mut self.status)),
                     PanelId::Issues => scroll(ui, &mut |ui| v.ws_issues(ui, lang)),
                     PanelId::Item => scroll(ui, &mut |ui| {
                         if v.ws_has_item() {

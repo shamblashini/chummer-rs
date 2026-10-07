@@ -490,6 +490,153 @@ pub fn edge_boxes(ui: &mut Ui, id: impl std::hash::Hash, total: i32, available: 
     out
 }
 
+// ----- the Play screen and the GM screen -----
+
+/// A row of small damage boxes (`size` 14–16: a device's Matrix
+/// condition monitor, a vehicle's damage track), `per_row` to a row.
+/// `label` names a box in its tooltip. Returns the new number filled.
+#[allow(clippy::too_many_arguments)]
+pub fn small_track(ui: &mut Ui, id: impl std::hash::Hash, boxes: i32, filled: i32, per_row: i32, size: f32, color: Color32, label: &str) -> Option<i32> {
+    let ws = theme::ws(ui);
+    let mut out = None;
+    ui.push_id(id, |ui| {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::splat(if size < 16.0 { 2.0 } else { GAP });
+            let per_row = per_row.max(1);
+            let mut n = 1;
+            while n <= boxes {
+                ui.horizontal(|ui| {
+                    for k in n..(n + per_row).min(boxes + 1) {
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+                        let on = k <= filled;
+                        let edge = if on || resp.hovered() { color } else { ws.control };
+                        ui.painter().rect(rect, CornerRadius::same(2), if on { color } else { ws.well }, Stroke::new(1.0_f32, edge), StrokeKind::Inside);
+                        if resp.on_hover_text(format!("{label} {k}")).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            out = Some(box_click(filled, k));
+                        }
+                    }
+                });
+                n += per_row;
+            }
+        });
+    });
+    out
+}
+
+/// A quick-roll tile: the label on the left, the pool in accent
+/// monospace on the right; `height` 26 or 28.
+pub fn roll_tile(ui: &mut Ui, label: &str, value: &str, width: f32, height: f32) -> Response {
+    let ws = theme::ws(ui);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, height), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let hovered = resp.hovered();
+        let painter = ui.painter();
+        painter.rect(rect, CornerRadius::same(5), if hovered { ws.hover } else { ws.raised }, Stroke::new(1.0_f32, if hovered { ws.control } else { ws.divider }), StrokeKind::Inside);
+        let v = painter.layout_no_wrap(value.to_owned(), FontId::monospace(12.5), ws.accent);
+        let vx = rect.right() - 9.0 - v.size().x;
+        let l = painter.layout_no_wrap(label.to_owned(), FontId::proportional(if height <= 26.0 { 12.0 } else { 12.5 }), ws.text);
+        let clip = egui::Rect::from_min_max(rect.min, egui::pos2(vx - 4.0, rect.bottom()));
+        painter.with_clip_rect(clip).galley(egui::pos2(rect.left() + 9.0, rect.center().y - l.size().y / 2.0), l, ws.text);
+        painter.galley(egui::pos2(vx, rect.center().y - v.size().y / 2.0), v, ws.accent);
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Rounds left in a weapon as 4×12 pips (filled = loaded).
+pub fn ammo_pips(ui: &mut Ui, left: i32, total: i32) -> Response {
+    let ws = theme::ws(ui);
+    let n = total.max(0) as f32;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2((n * 6.0 - 2.0).max(0.0), 12.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        for k in 0..total.max(0) {
+            let r = egui::Rect::from_min_size(egui::pos2(rect.left() + k as f32 * 6.0, rect.top()), egui::vec2(4.0, 12.0));
+            if k < left {
+                ui.painter().rect(r, CornerRadius::same(1), ws.primary, Stroke::new(1.0_f32, ws.primary), StrokeKind::Inside);
+            } else {
+                ui.painter().rect_stroke(r, CornerRadius::same(1), Stroke::new(1.0_f32, ws.control), StrokeKind::Inside);
+            }
+        }
+    }
+    resp
+}
+
+/// One die of a roll: hits filled `primary`, ones outlined in `error`.
+pub fn die_face(ui: &mut Ui, value: u8) -> Response {
+    let ws = theme::ws(ui);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let (fill, edge, ink) = match value {
+            5 | 6 => (ws.primary, ws.primary, ws.on_primary),
+            1 => (Color32::TRANSPARENT, ws.error, ws.error),
+            _ => (Color32::TRANSPARENT, ws.control, ws.muted),
+        };
+        ui.painter().rect(rect, CornerRadius::same(4), fill, Stroke::new(1.0_f32, edge), StrokeKind::Inside);
+        ui.painter().text(rect.center(), Align2::CENTER_CENTER, value.to_string(), FontId::monospace(12.0), ink);
+    }
+    resp
+}
+
+/// A 1px divider across the `ui` (`vertical`: a line `height` tall).
+pub fn divider(ui: &mut Ui, vertical: Option<f32>) {
+    let ws = theme::ws(ui);
+    let size = match vertical {
+        Some(h) => egui::vec2(1.0, h),
+        None => egui::vec2(ui.available_width(), 1.0),
+    };
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::ZERO, ws.divider);
+}
+
+/// A row of a list: `text` on the left, a muted monospace `value` on the
+/// right, a line above (`height` 20–30).
+pub fn list_row(ui: &mut Ui, text: &str, value: &str, height: f32, line: bool) -> Response {
+    let ws = theme::ws(ui);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if line {
+            painter.hline(rect.x_range(), rect.top() + 0.5, Stroke::new(1.0_f32, ws.divider));
+        }
+        let v = painter.layout_no_wrap(value.to_owned(), FontId::monospace(11.5), ws.muted);
+        let vx = rect.right() - v.size().x;
+        let t = painter.layout_no_wrap(text.to_owned(), FontId::proportional(12.0), ws.text);
+        let clip = egui::Rect::from_min_max(rect.min, egui::pos2(vx - 6.0, rect.bottom()));
+        painter.with_clip_rect(clip).galley(egui::pos2(rect.left(), rect.center().y - t.size().y / 2.0), t, ws.text);
+        painter.galley(egui::pos2(vx, rect.center().y - v.size().y / 2.0), v, ws.muted);
+    }
+    resp
+}
+
+/// A [`button`] as wide as the `ui`, its icon and text centred.
+pub fn wide_button(ui: &mut Ui, glyph: Option<&str>, text: &str, look: Look, height: f32) -> Response {
+    let ws = theme::ws(ui);
+    let size = if height <= 22.0 { 11.5 } else { 12.0 };
+    let font = if look == Look::Primary { bold(size) } else { FontId::proportional(size) };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let enabled = ui.is_enabled();
+        let hovered = enabled && resp.hovered();
+        let (fill, stroke, color) = match look {
+            Look::Primary => (if hovered { ws.primary.gamma_multiply(0.9) } else { ws.primary }, ws.primary, ws.on_primary),
+            Look::Secondary => (if hovered { ws.hover } else { ws.raised }, if hovered { ws.control } else { ws.divider }, ws.text),
+            Look::Ghost => (if hovered { ws.hover } else { Color32::TRANSPARENT }, Color32::TRANSPARENT, if hovered { ws.text } else { ws.muted }),
+            Look::Outline => (if hovered { ws.selection } else { Color32::TRANSPARENT }, ws.primary, ws.accent),
+        };
+        let alpha = if enabled { 1.0 } else { 0.5 };
+        let painter = ui.painter();
+        painter.rect(rect, CornerRadius::same(5), fill.gamma_multiply(alpha), Stroke::new(1.0_f32, stroke.gamma_multiply(alpha)), StrokeKind::Inside);
+        let galley = painter.layout_no_wrap(text.to_owned(), font, color.gamma_multiply(alpha));
+        let icon_w = if glyph.is_some() { 20.0 } else { 0.0 };
+        let mut x = rect.center().x - (icon_w + galley.size().x) / 2.0;
+        if let Some(g) = glyph {
+            icons::paint(painter, egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 7.0), Vec2::splat(14.0)), g, 14.0, color.gamma_multiply(alpha));
+            x += icon_w;
+        }
+        painter.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, color.gamma_multiply(alpha));
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

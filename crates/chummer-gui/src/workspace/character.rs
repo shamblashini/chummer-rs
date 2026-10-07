@@ -9,7 +9,6 @@
 use std::sync::Arc;
 
 use chummer_core::chargen::issues::{Issue, Severity};
-use chummer_core::command::Command;
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
 use chummer_core::sections::{self, Section as Sec};
@@ -21,9 +20,9 @@ use super::issues_ui::{gear_sub_tab, tab_of};
 use super::{CharacterView, Tab, STREET_GEAR, TABS};
 use crate::pdf_ui::Status;
 use crate::theme::{self, Badge};
-use crate::workspace::widgets::{self, CmClick, Look, Tone, Track};
-use crate::workspace::popout::{Panel, PopKey, PopOuts};
-use crate::workspace::{icons, DocKey, NavGroup, NavItem, PanelId, Section};
+use crate::workspace::widgets::{self, Look, Tone};
+use crate::workspace::popout::PopOuts;
+use crate::workspace::{icons, NavGroup, NavItem, Section};
 
 /// The label of Street Gear sub-tab `i`.
 pub fn gear_label(i: usize) -> &'static str {
@@ -267,14 +266,7 @@ impl CharacterView {
     pub fn ws_page(&mut self, ui: &mut egui::Ui, section: Section, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, roll: &mut Option<u32>, pops: &mut PopOuts) -> bool {
         let mut changed = false;
         match section {
-            Section::Play => {
-                let key = PopKey::new(DocKey::Character(self.ws_id), PanelId::Condition);
-                let ws = theme::ws(ui);
-                let hint = lang.tr("Click a box to mark it; click again to clear.");
-                Panel::card(key, &lang.tr("Condition Monitor")).show(ui, pops, lang, |ui| {
-                    ui.label(RichText::new(hint).size(11.5).color(ws.muted));
-                }, |ui| changed |= self.ws_condition(ui, lang, roll));
-            }
+            Section::Play => changed |= self.ws_play(ui, lang, status, pops),
             Section::History => {
                 let ws = theme::ws(ui);
                 widgets::card_frame(&ws).show(ui, |ui| {
@@ -306,69 +298,6 @@ impl CharacterView {
                 changed |= self.tab_page(ui, tab, engine, lang, pdfs, status, roll);
             }
             _ => {}
-        }
-        changed
-    }
-
-    /// The Play screen's condition card: the condition monitor, Edge,
-    /// and the numbers needed at the table. Returns true if the character
-    /// changed.
-    pub fn ws_condition(&mut self, ui: &mut egui::Ui, lang: &Language, roll: &mut Option<u32>) -> bool {
-        let ws = theme::ws(ui);
-        let mut changed = false;
-        let s = self.sheet.clone();
-        {
-            let (plabel, slabel) = crate::ai_ui::cm_labels(&self.doc, lang);
-            let physical = Track { label: plabel, color: ws.physical, boxes: s.physical_cm, filled: chummer_core::play::ai::physical_filled(&self.doc), threshold: s.cm_threshold };
-            let stun = Track { label: slabel, color: ws.stun, boxes: s.stun_cm, filled: chummer_core::play::ai::stun_filled(&self.doc), threshold: if self.doc.is_ai() { 0 } else { s.cm_threshold } };
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 18.0;
-                match widgets::condition_monitor(ui, "ws_cm", &physical, &stun, s.cm_overflow, &lang.tr("Overflow")) {
-                    Some(CmClick::Physical(n)) => changed |= self.doc.set(Command::SetPhysicalDamage { filled: n }),
-                    Some(CmClick::Stun(n)) => changed |= self.doc.set(Command::SetStunDamage { filled: n }),
-                    None => {}
-                }
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, 120.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 0.0, ws.divider);
-                ui.vertical(|ui| {
-                    ui.set_max_width(260.0);
-                    ui.spacing_mut().item_spacing.y = 8.0;
-                    if s.wound_modifier != 0 {
-                        ui.horizontal(|ui| {
-                            widgets::tag(ui, &format!("{} {}", lang.tr("CM Penalty:"), s.wound_modifier), ws.warning, ws.warning);
-                        });
-                    }
-                    widgets::stat_row(ui, &lang.tr("Armor"), &s.armor.to_string(), false);
-                    widgets::stat_row(ui, &lang.tr("Initiative"), &format!("{} + {}d6", s.initiative, s.initiative_dice), true);
-                    widgets::stat_row(ui, &lang.tr("Physical limit"), &s.limit_physical.to_string(), false);
-                    widgets::stat_row(ui, &lang.tr("Mental limit"), &s.limit_mental.to_string(), false);
-                    widgets::stat_row(ui, &lang.tr("Social limit"), &s.limit_social.to_string(), false);
-                    if widgets::button(ui, Some(icons::DICE_FIVE), &lang.tr("Open Dice Roller"), Look::Outline, 24.0).clicked() {
-                        *roll = Some(6);
-                    }
-                });
-            });
-            if self.doc.created {
-                ui.add_space(8.0);
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 0.0, ws.divider);
-                ui.add_space(8.0);
-                let total = s.attr("EDG").max(0);
-                let used = self.doc.doc.get_i32("edgeused").unwrap_or(0).clamp(0, total);
-                let available = total - used;
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    ui.label(RichText::new(lang.tr("Edge")).font(widgets::bold(12.5)).color(ws.text));
-                    let tip = |n: i32, on: bool| format!("{} {n} / {total}: {}", lang.tr("Edge"), if on { lang.tr("available") } else { lang.tr("spent") });
-                    if let Some(a) = widgets::edge_boxes(ui, "ws_edge", total, available, tip) {
-                        changed |= self.doc.set(Command::SetEdgeUsed { used: total - a });
-                    }
-                    ui.label(widgets::mono(format!("{available}/{total}"), 11.5, ws.muted));
-                    if widgets::icon_button(ui, icons::ARROWS_CLOCKWISE, 24.0).on_hover_text(lang.tr("Reset")).clicked() {
-                        changed |= self.doc.set(Command::RefreshEdge);
-                    }
-                });
-            }
         }
         changed
     }

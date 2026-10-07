@@ -36,6 +36,9 @@ pub use guide_ui::{guided_offer, guided_preference, save_guided_preference};
 // The Workspace layout's access to the view (`crate::workspace`).
 #[path = "workspace/character.rs"]
 pub(crate) mod workspace;
+// The Workspace's Play screen ("At the table").
+#[path = "workspace/play.rs"]
+pub(crate) mod play;
 
 /// The character tabs, in Chummer5a's order (CharacterCareer.Designer.cs).
 /// Magic, resonance and critter tabs only show when the character has
@@ -164,6 +167,8 @@ pub struct CharacterView {
     pub campaign_member: Option<chummer_core::campaign::MemberId>,
     /// Names the tab for the Workspace (`workspace::DocKey`).
     ws_id: u64,
+    /// The Workspace's Play screen: rolls, initiative, ammunition choices.
+    play: play::PlayState,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -282,6 +287,7 @@ impl CharacterView {
                 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             },
+            play: Default::default(),
         };
         v.refresh_budget();
         v.set_guided(guided_preference());
