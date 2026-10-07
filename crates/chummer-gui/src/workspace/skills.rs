@@ -70,7 +70,7 @@ impl CharacterView {
                     crate::combo::selectable_value(ui, &mut self.new_kno.1, t.to_owned(), lang.data_name("skills.xml", "", t));
                 }
             });
-            widgets::text_field(ui, &mut self.new_kno.0, &lang.tr("New Knowledge Skill"), 200.0);
+            knowledge_name_input(ui, &self.store, lang, &mut self.new_kno, 220.0);
         });
         if add {
             let name = self.new_kno.0.trim().to_owned();
@@ -363,6 +363,23 @@ impl CharacterView {
             Some(Click::Action(a)) => edits.push(Edit::Action(a)),
             Some(Click::Select(t)) => self.open_select(t, engine),
             None => {}
+        }
+    }
+}
+
+/// The name of a new knowledge skill: free text with the knowledge skills
+/// of `skills.xml` as presets; picking one also sets its type.
+pub(crate) fn knowledge_name_input(ui: &mut egui::Ui, store: &chummer_core::data::DataStore, lang: &Language, kno: &mut (String, String, bool), width: f32) {
+    let Ok(doc) = store.doc("skills.xml") else { return };
+    let mut recs: Vec<(String, String, String)> =
+        chummer_core::data::records(&doc, "knowledgeskills", "skill").into_iter().filter(|r| !r.hidden()).map(|r| (r.name(), lang.data_name("skills.xml", &r.id(), &r.name()), r.category())).collect();
+    recs.sort_by_cached_key(|r| r.1.to_lowercase());
+    let presets: Vec<(String, String)> = recs.iter().map(|(n, shown, _)| (n.clone(), shown.clone())).collect();
+    if widgets::preset_input(ui, "new_knowledge", &mut kno.0, &presets, &lang.tr("New Knowledge Skill"), width).changed() {
+        if let Some((_, _, cat)) = recs.iter().find(|(n, _, _)| *n == kno.0) {
+            if ["Academic", "Interest", "Language", "Professional", "Street"].contains(&cat.as_str()) {
+                kno.1 = cat.clone();
+            }
         }
     }
 }

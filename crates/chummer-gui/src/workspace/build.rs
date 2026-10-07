@@ -36,7 +36,7 @@ pub(crate) mod career_ws;
 #[path = "magic.rs"]
 mod magic;
 #[path = "skills.rs"]
-mod skills;
+pub(crate) mod skills;
 #[path = "stats.rs"]
 mod stats;
 #[path = "story.rs"]

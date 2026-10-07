@@ -955,7 +955,7 @@ impl CharacterView {
             egui::ScrollArea::vertical().id_salt("kno_scroll").auto_shrink(false).show(ui, |ui| {
                     ui.heading(lang.tr("Knowledge Skills"));
                     ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut self.new_kno.0).hint_text(lang.tr("New Knowledge Skill")).desired_width(200.0));
+                        workspace::build::skills::knowledge_name_input(ui, &self.store, lang, &mut self.new_kno, 220.0);
                         crate::combo::Combo::from_id_salt("kno_type").selected_text(lang.data_name("skills.xml", "", &self.new_kno.1)).show_ui(ui, |ui| {
                             for t in ["Academic", "Interest", "Language", "Professional", "Street"] {
                                 crate::combo::selectable_value(ui, &mut self.new_kno.1, t.to_owned(), lang.data_name("skills.xml", "", t));
