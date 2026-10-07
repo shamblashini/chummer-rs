@@ -12,7 +12,8 @@
 //!   list it in the sidebar model (`CharacterView::ws_nav` in
 //!   `character.rs` for characters, `App::ws_nav` in `shell.rs` for Home
 //!   and the campaign) and draw it in `CharacterView::ws_page`
-//!   (characters) or the shell (`App::ws_home`, `App::ws_campaign`).
+//!   (characters) or the shell (`App::ws_home`, `App::ws_campaign`; the
+//!   GM screen is `gm_screen::workspace`, `workspace/gm.rs`).
 //!   Until a screen is rebuilt, `Section::Page(tab)` draws the Classic
 //!   tab page; [`Section::Play`] (`workspace/play.rs`, drawn by
 //!   `CharacterView::ws_play`) is the first rebuilt one.
@@ -149,6 +150,8 @@ pub enum PanelId {
     Activity,
     /// A block of the Play screen (`crate::view::play`).
     Play(crate::view::play::Panel),
+    /// A part of the GM screen (`crate::gm_screen::workspace`).
+    Gm(crate::gm_screen::workspace::Panel),
 }
 
 /// One sidebar entry.

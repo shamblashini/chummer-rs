@@ -576,6 +576,13 @@ pub fn die_face(ui: &mut Ui, value: u8) -> Response {
     resp
 }
 
+/// A small filled circle (online state), `size` 6 or 7.
+pub fn dot(ui: &mut Ui, color: Color32, size: f32) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    ui.painter().circle_filled(rect.center(), size / 2.0, color);
+    resp
+}
+
 /// A 1px divider across the `ui` (`vertical`: a line `height` tall).
 pub fn divider(ui: &mut Ui, vertical: Option<f32>) {
     let ws = theme::ws(ui);

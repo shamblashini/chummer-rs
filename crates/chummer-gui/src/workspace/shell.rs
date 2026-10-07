@@ -44,6 +44,12 @@ impl App {
         let open = self.ws_docs();
         self.ws.pops.retain_docs(|d| open.contains(&d));
         let doc = self.ws_doc();
+        if doc == DocKey::Campaign {
+            let engine = self.engine.clone();
+            if let Some(gm) = self.gm.as_mut() {
+                gm.begin_frame(&engine, &mut self.views, &mut self.online);
+            }
+        }
         self.ws_top_bar(ctx, doc);
         self.ws_status_bar(ctx, doc);
         self.ws_sidebar(ctx, doc);
@@ -319,8 +325,20 @@ impl App {
         let mut go = None;
         let mut open_member = None;
         let mut sources = false;
-        egui::SidePanel::left("ws_sidebar").exact_width(SIDEBAR_WIDTH).resizable(false).frame(egui::Frame::new().fill(ws.chrome)).show(ctx, |ui| {
+        // The GM screen's roster is a little wider.
+        let width = if doc == DocKey::Campaign { 220.0 } else { SIDEBAR_WIDTH };
+        let mut gm_action = None;
+        egui::SidePanel::left("ws_sidebar").exact_width(width).resizable(false).frame(egui::Frame::new().fill(ws.chrome)).show(ctx, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+            if let (DocKey::Campaign, Some(gm)) = (doc, self.gm.as_mut()) {
+                let height = (ui.available_height() - CLUSTER_HEIGHT).max(40.0);
+                let engine = self.engine.clone();
+                let mut env = gm_env(&engine, &self.lang, &mut self.views, &mut self.status, &mut self.online, &mut self.ws.pops);
+                gm_action = gm.ws_sidebar(ui, &mut env, height);
+                rule(ui, ws.divider);
+                self.ws_cluster(ctx, ui);
+                return;
+            }
             self.ws_sidebar_header(ui, doc);
             // The sections scroll; the cluster stays at the bottom.
             let nav_height = (ui.available_height() - CLUSTER_HEIGHT).max(40.0);
@@ -369,6 +387,9 @@ impl App {
             self.ws_go(doc, s);
         }
         if let Some(id) = open_member {
+            self.open_member(id);
+        }
+        if let Some(crate::gm_screen::Action::Open(id)) = gm_action {
             self.open_member(id);
         }
         if sources {
@@ -621,10 +642,9 @@ impl App {
     // ----- campaign and home -----
 
     fn ws_campaign(&mut self, ctx: &egui::Context) {
-        let feed = !self.ws.pops.is_out(PopKey::new(DocKey::Campaign, PanelId::Activity));
         let engine = self.engine.clone();
         let action = match self.gm.as_mut() {
-            Some(gm) => gm.ui(ctx, &engine, &self.lang, &mut self.views, &mut self.status, &mut self.online, feed),
+            Some(gm) => gm.ws_ui(ctx, &mut gm_env(&engine, &self.lang, &mut self.views, &mut self.status, &mut self.online, &mut self.ws.pops)),
             None => {
                 self.home = Some(Home::Roster);
                 None
@@ -663,6 +683,7 @@ impl App {
             PanelId::Initiative => self.lang.tr("Initiative tracker"),
             PanelId::Activity => self.lang.tr("Activity"),
             PanelId::Play(p) => self.lang.tr(p.title()),
+            PanelId::Gm(p) => self.lang.tr(p.title()),
         };
         let doc = match key.doc {
             DocKey::Character(id) => self.ws_index(id).map(|i| self.views[i].doc().display_name()),
@@ -754,8 +775,17 @@ impl App {
                 }
             }
             DocKey::Campaign => {
+                let mut action = None;
                 if let Some(gm) = self.gm.as_mut() {
-                    scroll(ui, &mut |ui| gm.activity(ui, &engine, &self.lang, &mut self.views, &mut self.status, &mut self.online));
+                    let panel = match key.panel {
+                        PanelId::Gm(p) => Some(p),
+                        _ => None,
+                    };
+                    let mut env = gm_env(&engine, &self.lang, &mut self.views, &mut self.status, &mut self.online, &mut self.ws.pops);
+                    scroll(ui, &mut |ui| action = gm.ws_panel(ui, panel, &mut env));
+                }
+                if let Some(crate::gm_screen::Action::Open(id)) = action {
+                    self.open_member(id);
                 }
             }
             DocKey::Home => match key.panel {
@@ -926,6 +956,18 @@ impl App {
             Cmd::Save | Cmd::SaveAs | Cmd::Print | Cmd::Export | Cmd::Close => {}
         }
     }
+}
+
+/// What the GM screen's Workspace drawing needs from the app.
+fn gm_env<'a>(
+    engine: &'a std::sync::Arc<chummer_core::engine::Engine>,
+    lang: &'a chummer_core::lang::Language,
+    views: &'a mut [CharacterView],
+    status: &'a mut crate::pdf_ui::Status,
+    net: &'a mut crate::online::Online,
+    pops: &'a mut popout::PopOuts,
+) -> crate::gm_screen::workspace::Env<'a> {
+    crate::gm_screen::workspace::Env { engine, lang, views, status, net, pops }
 }
 
 /// A 1px line across the `ui`.

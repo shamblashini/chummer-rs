@@ -17,7 +17,35 @@ use chummer_sync::hosted::{self, HostedCampaign, GM_OWNER};
 use chummer_sync::MailReport;
 use eframe::egui::{self, RichText};
 
-use super::{GmScreen, Live, AUTHOR};
+use super::{FeedRow, GmScreen, Live, AUTHOR};
+
+/// A player of an online campaign.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlayerRow {
+    pub name: String,
+    /// The endpoint, in full (for the tooltip).
+    pub id: String,
+    pub connected: bool,
+}
+
+/// A mailbox round: (read, applied, sent), or what went wrong.
+pub(crate) type MailResult = Result<(usize, usize, usize), String>;
+
+/// The online section, worked out for drawing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct OnlineView {
+    /// Hosting now.
+    pub serving: bool,
+    /// The campaign is online (hosted at least once).
+    pub online: bool,
+    /// While serving: the home relay, once connected.
+    pub relay: Option<Option<String>>,
+    pub players: Vec<PlayerRow>,
+    pub mail_busy: bool,
+    /// The last mailbox round: when, and (read, applied, sent) or the error.
+    pub mail: Option<(String, MailResult)>,
+    pub invite: Option<String>,
+}
 use crate::doc::{Backend, Doc};
 use crate::online::{Online, GM_MAIL_EVERY};
 use crate::view::CharacterView;
@@ -198,52 +226,90 @@ impl GmScreen {
         self.online = None;
     }
 
+    /// What the online section shows.
+    pub(crate) fn online_view(&self, net: &Online) -> OnlineView {
+        let serving = self.serving(net);
+        let Some(o) = &self.online else { return OnlineView { serving, ..Default::default() } };
+        let node = net.node_if_started();
+        let connected: Vec<chummer_net::EndpointId> = o.hosted.host.connected().into_iter().map(|(p, _)| p).collect();
+        let relay = match (&node, serving) {
+            (Some(n), true) => Some(n.home_relay().map(|r| r.to_string())),
+            _ => None,
+        };
+        let players = {
+            let a = o.hosted.host.authority();
+            a.members()
+                .iter()
+                .filter(|(id, _)| **id != a.gm())
+                .map(|(id, m)| PlayerRow { name: if m.name.is_empty() { id.fmt_short().to_string() } else { m.name.clone() }, id: id.to_string(), connected: connected.contains(id) })
+                .collect()
+        };
+        let m = o.mail.lock().expect("poisoned");
+        let mail = m.last.as_ref().map(|(at, r)| (crate::history_ui::short_time(*at), r.as_ref().map(|r| (r.fetched, r.handled, r.sent)).map_err(Clone::clone)));
+        OnlineView { serving, online: true, relay, players, mail_busy: m.busy, mail, invite: o.invite.clone() }
+    }
+
+    /// A new invite link for players (shown in the online section).
+    pub(crate) fn new_invite(&mut self, net: &Online) {
+        let node = net.node_if_started();
+        if let Some(o) = &mut self.online {
+            let link = o.hosted.invite(Role::Player, "", node.as_deref());
+            o.invite = Some(link.to_string());
+        }
+    }
+
+    /// Check the mailbox on the next frame.
+    pub(crate) fn ask_mail(&mut self) {
+        self.check_mail_later = true;
+    }
+
+    /// Host online on or off; an error goes to the status line.
+    pub(crate) fn toggle_hosting(&mut self, net: &mut Online, engine: &Arc<Engine>, views: &mut [CharacterView], on: bool, status: &mut crate::pdf_ui::Status) {
+        match self.set_hosting(net, engine, views, on) {
+            Ok(()) => self.online_error = None,
+            Err(e) => *status = Some((e, true)),
+        }
+    }
+
     /// The Online section at the top of the feed panel.
     pub(super) fn online_panel(&mut self, ui: &mut egui::Ui, net: &mut Online, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut crate::pdf_ui::Status) {
-        let serving = self.serving(net);
+        let v = self.online_view(net);
         ui.horizontal(|ui| {
             ui.label(crate::theme::strong(ui, lang.tr("Online")));
-            let mut on = serving;
+            let mut on = v.serving;
             let saved = self.path.is_some();
             let r = ui.add_enabled(saved, egui::Checkbox::new(&mut on, lang.tr("Host online")));
             let r = if saved { r.on_hover_text(lang.tr("Players connect to this app; changes sync live")) } else { r.on_disabled_hover_text(lang.tr("Save the campaign to a file first")) };
             if r.changed() {
-                match self.set_hosting(net, engine, views, on) {
-                    Ok(()) => self.online_error = None,
-                    Err(e) => *status = Some((e, true)),
-                }
+                self.toggle_hosting(net, engine, views, on, status);
             }
         });
         if let Some(e) = &self.online_error {
             ui.colored_label(ui.visuals().error_fg_color, e);
         }
-        let Some(o) = &mut self.online else {
+        if !v.online {
             ui.weak(lang.tr("Host the campaign to invite players. Their characters then sync with yours; every change is logged here."));
             return;
-        };
-        let node = net.node_if_started();
-        let connected: Vec<chummer_net::EndpointId> = o.hosted.host.connected().into_iter().map(|(p, _)| p).collect();
-        match (&node, serving) {
-            (Some(n), true) => {
-                let relay = n.home_relay().map(|r| r.to_string()).unwrap_or_else(|| lang.tr("connecting to the relay…"));
+        }
+        match &v.relay {
+            Some(relay) => {
+                let relay = relay.clone().unwrap_or_else(|| lang.tr("connecting to the relay…"));
                 ui.label(RichText::new(lang.tr("Online: players can connect")).color(crate::theme::accent(ui)));
                 ui.weak(format!("{} {relay}", lang.tr("Relay:")));
             }
-            _ => {
+            None => {
                 ui.weak(lang.tr("Offline: changes for players wait in the mailbox"));
             }
         }
         ui.horizontal(|ui| {
             if ui.button(lang.tr("Invite player")).on_hover_text(lang.tr("A link for players; it stays valid for the whole group")).clicked() {
-                let link = o.hosted.invite(Role::Player, "", node.as_deref());
-                o.invite = Some(link.to_string());
+                self.new_invite(net);
             }
-            let busy = o.mail.lock().expect("poisoned").busy;
-            if ui.add_enabled(!busy, egui::Button::new(lang.tr("Check mail"))).on_hover_text(lang.tr("Collect changes players mailed while you were offline, and mail them yours")).clicked() {
-                self.check_mail_later = true;
+            if ui.add_enabled(!v.mail_busy, egui::Button::new(lang.tr("Check mail"))).on_hover_text(lang.tr("Collect changes players mailed while you were offline, and mail them yours")).clicked() {
+                self.ask_mail();
             }
         });
-        if let Some(link) = o.invite.clone() {
+        if let Some(link) = v.invite.clone() {
             ui.horizontal(|ui| {
                 let mut text = link.clone();
                 // A fixed width: the panel must not grow with the link.
@@ -254,30 +320,20 @@ impl GmScreen {
                 }
             });
         }
-        {
-            let m = o.mail.lock().expect("poisoned");
-            if m.busy {
-                ui.weak(lang.tr("Checking mail…"));
-            } else if let Some((at, r)) = &m.last {
-                let when = crate::history_ui::short_time(*at);
-                match r {
-                    Ok(r) => ui.weak(lang.tr_fmt("Mail at {0}: {1} read, {2} applied, {3} sent", &[&when, &r.fetched, &r.handled, &r.sent])),
-                    Err(e) => ui.colored_label(ui.visuals().error_fg_color, format!("{when}: {e}")),
-                };
-            }
+        if v.mail_busy {
+            ui.weak(lang.tr("Checking mail…"));
+        } else if let Some((when, r)) = &v.mail {
+            match r {
+                Ok((f, h, s)) => ui.weak(lang.tr_fmt("Mail at {0}: {1} read, {2} applied, {3} sent", &[when, f, h, s])),
+                Err(e) => ui.colored_label(ui.visuals().error_fg_color, format!("{when}: {e}")),
+            };
         }
-        let members: Vec<(chummer_net::EndpointId, chummer_sync::Member)> = {
-            let a = o.hosted.host.authority();
-            a.members().iter().filter(|(id, _)| **id != a.gm()).map(|(k, v)| (*k, v.clone())).collect()
-        };
-        if !members.is_empty() {
+        if !v.players.is_empty() {
             ui.label(RichText::new(lang.tr("Players")).strong());
-            for (id, m) in members {
-                let on = connected.contains(&id);
-                let name = if m.name.is_empty() { id.fmt_short().to_string() } else { m.name.clone() };
+            for p in &v.players {
                 ui.horizontal(|ui| {
-                    ui.label(name).on_hover_text(id.to_string());
-                    if on {
+                    ui.label(&p.name).on_hover_text(&p.id);
+                    if p.connected {
                         ui.label(RichText::new(lang.tr("connected")).color(crate::theme::accent(ui)));
                     } else {
                         ui.weak(lang.tr("not connected"));
@@ -326,68 +382,51 @@ impl GmScreen {
 
     /// The activity feed of an online campaign: the authority's (every
     /// player's changes and the GM's, with authors; Revert on those that
-    /// can be) and the GM's own notes, newest first.
-    pub(super) fn online_feed(&mut self, ui: &mut egui::Ui, lang: &Language, views: &mut [CharacterView], status: &mut crate::pdf_ui::Status) -> bool {
-        let Some(o) = &self.online else { return false };
-        enum Row {
-            Feed(crate::doc::LogLine, chummer_sync::CharacterId, String),
-            Note(String),
-        }
-        let mut rows: Vec<(i64, Row)> = {
+    /// can be) and the GM's own notes, newest first. `None` offline.
+    pub(super) fn online_rows(&self) -> Option<Vec<FeedRow>> {
+        let o = self.online.as_ref()?;
+        let mut rows: Vec<FeedRow> = {
             let a = o.hosted.host.authority();
-            a.feed().iter().rev().take(300).map(|f| (f.at, Row::Feed(crate::doc::gm_line(&a, f), f.character.clone(), f.character_name.clone()))).collect()
+            a.feed()
+                .iter()
+                .rev()
+                .take(300)
+                .map(|f| {
+                    let l = crate::doc::gm_line(&a, f);
+                    FeedRow { at: f.at, who: f.character_name.clone(), text: l.text, refused: l.refused, note: false, revert: l.revert.map(|v| (f.character.clone(), v)) }
+                })
+                .collect()
         };
         rows.extend(self.campaign.log.iter().rev().take(100).filter(|i| !i.author.is_empty() || i.member.is_none()).map(|i| {
             let who = i.member.and_then(|m| self.campaign.member(m)).map(|m| m.name.as_str()).unwrap_or("");
-            (i.at, Row::Note(if who.is_empty() || i.description.contains(who) { i.description.clone() } else { format!("{who} {}", i.description) }))
+            let text = if who.is_empty() || i.description.contains(who) { i.description.clone() } else { format!("{who} {}", i.description) };
+            FeedRow { at: i.at, who: String::new(), text, refused: false, note: true, revert: None }
         }));
-        rows.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
-        let mut revert = None;
-        egui::ScrollArea::vertical().id_salt("gm_feed_scroll").auto_shrink(false).show(ui, |ui| {
-            if rows.is_empty() {
-                ui.weak(lang.tr("Changes to the campaign's characters show here."));
-            }
-            for (at, row) in &rows {
-                ui.horizontal_wrapped(|ui| {
-                    ui.weak(crate::history_ui::short_time(*at));
-                    match row {
-                        Row::Feed(l, c, name) => {
-                            ui.label(RichText::new(name).strong());
-                            if l.refused {
-                                ui.colored_label(ui.visuals().error_fg_color, &l.text);
-                            } else {
-                                ui.label(&l.text);
-                            }
-                            if let Some(v) = l.revert {
-                                if ui.small_button(lang.tr("Revert")).on_hover_text(lang.tr("Take this change back")).clicked() {
-                                    revert = Some((c.clone(), v));
-                                }
-                            }
-                        }
-                        Row::Note(t) => {
-                            ui.label(RichText::new(t).italics());
-                        }
-                    }
-                });
-            }
-        });
-        if let Some((c, v)) = revert {
-            match o.hosted.host.gm_revert(&c, v) {
-                Ok(r) => {
-                    let mut msg = r.applied.accepted.description;
-                    if !r.dropped.is_empty() {
-                        msg = format!("{msg} — dropped: {}", r.dropped.join("; "));
-                    }
-                    *status = Some((msg, false));
-                    for v in views.iter_mut() {
-                        v.doc_mut().refresh();
-                    }
-                    return true;
+        rows.sort_by_key(|r| std::cmp::Reverse(r.at));
+        Some(rows)
+    }
+
+    /// Revert: take a player's change back through the authority; later
+    /// changes are applied again on top. Returns true if it worked.
+    pub(crate) fn revert(&mut self, c: &chummer_sync::CharacterId, v: u64, views: &mut [CharacterView], status: &mut crate::pdf_ui::Status) -> bool {
+        let Some(o) = &self.online else { return false };
+        match o.hosted.host.gm_revert(c, v) {
+            Ok(r) => {
+                let mut msg = r.applied.accepted.description;
+                if !r.dropped.is_empty() {
+                    msg = format!("{msg} — dropped: {}", r.dropped.join("; "));
                 }
-                Err(e) => *status = Some((e, true)),
+                *status = Some((msg, false));
+                for v in views.iter_mut() {
+                    v.doc_mut().refresh();
+                }
+                true
+            }
+            Err(e) => {
+                *status = Some((e, true));
+                false
             }
         }
-        false
     }
 
     pub(super) fn take_mail_request(&mut self, net: &mut Online) {

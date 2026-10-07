@@ -19,13 +19,17 @@
 //! authority's, with Revert.
 
 mod online;
+// The Workspace layout's GM screen; a child module so it can use the
+// screen's state.
+#[path = "workspace/gm.rs"]
+pub(crate) mod workspace;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chummer_core::calc::Sheet;
-use chummer_core::campaign::damage::{Defender, Tracks};
+use chummer_core::campaign::damage::{Attack, Defender, Tracks};
 use chummer_core::campaign::{self, Campaign, Combatant, CombatantId, Encounter, FeedCursor, InitStats, Member, MemberId, MemberKind};
 use chummer_core::character::Character;
 use chummer_core::command::Command;
@@ -60,6 +64,58 @@ pub enum Action {
     Open(MemberId),
 }
 
+/// A member as the roster shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RosterRow {
+    pub id: MemberId,
+    pub name: String,
+    /// Player and group.
+    pub who: String,
+    /// Filled and total boxes of the Physical and Stun tracks, once the
+    /// character is loaded.
+    pub physical: Option<(i32, i32)>,
+    pub stun: Option<(i32, i32)>,
+    /// Why the character did not load.
+    pub error: Option<String>,
+    pub notes: String,
+}
+
+impl RosterRow {
+    /// "P 3/10  S 0/11".
+    pub fn condition(&self) -> String {
+        match (self.physical, self.stun) {
+            (Some((pf, pcm)), Some((sf, scm))) => format!("P {pf}/{pcm}  S {sf}/{scm}"),
+            _ => String::new(),
+        }
+    }
+}
+
+/// A line of the activity feed, newest first.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FeedRow {
+    /// Unix ms.
+    pub at: i64,
+    /// Who or what it is about (shown in bold); may be empty.
+    pub who: String,
+    pub text: String,
+    /// The authority refused the change.
+    pub refused: bool,
+    /// A note of the GM's (online campaigns show them in italics).
+    pub note: bool,
+    /// What Revert takes back (online campaigns): the character and the
+    /// version.
+    pub revert: Option<(chummer_sync::CharacterId, u64)>,
+}
+
+/// What the combatant card shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Card {
+    /// Combatant `i` of the encounter, without a character.
+    AdHoc(usize),
+    Member(MemberId),
+    None,
+}
+
 pub struct GmScreen {
     pub campaign: Campaign,
     pub path: Option<PathBuf>,
@@ -82,8 +138,10 @@ pub struct GmScreen {
     improvements: crate::improvement_ui::ImprovementsPanel,
     /// Member the improvement dialog is for.
     improvement_for: Option<MemberId>,
-    /// Recent dice rolls, newest first.
-    rolls: Vec<String>,
+    /// Recent dice rolls (Unix ms, line), newest first.
+    rolls: Vec<(i64, String)>,
+    /// The Workspace roster's filter.
+    filter: String,
     /// The online side, once the campaign was hosted.
     online: Option<online::GmOnline>,
     /// Why an online campaign opened without its online state.
@@ -125,6 +183,7 @@ impl GmScreen {
             improvements: Default::default(),
             improvement_for: None,
             rolls: Vec::new(),
+            filter: String::new(),
             online: None,
             online_error: None,
             check_mail_later: false,
@@ -300,9 +359,7 @@ impl GmScreen {
     /// Workspace shows it in its own window, see [`GmScreen::activity`]).
     #[allow(clippy::too_many_arguments)]
     pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status, net: &mut crate::online::Online, feed: bool) -> Option<Action> {
-        self.online_tick(engine, views);
-        self.take_mail_request(net);
-        self.sync(engine, views);
+        self.begin_frame(engine, views, net);
         let mut action = None;
         egui::SidePanel::left("gm_roster").resizable(true).default_width(340.0).min_width(260.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("gm_roster_scroll").auto_shrink(false).show(ui, |ui| self.roster(ui, engine, lang, views, status, &mut action));
@@ -315,6 +372,14 @@ impl GmScreen {
         });
         self.windows(ctx, engine, lang, views, status);
         action
+    }
+
+    /// Start of a frame (both layouts): what arrived online, the mailbox,
+    /// sheets and the feed of members that changed.
+    pub fn begin_frame(&mut self, engine: &Arc<Engine>, views: &mut [CharacterView], net: &mut crate::online::Online) {
+        self.online_tick(engine, views);
+        self.take_mail_request(net);
+        self.sync(engine, views);
     }
 
     /// The online panel and the activity feed (the right-hand panel).
@@ -338,39 +403,7 @@ impl GmScreen {
             ui.add(egui::Label::new(RichText::new(file).weak()).truncate()).on_hover_text(p.display().to_string());
         }
         ui.horizontal_wrapped(|ui| {
-            ui.menu_button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add")), |ui| {
-                if ui.button(lang.tr("Character file (copy into the campaign)…")).clicked() {
-                    ui.close();
-                    for p in campaign_ui::pick_characters() {
-                        self.add_file(&p, false, engine, status);
-                    }
-                }
-                if ui.button(lang.tr("Character file (link to the file)…")).clicked() {
-                    ui.close();
-                    for p in campaign_ui::pick_characters() {
-                        self.add_file(&p, true, engine, status);
-                    }
-                }
-                if ui.button(lang.tr("New Critter…")).clicked() {
-                    ui.close();
-                    self.critter = Some(crate::gm_ui::CritterWizard::new());
-                }
-                if ui.button(lang.tr("NPC from PACKS Kit…")).clicked() {
-                    ui.close();
-                    self.kit = Some(KitForm::new(engine));
-                }
-                let open: Vec<usize> = (0..views.len()).filter(|&i| views[i].campaign_member.is_none()).collect();
-                if !open.is_empty() {
-                    ui.separator();
-                    ui.weak(lang.tr("Open characters:"));
-                    for i in open {
-                        if ui.button(views[i].ch().display_name()).clicked() {
-                            ui.close();
-                            self.adopt(&mut views[i]);
-                        }
-                    }
-                }
-            });
+            ui.menu_button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add")), |ui| self.add_menu(ui, engine, lang, views, status));
         });
         ui.separator();
 
@@ -386,26 +419,19 @@ impl GmScreen {
             })
             .collect();
         let selected = self.selected.map(|s| s.to_string());
+        let rows: BTreeMap<MemberId, RosterRow> = self.roster_rows(views).into_iter().flat_map(|(_, rs)| rs).map(|r| (r.id, r)).collect();
         let out = {
-            let live = &self.live;
-            let campaign = &self.campaign;
-            let errors = &self.errors;
             crate::tree_table::TreeTable::new("gm_roster_tree", &headers).selected(selected.as_deref()).show(
                 ui,
                 &roots,
-                |n| match n.value.and_then(|id| campaign.member(id)) {
+                |n| match n.value.and_then(|id| rows.get(&id)) {
                     None => {
                         let kind = MemberKind::from(n.key.trim_start_matches("kind:").to_owned());
                         crate::tree_table::RowView { cells: vec![format!("{} ({})", lang.tr(kind.plural()), n.children.len())], group: true, ..Default::default() }
                     }
-                    Some(m) => {
-                        let cond = match (live.get(&m.id), doc_ref(live, views, m.id)) {
-                            (Some(l), Some(d)) => format!("P {}/{}  S {}/{}", chummer_core::play::ai::physical_filled(d), l.sheet.physical_cm, chummer_core::play::ai::stun_filled(d), l.sheet.stun_cm),
-                            _ => String::new(),
-                        };
-                        let who = [m.player.as_str(), m.group.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
-                        let warning = errors.get(&m.id).map(|e| (e.clone(), true));
-                        crate::tree_table::RowView { cells: vec![m.name.clone(), who, cond], clickable: true, hover: m.notes.clone(), warning, ..Default::default() }
+                    Some(r) => {
+                        let warning = r.error.clone().map(|e| (e, true));
+                        crate::tree_table::RowView { cells: vec![r.name.clone(), r.who.clone(), r.condition()], clickable: true, hover: r.notes.clone(), warning, ..Default::default() }
                     }
                 },
                 |ui, n| {
@@ -427,6 +453,35 @@ impl GmScreen {
         }
         ui.add_space(8.0);
         self.member_fields(ui, engine, lang, views, status, action);
+    }
+
+    /// The roster grouped by kind, as both layouts show it.
+    pub(crate) fn roster_rows(&self, views: &[CharacterView]) -> Vec<(MemberKind, Vec<RosterRow>)> {
+        self.campaign
+            .grouped()
+            .into_iter()
+            .map(|(k, ms)| {
+                let rows = ms
+                    .into_iter()
+                    .map(|m| {
+                        let tracks = match (self.live.get(&m.id), doc_ref(&self.live, views, m.id)) {
+                            (Some(l), Some(d)) => Some(((chummer_core::play::ai::physical_filled(d), l.sheet.physical_cm), (chummer_core::play::ai::stun_filled(d), l.sheet.stun_cm))),
+                            _ => None,
+                        };
+                        RosterRow {
+                            id: m.id,
+                            name: m.name.clone(),
+                            who: [m.player.as_str(), m.group.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · "),
+                            physical: tracks.map(|t| t.0),
+                            stun: tracks.map(|t| t.1),
+                            error: self.errors.get(&m.id).cloned(),
+                            notes: m.notes.clone(),
+                        }
+                    })
+                    .collect();
+                (k, rows)
+            })
+            .collect()
     }
 
     fn select_member(&mut self, id: MemberId) {
@@ -614,31 +669,70 @@ impl GmScreen {
         ui.label(crate::theme::strong(ui, lang.tr("Activity")));
         if !self.rolls.is_empty() {
             ui.label(RichText::new(lang.tr("Dice rolls")).color(crate::theme::accent(ui)));
-            for r in self.rolls.iter().take(5) {
+            for (_, r) in self.rolls.iter().take(5) {
                 ui.label(RichText::new(r).monospace().size(11.5));
             }
             ui.separator();
         }
-        if self.is_online() {
-            self.online_feed(ui, lang, views, status);
-            return;
-        }
+        let rows = self.feed_rows();
+        let mut revert = None;
         egui::ScrollArea::vertical().id_salt("gm_feed_scroll").auto_shrink(false).show(ui, |ui| {
-            if self.campaign.log.is_empty() {
+            if rows.is_empty() {
                 ui.weak(lang.tr("Changes to the campaign's characters show here."));
             }
-            for item in self.campaign.log.iter().rev().take(300) {
-                let when = chummer_core::chargen::iso_from_unix(item.at.div_euclid(1000));
-                let who = item.member.and_then(|m| self.campaign.member(m)).map(|m| m.name.as_str()).unwrap_or("");
+            for r in &rows {
                 ui.horizontal_wrapped(|ui| {
-                    ui.weak(when.get(5..16).unwrap_or("").replace('T', " "));
-                    if !who.is_empty() && !item.description.contains(who) {
-                        ui.label(RichText::new(who).strong());
+                    ui.weak(crate::history_ui::short_time(r.at));
+                    if r.note {
+                        ui.label(RichText::new(&r.text).italics());
+                        return;
                     }
-                    ui.label(&item.description);
+                    if !r.who.is_empty() {
+                        ui.label(RichText::new(&r.who).strong());
+                    }
+                    if r.refused {
+                        ui.colored_label(ui.visuals().error_fg_color, &r.text);
+                    } else {
+                        ui.label(&r.text);
+                    }
+                    if let Some(v) = &r.revert {
+                        if ui.small_button(lang.tr("Revert")).on_hover_text(lang.tr("Take this change back")).clicked() {
+                            revert = Some(v.clone());
+                        }
+                    }
                 });
             }
         });
+        if let Some((c, v)) = revert {
+            self.revert(&c, v, views, status);
+        }
+    }
+
+    /// The activity feed, newest first: an online campaign's is the
+    /// authority's with the GM's notes; otherwise the campaign's log.
+    pub(crate) fn feed_rows(&self) -> Vec<FeedRow> {
+        if let Some(rows) = self.online_rows() {
+            return rows;
+        }
+        self.campaign
+            .log
+            .iter()
+            .rev()
+            .take(300)
+            .map(|item| {
+                let who = item.member.and_then(|m| self.campaign.member(m)).map(|m| m.name.as_str()).unwrap_or("");
+                let who = if !who.is_empty() && !item.description.contains(who) { who.to_owned() } else { String::new() };
+                FeedRow { at: item.at, who, text: item.description.clone(), refused: false, note: false, revert: None }
+            })
+            .collect()
+    }
+
+    /// Note a dice roll of the GM's.
+    fn log_roll(&mut self, line: Option<String>) {
+        if let Some(l) = line {
+            self.rolls.insert(0, (chummer_core::campaign::now_ms(), l));
+            self.rolls.truncate(30);
+        }
     }
 
     // ----- encounter board -----
@@ -678,28 +772,112 @@ impl GmScreen {
         ui.add_space(8.0);
         ui.separator();
         // The card: the selected combatant, or the selected member.
-        let enc = &self.campaign.encounters[self.encounter];
-        let card = self.combatant.and_then(|c| enc.index(c)).map(|i| (enc.combatants[i].member, Some(i)));
-        match card {
-            Some((None, Some(i))) => self.adhoc_card(ui, lang, i),
-            Some((Some(m), _)) => self.member_card(ui, engine, lang, views, status, m, action),
-            _ => match self.selected {
-                Some(m) if self.live.contains_key(&m) => self.member_card(ui, engine, lang, views, status, m, action),
-                _ => {
-                    ui.weak(lang.tr("Select a combatant or a character to see its condition monitors and dice pools."));
-                }
+        match self.card() {
+            Card::AdHoc(i) => self.adhoc_card(ui, lang, i),
+            Card::Member(m) => self.member_card(ui, engine, lang, views, status, m, action),
+            Card::None => {
+                ui.weak(lang.tr("Select a combatant or a character to see its condition monitors and dice pools."));
+            }
+        }
+    }
+
+    /// What the card shows: the selected combatant, or the selected member.
+    pub(crate) fn card(&self) -> Card {
+        let enc = self.campaign.encounters.get(self.encounter);
+        let combatant = enc.and_then(|e| self.combatant.and_then(|c| e.index(c)).map(|i| (e.combatants[i].member, i)));
+        match combatant {
+            Some((None, i)) => Card::AdHoc(i),
+            Some((Some(m), _)) => Card::Member(m),
+            None => match self.selected {
+                Some(m) if self.live.contains_key(&m) => Card::Member(m),
+                _ => Card::None,
             },
         }
     }
 
-    fn initiative_controls(&mut self, ui: &mut egui::Ui, lang: &Language, views: &[CharacterView]) {
+    /// Start the next combat round: everyone rolls.
+    pub(crate) fn roll_initiative(&mut self, views: &[CharacterView]) {
         let stats: BTreeMap<MemberId, InitStats> = self.live.keys().filter_map(|id| Some((*id, self.initiative_stats(views, *id)?))).collect();
+        let Some(e) = self.campaign.encounters.get_mut(self.encounter) else { return };
+        e.new_round(&mut self.rng, |c| c.member.and_then(|m| stats.get(&m).copied()));
+        self.dirty = true;
+    }
+
+    /// Add every player not in the encounter yet.
+    pub(crate) fn add_all_players(&mut self, views: &[CharacterView]) {
+        let players: Vec<MemberId> = self.campaign.members.iter().filter(|m| m.kind == MemberKind::Player && self.live.contains_key(&m.id)).map(|m| m.id).collect();
+        for p in players {
+            if !self.campaign.encounters[self.encounter].has_member(p) {
+                self.add_to_encounter(p, views, false);
+            }
+        }
+    }
+
+    /// Add the combatant without a character typed in `adhoc`.
+    pub(crate) fn add_adhoc(&mut self) {
+        let Some(e) = self.campaign.encounters.get_mut(self.encounter) else { return };
+        let c = Combatant::ad_hoc(self.adhoc.0.trim(), self.adhoc.1, self.adhoc.2, 10, 10);
+        self.combatant = Some(c.id);
+        e.combatants.push(c);
+        if e.round > 0 {
+            let i = e.combatants.len() - 1;
+            e.reroll(i, &mut self.rng, None);
+        }
+        self.adhoc.0.clear();
+        self.dirty = true;
+    }
+
+    /// Spend a member's Edge (Seize the Initiative, Blitz).
+    fn spend_edge(&mut self, member: Option<MemberId>, views: &mut [CharacterView]) {
+        if let Some(d) = member.and_then(|m| doc_mut(&mut self.live, views, m)) {
+            if d.created {
+                let _ = d.apply(Command::SpendEdge);
+            }
+        }
+    }
+
+    /// Seize the Initiative for combatant `i` (spends 1 Edge).
+    pub(crate) fn seize(&mut self, i: usize, views: &mut [CharacterView]) {
         let e = &mut self.campaign.encounters[self.encounter];
+        e.combatants[i].seized = true;
+        let m = e.combatants[i].member;
+        self.spend_edge(m, views);
+        self.dirty = true;
+    }
+
+    /// Blitz for combatant `i`: 5d6 (spends 1 Edge).
+    pub(crate) fn blitz(&mut self, i: usize, views: &mut [CharacterView]) {
+        let e = &mut self.campaign.encounters[self.encounter];
+        e.blitz(i, &mut self.rng);
+        let m = e.combatants[i].member;
+        self.spend_edge(m, views);
+        self.dirty = true;
+    }
+
+    /// Show combatant `cid` on the card (and its member in the roster).
+    pub(crate) fn select_combatant(&mut self, cid: CombatantId, member: Option<MemberId>) {
+        self.combatant = Some(cid);
+        if member.is_some() {
+            self.selected = member;
+        }
+    }
+
+    pub(crate) fn remove_combatant(&mut self, i: usize) {
+        let e = &mut self.campaign.encounters[self.encounter];
+        if self.combatant == Some(e.combatants[i].id) {
+            self.combatant = None;
+        }
+        e.combatants.remove(i);
+        self.dirty = true;
+    }
+
+    fn initiative_controls(&mut self, ui: &mut egui::Ui, lang: &Language, views: &[CharacterView]) {
+        let mut roll = false;
         ui.horizontal_wrapped(|ui| {
             if ui.add(crate::theme::primary_button(ui, format!("{} {}", crate::theme::glyph(crate::theme::glyph("🎲")), lang.tr("Roll initiative")))).on_hover_text(lang.tr("Start the next combat round: everyone rolls")).clicked() {
-                e.new_round(&mut self.rng, |c| c.member.and_then(|m| stats.get(&m).copied()));
-                self.dirty = true;
+                roll = true;
             }
+            let e = &mut self.campaign.encounters[self.encounter];
             if ui.add_enabled(e.round > 0 && e.has_next_pass(), egui::Button::new(lang.tr("Next pass"))).on_hover_text(lang.tr("Everyone loses 10")).clicked() {
                 e.next_pass();
                 self.dirty = true;
@@ -716,14 +894,13 @@ impl GmScreen {
                 ui.label(RichText::new(format!("{}  ·  {}", lang.tr_fmt("Round {0}", &[&e.round]), lang.tr_fmt("Pass {0}", &[&e.pass]))).strong());
             }
         });
+        if roll {
+            self.roll_initiative(views);
+        }
         ui.horizontal_wrapped(|ui| {
-            let players: Vec<MemberId> = self.campaign.members.iter().filter(|m| m.kind == MemberKind::Player && self.live.contains_key(&m.id)).map(|m| m.id).collect();
-            if ui.add_enabled(!players.is_empty(), egui::Button::new(lang.tr("Add all players"))).clicked() {
-                for p in players {
-                    if !self.campaign.encounters[self.encounter].has_member(p) {
-                        self.add_to_encounter(p, views, false);
-                    }
-                }
+            let players = self.campaign.members.iter().any(|m| m.kind == MemberKind::Player && self.live.contains_key(&m.id));
+            if ui.add_enabled(players, egui::Button::new(lang.tr("Add all players"))).clicked() {
+                self.add_all_players(views);
             }
             ui.separator();
             ui.add(egui::TextEdit::singleline(&mut self.adhoc.0).hint_text(lang.tr("Name")).desired_width(120.0));
@@ -732,16 +909,7 @@ impl GmScreen {
             ui.label("+");
             ui.add(egui::DragValue::new(&mut self.adhoc.2).range(1..=5).suffix("d6"));
             if ui.add_enabled(!self.adhoc.0.trim().is_empty(), egui::Button::new(lang.tr("Add"))).on_hover_text(lang.tr("A combatant without a character sheet")).clicked() {
-                let e = &mut self.campaign.encounters[self.encounter];
-                let c = Combatant::ad_hoc(self.adhoc.0.trim(), self.adhoc.1, self.adhoc.2, 10, 10);
-                self.combatant = Some(c.id);
-                e.combatants.push(c);
-                if e.round > 0 {
-                    let i = e.combatants.len() - 1;
-                    e.reroll(i, &mut self.rng, None);
-                }
-                self.adhoc.0.clear();
-                self.dirty = true;
+                self.add_adhoc();
             }
         });
     }
@@ -757,7 +925,7 @@ impl GmScreen {
         let accent = crate::theme::accent(ui);
         let mut remove = None;
         let mut select = None;
-        let mut edge_spend: Vec<MemberId> = Vec::new();
+        let mut seize = None;
         let mut blitz = None;
         egui::Grid::new("gm_init").striped(true).num_columns(11).spacing([8.0, 4.0]).show(ui, |ui| {
             for h in lang.tr_all(["", "Score", "Name", "Roll", "Acted", "Delay", "Seize", "Blitz", "", "", ""]) {
@@ -786,14 +954,11 @@ impl GmScreen {
                 self.dirty |= ui.checkbox(&mut c.delayed, "").changed();
                 let mut seized = c.seized;
                 if ui.checkbox(&mut seized, "").on_hover_text(lang.tr("Seize the Initiative (spends 1 Edge)")).changed() && seized {
-                    c.seized = true;
-                    edge_spend.extend(c.member);
-                    self.dirty = true;
+                    seize = Some(i);
                 }
                 let mut blitzed = c.blitzed;
                 if ui.add_enabled(pass > 0, egui::Checkbox::new(&mut blitzed, "")).on_hover_text(lang.tr("Blitz: roll 5d6 (spends 1 Edge)")).changed() && blitzed {
                     blitz = Some(i);
-                    edge_spend.extend(c.member);
                 }
                 if ui.small_button("−5").on_hover_text(lang.tr("Interrupt action")).clicked() {
                     c.score -= 5;
@@ -809,31 +974,66 @@ impl GmScreen {
                 ui.end_row();
             }
         });
-        if let Some(i) = blitz {
-            self.campaign.encounters[enc_i].blitz(i, &mut self.rng);
-            self.dirty = true;
+        if let Some(i) = seize {
+            self.seize(i, views);
         }
-        for m in edge_spend {
-            if let Some(d) = doc_mut(&mut self.live, views, m) {
-                if d.created {
-                    let _ = d.apply(Command::SpendEdge);
-                }
-            }
+        if let Some(i) = blitz {
+            self.blitz(i, views);
         }
         if let Some((cid, m)) = select {
-            self.combatant = Some(cid);
-            if m.is_some() {
-                self.selected = m;
-            }
+            self.select_combatant(cid, m);
         }
         if let Some(i) = remove {
-            let e = &mut self.campaign.encounters[enc_i];
-            if self.combatant == Some(e.combatants[i].id) {
-                self.combatant = None;
-            }
-            e.combatants.remove(i);
-            self.dirty = true;
+            self.remove_combatant(i);
         }
+    }
+
+    /// Damage to combatant `i` without a character: no soak.
+    pub(crate) fn damage_adhoc(&mut self, i: usize, a: Attack) {
+        let c = &mut self.campaign.encounters[self.encounter].combatants[i];
+        let t = c.track.get_or_insert_with(Default::default);
+        let tracks = Tracks { physical: t.physical, stun: t.stun, overflow: 0, physical_filled: t.physical_filled, stun_filled: t.stun_filled };
+        let r = campaign_ui::resolve(&mut self.rng, a, Defender::default(), tracks, false);
+        t.physical_filled = r.physical_filled;
+        t.stun_filled = r.stun_filled;
+        let line = format!("{} {}", c.name, r.text);
+        self.campaign.note(None, AUTHOR, line);
+        self.dirty = true;
+    }
+
+    /// Damage to member `id`, soaked as its sheet says, in the feed.
+    pub(crate) fn damage_member(&mut self, id: MemberId, a: Attack, views: &mut [CharacterView], status: &mut Status) {
+        let Some(sheet) = self.live.get(&id).map(|l| l.sheet.clone()) else { return };
+        let GmScreen { live, rng, damage, campaign, .. } = self;
+        let Some(doc) = doc_mut(live, views, id) else { return };
+        let (t, r) = campaign_ui::damage_character(rng, a, doc, &sheet, damage.soak_roll);
+        campaign.note(Some(id), AUTHOR, r.text.clone());
+        for c in campaign_ui::damage_commands(&t, &r) {
+            doc.run(c, status);
+        }
+    }
+
+    /// Give or take karma or nuyen (the award form) to member `id`.
+    pub(crate) fn award_member(&mut self, id: MemberId, gain: bool, views: &mut [CharacterView], status: &mut Status) {
+        let cmd = self.award.command(gain);
+        let Some(doc) = doc_mut(&mut self.live, views, id) else { return };
+        if doc.run(cmd, status).is_some() {
+            self.award.note.clear();
+        }
+    }
+
+    /// Open the custom improvement dialog for member `id`.
+    pub(crate) fn add_improvement(&mut self, id: MemberId, engine: &Arc<Engine>, views: &[CharacterView], lang: &Language) {
+        let Some(doc) = doc_ref(&self.live, views, id) else { return };
+        let store = engine.store_for_character(doc);
+        self.improvements.open_create(&store, lang, "GM");
+        self.improvement_for = Some(id);
+    }
+
+    /// Roll a pool for the roll log.
+    pub(crate) fn roll_pool(&mut self, who: &str, label: &str, pool: i32, lang: &Language) {
+        let line = campaign_ui::roll_pool(&mut self.rng, lang, who, label, pool);
+        self.log_roll(Some(line));
     }
 
     fn adhoc_card(&mut self, ui: &mut egui::Ui, lang: &Language, i: usize) {
@@ -860,14 +1060,9 @@ impl GmScreen {
         ui.label(format!("{} {wm}", lang.tr("CM Penalty:")));
         ui.add_space(4.0);
         ui.label(RichText::new(lang.tr("Damage")).strong());
-        if let Some(a) = self.damage.ui(ui, lang) {
-            let tracks = Tracks { physical: t.physical, stun: t.stun, overflow: 0, physical_filled: t.physical_filled, stun_filled: t.stun_filled };
-            let r = campaign_ui::resolve(&mut self.rng, a, Defender::default(), tracks, false);
-            t.physical_filled = r.physical_filled;
-            t.stun_filled = r.stun_filled;
-            let line = format!("{} {}", c.name, r.text);
-            self.campaign.note(None, AUTHOR, line);
-            changed = true;
+        let attack = self.damage.ui(ui, lang);
+        if let Some(a) = attack {
+            self.damage_adhoc(i, a);
         }
         ui.label(lang.tr("Notes"));
         let c = &mut self.campaign.encounters[self.encounter].combatants[i];
@@ -880,7 +1075,7 @@ impl GmScreen {
         let Some(sheet) = self.live.get(&id).map(|l| l.sheet.clone()) else { return };
         let name = self.campaign.member(id).map(|m| m.name.clone()).unwrap_or_default();
         let kind = self.campaign.member(id).map(|m| m.kind.clone()).unwrap_or_default();
-        let GmScreen { live, rng, rolls, award, damage, campaign, improvements, improvement_for, .. } = self;
+        let GmScreen { live, rng, rolls, award, damage, improvements, improvement_for, .. } = self;
         let Some(doc) = doc_mut(live, views, id) else { return };
         let p = crate::theme::palette(ui);
         ui.horizontal(|ui| {
@@ -890,9 +1085,10 @@ impl GmScreen {
                 *action = Some(Action::Open(id));
             }
         });
-        let roll_line = |rolls: &mut Vec<String>, line: Option<String>| {
+        let mut attack = None;
+        let roll_line = |rolls: &mut Vec<(i64, String)>, line: Option<String>| {
             if let Some(l) = line {
-                rolls.insert(0, l);
+                rolls.insert(0, (chummer_core::campaign::now_ms(), l));
                 rolls.truncate(30);
             }
         };
@@ -982,13 +1178,7 @@ impl GmScreen {
             }
             ui.add_space(6.0);
             ui.label(RichText::new(lang.tr("Damage")).strong());
-            if let Some(a) = damage.ui(ui, lang) {
-                let (t, r) = campaign_ui::damage_character(rng, a, doc, &sheet, damage.soak_roll);
-                campaign.note(Some(id), AUTHOR, r.text.clone());
-                for c in campaign_ui::damage_commands(&t, &r) {
-                    doc.run(c, status);
-                }
-            }
+            attack = damage.ui(ui, lang);
             ui.add_space(6.0);
             ui.label(RichText::new(lang.tr("GM award")).strong());
             if let Some(cmd) = award.ui(ui, lang, doc.created) {
@@ -1002,6 +1192,9 @@ impl GmScreen {
                 *improvement_for = Some(id);
             }
         });
+        if let Some(a) = attack {
+            self.damage_member(id, a, views, status);
+        }
     }
 
     // ----- windows -----
@@ -1063,6 +1256,58 @@ impl GmScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn roster_feed_encounter_and_card() {
+        let Ok(engine) = Engine::load() else { return };
+        let engine = Arc::new(engine);
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../chummer-core/tests/fixtures/Munin_Career.chum5");
+        let ch = Character::load(&p).unwrap();
+        let mut gm = GmScreen::new_campaign("Test");
+        let mut views: Vec<CharacterView> = Vec::new();
+        assert_eq!(gm.card(), Card::None);
+        let mut m = Member::embedded(MemberKind::Player, &ch);
+        m.player = "Anna".into();
+        let id = gm.add_member(m, ch.clone(), &engine);
+        let npc = gm.add_member(Member::embedded(MemberKind::Npc, &ch), ch, &engine);
+        assert_eq!(gm.card(), Card::Member(npc), "adding selects the member");
+        // The roster: grouped by kind, with player and damage.
+        doc_mut(&mut gm.live, &mut views, id).unwrap().apply(Command::SetPhysicalDamage { filled: 3 }).unwrap();
+        gm.sync(&engine, &views);
+        let rows = gm.roster_rows(&views);
+        let (kind, players) = &rows[0];
+        assert_eq!(*kind, MemberKind::Player);
+        let r = &players[0];
+        assert_eq!((r.name.as_str(), r.who.as_str()), ("Munin", "Anna"));
+        assert_eq!(r.physical.map(|p| p.0), Some(3));
+        assert!(r.condition().starts_with("P 3/"));
+        // The feed: newest first, the member named once.
+        let feed = gm.feed_rows();
+        assert_eq!(feed[0].text, "Set physical damage to 3");
+        assert_eq!(feed[0].who, "Munin");
+        assert!(feed.iter().all(|f| f.revert.is_none()), "no Revert offline");
+        // The encounter: players only, then an ad-hoc combatant on the card.
+        gm.add_all_players(&views);
+        assert_eq!(gm.campaign.encounters[0].combatants.len(), 1);
+        gm.roll_initiative(&views);
+        assert_eq!(gm.campaign.encounters[0].round, 1);
+        assert!(gm.campaign.encounters[0].combatants[0].score > 0);
+        gm.adhoc = ("Ganger".into(), 8, 1);
+        gm.add_adhoc();
+        assert_eq!(gm.card(), Card::AdHoc(1));
+        gm.damage_adhoc(1, Attack::parse("4P").unwrap());
+        assert_eq!(gm.campaign.encounters[0].combatants[1].track.as_ref().unwrap().physical_filled, 4);
+        // Seizing the initiative spends the player's Edge.
+        let edge = |gm: &GmScreen| doc_ref(&gm.live, &[], id).unwrap().doc.get_i32("edgeused").unwrap_or(0);
+        let before = edge(&gm);
+        gm.seize(0, &mut views);
+        assert!(gm.campaign.encounters[0].combatants[0].seized);
+        assert_eq!(edge(&gm), before + 1);
+        gm.remove_combatant(1);
+        assert_eq!(gm.card(), Card::Member(npc), "the card falls back to the selected member");
+        gm.roll_pool("Munin", "Defense", 6, &Language::default());
+        assert!(gm.rolls[0].1.starts_with("Munin: Defense 6d6 → "));
+    }
 
     #[test]
     fn members_lent_to_tabs_save_with_the_campaign() {

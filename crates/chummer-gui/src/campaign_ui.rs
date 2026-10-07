@@ -162,6 +162,12 @@ impl Default for AwardForm {
 }
 
 impl AwardForm {
+    /// The command that gives (`gain`) or takes the amount: a karma or
+    /// nuyen expense entry with the reason.
+    pub fn command(&self, gain: bool) -> Command {
+        Command::ManualExpense { karma: self.karma, gain, expense: ManualExpense { amount: self.amount, reason: self.note.trim().to_owned(), ..Default::default() } }
+    }
+
     /// Draw the form; returns the command to run (give or take).
     pub fn ui(&mut self, ui: &mut egui::Ui, lang: &Language, career: bool) -> Option<Command> {
         let mut out = None;
@@ -175,12 +181,11 @@ impl AwardForm {
             ui.add(egui::TextEdit::singleline(&mut self.note).hint_text(lang.tr("Reason")).desired_width(f32::INFINITY));
             ui.horizontal(|ui| {
                 let ok = self.amount > 0.0;
-                let cmd = |gain: bool| Command::ManualExpense { karma: self.karma, gain, expense: ManualExpense { amount: self.amount, reason: self.note.trim().to_owned(), ..Default::default() } };
                 if ui.add_enabled(ok, egui::Button::new(lang.tr("Give"))).clicked() {
-                    out = Some(cmd(true));
+                    out = Some(self.command(true));
                 }
                 if ui.add_enabled(ok, egui::Button::new(lang.tr("Take"))).clicked() {
-                    out = Some(cmd(false));
+                    out = Some(self.command(false));
                 }
             });
         });
