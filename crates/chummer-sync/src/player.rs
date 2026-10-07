@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chummer_core::command::{Command, Rejected, Report};
 use chummer_core::engine::Engine;
@@ -22,7 +22,7 @@ use chummer_net::{Endpoint, EndpointId, NetError, SecretKey};
 use tokio::sync::mpsc;
 
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
-use crate::msg::{self, CharacterId, ClientMessage, MailMessage, ServerMessage};
+use crate::msg::{self, CharacterId, ClientMessage, MailMessage, OpId, ServerMessage};
 use crate::replica::{Event, Replica};
 
 /// How a player reaches their campaign.
@@ -38,11 +38,19 @@ pub struct PlayerConfig {
     /// Where the replica is saved.
     pub path: Option<PathBuf>,
     pub connect_timeout: Duration,
+    /// Commands mailed this long ago and still not answered are mailed
+    /// again (with a join message, so the GM also sends what we missed):
+    /// mail can expire on the relay or be lost with its data. The GM runs
+    /// each command once however often it arrives.
+    pub remail_after: Duration,
 }
+
+/// Default [`PlayerConfig::remail_after`].
+pub const REMAIL_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
 impl PlayerConfig {
     pub fn new(name: impl Into<String>, link: InviteLink) -> PlayerConfig {
-        PlayerConfig { name: name.into(), link, mailbox: None, path: None, connect_timeout: Duration::from_secs(15) }
+        PlayerConfig { name: name.into(), link, mailbox: None, path: None, connect_timeout: Duration::from_secs(15), remail_after: REMAIL_AFTER }
     }
 }
 
@@ -75,6 +83,10 @@ struct Inner {
     wake: tokio::sync::Notify,
     last_mode: Mutex<Option<SyncMode>>,
     closed: std::sync::atomic::AtomicBool,
+    /// When each mailed command was (last) mailed, as far as this run
+    /// knows; and when we last mailed a join message.
+    mailed_at: Mutex<std::collections::HashMap<OpId, Instant>>,
+    joined_by_mail: Mutex<Instant>,
 }
 
 /// A player's session. Cheap to clone.
@@ -126,6 +138,8 @@ impl PlayerSession {
                 wake: tokio::sync::Notify::new(),
                 last_mode: Mutex::new(None),
                 closed: std::sync::atomic::AtomicBool::new(false),
+                mailed_at: Mutex::default(),
+                joined_by_mail: Mutex::new(Instant::now()),
             }),
             events: Arc::new(tokio::sync::Mutex::new(rx)),
         }
@@ -441,6 +455,18 @@ impl PlayerSession {
         let mb = self.mailbox_client().await?;
         let host = self.inner.cfg.link.host;
         let mut sent = 0;
+        let stale = self.stale_mail();
+        if !stale.is_empty() {
+            tracing::info!("{} command(s) mailed long ago are still not answered; mailing them again", stale.len());
+            self.replica().mark_unmailed(&stale);
+        }
+        let rejoin = !stale.is_empty() || self.inner.joined_by_mail.lock().expect("poisoned").elapsed() >= self.inner.cfg.remail_after;
+        if rejoin {
+            let join = self.replica().join_message(&self.inner.cfg.name);
+            let mut limit = *self.inner.blob_limit.lock().expect("poisoned");
+            sent += mail::send(&mb, &self.inner.secret, host, &MailMessage::Client(join), &mut limit).await?;
+            *self.inner.joined_by_mail.lock().expect("poisoned") = Instant::now();
+        }
         let batches = self.replica().unmailed();
         for batch in batches {
             let mut limit = *self.inner.blob_limit.lock().expect("poisoned");
@@ -450,6 +476,8 @@ impl PlayerSession {
                 *self.inner.blob_limit.lock().expect("poisoned") = limit;
                 sent += r?;
                 self.replica().mark_mailed(&part);
+                let now = Instant::now();
+                self.inner.mailed_at.lock().expect("poisoned").extend(part.ops.iter().map(|o| (o.id, now)));
                 self.save_logged();
             }
         }
@@ -459,6 +487,18 @@ impl PlayerSession {
             sent += mail::send(&mb, &self.inner.secret, host, &MailMessage::Client(ClientMessage::Resync(r)), &mut limit).await?;
         }
         Ok(sent)
+    }
+
+    /// Commands marked mailed whose mailing is older than
+    /// [`PlayerConfig::remail_after`] (counted from when this run first
+    /// saw them, for those mailed before a restart).
+    fn stale_mail(&self) -> Vec<OpId> {
+        let now = Instant::now();
+        let r = self.replica();
+        let mut at = self.inner.mailed_at.lock().expect("poisoned");
+        let pending: Vec<OpId> = r.characters().flat_map(|c| r.outbox(c).iter().filter(|p| p.mailed).map(|p| p.op.id)).collect();
+        at.retain(|id, _| pending.contains(id));
+        pending.into_iter().filter(|id| now.duration_since(*at.entry(*id).or_insert(now)) >= self.inner.cfg.remail_after).collect()
     }
 
     /// Collects mail from the GM: answers to mailed commands and pushes.

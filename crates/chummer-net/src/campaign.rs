@@ -157,6 +157,14 @@ impl<H: CampaignHandler> CampaignHost<H> {
         }
     }
 
+    /// Hangs up on `peer` (it is not taking pushes); it can connect again.
+    pub fn disconnect(&self, peer: &EndpointId) {
+        let session = self.sessions.lock().expect("poisoned").remove(peer);
+        if let Some(s) = session {
+            s.conn.close(5u32.into(), b"not taking pushes");
+        }
+    }
+
     /// Sends `payload` to `peer`. Fails if the peer is not connected; the
     /// caller then falls back to the mailbox.
     pub async fn push(&self, peer: EndpointId, payload: Vec<u8>) -> Result<(), NetError> {

@@ -270,6 +270,17 @@ impl Replica {
         }
     }
 
+    /// Marks commands to be mailed again (their mail was lost).
+    pub fn mark_unmailed(&mut self, ops: &[OpId]) {
+        for c in self.copies.values_mut() {
+            for p in &mut c.outbox {
+                if ops.contains(&p.op.id) {
+                    p.mailed = false;
+                }
+            }
+        }
+    }
+
     /// Resync requests for drifted copies.
     pub fn resync_requests(&self) -> Vec<ResyncRequest> {
         self.copies.iter().filter(|(_, c)| c.needs_resync || !c.early.is_empty()).map(|(id, c)| ResyncRequest { character: id.clone(), have_version: c.version }).collect()
@@ -351,7 +362,10 @@ impl Replica {
                     return vec![Event::NeedResync(ResyncRequest { character: id, have_version: 0 })];
                 };
                 if c.needs_resync {
-                    return ev;
+                    // Still waiting for a snapshot: the request or its
+                    // answer may have been lost (a dropped connection), so
+                    // ask again; else a live session never recovers.
+                    return vec![Event::NeedResync(ResyncRequest { character: id, have_version: c.version })];
                 }
                 if push.version <= c.version {
                     // Old news; check we agree on where we are.

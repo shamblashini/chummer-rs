@@ -34,6 +34,16 @@ pub const MIN_BLOB_LIMIT: usize = 4 * 1024;
 /// Partial messages kept at most (oldest dropped first).
 const PARTIAL_LIMIT: usize = 256;
 
+/// Bytes of chunks kept at most over all partial messages (oldest
+/// messages dropped first). Partial mail is saved with the replica or the
+/// authority, so a sender whose messages never complete must not make it
+/// grow without bound.
+pub const MAX_PARTIAL_BYTES: usize = 64 * 1024 * 1024;
+
+/// Most chunks a message may have; mail claiming more is dropped. (A
+/// 16 MiB snapshot in blobs of [`MIN_BLOB_LIMIT`] needs about 4600.)
+pub const MAX_CHUNKS: u32 = 8192;
+
 /// Messages fetched per mailbox request.
 const FETCH_LIMIT: u32 = 64;
 
@@ -105,22 +115,28 @@ impl Inbox {
         if chunk.total <= 1 {
             return msg::decode(&chunk.data).map(Some);
         }
-        if chunk.index >= chunk.total {
+        if chunk.index >= chunk.total || chunk.total > MAX_CHUNKS || chunk.data.len() > MAX_PARTIAL_BYTES {
             return Ok(None);
         }
         let key = (sender, chunk.message);
         self.counter += 1;
         let order = self.counter;
         let p = self.partial.entry(key).or_insert_with(|| Partial { total: chunk.total, parts: BTreeMap::new(), order });
+        if chunk.index >= p.total {
+            // Chunks of one message disagree on how many there are.
+            return Ok(None);
+        }
         p.parts.insert(chunk.index, chunk.data);
         if p.parts.len() as u32 >= p.total {
             let p = self.partial.remove(&key).expect("present");
             let bytes: Vec<u8> = p.parts.into_values().flatten().collect();
             return msg::decode(&bytes).map(Some);
         }
-        while self.partial.len() > PARTIAL_LIMIT {
+        let mut bytes: usize = self.partial.values().flat_map(|p| p.parts.values()).map(Vec::len).sum();
+        while self.partial.len() > PARTIAL_LIMIT || bytes > MAX_PARTIAL_BYTES {
             let oldest = self.partial.iter().min_by_key(|(_, p)| p.order).map(|(k, _)| *k).expect("not empty");
-            self.partial.remove(&oldest);
+            let gone = self.partial.remove(&oldest).expect("present");
+            bytes -= gone.parts.values().map(Vec::len).sum::<usize>();
         }
         Ok(None)
     }

@@ -47,6 +47,10 @@ pub const LOG_WINDOW: usize = 256;
 /// Operation ids remembered per character for de-duplication.
 pub const SEEN_LIMIT: usize = 20_000;
 
+/// How far ahead of the authority a member's version may claim to be
+/// before [`CharState::catch_up`] stops believing it.
+const MAX_VERSION_JUMP: u64 = 1 << 32;
+
 /// Entries carried in a snapshot push for the feed.
 const RECENT_IN_SNAPSHOT: usize = 20;
 
@@ -159,6 +163,26 @@ impl CharState {
             self.base_hash = old.hash;
             self.base_snapshot = None;
         }
+    }
+
+    /// A member has `claimed` (a version, with what it contains), which is
+    /// newer than ours: this authority went back to an older save (it
+    /// crashed between acknowledging changes and saving them). Versions
+    /// only go forward, so move past theirs: the current state becomes
+    /// that newer version with an empty log window, and every copy gets
+    /// it as a snapshot, which it takes because it is newer. Absurd claims
+    /// (more than [`MAX_VERSION_JUMP`] ahead) are ignored.
+    fn catch_up(&mut self, id: &CharacterId, claimed: u64) {
+        if claimed <= self.version || claimed - self.version > MAX_VERSION_JUMP {
+            return;
+        }
+        tracing::warn!("{id}: a member has version {claimed}, this authority only {}; it lost changes (a crash before saving?) and moves on to {}", self.version, claimed + 1);
+        self.version = claimed + 1;
+        self.log.clear();
+        self.base = self.ch.clone();
+        self.base_hash = self.hash;
+        self.base_snapshot = None;
+        self.snapshot = None;
     }
 
     fn base_snapshot(&mut self) -> Vec<u8> {
@@ -516,6 +540,7 @@ impl Authority {
     pub fn submit(&mut self, engine: &Engine, peer: EndpointId, batch: SubmitBatch) -> Result<Submitted, String> {
         self.check_access(&peer, &batch.character)?;
         let id = batch.character.clone();
+        self.chars.get_mut(&id).expect("checked").catch_up(&id, batch.base_version);
         let (start, diverged) = {
             let c = &self.chars[&id];
             (c.version, c.hash_at(batch.base_version).is_none_or(|h| h != batch.base_hash))
@@ -655,6 +680,9 @@ impl Authority {
         let mut pushes = Vec::new();
         for id in self.visible(&peer) {
             let c = self.chars.get_mut(&id).expect("visible");
+            if let Some(h) = have.iter().find(|h| h.character == id) {
+                c.catch_up(&id, h.version);
+            }
             let push = match have.iter().find(|h| h.character == id) {
                 Some(h) if h.version == c.version && h.hash == c.hash => None,
                 Some(h) => Some(c.push_from(&id, h.version, Some(h.hash), false)),
@@ -673,6 +701,7 @@ impl Authority {
     pub fn resync(&mut self, peer: EndpointId, req: &ResyncRequest) -> Result<Push, String> {
         self.check_access(&peer, &req.character)?;
         let c = self.chars.get_mut(&req.character).expect("checked");
+        c.catch_up(&req.character, req.have_version);
         let push = c.push_from(&req.character, req.have_version, None, true);
         let v = c.version;
         self.mark_delivered(peer, &req.character, v);

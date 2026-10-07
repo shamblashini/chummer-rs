@@ -24,6 +24,10 @@ use crate::authority::{Authority, LocalApplied};
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
 use crate::msg::{self, CharacterId, ClientMessage, MailMessage, ServerMessage};
 
+/// How long one push to a connected member may take before the member is
+/// taken to be stuck.
+const PUSH_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// How often unsaved changes are written to disk.
 const SAVE_EVERY: Duration = Duration::from_secs(2);
 
@@ -393,12 +397,26 @@ impl Pusher {
         let online: Vec<EndpointId> = host.connected().into_iter().map(|(p, _)| p).collect();
         for peer in peers.iter().filter(|p| online.contains(p)) {
             let msgs = shared.lock().outgoing_for(peer);
+            let mut stuck = false;
             for m in msgs {
-                match host.push(*peer, msg::encode(&m)).await {
-                    Ok(()) => shared.lock().mark_sent(*peer, &m),
-                    Err(e) => {
+                if stuck {
+                    shared.lock().requeue(*peer, m);
+                    continue;
+                }
+                match tokio::time::timeout(PUSH_TIMEOUT, host.push(*peer, msg::encode(&m))).await {
+                    Ok(Ok(())) => shared.lock().mark_sent(*peer, &m),
+                    Ok(Err(e)) => {
                         tracing::debug!("push to {} failed: {e}", peer.fmt_short());
                         shared.lock().requeue(*peer, m);
+                    }
+                    Err(_) => {
+                        // The member's app stopped taking pushes (hung, or
+                        // far behind): hang up, so it rejoins and catches
+                        // up, and the others are not kept waiting.
+                        tracing::info!("{} is not taking pushes; hanging up", peer.fmt_short());
+                        shared.lock().requeue(*peer, m);
+                        host.disconnect(peer);
+                        stuck = true;
                     }
                 }
             }
