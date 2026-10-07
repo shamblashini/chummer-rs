@@ -582,8 +582,8 @@ pub fn click_card<R>(ui: &mut Ui, id: impl std::hash::Hash, width: f32, add: imp
         .corner_radius(CornerRadius::same(7))
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
-            ui.set_width(width - 24.0);
-            add(ui)
+            ui.set_width(width - 26.0);
+            ui.vertical(|ui| add(ui)).inner
         });
     let resp = ui.interact(inner.response.rect, id, Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
     let now = resp.hovered();

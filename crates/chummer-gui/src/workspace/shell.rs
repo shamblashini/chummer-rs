@@ -155,7 +155,7 @@ impl App {
     }
 
     /// Go to a section of a document.
-    fn ws_go(&mut self, doc: DocKey, s: Section) {
+    pub(super) fn ws_go(&mut self, doc: DocKey, s: Section) {
         match doc {
             DocKey::Home => {
                 self.home = Some(if s == Section::DataBrowser { Home::MasterIndex } else { Home::Roster });
@@ -640,7 +640,7 @@ impl App {
                 self.browser.ui(ui, &self.engine.store, &self.lang, &self.pdfs, &mut self.status);
             });
         } else {
-            self.welcome(ctx);
+            self.ws_home_page(ctx);
         }
     }
 
@@ -881,7 +881,7 @@ impl App {
     }
 
     /// Run a menu action (palette, buttons).
-    fn ws_run(&mut self, ctx: &egui::Context, c: Cmd) {
+    pub(super) fn ws_run(&mut self, ctx: &egui::Context, c: Cmd) {
         let has = self.current().is_some();
         match c {
             Cmd::NewCharacter => self.wizard = Some(crate::wizard::Wizard::new()),

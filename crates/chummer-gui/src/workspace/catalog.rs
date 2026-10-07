@@ -802,7 +802,7 @@ impl CharacterView {
             let sort_w = 180.0;
             // The combo adds its padding and arrow to `sort_w`.
             let field_w = (ui.available_width() - sort_w - 40.0).max(160.0);
-            egui::Frame::new().fill(ws.well).stroke(egui::Stroke::new(1.0_f32, ws.control)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
+            let field = egui::Frame::new().fill(ws.well).stroke(egui::Stroke::new(1.0_f32, ws.control)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
                 ui.set_width(field_w - 18.0);
                 ui.horizontal(|ui| {
                     ui.label(icons::icon(icons::MAGNIFYING_GLASS, 14.0, ws.muted));
@@ -813,6 +813,10 @@ impl CharacterView {
                     }
                 });
             });
+            // A click anywhere on the field (the icon, the margin) types in it.
+            if ui.interact(field.response.rect, egui::Id::new("ws_catalog_search_frame"), Sense::click()).clicked() {
+                ui.memory_mut(|m| m.request_focus(egui::Id::new("ws_catalog_search")));
+            }
             crate::combo::Combo::from_id_salt("ws_catalog_sort").selected_text(lang.tr(c.sort.label())).width(sort_w).show_ui(ui, |ui| {
                 for s in [Sort::Match, Sort::Name, Sort::Cost, Sort::Avail, Sort::Essence] {
                     if s == Sort::Essence && !ware {

@@ -29,6 +29,7 @@
 //!   condition monitor, Edge boxes, `clip_to`), icons in [`icons`],
 //!   colours in `crate::theme::ws`.
 
+mod home;
 pub mod icons;
 pub mod palette;
 pub mod popout;
@@ -178,6 +179,8 @@ pub struct Workspace {
     special: HashMap<u64, (Section, Tab)>,
     /// Home's section (Home or the Master Index).
     home: Option<Section>,
+    /// The Home page's filters and cached file summaries (`home`).
+    home_page: home::HomeState,
 }
 
 /// The app icon (the logo at 256px), for the window and the pop-outs.
