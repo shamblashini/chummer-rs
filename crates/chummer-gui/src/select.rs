@@ -20,7 +20,7 @@ use crate::browser::record_fields;
 use crate::pdf_ui::{self, Status};
 
 /// Extra list columns per kind: (header, data field).
-fn columns(tag: &str) -> &'static [(&'static str, &'static str)] {
+pub(crate) fn columns(tag: &str) -> &'static [(&'static str, &'static str)] {
     match tag {
         "quality" => &[("Karma", "karma"), ("Type", "category")],
         "gear" => &[("Rating", "rating"), ("Avail", "avail"), ("Cost", "cost")],
@@ -49,7 +49,7 @@ pub fn parent_of(tag: &str) -> Option<(&'static str, &'static str)> {
 }
 
 /// Kinds that may optionally go inside another item.
-fn optional_parent(tag: &str) -> Option<(&'static str, &'static str)> {
+pub(crate) fn optional_parent(tag: &str) -> Option<(&'static str, &'static str)> {
     match tag {
         "gear" => Some(("gears", "gear")),
         "cyberware" | "bioware" => Some(("cyberwares", "cyberware")),
@@ -190,16 +190,7 @@ impl SelectDialog {
                     if !needle.is_empty() && !name.to_lowercase().contains(&needle) && !r.name().to_lowercase().contains(&needle) {
                         return None;
                     }
-                    let mut why = requirements::unmet(r.el(), &check);
-                    if self.kind.tag == "quality" && requirements::remaining_quality_slots(r.el(), ch) == Some(0) {
-                        why.push("already taken".into());
-                    }
-                    if !ch.created && self.max_avail > 0 {
-                        let a = Availability::parse(&r.get("avail"), rating_default(*r), 0, &expr::NoAttributes);
-                        if !a.add_to_parent && a.value > self.max_avail {
-                            why.push(format!("availability {a} is above {}", self.max_avail));
-                        }
-                    }
+                    let why = unavailable_reasons(self.kind.tag, *r, &check, self.max_avail);
                     (self.show_unavailable || why.is_empty()).then_some((i, name, why))
                 })
                 .collect();
@@ -354,8 +345,26 @@ impl SelectDialog {
     }
 }
 
+/// Why a record cannot be added now: unmet requirements, a quality
+/// already taken, and (while creating, `max_avail` > 0) availability at
+/// the default rating above the limit.
+pub(crate) fn unavailable_reasons(tag: &str, r: Record<'_>, check: &Check<'_>, max_avail: i32) -> Vec<String> {
+    let ch = check.ch;
+    let mut why = requirements::unmet(r.el(), check);
+    if tag == "quality" && requirements::remaining_quality_slots(r.el(), ch) == Some(0) {
+        why.push("already taken".into());
+    }
+    if !ch.created && max_avail > 0 {
+        let a = Availability::parse(&r.get("avail"), rating_default(r), 0, &expr::NoAttributes);
+        if !a.add_to_parent && a.value > max_avail {
+            why.push(format!("availability {a} is above {max_avail}"));
+        }
+    }
+    why
+}
+
 /// The highest rating a record allows (`<rating>`), 0 when it has none.
-fn rating_max(r: Record<'_>) -> i32 {
+pub(crate) fn rating_max(r: Record<'_>) -> i32 {
     let t = r.get("rating");
     if t.trim().is_empty() {
         return 0;
@@ -363,7 +372,7 @@ fn rating_max(r: Record<'_>) -> i32 {
     expr::parse_plain(&t).map(|v| v as i32).unwrap_or(6)
 }
 
-fn rating_default(r: Record<'_>) -> i32 {
+pub(crate) fn rating_default(r: Record<'_>) -> i32 {
     let max = rating_max(r);
     if max == 0 {
         0
@@ -373,14 +382,14 @@ fn rating_default(r: Record<'_>) -> i32 {
 }
 
 /// `<grades>` of cyberware.xml/bioware.xml as (name, essence multiplier).
-fn grades(doc: &Element) -> Vec<(String, String)> {
+pub(crate) fn grades(doc: &Element) -> Vec<(String, String)> {
     doc.child("grades")
         .map(|g| g.children_named("grade").filter(|e| e.child("hide").is_none() && e.get("name") != "None").map(|e| (e.get("name"), e.get("ess"))).collect())
         .unwrap_or_default()
 }
 
 /// Cost at the chosen rating and quantity, when it is a plain expression.
-fn preview_cost(r: Record<'_>, p: &Purchase) -> Option<f64> {
+pub(crate) fn preview_cost(r: Record<'_>, p: &Purchase) -> Option<f64> {
     let raw = r.get("cost");
     if raw.trim().is_empty() || raw.contains("Variable") || raw.contains("Parent") || raw.contains("Gear") {
         return None;

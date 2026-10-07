@@ -36,6 +36,13 @@ pub use guide_ui::{guided_offer, guided_preference, save_guided_preference};
 // The Workspace layout's access to the view (`crate::workspace`).
 #[path = "workspace/character.rs"]
 pub(crate) mod workspace;
+// The Workspace's item pages, inline catalog and item inspector.
+#[path = "workspace/items.rs"]
+pub(crate) mod ws_items;
+#[path = "workspace/catalog.rs"]
+pub(crate) mod ws_catalog;
+#[path = "workspace/inspector.rs"]
+pub(crate) mod ws_inspector;
 
 /// The character tabs, in Chummer5a's order (CharacterCareer.Designer.cs).
 /// Magic, resonance and critter tabs only show when the character has
@@ -164,6 +171,8 @@ pub struct CharacterView {
     pub campaign_member: Option<chummer_core::campaign::MemberId>,
     /// Names the tab for the Workspace (`workspace::DocKey`).
     ws_id: u64,
+    /// The Workspace's item pages: the inline catalog and item inspector.
+    ws_gear: ws_items::GearState,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -282,6 +291,7 @@ impl CharacterView {
                 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             },
+            ws_gear: Default::default(),
         };
         v.refresh_budget();
         v.set_guided(guided_preference());

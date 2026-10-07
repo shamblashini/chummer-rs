@@ -587,7 +587,7 @@ impl App {
                 &mut self.ws.pops,
                 lang,
                 |ui| close = widgets::icon_button(ui, icons::X, 22.0).on_hover_text(lang.tr("Close")).clicked(),
-                |ui| changed |= v.ws_item(ui, &engine, lang, &mut self.status),
+                |ui| changed |= v.ws_item(ui, &engine, lang, &self.pdfs, &mut self.status),
             );
             if close {
                 v.ws_close_item();
@@ -730,7 +730,7 @@ impl App {
                     PanelId::Issues => scroll(ui, &mut |ui| v.ws_issues(ui, lang)),
                     PanelId::Item => scroll(ui, &mut |ui| {
                         if v.ws_has_item() {
-                            changed |= v.ws_item(ui, &engine, lang, &mut self.status);
+                            changed |= v.ws_item(ui, &engine, lang, &self.pdfs, &mut self.status);
                         } else {
                             ui.label(RichText::new(lang.tr("Select an item to see its details.")).color(theme::ws(ui).muted));
                         }
