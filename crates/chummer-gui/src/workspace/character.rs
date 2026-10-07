@@ -295,7 +295,11 @@ impl CharacterView {
                 }
                 self.ws_guide(ui, lang, pdfs, status);
                 self.ws_issue_strip(ui, lang, tab);
-                changed |= self.ws_tab_page(ui, tab, engine, lang, pdfs, status, roll);
+                // Item pages and the inline catalog (`ws_items`); the rest are `ws_tab_page`.
+                match self.ws_items_page(ui, tab, engine, lang, pdfs, status) {
+                    Some(c) => changed |= c,
+                    None => changed |= self.ws_tab_page(ui, tab, engine, lang, pdfs, status, roll),
+                }
             }
             _ => {}
         }
@@ -321,16 +325,17 @@ impl CharacterView {
 
     /// Whether an item is open in the item pane.
     pub fn ws_has_item(&self) -> bool {
-        self.item_editor.is_some()
+        self.ws_inspector_has_item()
     }
 
     pub fn ws_close_item(&mut self) {
-        self.item_editor = None;
+        self.ws_inspector_close();
     }
 
-    /// Inspector: the selected item's editor.
-    pub fn ws_item(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, status: &mut Status) -> bool {
-        self.item_pane(ui, engine, lang, status, false)
+    /// Inspector: the selected item (`ws_inspector`), or the catalog's
+    /// selected record.
+    pub fn ws_item(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+        self.ws_inspector(ui, engine, lang, pdfs, status)
     }
 
     /// Inspector: the Karma Summary in creation, Other Info and Spell

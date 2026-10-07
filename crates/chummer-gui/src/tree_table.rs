@@ -87,7 +87,16 @@ impl<'a> TreeTable<'a> {
         let th = theme::current(ui.ctx());
         let p = th.palette;
         let classic = th.kind == ThemeKind::Classic;
-        let guide = if classic { p.weak } else { p.stroke };
+        // Workspace: no stripes, faint guides, Phosphor carets, small
+        // muted headers.
+        let ws = matches!(th.kind, ThemeKind::WorkspaceDark | ThemeKind::WorkspaceLight);
+        let guide = if classic {
+            p.weak
+        } else if ws {
+            th.ws.divider
+        } else {
+            p.stroke
+        };
         let row_h = ui.spacing().interact_size.y;
         let n_cols = self.headers.len().max(1);
 
@@ -95,7 +104,7 @@ impl<'a> TreeTable<'a> {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
             let mut tb = TableBuilder::new(ui)
                 .id_salt("table")
-                .striped(true)
+                .striped(!ws)
                 .resizable(true)
                 .vscroll(false)
                 .sense(Sense::click())
@@ -108,7 +117,11 @@ impl<'a> TreeTable<'a> {
             tb.header(row_h + 2.0, |mut h| {
                 for t in self.headers {
                     h.col(|ui| {
-                        ui.strong(t);
+                        if ws {
+                            ui.label(RichText::new(t).size(10.5).color(th.ws.muted));
+                        } else {
+                            ui.strong(t);
+                        }
                     });
                 }
                 h.col(|_| {});
@@ -172,6 +185,13 @@ impl<'a> TreeTable<'a> {
                                 if !r.open {
                                     ui.painter().line_segment([egui::pos2(c.x, c.y - 2.5), egui::pos2(c.x, c.y + 2.5)], ink);
                                 }
+                            } else if ws {
+                                let color = if hot { th.ws.accent } else if selected { p.selection_text } else { th.ws.muted };
+                                if hot {
+                                    ui.painter().rect_filled(egui::Rect::from_center_size(c, egui::vec2(16.0, 16.0)), 4.0, th.ws.hover);
+                                }
+                                let glyph = if r.open { crate::workspace::icons::CARET_DOWN } else { crate::workspace::icons::CARET_RIGHT };
+                                crate::workspace::icons::paint(ui.painter(), toggle_rect, glyph, 12.0, color);
                             } else {
                                 // ▸ / ▾, drawn: the UI fonts have no such glyphs.
                                 let color = if hot { p.accent } else if selected { p.selection_text } else { p.weak };

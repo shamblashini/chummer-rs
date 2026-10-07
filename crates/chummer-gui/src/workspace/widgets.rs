@@ -644,6 +644,116 @@ pub fn wide_button(ui: &mut Ui, glyph: Option<&str>, text: &str, look: Look, hei
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+// ----- item pages, catalog and home (added for the gear and home screens) -----
+
+/// A number field with − and + buttons, 26px high (the catalog's
+/// Rating). Returns the response of the value; `changed` when a button
+/// or a drag moved it.
+pub fn rating_stepper(ui: &mut Ui, value: &mut i32, min: i32, max: i32, lower_tip: &str, raise_tip: &str) -> Response {
+    let ws = theme::ws(ui);
+    let old = *value;
+    let inner = egui::Frame::new().fill(ws.well).stroke(Stroke::new(1.0_f32, ws.control)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::same(0)).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.horizontal(|ui| {
+            let down = ui.add_enabled_ui(*value > min, |ui| icon_button(ui, icons::MINUS, 24.0)).inner.on_hover_text(lower_tip);
+            if down.clicked() {
+                *value -= 1;
+            }
+            let mut r = ui.add_sized([34.0, 24.0], egui::DragValue::new(value).range(min..=max));
+            let up = ui.add_enabled_ui(*value < max, |ui| icon_button(ui, icons::PLUS, 24.0)).inner.on_hover_text(raise_tip);
+            if up.clicked() {
+                *value += 1;
+            }
+            *value = (*value).clamp(min, max);
+            if *value != old {
+                r.mark_changed();
+            }
+            r
+        })
+        .inner
+    });
+    inner.inner
+}
+
+/// A 24px line: a muted label, a monospace value in `color`, and an
+/// optional small note after it ("was 8 + 1d6", "≤ 12 ok").
+pub fn value_row(ui: &mut Ui, label: &str, value: &str, color: Color32, note: &str) {
+    let ws = theme::ws(ui);
+    ui.horizontal(|ui| {
+        ui.set_min_height(22.0);
+        ui.label(RichText::new(label).size(12.5).color(ws.muted));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if !note.is_empty() {
+                ui.label(RichText::new(note).size(11.0).color(ws.muted));
+            }
+            ui.label(mono(value, 12.5, color));
+        });
+    });
+}
+
+/// A thin horizontal rule in the divider colour.
+pub fn rule(ui: &mut Ui) {
+    let ws = theme::ws(ui);
+    let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().rect_filled(r, CornerRadius::ZERO, ws.divider);
+}
+
+/// An icon and a line of text in `color` (requirement checks, sync
+/// states).
+pub fn icon_line(ui: &mut Ui, glyph: &str, text: &str, color: Color32, text_color: Color32) -> Response {
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(icons::icon(glyph, 13.0, color));
+        // Wrap within the space left (a wrapping label in a row would
+        // widen a side panel instead).
+        let w = ui.available_width();
+        ui.allocate_ui_with_layout(egui::vec2(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_max_width(w);
+            ui.add(egui::Label::new(RichText::new(text).size(12.0).color(text_color)).wrap());
+        });
+    })
+    .response
+}
+
+/// Essence before and after a purchase as a bar out of 6: the essence
+/// left in `primary`, the part the purchase takes in `accent`.
+pub fn essence_bar(ui: &mut Ui, before: f64, after: f64) {
+    let ws = theme::ws(ui);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 8.0), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(4), ws.divider);
+    let frac = |v: f64| (v / 6.0).clamp(0.0, 1.0) as f32;
+    let left = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * frac(after.min(before)), rect.height()));
+    ui.painter().rect_filled(left, CornerRadius::same(4), ws.primary);
+    if before > after {
+        let taken = egui::Rect::from_min_max(egui::pos2(left.right(), rect.top()), egui::pos2(rect.left() + rect.width() * frac(before), rect.bottom()));
+        ui.painter().rect_filled(taken, CornerRadius::same(2), ws.accent);
+    }
+}
+
+/// A clickable card (Home's Continue and Tools cards): raised, with a
+/// divider border that turns `primary` on hover. `add` fills it.
+pub fn click_card<R>(ui: &mut Ui, id: impl std::hash::Hash, width: f32, add: impl FnOnce(&mut Ui) -> R) -> (Response, R) {
+    let ws = theme::ws(ui);
+    let id = ui.id().with(id);
+    let hovered = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    let inner = egui::Frame::new()
+        .fill(if hovered { ws.hover } else { ws.raised })
+        .stroke(Stroke::new(1.0_f32, if hovered { ws.primary } else { ws.divider }))
+        .corner_radius(CornerRadius::same(7))
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(width - 26.0);
+            ui.vertical(|ui| add(ui)).inner
+        });
+    let resp = ui.interact(inner.response.rect, id, Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+    let now = resp.hovered();
+    if now != hovered {
+        ui.ctx().data_mut(|d| d.insert_temp(id, now));
+        ui.ctx().request_repaint();
+    }
+    (resp, inner.inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

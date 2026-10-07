@@ -39,6 +39,13 @@ pub(crate) mod workspace;
 // The Workspace's Play screen ("At the table").
 #[path = "workspace/play.rs"]
 pub(crate) mod play;
+// The Workspace's item pages, inline catalog and item inspector.
+#[path = "workspace/items.rs"]
+pub(crate) mod ws_items;
+#[path = "workspace/catalog.rs"]
+pub(crate) mod ws_catalog;
+#[path = "workspace/inspector.rs"]
+pub(crate) mod ws_inspector;
 
 /// The character tabs, in Chummer5a's order (CharacterCareer.Designer.cs).
 /// Magic, resonance and critter tabs only show when the character has
@@ -171,6 +178,8 @@ pub struct CharacterView {
     play: play::PlayState,
     /// The Workspace pages' own state (selection, ledger filter).
     ws_build: workspace::build::State,
+    /// The Workspace's item pages: the inline catalog and item inspector.
+    ws_gear: ws_items::GearState,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -291,6 +300,7 @@ impl CharacterView {
             },
             play: Default::default(),
             ws_build: Default::default(),
+            ws_gear: Default::default(),
         };
         v.refresh_budget();
         v.set_guided(guided_preference());

@@ -393,7 +393,6 @@ was.
   points, stream, initiation with its options and cost) above each
   list. Character Info, Game Notes, Calendar, Improvements, Relationships
   and Karma & Nuyen (with the whole ledger) are restyled the same way.
-  Gear, cyberware and vehicles still show the Classic pages.
 - **At the table** (career): the condition monitor as box grids (rows of
   the wound threshold, the wound modifier in the last box of a row,
   Physical and Stun side by side, overflow under Physical), damage taken
@@ -421,14 +420,53 @@ was.
   relay, invite link, mailbox), the activity feed (with Revert for an
   online campaign), the GM award and the GM's notes. The encounter, the
   card, the feed and the inspector sections pop out.
+- **Item pages** (Cyberware & Bioware, Gear, Clothing & Armor, Weapons,
+  Drugs, Lifestyles, Vehicles & Drones): "Add …" buttons, a summary card
+  (essence, combat stats, vehicle stats, the lifestyle editor) and the
+  item tree in a card, with the same columns, locations, nesting, issue
+  marks, source links and remove buttons as Classic; the tree has faint
+  guides and Phosphor carets.
+- **Inline catalog**: "Add …" opens the game data inside the page instead
+  of the selection dialog (Classic keeps the dialog). Filters on the
+  left: kind (cyberware and bioware together), category with counts,
+  grade, the rating the table shows, what fits the build (availability
+  within the creation limit, essence, affordable, requirements met),
+  legality and books. In the middle: the search (word matching as in the
+  drop-down lists), sorting (best match, name, cost, availability,
+  essence), and the results with rating, the kind's own columns,
+  essence, availability, cost and the source page; a reason shows under
+  a record that cannot be added. Arrow keys move, Enter adds and goes
+  back to the list, Shift+Enter adds and stays, Esc goes back. The
+  inspector shows the selected record: rating, grade, quantity, where to
+  install it, and a preview made by applying the purchase to a copy of
+  the character: essence before and after (with a bar), cost,
+  availability against the limit, nuyen (left) after, and initiative,
+  attributes, armor, limits and condition monitor where they change; the
+  checks (requirements, availability, money); "Add", which runs the same
+  command as the dialog (career mode pays for it), with the same
+  question for bonus selections; and a comparison of up to three
+  records (essence, initiative, cost).
 - **Inspector**: creation issues with Finish creation, the selected
-  item's editor, the selected attribute (range, what modifies it, the
+  item in the Workspace style (rating, quantity, equipped and wireless,
+  custom name, location, cost, availability, essence, capacity,
+  ammunition, matrix and vehicle panels, notes, contents with their
+  "Add …" commands, which open the catalog with the parent set, Sell or
+  Delete), the selected attribute (range, what modifies it, the
   skills and limits that use it, the raise button), skill (pool,
   specializations, rule) or skill group, in career Karma & Nuyen (karma,
   career karma, nuyen and street cred, Add entry, and the ledger
   filtered All / Karma / Nuyen with Undo on the entries that can be
   undone), the Karma Summary (creation) or Other Info and Spell Defense
   (career), and this session's history.
+- **Home**: Continue cards for the recent characters (mode, karma or
+  build method, when the file changed), every character of the roster
+  folders with a filter and a status filter, the tools (Master Index,
+  sourcebooks, dice roller, initiative tracker), the rulesets (character
+  settings), and on the right the campaigns: the open one (GM screen),
+  the joined ones with their sync state (online, via mailbox, offline,
+  pending and refused changes), their characters, Sync now, the invite
+  link and Leave; a field for an invite link (opens Join Campaign with
+  it); and the campaigns' recent activity.
 - **Command palette** (Ctrl+K or the search field): menu actions, the
   document's sections, the character's items, the open documents and
   every game-data record (opens in the Master Index), and in career the
@@ -455,6 +493,12 @@ was.
 ![Workspace, career, knowledge skills and other advances](docs/screenshots/workspace-career-advances.png)
 ![Workspace, light, career attributes, Agility in the inspector](docs/screenshots/workspace-career-light.png)
 ![Workspace, the palette offering advances](docs/screenshots/workspace-career-palette.png)
+![Inline catalog, dark: adding cyberware in career mode, with the preview and a comparison](docs/screenshots/workspace-gear-catalog-dark.png)
+![Inline catalog, light: adding cyberware during creation](docs/screenshots/workspace-gear-catalog-light.png)
+![Weapons with a weapon in the item inspector, dark](docs/screenshots/workspace-gear-inspector-dark.png)
+![Cyberware with an item in the inspector, light](docs/screenshots/workspace-gear-inspector-light.png)
+![Home, dark](docs/screenshots/workspace-home-dark.png)
+![Home, light](docs/screenshots/workspace-home-light.png)
 
 ### Command line
 
@@ -678,21 +722,23 @@ cargo test --workspace
   grades whose requirements are not met, and Friends in High Places
   contact limits. A missing technomancer stream is only a warning,
   because there is no stream picker yet.
-- Workspace layout: the gear, cyberware and vehicle sections still show
-  the Classic tab pages (with Phosphor icons in place of emoji), and the
-  gear and home screens of the design are still to come. In the build
-  pages the priorities cannot be swapped (pick them in the New Character
-  wizard), there is no "Change metatype", and the editors of the magic
-  pages (spell picker, mentor, foci, spirits, metamagic) and of
-  Relationships and custom improvements keep their Classic controls
-  inside Workspace cards. The design's training time and "Saving for"
-  goals are not there. The window positions of popped-out panels are not
-  saved between sessions. At the table: rolls and the rolled initiative
-  are kept for the session only; gear at hand is listed, not used up
-  (career mode has no quantity change); the design's situational
-  modifiers, Edge actions (Push the Limit, Second Chance) and "Share to
-  GM" are not there because the app has no such rules or messages. GM
-  screen: the design's scene notes and activity filters are left out.
+- Workspace layout: in the build pages the priorities cannot be swapped
+  (pick them in the New Character wizard), there is no "Change
+  metatype", and the editors of the magic pages (spell picker, mentor,
+  foci, spirits, metamagic) and of Relationships and custom improvements
+  keep their Classic controls inside Workspace cards. The design's
+  training time and "Saving for" goals are not there. The catalog's
+  preview does not show changes to skills or dice pools, and its table
+  shows essence, cost and availability from the data at the chosen
+  rating and grade (the inspector's preview is exact). Home's recent
+  activity lists joined campaigns only (the GM's own feed is on the GM
+  screen). The window positions of popped-out panels are not saved
+  between sessions. At the table: rolls and the rolled initiative are
+  kept for the session only; gear at hand is listed, not used up (career
+  mode has no quantity change); the design's situational modifiers, Edge
+  actions (Push the Limit, Second Chance) and "Share to GM" are not there
+  because the app has no such rules or messages. GM screen: the design's
+  scene notes and activity filters are left out.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute
   and tab flags; objects it created (a free spell, say) stay until it is
@@ -717,7 +763,7 @@ cargo test --workspace
 | `print.rs`, `export.rs`, `roster.rs`, `calendar.rs` | Sheets, export, roster, calendar |
 | `tree.rs` | Item lists as Chummer's trees (root nodes, locations, nesting) |
 | `crates/chummer-gui` | egui desktop application |
-| `chummer-gui/src/workspace/` | The Workspace layout: shell, widgets, command palette, pop-out windows, At the table (`play.rs`), GM screen (`gm.rs`) |
+| `chummer-gui/src/workspace/` | The Workspace layout: shell, widgets, command palette, pop-out windows, At the table (`play.rs`), GM screen (`gm.rs`), build/story/career pages, item pages, inline catalog, item inspector, Home |
 | `crates/chummer-cli` | Command-line tool |
 | `crates/chummer-net` | Online campaigns: iroh endpoints, campaign protocol, invites, mailbox client, sealing |
 | `crates/chummer-sync` | Online campaigns: the GM's authority (with revert), player replicas with an outbox, mailbox play-by-post, the hosted campaign file (`hosted.rs`) and the app's node |
