@@ -4,6 +4,9 @@
 //! compresses every changed character), so without the journal a crash
 //! lost changes that players had already been told were accepted.
 //!
+//! Records are appended after the authority's lock is released (so the
+//! GUI never waits for the disk) but before the answer is sent.
+//!
 //! Saving rotates the journal: under the authority's lock the state is
 //! taken and the journal renamed to `<sidecar>.journal.saving`; once the
 //! sidecar is written, that file is deleted. On start
@@ -101,9 +104,11 @@ impl Journal {
         }
     }
 
-    /// Every record of both files, oldest first.
+    /// Every record of both files, in version order per character
+    /// (records are appended outside the authority's lock, so two
+    /// answers may land in either order).
     pub fn read(sidecar: &Path) -> Vec<(CharacterId, Entry)> {
-        let mut out = Vec::new();
+        let mut out: Vec<(CharacterId, Entry)> = Vec::new();
         for p in [saving_path(sidecar), path_for(sidecar)] {
             let Ok(mut f) = File::open(&p) else { continue };
             let mut bytes = Vec::new();
@@ -123,6 +128,7 @@ impl Journal {
                 rest = &rest[4 + len..];
             }
         }
+        out.sort_by(|a, b| (&a.0, a.1.version).cmp(&(&b.0, b.1.version)));
         out
     }
 }

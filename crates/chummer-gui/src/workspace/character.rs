@@ -114,6 +114,33 @@ impl CharacterView {
         self.begin_frame()
     }
 
+    /// Whether a dialog drawn at the end of the frame is open.
+    pub fn ws_has_dialog(&self) -> bool {
+        self.confirm_remove.is_some() || self.select.is_some() || self.confirm_finish || self.drug_builder.open || self.custom_improvements.is_open() || self.packs.is_open() || self.spell_designer.open
+    }
+
+    /// Note a press in the window `ctx` draws: with no dialog open, the
+    /// next one opens in that window.
+    pub fn ws_track_dialogs(&mut self, ctx: &egui::Context) {
+        let open = self.ws_has_dialog();
+        self.ws_dialogs.track(ctx, open);
+    }
+
+    /// Which window the dialogs show in.
+    pub fn ws_dialog_home(&mut self) -> &mut crate::workspace::popout::DialogHome {
+        &mut self.ws_dialogs
+    }
+
+    /// The dialogs, when they belong to the window `ctx` draws (a
+    /// pop-out of a character whose frame ran in another window).
+    pub fn ws_dialogs_in(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) {
+        // Embedded (one window): the main frame drew them.
+        if self.ws_dialogs.here(ctx) && ctx.viewport_id() != egui::ViewportId::ROOT {
+            let changed = self.frame_dialogs(ctx, engine, lang, pdfs, status);
+            self.finish_frame(engine, status, changed);
+        }
+    }
+
     /// End of a frame: dialogs, purchases, recomputing.
     pub fn ws_end(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, changed: bool) {
         self.end_frame(ctx, engine, lang, pdfs, status, changed);
@@ -124,6 +151,7 @@ impl CharacterView {
     pub fn ws_current(&self, special: Option<(Section, Tab)>) -> Section {
         match special {
             Some((s, t)) if t == self.tab => s,
+            _ if self.reviewing() => Section::Review,
             _ if self.tab == Tab::StreetGear => Section::Gear(self.gear_tab),
             _ => Section::Page(self.tab),
         }
@@ -131,6 +159,7 @@ impl CharacterView {
 
     /// Go to a section's tab (Play and History keep the tab).
     pub fn ws_go(&mut self, s: Section) {
+        self.set_reviewing(s == Section::Review);
         match s {
             Section::Page(t) => self.tab = t,
             Section::Gear(i) => {
@@ -162,8 +191,9 @@ impl CharacterView {
     /// The sidebar: Session (career), Build or Character, Story, Records.
     pub fn ws_nav(&self, lang: &Language) -> Vec<NavGroup> {
         let created = self.doc.created;
-        let item = |s: Section, badge: Option<Badge>| NavItem { section: s, label: lang.tr(s.label()), badge };
-        let page = |t: Tab| item(Section::Page(t), self.tab_badge(t));
+        let item = |s: Section, badge: Option<Badge>| NavItem { section: s, label: lang.tr(s.label()), badge, check: None };
+        // Guided creation: the build entries are the checklist.
+        let page = |t: Tab| NavItem { check: self.tab_check(t), ..item(Section::Page(t), self.tab_badge(t)) };
         let mut groups = Vec::new();
         if created {
             groups.push(NavGroup { title: lang.tr("Session"), items: vec![item(Section::Play, None)] });
@@ -175,14 +205,21 @@ impl CharacterView {
                 Tab::StreetGear => {
                     for i in 0..STREET_GEAR.len() {
                         let b = badge(self.issues.iter().filter(|x| x.tab().map(tab_of) == Some(Tab::StreetGear) && gear_sub_tab(x.area).unwrap_or(0) == i));
-                        build.push(item(Section::Gear(i), b));
+                        // The gear step's mark sits on the first sub-tab.
+                        let check = if i == 0 { self.tab_check(Tab::StreetGear) } else { None };
+                        build.push(NavItem { check, ..item(Section::Gear(i), b) });
                     }
                 }
                 t if self.visible(*t) => build.push(page(*t)),
                 _ => {}
             }
         }
-        groups.push(NavGroup { title: lang.tr(if created { "Character" } else { "Build" }), items: build });
+        let mut title = lang.tr(if created { "Character" } else { "Build" });
+        if let Some((done, total)) = self.guide_progress() {
+            build.push(NavItem { check: Some(self.review_clear()), ..item(Section::Review, None) });
+            title = format!("{title} · {done}/{total}");
+        }
+        groups.push(NavGroup { title, items: build });
         let story: Vec<NavItem> = [Tab::CharacterInfo, Tab::Notes, Tab::Calendar].into_iter().filter(|t| self.visible(*t)).map(page).collect();
         groups.push(NavGroup { title: lang.tr("Story"), items: story });
         let mut records: Vec<NavItem> = [Tab::Karma, Tab::Improvements].into_iter().filter(|t| self.visible(*t)).map(page).collect();
@@ -266,8 +303,8 @@ impl CharacterView {
         out
     }
 
-    /// A section's page: the guide and the tab's issues above a Classic
-    /// tab page, or the Workspace's own Play and History screens. Returns
+    /// A section's page: the guide's hint line above a tab page, or the
+    /// Workspace's own Play, History and Review & Finish screens. Returns
     /// true if the character changed.
     #[allow(clippy::too_many_arguments)]
     pub fn ws_page(&mut self, ui: &mut egui::Ui, section: Section, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, roll: &mut Option<u32>, pops: &mut PopOuts) -> bool {
@@ -281,6 +318,10 @@ impl CharacterView {
                     egui::ScrollArea::vertical().id_salt("ws_history").auto_shrink([false, true]).show(ui, |ui| changed |= crate::history_ui::panel(ui, &mut self.doc, lang));
                 });
             }
+            Section::Review => {
+                let tab = self.tab;
+                self.page_hint(ui, lang, pdfs, status, tab, None, true);
+            }
             Section::Page(_) | Section::Gear(_) => {
                 let tab = match section {
                     Section::Gear(i) => {
@@ -293,8 +334,7 @@ impl CharacterView {
                 if let Some(key) = crate::ruleset_ui::banner(ui, &self.doc, engine, lang, tab == Tab::Common) {
                     changed |= self.switch_settings(&key, status);
                 }
-                self.ws_guide(ui, lang, pdfs, status);
-                self.ws_issue_strip(ui, lang, tab);
+                self.page_hint(ui, lang, pdfs, status, tab, matches!(section, Section::Gear(_)).then_some(self.gear_tab), false);
                 // Item pages and the inline catalog (`ws_items`); the rest are `ws_tab_page`.
                 match self.ws_items_page(ui, tab, engine, lang, pdfs, status) {
                     Some(c) => changed |= c,

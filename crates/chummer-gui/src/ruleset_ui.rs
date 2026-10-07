@@ -17,10 +17,16 @@ pub struct ImportFlow {
 }
 
 impl ImportFlow {
-    /// Ask for a file and install it unless it clashes. `Some` when done
+    /// Ask for a file (the dialog runs on its own thread; [`ImportFlow::ui`]
+    /// goes on when it is picked).
+    pub fn start(&mut self, ctx: &egui::Context) {
+        crate::bg::dialog(ctx, IMPORT_DIALOG, || rfd::FileDialog::new().add_filter("Chummer settings", &["xml"]).add_filter("All files", &["*"]).pick_file());
+    }
+
+    /// The picked file: installed unless it clashes. `Some` when done
     /// (the library must then be reloaded on `Ok`).
-    pub fn start(&mut self, engine: &Engine) -> Option<Result<Imported, String>> {
-        let src = rfd::FileDialog::new().add_filter("Chummer settings", &["xml"]).add_filter("All files", &["*"]).pick_file()?;
+    fn picked(&mut self, engine: &Engine) -> Option<Result<Imported, String>> {
+        let src = crate::bg::take::<Option<std::path::PathBuf>>(IMPORT_DIALOG)??;
         let Some(dir) = settings::user_settings_dir() else { return Some(Err("no settings directory".into())) };
         let plan = match engine.settings.plan_import(&src, &dir) {
             Ok(p) => p,
@@ -33,8 +39,12 @@ impl ImportFlow {
         Some(install(&plan, engine, &dir, &ImportMode::New))
     }
 
-    /// The clash prompt, while one is open.
+    /// The picked file, then the clash prompt while one is open. `Some`
+    /// when an import is done.
     pub fn ui(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language) -> Option<Result<Imported, String>> {
+        if let Some(done) = self.picked(engine) {
+            return Some(done);
+        }
         let file_name = self.pending.as_ref()?.file_name.clone();
         let mut mode = None;
         let mut cancel = false;
@@ -65,6 +75,7 @@ fn install(plan: &ImportPlan, engine: &Engine, dir: &std::path::Path, mode: &Imp
 }
 
 const IMPORT_REQUEST: &str = "ruleset_import_request";
+const IMPORT_DIALOG: &str = "dialog:settings-import";
 
 /// Ask the app to open the settings window and start an import.
 fn request_import(ctx: &egui::Context) {
@@ -81,6 +92,9 @@ pub fn take_import_request(ctx: &egui::Context) -> bool {
 /// the Info tab, the preset in use with Chummer's "Change Settings File".
 /// Returns the key of a preset the user picked.
 pub fn banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language, show_row: bool) -> Option<String> {
+    if crate::theme::current(ui.ctx()).workspace_layout() {
+        return ws_banner(ui, ch, engine, lang, show_row);
+    }
     let key = ch.field("settings");
     let lib = &engine.settings;
     let mut picked = None;
@@ -105,6 +119,53 @@ pub fn banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Languag
             picked = picker(ui, ch, engine, lang, lib.find(&key));
         });
         ui.add_space(4.0);
+    }
+    picked
+}
+
+/// [`banner`] in the Workspace style: a card with a warning border and
+/// icon, or a one-line settings row.
+fn ws_banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language, show_row: bool) -> Option<String> {
+    use crate::workspace::{icons, widgets};
+    let ws = crate::theme::ws(ui);
+    let key = ch.field("settings");
+    let lib = &engine.settings;
+    let mut picked = None;
+    if let Some(missing) = lib.missing_preset(&key) {
+        let fallback = lib.fallback().map(CharacterSettings::name).unwrap_or_default();
+        widgets::card_frame(&ws).stroke(egui::Stroke::new(1.0_f32, ws.warning)).inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.label(icons::icon(icons::WARNING, 18.0, ws.warning));
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 3.0;
+                    ui.label(RichText::new(lang.tr("Cannot Find Settings File")).font(widgets::bold(13.0)).color(ws.warning));
+                    let line = |ui: &mut egui::Ui, t: String| ui.add(egui::Label::new(RichText::new(t).size(12.0).color(ws.muted)).wrap());
+                    line(ui, lang.tr_fmt("The character's settings file ({0}) could not be found.", &[&missing]));
+                    line(ui, lang.tr_fmt("Costs and budgets shown use {0}. Saving keeps the character's settings file unless you pick another one.", &[&fallback]));
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let r = widgets::button(ui, Some(icons::FILE_ARROW_DOWN), &lang.tr("Import settings file…"), widgets::Look::Secondary, 24.0);
+                        if r.on_hover_text(lang.tr("Install a settings file someone shared, e.g. your GM's house rules.")).clicked() {
+                            request_import(ui.ctx());
+                        }
+                        picked = picker(ui, ch, engine, lang, None);
+                    });
+                });
+            });
+        });
+        ui.add_space(6.0);
+    } else if show_row {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.label(icons::icon(icons::SLIDERS_HORIZONTAL, 14.0, ws.muted));
+            ui.label(RichText::new(lang.tr("Settings File:")).size(12.0).color(ws.muted));
+            ui.label(RichText::new(lib.find(&key).or_else(|| lib.fallback()).map(CharacterSettings::name).unwrap_or_default()).font(widgets::bold(12.5)).color(ws.text));
+            picked = picker(ui, ch, engine, lang, lib.find(&key));
+        });
+        ui.add_space(6.0);
     }
     picked
 }

@@ -70,7 +70,7 @@ impl CharacterView {
                     crate::combo::selectable_value(ui, &mut self.new_kno.1, t.to_owned(), lang.data_name("skills.xml", "", t));
                 }
             });
-            widgets::text_field(ui, &mut self.new_kno.0, &lang.tr("New Knowledge Skill"), 200.0);
+            knowledge_name_input(ui, &self.store, lang, &mut self.new_kno, 220.0);
         });
         if add {
             let name = self.new_kno.0.trim().to_owned();
@@ -131,7 +131,7 @@ impl CharacterView {
                 } else {
                     self.doc.skills.iter().find(|x| x.guid == s.guid).map_or((0, 0), |x| (x.base, x.karma))
                 };
-                let cost = if career_mode && !s.disabled && !s.native { career::skill_upgrade_karma_cost(engine, &self.doc, &s.guid) } else { None };
+                let cost = if career_mode && !s.disabled && !s.native { self.career_costs(engine).skill(&self.doc, &s.guid) } else { None };
                 let mut w = widths.iter().copied();
                 let mut next = || w.next().unwrap_or(40.0);
                 let ink = if s.disabled { ws.muted } else { ws.text };
@@ -233,7 +233,7 @@ impl CharacterView {
         let career_mode = self.doc.created;
         let r = widgets::icon_button(ui, icons::PLUS, 22.0).on_hover_text(lang.tr("Add a specialization"));
         let suid = self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| x.suid.clone()).unwrap_or_default();
-        let cost = if career_mode { career::specialization_karma_cost(engine, &self.doc, &s.guid) } else { None };
+        let cost = if career_mode { self.career_costs(engine).specialization(&self.doc, &s.guid) } else { None };
         egui::Popup::menu(&r).show(|ui| {
             let opts = engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default();
             let opts: Vec<String> = opts.into_iter().filter(|o| !s.specs.contains(o)).collect();
@@ -272,7 +272,7 @@ impl CharacterView {
             widgets::table_header(ui, &caps, &widths);
             for g in &self.doc.skill_groups {
                 let selected = self.ws_build.sel.as_ref() == Some(&Selected::Group(g.name.clone()));
-                let cost = if career_mode { career::skill_group_upgrade_karma_cost(engine, &self.doc, &g.name) } else { None };
+                let cost = if career_mode { self.career_costs(engine).group(&self.doc, &g.name) } else { None };
                 let mut w = widths.iter().copied();
                 let mut next = || w.next().unwrap_or(40.0);
                 let row = widgets::table_row(ui, ("group", &g.name), selected, ROW, |ui| {
@@ -325,7 +325,7 @@ impl CharacterView {
         let mut raises: Vec<(i32, &str, i32)> = self
             .shown_attributes()
             .into_iter()
-            .filter_map(|a| Some((career::attribute_upgrade_karma_cost(engine, &self.doc, a)?, a, self.sheet.attr_values(a)?.value)))
+            .filter_map(|a| Some((self.career_costs(engine).attribute(&self.doc, a)?, a, self.sheet.attr_values(a)?.value)))
             .collect();
         raises.sort();
         for (c, a, v) in raises.into_iter().take(3) {
@@ -363,6 +363,23 @@ impl CharacterView {
             Some(Click::Action(a)) => edits.push(Edit::Action(a)),
             Some(Click::Select(t)) => self.open_select(t, engine),
             None => {}
+        }
+    }
+}
+
+/// The name of a new knowledge skill: free text with the knowledge skills
+/// of `skills.xml` as presets; picking one also sets its type.
+pub(crate) fn knowledge_name_input(ui: &mut egui::Ui, store: &chummer_core::data::DataStore, lang: &Language, kno: &mut (String, String, bool), width: f32) {
+    let Ok(doc) = store.doc("skills.xml") else { return };
+    let mut recs: Vec<(String, String, String)> =
+        chummer_core::data::records(&doc, "knowledgeskills", "skill").into_iter().filter(|r| !r.hidden()).map(|r| (r.name(), lang.data_name("skills.xml", &r.id(), &r.name()), r.category())).collect();
+    recs.sort_by_cached_key(|r| r.1.to_lowercase());
+    let presets: Vec<(String, String)> = recs.iter().map(|(n, shown, _)| (n.clone(), shown.clone())).collect();
+    if widgets::preset_input(ui, "new_knowledge", &mut kno.0, &presets, &lang.tr("New Knowledge Skill"), width).changed() {
+        if let Some((_, _, cat)) = recs.iter().find(|(n, _, _)| *n == kno.0) {
+            if ["Academic", "Interest", "Language", "Professional", "Street"].contains(&cat.as_str()) {
+                kno.1 = cat.clone();
+            }
         }
     }
 }

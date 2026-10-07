@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chummer_core::command::{Command, Rejected};
@@ -20,8 +20,9 @@ use chummer_net::mailbox::MailboxClient;
 use chummer_net::{EndpointId, NetError, RelayUrl, SecretKey};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::authority::{Authority, LocalApplied};
+use crate::authority::{Authority, LocalApplied, SnapshotJob};
 use crate::journal::Journal;
+use crate::lockwatch::{self, Guard};
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
 use crate::msg::{self, CharacterId, ClientMessage, MailMessage, ServerMessage};
 
@@ -65,15 +66,19 @@ impl std::fmt::Debug for Shared {
 }
 
 impl Shared {
-    fn lock(&self) -> MutexGuard<'_, Authority> {
-        self.authority.lock().expect("authority lock poisoned")
+    fn lock(&self) -> Guard<'_, Authority> {
+        lockwatch::lock(&self.authority, "authority")
     }
 
-    /// Writes the changes `a` made to the journal, before anyone is told
-    /// about them. Call with the authority still locked.
-    fn journal(&self, a: &mut Authority) {
-        let applied = a.take_applied();
-        if let Some(j) = self.journal.lock().expect("poisoned").as_mut() {
+    /// Writes changes taken with [`Authority::take_applied`] to the journal
+    /// (synced), before anyone is told about them. Called after the
+    /// authority lock is released, so the GUI is not kept waiting for the
+    /// disk; replay sorts by version.
+    fn journal(&self, applied: Vec<(CharacterId, crate::msg::Entry)>) {
+        if applied.is_empty() {
+            return;
+        }
+        if let Some(j) = self.journal.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             if let Err(e) = j.append(&applied) {
                 tracing::warn!("could not write the campaign journal (a crash now would lose the last changes): {e}");
             }
@@ -82,6 +87,33 @@ impl Shared {
 
     fn touch(&self) {
         self.dirty.store(true, Ordering::Release);
+    }
+
+    /// Makes snapshots without holding the lock (they take seconds for a
+    /// big character; the GUI reads the authority every frame).
+    fn warm(&self, jobs: Vec<SnapshotJob>) {
+        if jobs.is_empty() {
+            return;
+        }
+        let made: Vec<_> = jobs.into_iter().map(SnapshotJob::make).collect();
+        self.lock().put_snapshots(made);
+    }
+
+    /// The snapshots answering `msg` from `peer` needs, made outside the
+    /// lock.
+    fn warm_for(&self, peer: &EndpointId, msg: &ClientMessage) {
+        let jobs = match msg {
+            ClientMessage::Join { have, .. } => self.lock().push_snapshot_work(peer, None, Some(have), false),
+            ClientMessage::Resync(r) => self.lock().push_snapshot_work(peer, Some(&r.character), None, true),
+            ClientMessage::Submit(_) => Vec::new(),
+        };
+        self.warm(jobs);
+    }
+
+    /// The snapshots of what `peer` is behind on, made outside the lock.
+    fn warm_peer(&self, peer: &EndpointId) {
+        let jobs = self.lock().push_snapshot_work(peer, None, None, false);
+        self.warm(jobs);
     }
 
     fn save_if_dirty(&self) -> std::io::Result<()> {
@@ -96,20 +128,26 @@ impl Shared {
 
     fn save_now(&self) -> std::io::Result<()> {
         let Some(p) = &self.path else { return Ok(()) };
-        let _one_at_a_time = self.saving.lock().expect("poisoned");
+        let _one_at_a_time = self.saving.lock().unwrap_or_else(|e| e.into_inner());
+        // Compress outside the lock; whatever changes meanwhile is made
+        // under it by `to_bytes`.
+        let jobs = self.lock().save_snapshot_work();
+        self.warm(jobs);
         let bytes = {
             let mut a = self.lock();
-            self.journal(&mut a);
+            // Changes since the last journal write are in `bytes`; they
+            // go into the journal first in case this save fails.
+            self.journal(a.take_applied());
             let bytes = a.to_bytes();
             // The journal so far is in `bytes`; set it aside until they
             // are on disk.
-            if let Some(j) = self.journal.lock().expect("poisoned").as_mut() {
+            if let Some(j) = self.journal.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
                 j.rotate()?;
             }
             bytes
         };
         crate::persist::write_atomic(p, &bytes)?;
-        if let Some(j) = self.journal.lock().expect("poisoned").as_mut() {
+        if let Some(j) = self.journal.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             j.saved()?;
         }
         Ok(())
@@ -135,8 +173,9 @@ impl Shared {
                 Err(e) => (ServerMessage::Error(e), Vec::new(), None),
             },
         };
-        self.journal(&mut a);
+        let applied = a.take_applied();
         drop(a);
+        self.journal(applied);
         self.touch();
         (reply, notify, changed)
     }
@@ -166,6 +205,7 @@ impl CampaignHandler for Handler {
 
     async fn submit(&self, peer: EndpointId, _role: Role, payload: Vec<u8>) -> Result<Vec<u8>, String> {
         let msg: ClientMessage = msg::decode(&payload).map_err(|e| e.to_string())?;
+        self.shared.warm_for(&peer, &msg);
         let joined = matches!(msg, ClientMessage::Join { .. });
         let (reply, notify, changed) = self.shared.handle(peer, msg);
         if let Some(id) = changed {
@@ -275,8 +315,14 @@ impl AuthorityHost {
     /// The authority, locked. Do not hold it across an `.await`. After
     /// changing members or characters through it, call
     /// [`AuthorityHost::changed`].
-    pub fn authority(&self) -> MutexGuard<'_, Authority> {
+    pub fn authority(&self) -> Guard<'_, Authority> {
         self.shared.lock()
+    }
+
+    /// The authority, when no other thread holds it (a UI thread polls
+    /// with this so it never waits for a network task).
+    pub fn try_authority(&self) -> Option<Guard<'_, Authority>> {
+        lockwatch::try_lock(&self.shared.authority, "authority")
     }
 
     pub fn engine(&self) -> &Arc<Engine> {
@@ -311,7 +357,9 @@ impl AuthorityHost {
         let r = {
             let mut a = self.shared.lock();
             let r = a.apply_local(&self.shared.engine, id, cmd);
-            self.shared.journal(&mut a);
+            let applied = a.take_applied();
+            drop(a);
+            self.shared.journal(applied);
             r?
         };
         self.shared.touch();
@@ -330,7 +378,9 @@ impl AuthorityHost {
         let r = {
             let mut a = self.shared.lock();
             let r = a.revert(&self.shared.engine, id, version);
-            self.shared.journal(&mut a);
+            let applied = a.take_applied();
+            drop(a);
+            self.shared.journal(applied);
             r?
         };
         self.shared.touch();
@@ -377,6 +427,7 @@ impl AuthorityHost {
                             ClientMessage::Resync(r) => Some(r.character.clone()),
                             _ => None,
                         };
+                        self.shared.warm_for(&o.sender, &cm);
                         let (reply, notify, ch) = self.shared.handle(o.sender, cm);
                         let mut a = self.shared.lock();
                         match (resync, reply) {
@@ -412,6 +463,7 @@ impl AuthorityHost {
         }
         let behind = self.shared.lock().members_behind();
         for peer in behind.into_iter().filter(|p| !online.contains(p)) {
+            self.shared.warm_peer(&peer);
             let msgs = self.shared.lock().outgoing_for(&peer);
             let mut failed = None;
             for m in msgs {
@@ -461,6 +513,7 @@ impl Pusher {
         let shared = &self.shared;
         let online: Vec<EndpointId> = host.connected().into_iter().map(|(p, _)| p).collect();
         for peer in peers.iter().filter(|p| online.contains(p)) {
+            shared.warm_peer(peer);
             let msgs = shared.lock().outgoing_for(peer);
             let mut stuck = false;
             for m in msgs {

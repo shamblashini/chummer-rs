@@ -221,7 +221,7 @@ impl CharacterView {
             out.push(Entry { kind: Kind::Advance, icon, title, detail, hint: k(cost), keywords: lang.tr("raise advance karma"), enabled: ok, target: Target::Raise { raise, preview } });
         };
         for a in self.shown_attributes() {
-            let (Some(c), Some(v)) = (career::attribute_upgrade_karma_cost(engine, &self.doc, a), self.sheet.attr_values(a)) else { continue };
+            let (Some(c), Some(v)) = (self.career_costs(engine).attribute(&self.doc, a), self.sheet.attr_values(a)) else { continue };
             let name = attr_long(lang, a);
             push(icons::ARROW_FAT_UP, lang.tr_fmt("Raise {0} {1} → {2}", &[&name, &v.value, &(v.value + 1)]), lang.tr("Attribute"), format!("{name} {}", v.value + 1), c, Raise::Attribute(a.to_owned()));
         }
@@ -229,21 +229,21 @@ impl CharacterView {
             if s.disabled || s.native {
                 continue;
             }
-            if let Some(c) = career::skill_upgrade_karma_cost(engine, &self.doc, &s.guid) {
+            if let Some(c) = self.career_costs(engine).skill(&self.doc, &s.guid) {
                 let kind = if s.knowledge { lang.tr("Knowledge skill") } else { lang.tr("Skill") };
                 push(icons::LIGHTNING, lang.tr_fmt("Raise {0} {1} → {2}", &[&s.name, &s.rating, &(s.rating + 1)]), kind, format!("{} {}", s.name, s.rating + 1), c, Raise::Skill(s.guid.clone()));
             }
             if s.knowledge || s.rating == 0 {
                 continue;
             }
-            let Some(c) = career::specialization_karma_cost(engine, &self.doc, &s.guid) else { continue };
+            let Some(c) = self.career_costs(engine).specialization(&self.doc, &s.guid) else { continue };
             let suid = self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| x.suid.clone()).unwrap_or_default();
             for o in engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default().into_iter().filter(|o| !s.specs.contains(o)) {
                 push(icons::PLUS_CIRCLE, lang.tr_fmt("Add specialization: {0} ({1})", &[&s.name, &o]), lang.tr("Skill"), format!("{} ({o}) +{}", s.name, s.spec_bonus.max(2)), c, Raise::Specialize(s.guid.clone(), o));
             }
         }
         for g in &self.doc.skill_groups {
-            if let Some(c) = career::skill_group_upgrade_karma_cost(engine, &self.doc, &g.name) {
+            if let Some(c) = self.career_costs(engine).group(&self.doc, &g.name) {
                 push(icons::LIGHTNING, lang.tr_fmt("Raise {0} {1} → {2}", &[&g.name, &g.rating(), &(g.rating() + 1)]), lang.tr("Skill Group"), format!("{} {}", g.name, g.rating() + 1), c, Raise::Group(g.name.clone()));
             }
         }

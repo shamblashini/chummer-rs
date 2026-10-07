@@ -100,16 +100,38 @@ not wait for a pop-up at the end:
   spirit not chosen yet, no technomancer stream.
 - Each tab with issues has a warning badge with the count (Classic: a
   yellow warning sign; Graphite: a coloured dot). The focused tab shows
-  its issues at the top; click one to go to the row or item. ✖ hides the
-  panel until something changes. Rows with a problem have a warning mark.
+  its first issue in one line at the top, with "+n" for the rest; click
+  one to go to the row or item. ✖ hides the line until something
+  changes. Rows with a problem have a warning mark.
 - The Karma Summary lists every issue, and Finish creation shows the
   full list before it switches to career mode, carrying over at most 7
   karma and 5,000¥.
 
-**Guided creation.** For new players, a guide bar walks through the build
-one step at a time. Turn it on in the New Character wizard or with
-View → Guided creation (saved in `gui.ini`). The steps follow the build
-method:
+**Guided creation.** For new players, the character's own tabs (Classic)
+or sidebar (Workspace) become the build checklist; there is no extra
+bar. Turn it on in the New Character wizard (checked by default) or with
+View → Guided creation, and off with ✕ (saved in `gui.ini`). A new
+character opens on its first real step, e.g. "Attributes · 24 Attribute
+points left to spend · Next: Special Attributes →".
+
+- **Checklist**: each tab or sidebar entry with steps shows a tick when
+  they are done (visited, no errors or warnings left), an empty ring when
+  not visited yet, or the usual issue count. The Workspace's Build
+  heading counts the steps done ("Build · 6/11") and ends with **Review
+  & Finish**.
+- **One hint line** at the top of the page, for the step the page is
+  about: its name, the first thing left (click to go there) and "+n" for
+  the rest, and **Next** to the next unfinished step. The step follows
+  wherever you go (sidebar, tabs, issue links), so nothing is locked.
+- **Rules on demand**: ⓘ opens the step's rule in plain words with a 📖
+  link to the rulebook page (SR5 or Run Faster); hovering the name shows
+  the progress.
+- **Review & Finish** lists everything Finish creation would, grouped by
+  tab, with Finish creation (Classic: on the Common tab, reached with
+  Next). Steps without checks (cyberware, vehicles) count as done once
+  visited.
+
+The steps follow the build method:
 
 | Build method | Steps |
 |---|---|
@@ -117,15 +139,14 @@ method:
 | Point Buy | Concept & metatype → qualities (magic and resonance are qualities here) → attributes → special attributes → skills → … as above |
 | Life Modules | Concept & metatype → life modules → qualities → attributes → … as above |
 
-Each step explains its rule in plain words, with a 📖 link to the
-rulebook page (SR5 or Run Faster), and lists what is still to do there.
-Next is allowed when the step has no errors; the step chips let you jump
-anywhere. Tabs outside the current step are dimmed, not locked. The
-current step is remembered per file in `~/.config/chummer-rs/guide.ini`,
-not in the .chum5.
+The current step and the steps visited are remembered per file in
+`~/.config/chummer-rs/guide.ini`, not in the .chum5.
 
-![Guided creation, Graphite theme](docs/screenshots/guided-creation-graphite.png)
-![Creation issues on the Skills tab, Classic theme](docs/screenshots/guided-creation-classic.png)
+| | Start | Mid-way | Review |
+|---|---|---|---|
+| Workspace, dark | ![Guided creation start, Workspace dark](docs/screenshots/guided-creation-dark-start.png) | ![Guided creation mid-way, Workspace dark](docs/screenshots/guided-creation-dark-mid.png) | ![Review & Finish, Workspace dark](docs/screenshots/guided-creation-dark-review.png) |
+| Workspace, light | ![Guided creation start, Workspace light](docs/screenshots/guided-creation-light-start.png) | ![Guided creation mid-way, Workspace light](docs/screenshots/guided-creation-light-mid.png) | ![Review & Finish, Workspace light](docs/screenshots/guided-creation-light-review.png) |
+| Classic | ![Guided creation start, Classic](docs/screenshots/guided-creation-classic-start.png) | ![Guided creation mid-way, Classic](docs/screenshots/guided-creation-classic-mid.png) | ![Review & Finish, Classic](docs/screenshots/guided-creation-classic-review.png) |
 
 **Career mode.**
 - Raise attributes, skills, skill groups and knowledge skills for karma at Chummer's costs.
@@ -213,7 +234,8 @@ and Pets & Cohorts sub-tabs. Contacts and enemies have name, location,
 archetype, connection, loyalty, the Free/Group/Blackmail/Family flags and
 an expandable stat block (type, metatype, gender, age, personal life,
 preferred payment, hobbies/vice) with `contacts.xml`'s lists; pets have a
-name and a `critters.xml` metatype. Contacts can also be added from a
+name and a `critters.xml` metatype. Those fields take free text, with the
+list behind a chevron inside the field; typing filters the list. Contacts can also be added from a
 Chummer contacts XML file (Add from File). Any entry can be linked to
 another `.chum5` or `.chum5lz` (Attach Character): its name, metatype,
 gender, age and mugshot then come from that file, on screen and on
@@ -379,8 +401,8 @@ was.
 - **Budget strip**: creation budgets (attributes, special, skills, skill
   groups, knowledge, contacts, karma, nuyen, essence) with bars, or in
   career karma, nuyen, essence, limits, initiative and armor.
-- **Page**: the section, with the guide (a row of steps, the step's
-  rule and what is left in it) and the tab's issues above it. The build,
+- **Page**: the section, with one hint line above it in creation (the
+  guide's step and what is left, or the tab's issues). The build,
   story and record pages are the Workspace's own: tables with steppers in
   creation (points and karma), rating pips, pools you can click to roll,
   issue marks on the rows, and in career a "+1 · cost" button on every
@@ -391,8 +413,28 @@ was.
   new qualities and martial arts). Magic, resonance, critter, A.I. and
   martial arts pages show their summary (tradition and drain, power
   points, stream, initiation with its options and cost) above each
-  list. Character Info, Game Notes, Calendar, Improvements, Relationships
-  and Karma & Nuyen (with the whole ledger) are restyled the same way.
+  list, and their editors (the spell picker and quickening, the mentor
+  spirit and its choices, foci, adept powers, spirits and sprites,
+  metamagics and echoes, martial art techniques) use Workspace buttons,
+  check boxes, steppers and tables. Character Info, Game Notes,
+  Calendar, Improvements (custom improvements as group headings over
+  tables), Relationships (a segmented switch for Contacts, Enemies and
+  Pets, icon buttons for link, notes and delete) and Karma & Nuyen (with
+  the whole ledger) are restyled the same way, and so is the warning for
+  a missing settings file.
+- **Number steppers**: a small − and + inside the border and a value
+  field as wide as the range needs (up to four digits; a longer value
+  widens it), so nothing spills out at any value. Drag the value, or
+  click it and type (arrow keys step while typing). Used for points,
+  karma, ratings, quantities, connection and loyalty, spirit force and
+  services, power levels and lifestyle months.
+- **Text with presets**: a free-text field with a chevron inside its
+  right edge that opens the presets (contact archetype, type, metatype,
+  gender, age and the other contact fields, a custom improvement's
+  selected value, the PDF viewer command, a new knowledge skill, whose
+  type is set from the preset picked). Typing filters the presets, Up,
+  Down and Enter pick one, Esc closes the list; any other text is kept.
+  Classic uses the same field.
 - **At the table** (career): the condition monitor as box grids (rows of
   the wound threshold, the wound modifier in the last box of a row,
   Physical and Stun side by side, overflow under Physical), damage taken
@@ -441,7 +483,12 @@ was.
   install it, and a preview made by applying the purchase to a copy of
   the character: essence before and after (with a bar), cost,
   availability against the limit, nuyen (left) after, and initiative,
-  attributes, armor, limits and condition monitor where they change; the
+  attributes, armor, limits and condition monitor where they change;
+  the dice pools it changes ("Pistols 5 → 7": Defense, Damage
+  Resistance, Composure, Judge Intentions, Memory, Lift/Carry, astral
+  and Matrix initiative, the active skills with their specialization
+  pool, and each weapon's dice pool, DV, AP and accuracy; a new weapon
+  shows its values); the
   checks (requirements, availability, money); "Add", which runs the same
   command as the dialog (career mode pays for it), with the same
   question for bonus selections; and a comparison of up to three
@@ -477,17 +524,25 @@ was.
 - **Pop-out windows**: the button in a panel's header (page, inspector
   section, every block of At the table and the GM screen, dice roller,
   initiative tracker) moves it into its own window; "Dock back" or
-  closing the window puts it back. Which panels are out is kept for the
-  session. On Wayland the system places new windows; on X11, Windows and
-  macOS they open next to the main window.
+  closing the window puts it back. Dialogs opened from a popped-out
+  panel (confirmations, the selection dialog, the editors, pickers,
+  menus) show in its window; the inline catalog shows wherever its page
+  is. Each kind of window opens where it was last and as big (kept
+  between sessions), and the panels that were out when the app closed
+  come back out when their character or campaign opens again (the dice
+  roller and initiative tracker at once). On Wayland the system places
+  windows (only the size is kept); on X11, Windows and macOS a new
+  window opens next to the main window.
 
 ![Command palette](docs/screenshots/workspace-palette.png)
 ![At the table, light](docs/screenshots/workspace-play-light.png)
 ![The recent rolls in their own window](docs/screenshots/workspace-play-popout.png)
+![A confirmation inside a popped-out Weapons page](docs/screenshots/workspace-popout-dialog.png)
+![The catalog's preview with the dice pools a Muscle Toner changes](docs/screenshots/workspace-catalog-pools.png)
 ![The GM screen with an encounter, dark](docs/screenshots/workspace-gm-dark.png)
 ![The GM screen, light](docs/screenshots/workspace-gm-light.png)
 ![Workspace, light, Skills during creation](docs/screenshots/workspace-light-creation.png)
-![Workspace, dark, Attributes & Qualities during creation with the guide](docs/screenshots/workspace-build-dark.png)
+![Workspace, dark, Attributes & Qualities during creation](docs/screenshots/workspace-build-dark.png)
 ![Workspace, light, Skills during creation, a skill in the inspector](docs/screenshots/workspace-build-light.png)
 ![Workspace, career, Skills with the +1 buttons and the ledger](docs/screenshots/workspace-career-skills.png)
 ![Workspace, career, knowledge skills and other advances](docs/screenshots/workspace-career-advances.png)
@@ -498,6 +553,16 @@ was.
 ![Weapons with a weapon in the item inspector, dark](docs/screenshots/workspace-gear-inspector-dark.png)
 ![Cyberware with an item in the inspector, light](docs/screenshots/workspace-gear-inspector-light.png)
 ![Home, dark](docs/screenshots/workspace-home-dark.png)
+![Steppers at 1, 12 and 128, dark](docs/screenshots/workspace-stepper-dark.png)
+![Steppers at 1, 12 and 128, light](docs/screenshots/workspace-stepper-light.png)
+![A contact's archetype: the presets opened with the chevron, and filtered by typing, dark](docs/screenshots/workspace-preset-input-dark.png)
+![The same, light](docs/screenshots/workspace-preset-input-light.png)
+![Relationships, dark](docs/screenshots/workspace-relationships-dark.png)
+![Relationships, light](docs/screenshots/workspace-relationships-light.png)
+![Spells & Spirits with the spirits editor, dark](docs/screenshots/workspace-magic-dark.png)
+![Spells & Spirits with the spirits editor, light](docs/screenshots/workspace-magic-light.png)
+![Improvements with a custom improvement, dark](docs/screenshots/workspace-improvements-dark.png)
+![Improvements with a custom improvement, light](docs/screenshots/workspace-improvements-light.png)
 ![Home, light](docs/screenshots/workspace-home-light.png)
 
 ### Command line
@@ -624,6 +689,39 @@ instance its own `XDG_CONFIG_HOME` (another node key), and in Online
 Settings enter `https://127.0.0.1:3443#<mailbox id>` and its
 `self-signed-cert.pem`.
 
+## Troubleshooting
+
+### "chummer-rs is not responding"
+
+The desktop shows this when the window does not answer for a few
+seconds. Saving, opening, printing, file dialogs, going online, mailbox
+rounds and campaign saves run on their own threads (the status bar shows
+a spinner and what is running), and the online sync no longer
+compresses characters while it holds the campaign's state. If the window
+still stalls, start chummer-rs from a terminal with frame timing on:
+
+```bash
+CHUMMER_TRACE_FRAMES=1 chummer-rs 2>trace.log
+```
+
+Every frame slower than 50 ms is then written to stderr with the phases
+that ran in it (sheet recompute, issues, catalog preview, palette index,
+page drawing, online refresh and so on), time spent painting outside the
+frame, waits for the online locks, long holds of those locks by network
+tasks, and slow background jobs:
+
+```
+[trace    93.208] slow frame #240: update 93.5 ms (worst so far 93.5 ms)
+    workspace layout: 93.5 ms
+      character page: 93.4 ms
+        At the table: 93.2 ms
+          Weapons: 79.7 ms
+[trace] background job save:3 took 1333.6 ms
+[trace   167.842] held the authority lock 34.4 ms (thread chummer-net)
+```
+
+Attach the log to a bug report. Without the variable nothing is timed.
+
 ## How it is checked
 
 The 34 test characters from Chummer5a's own test suite are oracles. Chummer
@@ -669,6 +767,12 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
 
 ## Not done yet
 
+- Still on the UI thread, though short: opening a campaign file
+  (~0.4 s for four big characters), a joined campaign's local copies at
+  start (~0.2 s per big character), the first frame of the Play page
+  with many weapons (~0.1 s). Compressing a character for the online
+  sync (LZMA, ~2 s for one with big mugshots) runs on network and
+  background threads, but costs that CPU on every change that is saved.
 - Places where chummer-rs copies (or fixes) what looks like a Chummer5a
   bug are listed, with rules references, in
   [docs/likely-bugs.md](docs/likely-bugs.md). Every place where
@@ -738,22 +842,26 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   because there is no stream picker yet.
 - Workspace layout: in the build pages the priorities cannot be swapped
   (pick them in the New Character wizard), there is no "Change
-  metatype", and the editors of the magic pages (spell picker, mentor,
-  foci, spirits, metamagic) and of Relationships and custom improvements
-  keep their Classic controls inside Workspace cards. The design's
+  metatype", and the dialogs these pages open (the spell, mentor and
+  metamagic pickers, Create Improvement, contact notes) are Classic
+  windows with Workspace buttons. The design's
   training time and "Saving for" goals are not there. The catalog's
-  preview does not show changes to skills or dice pools, and its table
-  shows essence, cost and availability from the data at the chosen
+  table shows essence, cost and availability from the data at the chosen
   rating and grade (the inspector's preview is exact). Home's recent
   activity lists joined campaigns only (the GM's own feed is on the GM
-  screen). The window positions of popped-out panels are not saved
-  between sessions. At the table: rolls and the rolled initiative are
+  screen). Pop-outs: on Wayland the system places the windows (only
+  their size is kept); with an item page popped out, the catalog's
+  record and preview stay in the main window's inspector (pop out its
+  Item panel too); the app's own windows (Character Settings, Export,
+  Character Sheet, Sourcebooks, the New Character wizard) open in the
+  main window. At the table: rolls and the rolled initiative are
   kept for the session only; gear at hand is listed, not used up (career
   mode has no quantity change); the design's situational modifiers, Edge
   actions (Push the Limit, Second Chance) and "Share to GM" are not there
   because the app has no such rules or messages. GM screen: the design's
   scene notes and activity filters are left out.
-- Custom improvements: no drag and drop between groups (use the 📁 menu),
+- Custom improvements: no drag and drop between groups (use the 📁 menu,
+  a folder icon in the Workspace),
   and disabling one only switches its modifiers and the special attribute
   and tab flags; objects it created (a free spell, say) stay until it is
   deleted.

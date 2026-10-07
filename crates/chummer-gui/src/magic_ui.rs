@@ -25,6 +25,8 @@ use eframe::egui::{self, RichText};
 use crate::doc::Doc;
 use crate::pdf_ui::Status;
 use crate::select::{self, SelectDialog};
+use crate::workspace::icons;
+use crate::workspace::widgets::{self, Look};
 
 /// Read-only context the editors need.
 pub struct Ctx<'a> {
@@ -200,11 +202,11 @@ impl Picker {
             let ready = self.selected.as_ref().and_then(|n| rows.iter().find(|(r, _)| &r.name() == n)).map(|(r, why)| (why.is_empty(), !choices(*r).is_empty()));
             let can = matches!(ready, Some((true, needs)) if !needs || !self.answer.trim().is_empty());
             ui.horizontal(|ui| {
-                if ui.add_enabled(can, egui::Button::new(lang.tr("Add"))).clicked() || (confirm && can) {
+                if ui.add_enabled_ui(can, |ui| dialog_button(ui, &lang.tr("Add"), true)).inner.clicked() || (confirm && can) {
                     let answer = Some(self.answer.trim().to_owned()).filter(|a| !a.is_empty());
                     result = Pick::Done(self.selected.clone().unwrap_or_default(), answer);
                 }
-                if ui.button(lang.tr("Cancel")).clicked() {
+                if dialog_button(ui, &lang.tr("Cancel"), false).clicked() {
                     result = Pick::Cancel;
                 }
             });
@@ -270,16 +272,16 @@ impl MagicEditor {
         let mut changed = false;
         let lang = cx.lang;
         ui.horizontal(|ui| {
-            if ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr("Add Spell…"))).clicked() {
+            if add_button(ui, &lang.tr("Add Spell…"), true).clicked() {
                 let max_avail = cx.settings.map_or(12, |s| s.max_availability());
                 self.spell_dialog = SelectDialog::new("spell", cx.store, cx.books(), max_avail, None);
                 self.pending_spell = None;
             }
             if !ch.created {
                 let c = account::spell_counts(ch, cx.sheet);
-                ui.label(format!("{} {} / {}", lang.tr("Free spells used"), c.spells + c.rituals + c.preparations, c.free));
+                note(ui, format!("{} {} / {}", lang.tr("Free spells used"), c.spells + c.rituals + c.preparations, c.free));
             } else {
-                ui.label(lang.tr_fmt("New spell: {0} karma", &[&career::spell_karma_cost(cx.engine, ch, "Spells")]));
+                note(ui, lang.tr_fmt("New spell: {0} karma", &[&career::spell_karma_cost(cx.engine, ch, "Spells")]));
             }
         });
         let ctx = ui.ctx().clone();
@@ -318,11 +320,12 @@ impl MagicEditor {
             ui.weak(format!("{} · {} · DV {}", rec.category(), rec.get("range"), rec.get("dv")));
             let descriptors = rec.get("descriptor");
             let extended_area = descriptors.split(',').any(|d| d.trim().eq_ignore_ascii_case("Extended Area"));
-            ui.checkbox(&mut p.opts.limited, lang.tr("Limited")).on_hover_text(lang.tr("−2 drain, needs a fetish or focus"));
-            ui.add_enabled(rec.category() == "Detection" && !extended_area, egui::Checkbox::new(&mut p.opts.extended, lang.tr("Extended")))
+            check_box(ui, &mut p.opts.limited, &lang.tr("Limited")).on_hover_text(lang.tr("−2 drain, needs a fetish or focus"));
+            ui.add_enabled_ui(rec.category() == "Detection" && !extended_area, |ui| check_box(ui, &mut p.opts.extended, &lang.tr("Extended")))
+                .inner
                 .on_hover_text(lang.tr("Detection spells only: extended area, +2 drain"));
-            ui.checkbox(&mut p.opts.alchemical, lang.tr("Alchemical Preparation"));
-            ui.checkbox(&mut p.opts.free_bonus, lang.tr("Free")).on_hover_text(lang.tr("Costs no karma and does not count against free spells"));
+            check_box(ui, &mut p.opts.alchemical, &lang.tr("Alchemical Preparation"));
+            check_box(ui, &mut p.opts.free_bonus, &lang.tr("Free")).on_hover_text(lang.tr("Costs no karma and does not count against free spells"));
             if ch.created && !p.opts.free_bonus {
                 let category = if p.opts.alchemical {
                     "Preparations"
@@ -336,8 +339,8 @@ impl MagicEditor {
                 ui.label(if cost > ch.karma { t.color(ui.visuals().error_fg_color) } else { t });
             }
             ui.horizontal(|ui| {
-                add = ui.button(lang.tr("Add")).clicked();
-                cancel = ui.button(lang.tr("Cancel")).clicked();
+                add = dialog_button(ui, &lang.tr("Add"), true).clicked();
+                cancel = dialog_button(ui, &lang.tr("Cancel"), false).clicked();
             });
         });
         if cancel || !open {
@@ -365,16 +368,19 @@ impl MagicEditor {
         }
         let mut changed = false;
         let lang = cx.lang;
-        egui::CollapsingHeader::new(RichText::new(lang.tr("Mentor Spirit")).strong()).id_salt("mentor_ed").default_open(true).show(ui, |ui| {
+        section(ui, "mentor_ed", &lang.tr("Mentor Spirit"), true, |ui| {
             for m in &mentors {
                 let guid = m.get("guid");
                 let mtype = m.child_text("mentortype").unwrap_or_else(|| "MentorSpirit".into());
                 ui.horizontal(|ui| {
-                    ui.strong(m.get("name"));
-                    ui.weak(format!("({})", if mtype == "Paragon" { lang.tr("Paragon") } else { lang.tr("Mentor Spirit") }));
+                    if ws_layout(ui) {
+                        ui.label(icons::icon(icons::SPARKLE, 14.0, crate::theme::ws(ui).accent));
+                    }
+                    strong(ui, m.get("name"));
+                    weak(ui, format!("({})", if mtype == "Paragon" { lang.tr("Paragon") } else { lang.tr("Mentor Spirit") }));
                 });
                 if !m.get("advantage").is_empty() {
-                    ui.label(format!("{} {}", lang.tr("Advantage:"), m.get("advantage")));
+                    note(ui, format!("{} {}", lang.tr("Advantage:"), m.get("advantage")));
                 }
                 let Ok(doc) = cx.store.doc(mentor::data_file(&mtype)) else { continue };
                 let Some(rec) = mentor_record(&doc, m) else { continue };
@@ -400,7 +406,7 @@ impl MagicEditor {
                         if set.is_empty() {
                             continue;
                         }
-                        ui.label(label);
+                        note(ui, label);
                         crate::combo::Combo::from_id_salt(("mentor_choice", &guid, n))
                             .selected_text(if value.is_empty() { lang.tr("Choose…") } else { value.clone() })
                             .width(360.0)
@@ -415,7 +421,7 @@ impl MagicEditor {
                 let (c1, c2) = entry.clone();
                 let saved_ok = m.get("extrachoice1") == c1 && m.get("extrachoice2") == c2;
                 let complete = (set1.is_empty() || !c1.is_empty()) && (set2.is_empty() || !c2.is_empty());
-                if ui.add_enabled(!saved_ok && complete, egui::Button::new(lang.tr("Apply choices"))).clicked() {
+                if ui.add_enabled_ui(!saved_ok && complete, |ui| action_button(ui, None, &lang.tr("Apply choices"), true)).inner.clicked() {
                     let cmd = Command::SetMentorChoices { mentor: guid.clone(), choice1: Some(c1).filter(|s| !s.is_empty()), choice2: Some(c2).filter(|s| !s.is_empty()) };
                     let r = ch.apply(cmd);
                     changed |= report(status, r, |_| format!("Mentor choices set for {}", m.get("name")));
@@ -425,8 +431,15 @@ impl MagicEditor {
             for (qguid, qname, mtype) in &pending {
                 ui.horizontal(|ui| {
                     let kind = if mtype == "Paragon" { lang.tr("Paragon") } else { lang.tr("Mentor Spirit") };
-                    ui.colored_label(crate::theme::warn(ui), lang.tr_fmt("{0} grants a {1} that is not chosen yet.", &[qname, &kind]));
-                    if ui.button(lang.tr("Choose…")).clicked() {
+                    let text = lang.tr_fmt("{0} grants a {1} that is not chosen yet.", &[qname, &kind]);
+                    if ws_layout(ui) {
+                        let ws = crate::theme::ws(ui);
+                        ui.label(icons::icon(icons::WARNING, 14.0, ws.warning));
+                        ui.label(RichText::new(text).size(12.0).color(ws.warning));
+                    } else {
+                        ui.colored_label(crate::theme::warn(ui), text);
+                    }
+                    if action_button(ui, Some(icons::SPARKLE), &lang.tr("Choose…"), false).clicked() {
                         let picker = Picker::new(lang.tr_fmt("Choose a {0}", &[&kind]), mentor::data_file(mtype), "mentors", "mentor", cx.books());
                         self.mentor = Some((qguid.clone(), mtype.clone(), picker));
                     }
@@ -475,7 +488,7 @@ impl MagicEditor {
         let what_label = if echo { lang.tr("echo") } else { lang.tr("metamagic") };
         ui.horizontal(|ui| {
             if ch.created && grade > 0 {
-                ui.label(lang.tr("Grade"));
+                note(ui, lang.tr("Grade"));
                 let label = |g: i32| {
                     let cost = career::metamagic_karma_cost(cx.engine, ch, g);
                     if cost == 0 { format!("{g} ({})", lang.tr("Free")) } else { format!("{g} ({})", lang.tr_fmt("{0} karma", &[&cost])) }
@@ -489,19 +502,22 @@ impl MagicEditor {
                 self.metamagic_grade = Some(pick);
             }
             let can = if ch.created { grade > 0 && ch.karma >= career_cost } else { free > 0 };
-            let mut text = format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), lang.tr_fmt("Add {0}…", &[&what_label]));
+            let mut text = lang.tr_fmt("Add {0}…", &[&what_label]);
             if career_cost > 0 {
                 text += &format!(" ({})", lang.tr_fmt("{0} karma", &[&career_cost]));
             }
-            let b = ui.add_enabled(can, egui::Button::new(text));
+            let b = ui.add_enabled_ui(can, |ui| add_button(ui, &text, true)).inner;
             if b.on_disabled_hover_text(if grade == 0 { lang.tr("Initiate or submerge first") } else { lang.tr("Every grade already has one") }).clicked() {
                 self.metamagic = Some(Picker::new(lang.tr_fmt("Add {0}", &[&what_label]), file, container, item, cx.books()));
             }
-            ui.label(if free == 1 {
-                lang.tr_fmt("Grade {0}: {1} free {2} slot", &[&grade, &free, &what_label])
-            } else {
-                lang.tr_fmt("Grade {0}: {1} free {2} slots", &[&grade, &free, &what_label])
-            });
+            note(
+                ui,
+                if free == 1 {
+                    lang.tr_fmt("Grade {0}: {1} free {2} slot", &[&grade, &free, &what_label])
+                } else {
+                    lang.tr_fmt("Grade {0}: {1} free {2} slots", &[&grade, &free, &what_label])
+                },
+            );
         });
         let mut changed = false;
         if let Some(picker) = self.metamagic.as_mut() {
@@ -542,8 +558,8 @@ impl MagicEditor {
             };
             let offered: Vec<String> = names.into_iter().filter(|t| !known.contains(t)).collect();
             ui.horizontal_wrapped(|ui| {
-                ui.strong(art.get("name"));
-                ui.weak(if known.is_empty() { lang.tr("no techniques") } else { known.join(", ") });
+                strong(ui, art.get("name"));
+                weak(ui, if known.is_empty() { lang.tr("no techniques") } else { known.join(", ") });
             });
             if offered.is_empty() {
                 continue;
@@ -564,7 +580,7 @@ impl MagicEditor {
                 let cost = if ch.created { career::technique_karma_cost(cx.engine, ch, &guid) } else { 0 };
                 let label = if ch.created { lang.tr_fmt("Learn ({0} karma)", &[&cost]) } else { lang.tr("Learn") };
                 let can = !pick.is_empty() && (!ch.created || ch.karma >= cost);
-                if ui.add_enabled(can, egui::Button::new(label)).clicked() {
+                if ui.add_enabled_ui(can, |ui| action_button(ui, Some(icons::GRADUATION_CAP), &label, false)).inner.clicked() {
                     let t = pick.clone();
                     let r = ch.apply(Command::LearnTechnique { art: guid.clone(), technique: t.clone() });
                     changed |= report(status, r, |_| format!("Learned {t}"));
@@ -622,14 +638,20 @@ fn powers_ui(ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status)
     let mut changed = false;
     let lang = cx.lang;
     ui.horizontal(|ui| {
-        let t = RichText::new(lang.tr_fmt("Power points used {0} of {1}", &[&fmt_pp(used), &fmt_pp(total)])).strong();
-        ui.label(if used > total + 1e-9 { t.color(ui.visuals().error_fg_color) } else { t });
+        let text = lang.tr_fmt("Power points used {0} of {1}", &[&fmt_pp(used), &fmt_pp(total)]);
+        if ws_layout(ui) {
+            let ws = crate::theme::ws(ui);
+            ui.label(RichText::new(text).font(crate::workspace::widgets::bold(12.5)).color(if used > total + 1e-9 { ws.error } else { ws.text }));
+        } else {
+            let t = RichText::new(text).strong();
+            ui.label(if used > total + 1e-9 { t.color(ui.visuals().error_fg_color) } else { t });
+        }
         if ch.is_adept() && ch.is_magician() && !second {
             let pp = ch.doc.get_i32("magsplitadept").unwrap_or(0);
-            ui.label(lang.tr_fmt("(mystic adept: {0} bought)", &[&pp]));
+            note(ui, lang.tr_fmt("(mystic adept: {0} bought)", &[&pp]));
             if ch.created {
                 let cost = career::power_point_karma_cost(cx.engine, ch);
-                if ui.add_enabled(ch.karma >= cost, egui::Button::new(lang.tr_fmt("Buy power point ({0} karma)", &[&cost]))).clicked() {
+                if ui.add_enabled_ui(ch.karma >= cost, |ui| action_button(ui, Some(icons::PLUS), &lang.tr_fmt("Buy power point ({0} karma)", &[&cost]), false)).inner.clicked() {
                     changed |= report(status, ch.apply(Command::BuyPowerPoint), |_| "Bought a power point".into());
                 }
             }
@@ -638,32 +660,32 @@ fn powers_ui(ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status)
     if powers.is_empty() {
         return changed;
     }
-    egui::Grid::new("power_editor").striped(true).num_columns(5).spacing([14.0, 4.0]).show(ui, |ui| {
-        for h in lang.tr_all(["Power", "Levels", "Free", "PP / level", "PP"]) {
-            ui.strong(h);
-        }
-        ui.end_row();
-        for p in &powers {
+    grid(ui, "power_editor", &lang.tr_all(["Power", "Levels", "Free", "PP / level", "PP"]), &[0.0, 90.0, 50.0, 80.0, 60.0], |ui, w| {
+        for (k, p) in powers.iter().enumerate() {
             let guid = p.get("guid");
             let extra = p.get("extra");
-            ui.label(if extra.is_empty() { p.get("name") } else { format!("{} ({extra})", p.get("name")) });
-            let cost_now = power::power_point_cost(ch, p, mag);
-            if p.get_bool("levels").unwrap_or(false) {
-                let max = power::total_maximum_levels(p, mag, ignore).max(1);
-                let mut r = p.get_i32("rating").unwrap_or(1);
-                let resp = ui.add(egui::DragValue::new(&mut r).range(1..=max)).on_hover_text(lang.tr_fmt("Up to {0}", &[&max]));
-                if resp.changed() && r != p.get_i32("rating").unwrap_or(1) {
-                    // Refused when the power points run out.
-                    changed |= ch.run(Command::SetPowerRating { power: guid.clone(), rating: r }, status).is_some();
-                }
-            } else {
-                ui.label("—");
-            }
-            let free = power::free_levels(ch, p, mag);
-            ui.label(if free > 0 { free.to_string() } else { String::new() });
-            ui.label(p.get("pointsperlevel"));
-            ui.label(fmt_pp(cost_now));
-            ui.end_row();
+            grid_row(ui, w, ("power", k), |ui| {
+                col(ui, w, 0, |ui| text_cell(ui, if extra.is_empty() { p.get("name") } else { format!("{} ({extra})", p.get("name")) }));
+                let cost_now = power::power_point_cost(ch, p, mag);
+                col(ui, w, 1, |ui| {
+                    if p.get_bool("levels").unwrap_or(false) {
+                        let max = power::total_maximum_levels(p, mag, ignore).max(1);
+                        let mut r = p.get_i32("rating").unwrap_or(1);
+                        let what = p.get("name");
+                        let resp = int_input(ui, ("power_level", k), &mut r, 1, max, lang, &what).on_hover_text(lang.tr_fmt("Up to {0}", &[&max]));
+                        if resp.changed() && r != p.get_i32("rating").unwrap_or(1) {
+                            // Refused when the power points run out.
+                            changed |= ch.run(Command::SetPowerRating { power: guid.clone(), rating: r }, status).is_some();
+                        }
+                    } else {
+                        weak(ui, "—".to_owned());
+                    }
+                });
+                let free = power::free_levels(ch, p, mag);
+                col(ui, w, 2, |ui| text_cell(ui, if free > 0 { free.to_string() } else { String::new() }));
+                col(ui, w, 3, |ui| text_cell(ui, p.get("pointsperlevel")));
+                col(ui, w, 4, |ui| value_cell(ui, fmt_pp(cost_now)));
+            });
         }
     });
     changed
@@ -686,9 +708,15 @@ fn quicken_ui(ui: &mut egui::Ui, ch: &mut Doc, lang: &Language, status: &mut Sta
                 crate::combo::selectable_value(ui, &mut pick, g.clone(), n);
             }
         });
-        ui.add(egui::DragValue::new(&mut karma).range(1..=999).suffix(" karma"));
+        if ws_layout(ui) {
+            let what = lang.tr("Karma");
+            int_input(ui, "quicken_karma_stepper", &mut karma, 1, 999, lang, &what);
+            note(ui, lang.tr("karma"));
+        } else {
+            ui.add(egui::DragValue::new(&mut karma).range(1..=999).suffix(" karma"));
+        }
         let can = !pick.is_empty() && ch.karma >= karma;
-        if ui.add_enabled(can, egui::Button::new(lang.tr("Quicken"))).clicked() {
+        if ui.add_enabled_ui(can, |ui| action_button(ui, Some(icons::LIGHTNING), &lang.tr("Quicken"), false)).inner.clicked() {
             changed = report(status, ch.apply(Command::QuickenSpell { spell: pick.clone(), karma }), |_| lang.tr_fmt("Quickened ({0} karma)", &[&karma]));
         }
     });
@@ -713,29 +741,30 @@ fn spirits_ui(ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status
         return false;
     }
     let mut changed = false;
-    egui::Grid::new("spirit_editor").striped(true).num_columns(5).spacing([14.0, 4.0]).show(ui, |ui| {
-        for h in lang.tr_all(["Spirit / sprite", "Force", "Services", "Bound", "Fettered"]) {
-            ui.strong(h);
-        }
-        ui.end_row();
-        for s in &spirits {
+    grid(ui, "spirit_editor", &lang.tr_all(["Spirit / sprite", "Force", "Services", "Bound", "Fettered"]), &[0.0, 90.0, 90.0, 110.0, 200.0], |ui, w| {
+        for (k, s) in spirits.iter().enumerate() {
             let sprite = s.get("type") == "Sprite";
             let mut force = s.get_i32("force").unwrap_or(1);
             let mut services = s.get_i32("services").unwrap_or(0);
             let mut bound = s.get_bool("bound").unwrap_or(false);
             let mut fettered = s.get_bool("fettered").unwrap_or(false);
             let name = s.get("crittername");
-            ui.label(if name.is_empty() { s.get("name") } else { format!("{name} ({})", s.get("name")) });
-            let mut c = ui.add(egui::DragValue::new(&mut force).range(1..=24)).changed();
-            c |= ui.add(egui::DragValue::new(&mut services).range(0..=99)).changed();
-            c |= ui.checkbox(&mut bound, if sprite { lang.tr("Registered") } else { lang.tr("Bound") }).changed();
-            if sprite {
-                ui.label("");
-            } else {
-                // A fettered spirit gains Banishing Resistance (SG p. 192).
-                let power = if spirit::gains_banishing_resistance(s) { lang.data_name("critterpowers.xml", "", spirit::FETTERED_POWER) } else { String::new() };
-                c |= ui.checkbox(&mut fettered, power).changed();
-            }
+            let mut c = false;
+            grid_row(ui, w, ("spirit", k), |ui| {
+                col(ui, w, 0, |ui| text_cell(ui, if name.is_empty() { s.get("name") } else { format!("{name} ({})", s.get("name")) }));
+                col(ui, w, 1, |ui| c |= int_input(ui, ("force", k), &mut force, 1, 24, lang, &lang.tr("Force")).changed());
+                col(ui, w, 2, |ui| c |= int_input(ui, ("services", k), &mut services, 0, 99, lang, &lang.tr("Services")).changed());
+                col(ui, w, 3, |ui| c |= check_box(ui, &mut bound, &if sprite { lang.tr("Registered") } else { lang.tr("Bound") }).changed());
+                col(ui, w, 4, |ui| {
+                    if sprite {
+                        ui.label("");
+                    } else {
+                        // A fettered spirit gains Banishing Resistance (SG p. 192).
+                        let power = if spirit::gains_banishing_resistance(s) { lang.data_name("critterpowers.xml", "", spirit::FETTERED_POWER) } else { String::new() };
+                        c |= check_box(ui, &mut fettered, &power).changed();
+                    }
+                });
+            });
             if c {
                 // Career mode: fettering costs karma (Spirit.Fettered).
                 match ch.apply(Command::SetSpiritState { spirit: s.get("guid"), force, services, bound, fettered }) {
@@ -748,7 +777,6 @@ fn spirits_ui(ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status
                     Err(e) => *status = Some((e.reason, true)),
                 }
             }
-            ui.end_row();
         }
     });
     changed
@@ -764,25 +792,24 @@ fn foci_ui(ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -
     let bound: Vec<String> = ch.items("foci", "focus").iter().map(|f| f.get("gearid").to_ascii_lowercase()).collect();
     let mut changed = false;
     let lang = cx.lang;
-    egui::CollapsingHeader::new(RichText::new(lang.tr("Foci")).strong()).id_salt("foci_ed").default_open(false).show(ui, |ui| {
+    section(ui, "foci_ed", &lang.tr("Foci"), false, |ui| {
         let total: i32 = foci.iter().filter(|g| bound.contains(&g.get("guid").to_ascii_lowercase())).map(|g| g.get_i32("rating").unwrap_or(0)).sum();
-        ui.weak(lang.tr_fmt("Bound force {0} (limit MAG × 5 = {1})", &[&total, &(cx.sheet.attr("MAG") * 5)]));
-        egui::Grid::new("foci_editor").striped(true).num_columns(4).spacing([14.0, 4.0]).show(ui, |ui| {
-            for h in lang.tr_all(["Focus", "Force", "Binding karma", "Bound"]) {
-                ui.strong(h);
-            }
-            ui.end_row();
-            for g in &foci {
+        weak(ui, lang.tr_fmt("Bound force {0} (limit MAG × 5 = {1})", &[&total, &(cx.sheet.attr("MAG") * 5)]));
+        grid(ui, "foci_editor", &lang.tr_all(["Focus", "Force", "Binding karma", "Bound"]), &[0.0, 60.0, 110.0, 60.0], |ui, w| {
+            for (k, g) in foci.iter().enumerate() {
                 let guid = g.get("guid");
                 let extra = g.get("extra");
-                ui.label(if extra.is_empty() { g.get("name") } else { format!("{} ({extra})", g.get("name")) });
-                ui.label(g.get("rating"));
                 let cost = career::focus_karma_cost(cx.engine, ch, g);
-                ui.label(cost.to_string());
                 let was = bound.contains(&guid.to_ascii_lowercase());
                 let mut on = was;
-                let resp = ui.add_enabled(was || !ch.created || ch.karma >= cost, egui::Checkbox::new(&mut on, ""));
-                if resp.changed() && on != was {
+                let mut resp = None;
+                grid_row(ui, w, ("focus", k), |ui| {
+                    col(ui, w, 0, |ui| text_cell(ui, if extra.is_empty() { g.get("name") } else { format!("{} ({extra})", g.get("name")) }));
+                    col(ui, w, 1, |ui| value_cell(ui, g.get("rating")));
+                    col(ui, w, 2, |ui| value_cell(ui, cost.to_string()));
+                    col(ui, w, 3, |ui| resp = Some(ui.add_enabled_ui(was || !ch.created || ch.karma >= cost, |ui| check_box(ui, &mut on, "")).inner));
+                });
+                if resp.is_some_and(|r| r.changed()) && on != was {
                     if on {
                         match ch.apply(Command::BindFocus { gear: guid.clone() }) {
                             Ok(r) => {
@@ -799,9 +826,167 @@ fn foci_ui(ui: &mut egui::Ui, ch: &mut Doc, cx: &Ctx<'_>, status: &mut Status) -
                         changed |= ch.set(Command::UnbindFocus { gear: guid.clone() });
                     }
                 }
-                ui.end_row();
             }
         });
     });
     changed
+}
+
+// ----- Workspace or Classic controls -----
+//
+// The editors draw the same controls in both layouts; these helpers pick
+// the Workspace widgets (`crate::workspace::widgets`, Phosphor icons) when
+// that layout is active, else the Classic egui ones.
+
+/// Whether the Workspace layout is active.
+fn ws_layout(ui: &egui::Ui) -> bool {
+    crate::theme::current(ui.ctx()).workspace_layout()
+}
+
+/// A muted line of text.
+fn note(ui: &mut egui::Ui, text: String) {
+    if ws_layout(ui) {
+        ui.label(RichText::new(text).size(12.0).color(crate::theme::ws(ui).muted));
+    } else {
+        ui.label(text);
+    }
+}
+
+fn strong(ui: &mut egui::Ui, text: String) {
+    if ws_layout(ui) {
+        ui.label(RichText::new(text).font(widgets::bold(12.5)).color(crate::theme::ws(ui).text));
+    } else {
+        ui.strong(text);
+    }
+}
+
+fn weak(ui: &mut egui::Ui, text: String) {
+    if ws_layout(ui) {
+        ui.label(RichText::new(text).size(12.0).color(crate::theme::ws(ui).muted));
+    } else {
+        ui.weak(text);
+    }
+}
+
+/// An "Add …" button: a Workspace button with a plus, or "➕ text".
+fn add_button(ui: &mut egui::Ui, text: &str, primary: bool) -> egui::Response {
+    if ws_layout(ui) {
+        widgets::button(ui, Some(icons::PLUS), text, if primary { Look::Secondary } else { Look::Ghost }, 24.0)
+    } else {
+        ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("➕")), text))
+    }
+}
+
+/// An action button ("Learn", "Apply choices"); `primary` fills it in the
+/// Workspace.
+fn action_button(ui: &mut egui::Ui, glyph: Option<&str>, text: &str, primary: bool) -> egui::Response {
+    if ws_layout(ui) {
+        widgets::button(ui, glyph, text, if primary { Look::Primary } else { Look::Secondary }, 24.0)
+    } else {
+        ui.button(text)
+    }
+}
+
+/// A dialog's Add / Cancel button.
+fn dialog_button(ui: &mut egui::Ui, text: &str, primary: bool) -> egui::Response {
+    if ws_layout(ui) {
+        widgets::button(ui, None, text, if primary { Look::Primary } else { Look::Secondary }, 26.0)
+    } else {
+        ui.button(text)
+    }
+}
+
+fn check_box(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
+    if ws_layout(ui) {
+        widgets::check(ui, on, label)
+    } else {
+        ui.checkbox(on, label)
+    }
+}
+
+/// A whole number: a stepper in the Workspace, a drag value in Classic.
+fn int_input(ui: &mut egui::Ui, id: impl std::hash::Hash, value: &mut i32, min: i32, max: i32, lang: &Language, what: &str) -> egui::Response {
+    if ws_layout(ui) {
+        widgets::num_stepper(ui, id, value, min, max, &lang.tr_fmt("Lower {0}", &[&what]), &lang.tr_fmt("Raise {0}", &[&what]))
+    } else {
+        ui.add(egui::DragValue::new(value).range(min..=max))
+    }
+}
+
+/// A part of the page with a title: a heading in the Workspace (always
+/// open), a collapsing header in Classic.
+fn section(ui: &mut egui::Ui, id: &str, title: &str, default_open: bool, add: impl FnOnce(&mut egui::Ui)) {
+    if ws_layout(ui) {
+        let ws = crate::theme::ws(ui);
+        ui.label(widgets::title(title, &ws));
+        ui.add_space(2.0);
+        ui.vertical(add);
+        ui.add_space(6.0);
+    } else {
+        egui::CollapsingHeader::new(RichText::new(title).strong()).id_salt(id).default_open(default_open).show(ui, add);
+    }
+}
+
+/// A table of rows: a Workspace table (`spec`: column widths, 0 for the
+/// one that takes the rest) or a Classic striped grid. `body` gets the
+/// column widths (empty in Classic) for [`grid_row`] and [`col`].
+fn grid(ui: &mut egui::Ui, id: &str, headers: &[String], spec: &[f32], body: impl FnOnce(&mut egui::Ui, &[f32])) {
+    if ws_layout(ui) {
+        let ws = crate::theme::ws(ui);
+        widgets::table_frame(&ws).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let widths = widgets::table_columns(ui, spec);
+            let caps: Vec<&str> = headers.iter().map(String::as_str).collect();
+            widgets::table_header(ui, &caps, &widths);
+            body(ui, &widths);
+            ui.add_space(2.0);
+        });
+    } else {
+        egui::Grid::new(id).striped(true).num_columns(headers.len()).spacing([14.0, 4.0]).show(ui, |ui| {
+            for h in headers {
+                ui.strong(h);
+            }
+            ui.end_row();
+            body(ui, &[]);
+        });
+    }
+}
+
+/// Row height of the Workspace tables.
+const ROW: f32 = 30.0;
+
+/// One row of a [`grid`].
+fn grid_row(ui: &mut egui::Ui, widths: &[f32], id: impl std::hash::Hash, add: impl FnOnce(&mut egui::Ui)) {
+    if widths.is_empty() {
+        add(ui);
+        ui.end_row();
+    } else {
+        widgets::table_row(ui, id, false, ROW, add);
+    }
+}
+
+/// Cell `k` of a [`grid_row`].
+fn col(ui: &mut egui::Ui, widths: &[f32], k: usize, add: impl FnOnce(&mut egui::Ui)) {
+    match widths.get(k) {
+        Some(w) => widgets::cell(ui, *w, ROW, add),
+        None => add(ui),
+    }
+}
+
+/// Text in a cell (truncated in the Workspace).
+fn text_cell(ui: &mut egui::Ui, text: String) {
+    if ws_layout(ui) {
+        ui.add(egui::Label::new(RichText::new(text).size(12.5).color(crate::theme::ws(ui).text)).truncate());
+    } else {
+        ui.label(text);
+    }
+}
+
+/// A number in a cell (monospace accent in the Workspace).
+fn value_cell(ui: &mut egui::Ui, text: String) {
+    if ws_layout(ui) {
+        ui.label(widgets::mono(text, 12.5, crate::theme::ws(ui).accent));
+    } else {
+        ui.label(text);
+    }
 }

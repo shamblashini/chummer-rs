@@ -54,7 +54,13 @@ pub struct SourcesWindow {
     /// Files the last scan left unlinked, with the reason.
     unmatched: Vec<(PathBuf, sources::Unmatched)>,
     message: Option<String>,
+    /// The book whose PDF is being picked (`bg` dialog).
+    choosing: Option<String>,
 }
+
+/// The file dialogs of the Sourcebooks window (`bg`).
+const PICK_FOLDER: &str = "dialog:pdf-folder";
+const PICK_BOOK: &str = "dialog:pdf-book";
 
 impl SourcesWindow {
     pub fn new(store: &DataStore) -> Self {
@@ -68,6 +74,7 @@ impl SourcesWindow {
             scan: None,
             unmatched: Vec::new(),
             message: None,
+            choosing: None,
         }
     }
 
@@ -75,21 +82,27 @@ impl SourcesWindow {
     pub fn ui(&mut self, ui: &mut egui::Ui, lib: &mut SourcebookLibrary, lang: &Language) -> bool {
         let mut changed = self.poll_detect(lib);
         changed |= self.poll_scan(lib);
+        if let Some(Some(dir)) = crate::bg::take::<Option<PathBuf>>(PICK_FOLDER) {
+            self.start_scan(dir);
+        }
+        if let Some(f) = crate::bg::take::<Option<PathBuf>>(PICK_BOOK) {
+            if let (Some(code), Some(f)) = (self.choosing.take(), f) {
+                lib.books.entry(code).or_default().path = Some(f);
+                changed = true;
+            }
+        }
         if self.scan.is_some() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
         }
 
         ui.horizontal(|ui| {
             ui.label(lang.tr("PDF viewer"));
-            crate::combo::Combo::from_id_salt("viewer_preset").selected_text(lang.tr("Choose…")).show_ui(ui, |ui| {
-                for v in sources::installed_viewers() {
-                    if crate::combo::selectable_label(ui, lib.viewer == v.template, v.name).clicked() {
-                        lib.viewer = v.template.to_owned();
-                        changed = true;
-                    }
-                }
+            // The command line, with the viewers found installed as presets.
+            // (Looked up once: finding them searches the PATH.)
+            let presets: Vec<(String, String)> = ui.data_mut(|d| {
+                d.get_temp_mut_or_insert_with(egui::Id::new("installed_pdf_viewers"), || sources::installed_viewers().iter().map(|v| (v.template.to_owned(), v.name.to_owned())).collect::<Vec<(String, String)>>()).clone()
             });
-            changed |= ui.add(egui::TextEdit::singleline(&mut lib.viewer).desired_width(380.0)).changed();
+            changed |= crate::workspace::widgets::preset_input(ui, "viewer_preset", &mut lib.viewer, &presets, &lang.tr("Choose…"), 400.0).changed();
         });
         ui.weak(lang.tr("{page} and {path} are replaced. Chummer5a's {localpath} also works."));
         ui.separator();
@@ -113,9 +126,7 @@ impl SourcesWindow {
             let scanning = self.scan.is_some();
             let label = if scanning { lang.tr("Scanning…") } else { lang.tr("Scan a Folder for PDF Files…") };
             if ui.add_enabled(!scanning, egui::Button::new(label)).clicked() {
-                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                    self.start_scan(dir);
-                }
+                crate::bg::dialog(ui.ctx(), PICK_FOLDER, || rfd::FileDialog::new().pick_folder());
             }
             let can_detect = sources::which("pdftotext").is_some();
             let busy = self.detect.is_some();
@@ -186,11 +197,8 @@ impl SourcesWindow {
                         }
                     }
                     ui.horizontal(|ui| {
-                        if ui.small_button(lang.tr("Choose…")).clicked() {
-                            if let Some(f) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
-                                entry.path = Some(f);
-                                changed = true;
-                            }
+                        if ui.small_button(lang.tr("Choose…")).clicked() && crate::bg::dialog(ui.ctx(), PICK_BOOK, || rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file()) {
+                            self.choosing = Some(b.code.clone());
                         }
                         if entry.path.is_some()
                             && ui.small_button(lang.tr("Clear")).clicked() {

@@ -224,10 +224,53 @@ fn skill_cost(ch: &Character, cr: &CareerRules, sheet: &Sheet, s: &SkillInfo<'_>
 /// Karma to raise an active or knowledge skill by one (`UpgradeKarmaCost`).
 /// `None` at the maximum or for an unknown guid.
 pub fn skill_upgrade_karma_cost(engine: &Engine, ch: &Character, skill_guid: &str) -> Option<i32> {
-    let cr = CareerRules::for_character(engine, ch);
-    let sheet = sheet(engine, ch, &cr);
-    let s = skill_info(ch, &cr, &sheet, skill_guid)?;
-    skill_cost(ch, &cr, &sheet, &s)
+    SkillCosts::new(engine, ch).skill(ch, skill_guid)
+}
+
+/// The upgrade costs of a character's attributes, skills, groups and
+/// specializations, worked out from one sheet. Each of
+/// [`skill_upgrade_karma_cost`], [`skill_group_upgrade_karma_cost`] and
+/// [`specialization_karma_cost`] computes a whole sheet; a page listing
+/// every skill asks this once instead. Valid for the character it was
+/// made from, until that changes.
+#[derive(Debug, Clone)]
+pub struct SkillCosts {
+    cr: CareerRules,
+    sheet: Sheet,
+}
+
+impl SkillCosts {
+    pub fn new(engine: &Engine, ch: &Character) -> SkillCosts {
+        let cr = CareerRules::for_character(engine, ch);
+        let sheet = sheet(engine, ch, &cr);
+        SkillCosts { cr, sheet }
+    }
+
+    /// [`attribute_upgrade_karma_cost`].
+    pub fn attribute(&self, ch: &Character, abbrev: &str) -> Option<i32> {
+        attribute_cost(ch, &self.cr, abbrev)
+    }
+
+    /// [`skill_upgrade_karma_cost`].
+    pub fn skill(&self, ch: &Character, skill_guid: &str) -> Option<i32> {
+        let s = skill_info(ch, &self.cr, &self.sheet, skill_guid)?;
+        skill_cost(ch, &self.cr, &self.sheet, &s)
+    }
+
+    /// [`skill_group_upgrade_karma_cost`].
+    pub fn group(&self, ch: &Character, group_name: &str) -> Option<i32> {
+        let members = group_members(&self.sheet, group_name);
+        if group_broken(ch, &self.cr, &members) {
+            return None;
+        }
+        group_cost(ch, &self.cr, &members, group_name)
+    }
+
+    /// [`specialization_karma_cost`].
+    pub fn specialization(&self, ch: &Character, skill_guid: &str) -> Option<i32> {
+        let s = skill_info(ch, &self.cr, &self.sheet, skill_guid)?;
+        spec_cost(ch, &self.cr, &s)
+    }
 }
 
 /// Add one karma rating to a skill by guid. Returns false if not found.
@@ -327,13 +370,7 @@ fn group_cost(ch: &Character, cr: &CareerRules, members: &[&SkillValues], name: 
 
 /// Karma to raise a skill group by one. `None` if it cannot be raised.
 pub fn skill_group_upgrade_karma_cost(engine: &Engine, ch: &Character, group_name: &str) -> Option<i32> {
-    let cr = CareerRules::for_character(engine, ch);
-    let sheet = sheet(engine, ch, &cr);
-    let members = group_members(&sheet, group_name);
-    if group_broken(ch, &cr, &members) {
-        return None;
-    }
-    group_cost(ch, &cr, &members, group_name)
+    SkillCosts::new(engine, ch).group(ch, group_name)
 }
 
 /// Raise a skill group by one (`SkillGroup.Upgrade`). Refused while the
@@ -380,10 +417,7 @@ pub(super) fn group_karma_unbroken(ch: &Character, engine: &Engine, group_name: 
 /// Karma for a new specialization in career mode (`Skill.AddSpecialization`).
 /// `None` when the skill cannot have one (rating 0).
 pub fn specialization_karma_cost(engine: &Engine, ch: &Character, skill_guid: &str) -> Option<i32> {
-    let cr = CareerRules::for_character(engine, ch);
-    let sheet = sheet(engine, ch, &cr);
-    let s = skill_info(ch, &cr, &sheet, skill_guid)?;
-    spec_cost(ch, &cr, &s)
+    SkillCosts::new(engine, ch).specialization(ch, skill_guid)
 }
 
 fn spec_cost(ch: &Character, cr: &CareerRules, s: &SkillInfo<'_>) -> Option<i32> {

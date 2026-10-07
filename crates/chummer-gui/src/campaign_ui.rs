@@ -13,13 +13,24 @@ use chummer_core::lang::Language;
 use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
-/// Pick character files; empty when cancelled.
-pub fn pick_characters() -> Vec<std::path::PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter("Chummer character", &["chum5", "chum5lz"])
-        .add_filter("All files", &["*"])
-        .pick_files()
-        .unwrap_or_default()
+/// Character files picked and loaded on another thread.
+pub type Picked = Vec<(std::path::PathBuf, Result<chummer_core::character::Character, String>)>;
+
+/// Pick character files and load them (on another thread); the answer
+/// comes from [`picked_characters`] with the same `link`.
+pub fn pick_characters(ctx: &egui::Context, link: bool) {
+    crate::bg::dialog(ctx, format!("dialog:gm-add:{link}"), || -> Picked {
+        let files = rfd::FileDialog::new().add_filter("Chummer character", &["chum5", "chum5lz"]).add_filter("All files", &["*"]).pick_files().unwrap_or_default();
+        files.into_iter().map(|p| {
+            let ch = chummer_core::character::Character::load(&p).map_err(|e| e.to_string());
+            (p, ch)
+        }).collect()
+    });
+}
+
+/// The files picked with [`pick_characters`], once there.
+pub fn picked_characters(link: bool) -> Picked {
+    crate::bg::take::<Picked>(&format!("dialog:gm-add:{link}")).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------

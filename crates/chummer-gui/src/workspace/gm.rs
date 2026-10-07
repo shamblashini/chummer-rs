@@ -219,18 +219,14 @@ impl GmScreen {
 
     /// The Add menu (both layouts): character files, a critter, PACKS
     /// NPCs, open characters.
-    pub(super) fn add_menu(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status) {
+    pub(super) fn add_menu(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], _status: &mut Status) {
         if ui.button(lang.tr("Character file (copy into the campaign)…")).clicked() {
             ui.close();
-            for p in crate::campaign_ui::pick_characters() {
-                self.add_file(&p, false, engine, status);
-            }
+            crate::campaign_ui::pick_characters(ui.ctx(), false);
         }
         if ui.button(lang.tr("Character file (link to the file)…")).clicked() {
             ui.close();
-            for p in crate::campaign_ui::pick_characters() {
-                self.add_file(&p, true, engine, status);
-            }
+            crate::campaign_ui::pick_characters(ui.ctx(), true);
         }
         if ui.button(lang.tr("New Critter…")).clicked() {
             ui.close();
@@ -260,6 +256,7 @@ impl GmScreen {
     pub fn ws_ui(&mut self, ctx: &egui::Context, env: &mut Env) -> Option<Action> {
         let ws = theme::current(ctx).ws;
         let mut action = None;
+        self.take_picked(env.engine, env.status);
         if self.campaign.encounters.is_empty() {
             self.campaign.encounters.push(chummer_core::campaign::Encounter::new("Encounter 1"));
         }
@@ -293,8 +290,34 @@ impl GmScreen {
                 });
             }
         });
-        self.windows(ctx, env.engine, env.lang, env.views, env.status);
+        if self.ws_dialogs.here(ctx) {
+            self.windows(ctx, env.engine, env.lang, env.views, env.status);
+        }
         action
+    }
+
+    /// Whether a dialog (new critter, PACKS kit, improvement) is open.
+    pub fn ws_has_dialog(&self) -> bool {
+        self.critter.is_some() || self.kit.is_some() || self.improvement_for.is_some()
+    }
+
+    /// Note a press in the window `ctx` draws (see
+    /// [`popout::DialogHome`]).
+    pub fn ws_track_dialogs(&mut self, ctx: &egui::Context) {
+        let open = self.ws_has_dialog();
+        self.ws_dialogs.track(ctx, open);
+    }
+
+    /// Which window the dialogs show in.
+    pub fn ws_dialog_home(&mut self) -> &mut popout::DialogHome {
+        &mut self.ws_dialogs
+    }
+
+    /// The dialogs, when they belong to the pop-out `ctx` draws.
+    pub fn ws_dialogs_in(&mut self, ctx: &egui::Context, env: &mut Env) {
+        if self.ws_dialogs.here(ctx) && ctx.viewport_id() != egui::ViewportId::ROOT {
+            self.windows(ctx, env.engine, env.lang, env.views, env.status);
+        }
     }
 
     /// A popped-out part's contents (`None`: the activity feed).

@@ -12,6 +12,8 @@ use chummer_core::settings::CharacterSettings;
 use eframe::egui::{self, RichText};
 
 use crate::doc::Doc;
+use crate::workspace::icons;
+use crate::workspace::widgets::{self, Look};
 
 #[derive(Default)]
 pub struct ImprovementsPanel {
@@ -86,6 +88,9 @@ impl ImprovementsPanel {
 
     /// The custom improvements part of the tab. Returns true on a change.
     pub fn tab(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language) -> bool {
+        if ws_layout(ui) {
+            return self.ws_tab(ui, ch, store, lang);
+        }
         let mut changed = false;
         let groups = custom::groups(ch);
         ui.horizontal(|ui| {
@@ -143,6 +148,213 @@ impl ImprovementsPanel {
                     }
                 });
             }
+        });
+        changed
+    }
+
+    /// The Edit Improvement dialog for `i` (of type `t`).
+    fn open_edit(&mut self, store: &DataStore, lang: &Language, i: &Improvement, t: Option<&ImprovementType>) {
+        let mut d = Dialog::new(store, lang, &i.custom_group);
+        d.pick = d.types.iter().position(|x| x.id == i.custom_id);
+        d.form = Form::from_improvement(i, t);
+        d.edit = Some(i.source_name.clone());
+        self.dialog = Some(d);
+    }
+
+    /// [`Self::tab`] in the Workspace style: a toolbar, then each group as
+    /// a heading with its buttons over a table of its improvements.
+    fn ws_tab(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language) -> bool {
+        let ws = crate::theme::ws(ui);
+        let mut changed = false;
+        let groups = custom::groups(ch);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if widgets::button(ui, Some(icons::PLUS), &lang.tr("Add Improvement"), Look::Primary, 26.0).clicked() {
+                self.dialog = Some(Dialog::new(store, lang, ""));
+            }
+            ui.add_space(10.0);
+            let r = widgets::preset_input(ui, "new_group", &mut self.new_group, &[], &lang.tr("Group"), 180.0);
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let ok = !self.new_group.trim().is_empty();
+            let add = ui.add_enabled_ui(ok, |ui| widgets::button(ui, Some(icons::FOLDER_PLUS), &lang.tr("Add Group"), Look::Secondary, 26.0)).inner.clicked();
+            if ok && (add || enter) && ch.set(Command::AddImprovementGroup { name: self.new_group.clone() }) {
+                self.new_group.clear();
+                changed = true;
+            }
+        });
+        ui.add_space(6.0);
+        let listed = custom::listed(ch);
+        let rows_of = |g: &str| -> Vec<usize> {
+            let mut v: Vec<usize> = listed
+                .iter()
+                .copied()
+                .filter(|&n| {
+                    let cg = &ch.improvements.list[n].custom_group;
+                    if g.is_empty() {
+                        cg.is_empty() || !groups.contains(cg)
+                    } else {
+                        cg == g
+                    }
+                })
+                .collect();
+            v.sort_by_cached_key(|&n| display_name(&ch.improvements.list[n]).to_lowercase());
+            v
+        };
+        let sections: Vec<(String, Vec<usize>)> = std::iter::once(String::new()).chain(groups.iter().cloned()).map(|g| { let r = rows_of(&g); (g, r) }).collect();
+        for (g, rows) in &sections {
+            let title = if g.is_empty() { lang.tr("Selected Improvements") } else { g.clone() };
+            let open_id = ui.id().with(("imp_group_open", g.as_str()));
+            let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(true);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if widgets::icon_button(ui, if open { icons::CARET_DOWN } else { icons::CARET_RIGHT }, 22.0).clicked() {
+                    open = !open;
+                }
+                ui.label(icons::icon(icons::FOLDER_SIMPLE, 14.0, ws.muted));
+                ui.label(RichText::new(&title).font(widgets::bold(13.0)).color(ws.text));
+                ui.label(widgets::mono(rows.len().to_string(), 11.5, ws.muted));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    changed |= self.ws_group_bar(ui, ch, store, lang, g);
+                });
+            });
+            ui.data_mut(|d| d.insert_temp(open_id, open));
+            if !open {
+                continue;
+            }
+            if rows.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.add_space(28.0);
+                    ui.label(RichText::new(lang.tr("None.")).size(12.0).color(ws.muted));
+                });
+                ui.add_space(4.0);
+                continue;
+            }
+            widgets::table_frame(&ws).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let widths = widgets::table_columns(ui, &[18.0, 0.0, 170.0, 240.0, 96.0]);
+                for &n in rows {
+                    changed |= self.ws_row(ui, ch, store, lang, n, &groups, &widths);
+                }
+            });
+            if let Some(src) = self.notes.clone() {
+                if let Some(n) = rows.iter().copied().find(|&n| ch.improvements.list[n].source_name == src && is_head(ch, n)) {
+                    ui.add_space(4.0);
+                    ui.horizontal_top(|ui| {
+                        ui.label(RichText::new(lang.tr("Notes:")).size(12.0).color(ws.muted));
+                        let mut text = ch.improvements.list[n].notes.clone();
+                        if ui.add(egui::TextEdit::multiline(&mut text).desired_rows(2).desired_width((ui.available_width() - 40.0).max(120.0))).changed() {
+                            changed |= ch.set(Command::SetImprovementNotes { at: at(ch, n), notes: text });
+                        }
+                        if widgets::icon_button(ui, icons::CHECK, 24.0).on_hover_text(lang.tr("OK")).clicked() {
+                            self.notes = None;
+                        }
+                    });
+                }
+            }
+            ui.add_space(8.0);
+        }
+        changed
+    }
+
+    /// A group's buttons in the Workspace, drawn right to left.
+    fn ws_group_bar(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, g: &str) -> bool {
+        let mut changed = false;
+        if !g.is_empty() {
+            if widgets::icon_button(ui, icons::TRASH, 22.0).on_hover_text(lang.tr("Remove")).clicked() {
+                self.confirm = Some(Confirm::Group(g.to_owned()));
+            }
+            match &mut self.renaming {
+                Some((old, new)) if old == g => {
+                    if widgets::icon_button(ui, icons::X, 22.0).on_hover_text(lang.tr("Cancel")).clicked() {
+                        self.renaming = None;
+                    } else if widgets::icon_button(ui, icons::CHECK, 22.0).on_hover_text(lang.tr("OK")).clicked() {
+                        let (old, new) = (old.clone(), new.clone());
+                        changed |= ch.set(Command::RenameImprovementGroup { old, new });
+                        self.renaming = None;
+                    } else {
+                        widgets::preset_input(ui, ("rename", g), new, &[], "", 160.0);
+                    }
+                }
+                _ => {
+                    if widgets::icon_button(ui, icons::PENCIL_SIMPLE, 22.0).on_hover_text(lang.tr("Rename Location")).clicked() {
+                        self.renaming = Some((g.to_owned(), g.to_owned()));
+                    }
+                }
+            }
+        }
+        if widgets::button(ui, Some(icons::SQUARE), &lang.tr("Disable All"), Look::Ghost, 22.0).clicked() {
+            changed |= ch.set(Command::SetImprovementGroupEnabled { group: g.to_owned(), on: false });
+        }
+        if widgets::button(ui, Some(icons::CHECK_SQUARE), &lang.tr("Enable All"), Look::Ghost, 22.0).clicked() {
+            changed |= ch.set(Command::SetImprovementGroupEnabled { group: g.to_owned(), on: true });
+        }
+        if !g.is_empty() && widgets::button(ui, Some(icons::PLUS), &lang.tr("Add Improvement"), Look::Ghost, 22.0).clicked() {
+            self.dialog = Some(Dialog::new(store, lang, g));
+        }
+        changed
+    }
+
+    /// One improvement as a Workspace table row: active check, name, type,
+    /// what it does, and edit / notes / group / remove buttons.
+    #[allow(clippy::too_many_arguments)]
+    fn ws_row(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, n: usize, groups: &[String], widths: &[f32]) -> bool {
+        let ws = crate::theme::ws(ui);
+        let mut changed = false;
+        let i = ch.improvements.list[n].clone();
+        let name = display_name(&i);
+        let t = (!i.custom_id.is_empty()).then(|| custom::find_type(store, &i.custom_id)).flatten();
+        let head = is_head(ch, n);
+        widgets::table_row(ui, ("custom_imp", n), false, 30.0, |ui| {
+            widgets::cell(ui, widths[0], 30.0, |ui| {
+                let mut on = i.enabled;
+                if widgets::check(ui, &mut on, "").on_hover_text(lang.tr("Active")).changed() {
+                    changed |= ch.set(Command::SetImprovementEnabled { at: at(ch, n), on });
+                }
+            });
+            widgets::cell(ui, widths[1], 30.0, |ui| {
+                let r = ui.add(egui::Label::new(RichText::new(&name).size(12.5).color(if i.enabled { ws.text } else { ws.muted })).truncate());
+                if !i.notes.is_empty() {
+                    r.on_hover_text(&i.notes);
+                }
+            });
+            widgets::cell(ui, widths[2], 30.0, |ui| {
+                let kind = match &t {
+                    Some(t) => type_name(lang, t),
+                    None => i.source.clone(),
+                };
+                ui.add(egui::Label::new(RichText::new(kind).size(12.0).color(ws.muted)).truncate());
+            });
+            widgets::cell(ui, widths[3], 30.0, |ui| {
+                ui.add(egui::Label::new(RichText::new(summary(lang, &i)).size(12.0).color(ws.accent)).truncate());
+            });
+            widgets::cell(ui, widths[4], 30.0, |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if head && i.custom && i.source == custom::SOURCE && t.is_some() && widgets::icon_button(ui, icons::PENCIL_SIMPLE, 22.0).on_hover_text(lang.tr("Edit Improvement")).clicked() {
+                    self.open_edit(store, lang, &i, t.as_ref());
+                }
+                if head {
+                    let glyph = if i.notes.is_empty() { icons::NOTE_BLANK } else { icons::NOTE };
+                    if widgets::icon_button(ui, glyph, 22.0).on_hover_text(lang.tr("Notes")).clicked() {
+                        self.notes = if self.notes.as_deref() == Some(i.source_name.as_str()) { None } else { Some(i.source_name.clone()) };
+                    }
+                }
+                if i.custom && !groups.is_empty() {
+                    let r = widgets::icon_button(ui, icons::FOLDER_SIMPLE, 22.0).on_hover_text(lang.tr("Group"));
+                    egui::Popup::menu(&r).show(|ui| {
+                        for g in std::iter::once(String::new()).chain(groups.iter().cloned()) {
+                            let label = if g.is_empty() { lang.tr("Selected Improvements") } else { g.clone() };
+                            if crate::combo::selectable_label(ui, i.custom_group == g, label).clicked() {
+                                changed |= ch.set(Command::SetImprovementGroup { at: at(ch, n), group: g.clone() });
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+                if widgets::icon_button(ui, icons::TRASH, 22.0).on_hover_text(lang.tr("Remove")).clicked() {
+                    self.confirm = Some(Confirm::Improvement(i.source_name.clone(), name.clone()));
+                }
+            });
         });
         changed
     }
@@ -210,11 +422,7 @@ impl ImprovementsPanel {
         ui.horizontal(|ui| {
             let head = is_head(ch, n);
             if head && i.custom && i.source == custom::SOURCE && t.is_some() && ui.small_button(crate::theme::glyph("✏")).on_hover_text(lang.tr("Edit Improvement")).clicked() {
-                let mut d = Dialog::new(store, lang, &i.custom_group);
-                d.pick = d.types.iter().position(|x| x.id == i.custom_id);
-                d.form = Form::from_improvement(&i, t.as_ref());
-                d.edit = Some(i.source_name.clone());
-                self.dialog = Some(d);
+                self.open_edit(store, lang, &i, t.as_ref());
             }
             if head && ui.small_button(crate::theme::glyph("📝")).on_hover_text(lang.tr("Notes")).clicked() {
                 self.notes = if self.notes.as_deref() == Some(i.source_name.as_str()) { None } else { Some(i.source_name.clone()) };
@@ -238,6 +446,11 @@ impl ImprovementsPanel {
         });
         ui.end_row();
         changed
+    }
+
+    /// Whether the Create Improvement dialog or a confirmation is open.
+    pub fn is_open(&self) -> bool {
+        self.dialog.is_some() || self.confirm.is_some()
     }
 
     /// The Create Improvement dialog and delete confirmations.
@@ -277,16 +490,9 @@ impl ImprovementsPanel {
                     }
                     let opts = d.options.as_ref().map(|(_, o)| o.as_slice()).unwrap_or_default();
                     ui.label(lang.tr("Selected Value:"));
-                    if opts.is_empty() {
-                        ui.add(egui::TextEdit::singleline(&mut d.form.select).desired_width(320.0));
-                    } else {
-                        let form = &mut d.form;
-                        crate::combo::Combo::from_id_salt("imp_select").width(320.0).selected_text(form.select.clone()).height(360.0).show_ui(ui, |ui| {
-                            for o in opts.iter() {
-                                crate::combo::selectable_value(ui, &mut form.select, o.clone(), o);
-                            }
-                        });
-                    }
+                    // Free text, with the values the selection offers as presets.
+                    let presets: Vec<(String, String)> = opts.iter().map(|o| (o.clone(), o.clone())).collect();
+                    crate::workspace::widgets::preset_input(ui, "imp_select", &mut d.form.select, &presets, "", 320.0);
                     ui.end_row();
                 }
                 let num = |ui: &mut egui::Ui, label: &str, v: &mut f64, decimals: usize| {
@@ -330,7 +536,7 @@ impl ImprovementsPanel {
             }
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.add_enabled(d.pick.is_some(), egui::Button::new(lang.tr("OK"))).clicked() {
+                if ui.add_enabled_ui(d.pick.is_some(), |ui| dialog_button(ui, &lang.tr("OK"), true)).inner.clicked() {
                     match ch.apply(Command::CreateImprovement { form: d.form.clone(), group: d.group.clone(), edit: d.edit.clone() }) {
                         Ok(_) => {
                             changed = true;
@@ -339,7 +545,7 @@ impl ImprovementsPanel {
                         Err(e) => d.error = Some(lang.tr(&e.reason)),
                     }
                 }
-                if ui.button(lang.tr("Cancel")).clicked() {
+                if dialog_button(ui, &lang.tr("Cancel"), false).clicked() {
                     done = true;
                 }
             });
@@ -363,10 +569,10 @@ impl ImprovementsPanel {
         egui::Window::new(lang.tr("Remove")).id(egui::Id::new("confirm_imp_delete")).collapsible(false).resizable(false).show(ctx, |ui| {
             ui.label(text);
             ui.horizontal(|ui| {
-                if ui.button(lang.tr("Remove")).clicked() {
+                if dialog_button(ui, &lang.tr("Remove"), true).clicked() {
                     answer = Some(true);
                 }
-                if ui.button(lang.tr("Cancel")).clicked() {
+                if dialog_button(ui, &lang.tr("Cancel"), false).clicked() {
                     answer = Some(false);
                 }
             });
@@ -411,4 +617,18 @@ fn at(ch: &Character, n: usize) -> ImprovementRef {
 fn is_head(ch: &Character, n: usize) -> bool {
     let src = &ch.improvements.list[n].source_name;
     ch.improvements.list.iter().position(|i| &i.source_name == src && (i.custom || !ch.improvements.list.iter().any(|j| &j.source_name == src && j.custom))) == Some(n)
+}
+
+/// Whether the Workspace layout is active (its widgets replace Classic's).
+fn ws_layout(ui: &egui::Ui) -> bool {
+    crate::theme::current(ui.ctx()).workspace_layout()
+}
+
+/// A dialog button: a Workspace button (`primary` filled) or a Classic one.
+fn dialog_button(ui: &mut egui::Ui, text: &str, primary: bool) -> egui::Response {
+    if ws_layout(ui) {
+        widgets::button(ui, None, text, if primary { Look::Primary } else { Look::Secondary }, 26.0)
+    } else {
+        ui.button(text)
+    }
 }

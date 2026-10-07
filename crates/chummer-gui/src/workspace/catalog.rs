@@ -38,7 +38,7 @@ use super::{kind_noun, CharacterView};
 use crate::pdf_ui::{self, Status};
 use crate::select;
 use crate::theme;
-use crate::workspace::icons;
+use crate::workspace::{icons, pool_diff};
 use crate::workspace::widgets::{self, Look};
 
 const FILTERS_WIDTH: f32 = 196.0;
@@ -132,6 +132,8 @@ struct Preview {
     /// Why Add would be refused (career: not enough nuyen); the sheet is
     /// then the purchase's effect as if it were free.
     refused: Option<String>,
+    /// The dice pools, skills and weapons it changes.
+    pools: Vec<pool_diff::Line>,
 }
 
 /// A record kept for comparison.
@@ -385,6 +387,7 @@ impl CharacterView {
 
     /// Recompute the rows when the filters or the character changed.
     fn ws_catalog_rows(&mut self, lang: &Language) {
+        let _s = crate::trace::span("catalog rows");
         let Some(c) = self.ws_gear.catalog.as_ref() else { return };
         let key = hash_of((
             &c.search,
@@ -712,7 +715,8 @@ impl CharacterView {
 
 /// Apply the purchase to a copy of the character and compute its sheet
 /// (and, while creating, the nuyen left).
-fn preview(ch: &Character, settings: Option<&chummer_core::settings::CharacterSettings>, engine: &Engine, tag: &str, rec: &Element, p: &Purchase) -> Result<Preview, String> {
+/// `before` is the character's current sheet, for the dice pools.
+fn preview(ch: &Character, before: &Sheet, settings: Option<&chummer_core::settings::CharacterSettings>, engine: &Engine, tag: &str, rec: &Element, p: &Purchase) -> Result<Preview, String> {
     let mut copy = ch.clone();
     let store = engine.store_for_character(&copy);
     let mut p = p.clone();
@@ -739,7 +743,8 @@ fn preview(ch: &Character, settings: Option<&chummer_core::settings::CharacterSe
         (Some(st), false) => chargen::budget_with(&copy, &sheet, &rules, st, Some(&store)).nuyen_left(),
         _ => copy.nuyen,
     };
-    Ok(Preview { sheet, nuyen, assumed, refused })
+    let pools = pool_diff::diff((ch, before), (&copy, &sheet));
+    Ok(Preview { sheet, nuyen, assumed, refused, pools })
 }
 
 /// Attributes the preview compares.
@@ -1057,7 +1062,7 @@ impl CharacterView {
         if c.preview.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
         }
-        let result = preview(&self.doc, self.settings.as_ref(), engine, slot.kind.tag, r.el(), p);
+        let result = crate::trace::time("catalog preview (clone+apply+compute)", || preview(&self.doc, &self.sheet, self.settings.as_ref(), engine, slot.kind.tag, r.el(), p));
         if let Some(c) = self.ws_gear.catalog.as_mut() {
             c.preview = Some((key, result));
         }
@@ -1163,7 +1168,7 @@ impl CharacterView {
             }
             if matches!(tag, "gear" | "drug") {
                 caption(ui, &lang.tr("Quantity"));
-                ui.add(egui::DragValue::new(&mut c.purchase.qty).range(1.0..=1000.0).max_decimals(0));
+                widgets::qty_stepper(ui, "ws_catalog_qty", &mut c.purchase.qty, 1.0, 1000.0, 1.0, 0, &lang.tr("Lower"), &lang.tr("Raise"));
                 ui.end_row();
             }
             if let Some(n) = &locked_parent {
@@ -1254,6 +1259,7 @@ impl CharacterView {
                 let cm = |s: &Sheet| format!("{} / {}", s.physical_cm, s.stun_cm);
                 widgets::value_row(ui, &lang.tr("Condition Monitor"), &cm(&a.sheet), ws.accent, &lang.tr_fmt("was {0}", &[&cm(sheet)]));
             }
+            pool_lines(ui, &a.pools, lang);
         }
         let capacity = r.get("capacity");
         if !capacity.trim().is_empty() {
@@ -1441,4 +1447,75 @@ impl CharacterView {
             None => false,
         }
     }
+}
+
+/// How many skill lines the preview lists before "and N more".
+const SKILL_LINES: usize = 6;
+
+/// The preview's dice pools (in [`pool_diff::diff`]'s order: fixed
+/// pools, skills, weapons): "Pistols 12 → 14", a weapon's changed values
+/// under its name.
+fn pool_lines(ui: &mut egui::Ui, lines: &[pool_diff::Line], lang: &Language) {
+    use pool_diff::Subject;
+    if lines.is_empty() {
+        return;
+    }
+    let ws = theme::ws(ui);
+    widgets::rule(ui);
+    ui.label(widgets::overline(&lang.tr("Dice Pools"), &ws));
+    let row = |ui: &mut egui::Ui, label: &str, indent: bool, part: &pool_diff::Part| {
+        ui.horizontal(|ui| {
+            ui.set_min_height(20.0);
+            if indent {
+                ui.add_space(12.0);
+            }
+            ui.add(egui::Label::new(RichText::new(label).size(12.5).color(if indent { ws.muted } else { ws.text })).truncate());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(widgets::mono(&part.after, 12.5, ws.accent));
+                if let Some(b) = &part.before {
+                    ui.label(icons::icon(icons::ARROW_RIGHT, 11.0, ws.muted));
+                    ui.label(widgets::mono(b, 12.0, ws.muted));
+                }
+            });
+        });
+    };
+    let skill_name = |n: &str| lang.data_name("skills.xml", "", n);
+    let mut skills = 0;
+    let mut hidden: Vec<String> = Vec::new();
+    let flush = |ui: &mut egui::Ui, hidden: &mut Vec<String>| {
+        if !hidden.is_empty() {
+            ui.label(RichText::new(lang.tr_fmt("and {0} more", &[&hidden.len()])).size(11.5).color(ws.muted)).on_hover_text(hidden.join("\n"));
+            hidden.clear();
+        }
+    };
+    for l in lines {
+        match &l.subject {
+            Subject::Fixed(label) => row(ui, &lang.tr(label), false, &l.parts[0]),
+            Subject::Skill(n) => {
+                let p = &l.parts[0];
+                if skills < SKILL_LINES {
+                    row(ui, &skill_name(n), false, p);
+                } else {
+                    hidden.push(format!("{} {} → {}", skill_name(n), p.before.as_deref().unwrap_or("—"), p.after));
+                }
+                skills += 1;
+            }
+            Subject::Weapon { name, new } => {
+                flush(ui, &mut hidden);
+                let name = lang.data_name("weapons.xml", "", name);
+                let title = if *new { format!("{name} ({})", lang.tr("New")) } else { name };
+                match l.parts.as_slice() {
+                    // Only its pool: one line ("Ares Predator V 12 → 14").
+                    [p] if p.field == pool_diff::Field::Pool => row(ui, &title, false, p),
+                    parts => {
+                        ui.add(egui::Label::new(RichText::new(title).size(12.5).color(ws.text)).truncate());
+                        for p in parts {
+                            row(ui, &lang.tr(p.field.label()), true, p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    flush(ui, &mut hidden);
 }

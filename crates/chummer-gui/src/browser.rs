@@ -73,6 +73,7 @@ impl DataBrowser {
             return;
         }
         let Some(doc) = self.doc.clone() else { return };
+        let _s = crate::trace::span("master index search");
         let recs = data::records(&doc, container, item);
         let needle = self.search.to_lowercase();
         let shown: Vec<(usize, String, String)> = recs
@@ -85,6 +86,7 @@ impl DataBrowser {
                 (needle.is_empty() || hay.contains(&needle)).then_some((i, name, cat))
             })
             .collect();
+        drop(_s);
         ui.label(lang.tr_fmt("{0} of {1} records", &[&shown.len(), &recs.len()]));
         ui.separator();
 
