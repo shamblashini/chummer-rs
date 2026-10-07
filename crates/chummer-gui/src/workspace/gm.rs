@@ -640,8 +640,16 @@ impl GmScreen {
             .take(6)
             .collect();
         let qualities: Vec<(String, String)> = doc.items("qualities", "quality").into_iter().take(6).map(|q| (q.get("name"), String::new())).collect();
+        let tag = [lang.tr(m.kind.as_str()), m.group.clone()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
+        if !header {
+            // In its own window: who it is (the window follows the card).
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&m.name).font(widgets::bold(15.0)).color(ws.text));
+                widgets::tag(ui, &tag, ws.muted, ws.divider);
+            });
+            ui.add_space(6.0);
+        }
         if header {
-            let tag = [lang.tr(m.kind.as_str()), m.group.clone()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
             card_title(ui, env.pops, lang, &m.name, &tag, |ui| {
                 if widgets::button(ui, Some(icons::ARROW_SQUARE_OUT), &lang.tr("Open"), Look::Ghost, 24.0).on_hover_text(lang.tr("Open the character in its own tab")).clicked() {
                     todo.push(CardDo::Open);
