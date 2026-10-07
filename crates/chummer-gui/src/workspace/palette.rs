@@ -351,19 +351,9 @@ impl Palette {
             return None;
         }
         let ws = theme::current(ctx).ws;
-        let results = self.results(entries);
-        self.selected = self.selected.min(results.len().saturating_sub(1));
+        // Keys first, before the search field sees them.
         let (up, down, enter, esc) = ctx.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, Key::ArrowUp), i.consume_key(egui::Modifiers::NONE, Key::ArrowDown), i.consume_key(egui::Modifiers::NONE, Key::Enter), i.consume_key(egui::Modifiers::NONE, Key::Escape)));
-        if up {
-            self.selected = self.selected.saturating_sub(1);
-        }
-        if down && self.selected + 1 < results.len() {
-            self.selected += 1;
-        }
         let mut picked = None;
-        if enter {
-            picked = results.get(self.selected).filter(|e| e.enabled).map(|e| e.target.clone());
-        }
         let screen = ctx.content_rect();
         // The dimmed backdrop; a click on it closes the palette.
         let scrim = egui::Area::new(egui::Id::new("palette scrim")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
@@ -394,12 +384,22 @@ impl Palette {
                         if r.changed() {
                             self.selected = 0;
                             moved = true;
-                            // The list was drawn for the old text.
-                            ui.ctx().request_repaint();
                         }
                         widgets::kbd(ui, "Esc");
                     });
                 });
+                // The list for the text as typed this frame.
+                let results = self.results(entries);
+                self.selected = self.selected.min(results.len().saturating_sub(1));
+                if up {
+                    self.selected = self.selected.saturating_sub(1);
+                }
+                if down && self.selected + 1 < results.len() {
+                    self.selected += 1;
+                }
+                if enter {
+                    picked = results.get(self.selected).filter(|e| e.enabled).map(|e| e.target.clone());
+                }
                 let rule = |ui: &mut egui::Ui| {
                     let (r, _) = ui.allocate_exact_size(egui::vec2(width, 1.0), Sense::hover());
                     ui.painter().rect_filled(r, CornerRadius::ZERO, ws.divider);

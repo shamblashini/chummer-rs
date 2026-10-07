@@ -16,6 +16,23 @@ pub fn bold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(theme::BOLD.into()))
 }
 
+/// Run `add` and clip what it paints on this layer to `rect`. Classic
+/// pages put panels inside the page, and a panel clips to its own rect:
+/// a row too wide for the page would otherwise paint over the inspector.
+pub fn clip_to<R>(ui: &mut Ui, rect: egui::Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let layer = ui.layer_id();
+    let start = ui.ctx().graphics_mut(|g| g.entry(layer).next_idx());
+    let r = add(ui);
+    ui.ctx().graphics_mut(|g| {
+        let list = g.entry(layer);
+        let end = list.next_idx();
+        for i in start.0..end.0 {
+            list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.clip_rect = s.clip_rect.intersect(rect));
+        }
+    });
+    r
+}
+
 /// Small uppercase caption ("BUILD", "ATTRIBUTE PTS").
 pub fn overline(text: &str, ws: &WsPalette) -> RichText {
     RichText::new(text.to_uppercase()).size(10.5).color(ws.muted)

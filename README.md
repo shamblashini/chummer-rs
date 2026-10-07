@@ -328,13 +328,16 @@ Skills and attributes stay flat tables.
 ![Classic theme, gear tree](docs/screenshots/chummer-rs-classic-gear-tree.png)
 ![Graphite theme, cyberware tree](docs/screenshots/chummer-rs-graphite-cyberware-tree.png)
 
-View → Theme selects one of two themes. The choice is saved in
-`~/.config/chummer-rs/gui.ini`; `--theme classic|graphite` overrides it.
+View → Appearance selects the layout (Classic, described above, or
+[Workspace](#workspace-layout)) and its theme. The choice is saved in
+`~/.config/chummer-rs/gui.ini`; `--layout classic|workspace` and
+`--theme classic|graphite|dark|light` override it.
 
 | Theme | Look |
 |---|---|
-| Graphite (default) | Dark greys with one teal accent, IBM Plex Sans and Plex Mono. |
-| Classic | Chummer5a's Windows look: light grey panels, white fields, square corners, Windows-blue selection, the Selawik font. |
+| Graphite (default) | Classic layout. Dark greys with one teal accent, IBM Plex Sans and Plex Mono. |
+| Classic | Classic layout. Chummer5a's Windows look: light grey panels, white fields, square corners, Windows-blue selection, the Selawik font. |
+| Dark, Light | Workspace layout. Colours from the chummer-rs logo, IBM Plex, Phosphor icons. |
 
 ![Classic theme](docs/screenshots/chummer-rs-classic-common.png)
 ![Graphite theme](docs/screenshots/chummer-rs-graphite-common.png)
@@ -345,7 +348,60 @@ For comparison, Chummer5a 5.226 under Wine:
 [career](docs/screenshots/chummer5a-career-common.png).
 
 The fonts are in `crates/chummer-gui/assets/fonts/` with their SIL Open
-Font License files (Selawik: Microsoft; IBM Plex: IBM).
+Font License files (Selawik: Microsoft; IBM Plex: IBM). The Workspace
+icons are [Phosphor](https://phosphoricons.com) (MIT licence), through the
+`egui-phosphor` crate (MIT or Apache-2.0). The app icon is the chummer-rs
+logo (`crates/chummer-gui/assets/logo/`, also `packaging/chummer-rs.svg`).
+
+### Workspace layout
+
+View → Appearance → Workspace (or `--layout workspace`) is a second
+layout for the same characters, campaigns and data. Classic stays as it
+was.
+
+![Workspace, dark, a character in creation](docs/screenshots/workspace-dark-creation.png)
+![Workspace, light, a career character at the table](docs/screenshots/workspace-light-career.png)
+
+- **Top bar**: the logo and the menu (☰: File, Edit, Tools, Special,
+  View, Window and Help, with Print), one tab per open document (Home,
+  the campaign, each character with its mode), + to open or create, the
+  search field and the sync state (local file saved or not, or an online
+  character's sync).
+- **Sidebar**: the open document's sections. A character's are grouped
+  as Session (career: At the table), Build or Character, Story and
+  Records, with the creation-issue counts as badges; Street Gear's
+  sub-tabs are entries of their own. Home has the roster and the Master
+  Index; the campaign has the GM screen and its members. At the bottom:
+  Undo and Redo (the tooltip names the change; online characters keep
+  Undo off with the usual explanation), Settings (character settings,
+  sourcebooks, online settings, guided creation, back to Classic) and the
+  dark/light switch.
+- **Budget strip**: creation budgets (attributes, special, skills, skill
+  groups, knowledge, contacts, karma, nuyen, essence) with bars, or in
+  career karma, nuyen, essence, limits, initiative and armor.
+- **Page**: the section. Until each screen is redesigned, it is the
+  Classic tab page, with the guide and the tab's issues above it. At the
+  table shows the condition monitor as box grids (rows of the wound
+  threshold, the wound modifier in the last box of a row, Physical and
+  Stun side by side, overflow under Physical) and Edge as boxes (filled
+  = available).
+- **Inspector**: creation issues with Finish creation, the selected
+  item's editor, the Karma Summary (creation) or Other Info and Spell
+  Defense (career), and this session's history.
+- **Command palette** (Ctrl+K or the search field): menu actions, the
+  document's sections, the character's items, the open documents and
+  every game-data record (opens in the Master Index). Arrow keys
+  select, Enter runs; the line under the list says what it will do.
+- **Pop-out windows**: the button in a panel's header (page, inspector
+  section, condition monitor, dice roller, initiative tracker, the GM
+  screen's activity feed) moves it into its own window; "Dock back" or
+  closing the window puts it back. Which panels are out is kept for the
+  session. On Wayland the system places new windows; on X11, Windows and
+  macOS they open next to the main window.
+
+![Command palette](docs/screenshots/workspace-palette.png)
+![The condition monitor in its own window](docs/screenshots/workspace-popout.png)
+![Workspace, light, Skills during creation](docs/screenshots/workspace-light-creation.png)
 
 ### Command line
 
@@ -569,6 +625,11 @@ cargo test --workspace
   grades whose requirements are not met, and Friends in High Places
   contact limits. A missing technomancer stream is only a warning,
   because there is no stream picker yet.
+- Workspace layout: only At the table is new so far; the other
+  sections show the Classic tab pages (with Phosphor icons in place of
+  emoji). The Play, GM, creation, career, gear and home screens of the
+  design are still to come. The window positions of popped-out panels
+  are not saved between sessions.
 - Custom improvements: no drag and drop between groups (use the 📁 menu),
   and disabling one only switches its modifiers and the special attribute
   and tab flags; objects it created (a free spell, say) stay until it is
@@ -593,6 +654,7 @@ cargo test --workspace
 | `print.rs`, `export.rs`, `roster.rs`, `calendar.rs` | Sheets, export, roster, calendar |
 | `tree.rs` | Item lists as Chummer's trees (root nodes, locations, nesting) |
 | `crates/chummer-gui` | egui desktop application |
+| `chummer-gui/src/workspace/` | The Workspace layout: shell, widgets, command palette, pop-out windows |
 | `crates/chummer-cli` | Command-line tool |
 | `crates/chummer-net` | Online campaigns: iroh endpoints, campaign protocol, invites, mailbox client, sealing |
 | `crates/chummer-sync` | Online campaigns: the GM's authority (with revert), player replicas with an outbox, mailbox play-by-post, the hosted campaign file (`hosted.rs`) and the app's node |

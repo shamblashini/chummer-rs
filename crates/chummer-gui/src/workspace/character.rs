@@ -322,6 +322,7 @@ impl CharacterView {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, 120.0), egui::Sense::hover());
                 ui.painter().rect_filled(rect, 0.0, ws.divider);
                 ui.vertical(|ui| {
+                    ui.set_max_width(260.0);
                     ui.spacing_mut().item_spacing.y = 8.0;
                     if s.wound_modifier != 0 {
                         ui.horizontal(|ui| {
@@ -366,6 +367,8 @@ impl CharacterView {
     /// Inspector: every creation issue, and Finish creation.
     pub fn ws_issues(&mut self, ui: &mut egui::Ui, lang: &Language) {
         let ws = theme::ws(ui);
+        // Issues wrap, so long ones do not widen the inspector.
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         if self.issues.iter().any(Issue::is_error) {
             ui.label(RichText::new(lang.tr("Fix the problems above first")).size(11.5).color(ws.muted));
         }
@@ -427,11 +430,10 @@ impl CharacterView {
         changed
     }
 
-    /// Inspector: this session's changes.
+    /// Inspector: this session's changes (the inspector scrolls; a
+    /// nested scroll area would widen the side panel every frame).
     pub fn ws_history(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
-        let mut changed = false;
-        egui::ScrollArea::vertical().id_salt("ws_recent").max_height(260.0).auto_shrink([false, true]).show(ui, |ui| changed = crate::history_ui::panel(ui, &mut self.doc, lang));
-        changed
+        crate::history_ui::panel(ui, &mut self.doc, lang)
     }
 
     /// The character's items, for the palette.

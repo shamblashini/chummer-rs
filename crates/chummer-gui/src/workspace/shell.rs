@@ -421,12 +421,7 @@ impl App {
         });
         rule(ui, ws.divider);
         if pop {
-            let key = PopKey::new(DocKey::Campaign, PanelId::Activity);
-            if self.ws.pops.is_out(key) {
-                self.ws.pops.dock(key);
-            } else {
-                self.ws.pops.pop_out(key);
-            }
+            self.ws.pops.toggle(PopKey::new(DocKey::Campaign, PanelId::Activity), ui.ctx());
         }
     }
 
@@ -533,15 +528,12 @@ impl App {
                     toggle |= popout::placeholder(ui, &self.lang);
                 });
             } else {
-                changed |= self.views[i].ws_page(ui, section, &engine, &self.lang, &self.pdfs, &mut self.status, &mut roll, &mut self.ws.pops);
+                let page = ui.max_rect();
+                changed |= widgets::clip_to(ui, page, |ui| self.views[i].ws_page(ui, section, &engine, &self.lang, &self.pdfs, &mut self.status, &mut roll, &mut self.ws.pops));
             }
         });
         if toggle {
-            if self.ws.pops.is_out(key) {
-                self.ws.pops.dock(key);
-            } else {
-                self.ws.pops.pop_out(key);
-            }
+            self.ws.pops.toggle(key, ctx);
         }
         self.views[i].ws_end(ctx, &engine, &self.lang, &self.pdfs, &mut self.status, changed);
         self.ws_after_character(ctx, i, roll);
@@ -703,9 +695,12 @@ impl App {
             let own_frame = key.doc != active && !seen.contains(&key.doc);
             seen.push(key.doc);
             let title = self.ws_panel_title(key);
-            let docked = popout::window(ctx, key, &title, icon.clone(), &dock, |vctx, ui| self.ws_panel(vctx, ui, key, own_frame));
+            let at = self.ws.pops.origin(key);
+            let docked = popout::window(ctx, key, &title, at, icon.clone(), &dock, |vctx, ui| self.ws_panel(vctx, ui, key, own_frame));
             if docked {
                 self.ws.pops.dock(key);
+                // The main window was drawn with the placeholder.
+                ctx.request_repaint();
             }
         }
     }
@@ -777,9 +772,9 @@ impl App {
     }
 
     /// Pop a tool panel out when its button was clicked.
-    pub(crate) fn ws_pop(&mut self, panel: PanelId, clicked: bool) {
+    pub(crate) fn ws_pop(&mut self, ctx: &egui::Context, panel: PanelId, clicked: bool) {
         if clicked {
-            self.ws.pops.pop_out(PopKey::new(DocKey::Home, panel));
+            self.ws.pops.pop_out_near(PopKey::new(DocKey::Home, panel), ctx);
         }
     }
 

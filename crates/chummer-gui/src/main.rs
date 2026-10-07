@@ -1093,7 +1093,7 @@ impl App {
                 self.dice.ui(ui, &self.lang)
             });
             self.show_dice = open;
-            self.ws_pop(dice, pop);
+            self.ws_pop(ctx, dice, pop);
         }
         let mut open = self.show_sources;
         egui::Window::new(self.lang.tr("Sourcebooks")).id(egui::Id::new("sourcebooks")).open(&mut open).default_size([820.0, 620.0]).show(ctx, |ui| {
@@ -1120,7 +1120,7 @@ impl App {
                 self.initiative.ui(ui, &self.lang, &chars)
             });
             self.show_initiative = open;
-            self.ws_pop(initiative, pop);
+            self.ws_pop(ctx, initiative, pop);
         }
         let mut open = self.show_settings;
         let mut reload = false;

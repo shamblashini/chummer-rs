@@ -28,35 +28,65 @@ impl PopKey {
     }
 }
 
-/// The panels in their own windows, in the order they were popped out.
+/// The panels in their own windows, in the order they were popped out,
+/// with where each window first opens (screen points; `None` lets the
+/// system place it).
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct PopOuts {
-    out: Vec<PopKey>,
+    out: Vec<(PopKey, Option<egui::Pos2>)>,
 }
 
 impl PopOuts {
     pub fn is_out(&self, key: PopKey) -> bool {
-        self.out.contains(&key)
+        self.out.iter().any(|(k, _)| *k == key)
     }
 
+    #[cfg(test)]
     pub fn pop_out(&mut self, key: PopKey) {
+        self.pop_out_at(key, None);
+    }
+
+    /// Pop out with the window opening at `at`.
+    pub fn pop_out_at(&mut self, key: PopKey, at: Option<egui::Pos2>) {
         if !self.is_out(key) {
-            self.out.push(key);
+            self.out.push((key, at));
         }
     }
 
+    /// Pop out next to the main window (staggered, so windows do not
+    /// open on top of each other).
+    pub fn pop_out_near(&mut self, key: PopKey, ctx: &egui::Context) {
+        let main = ctx.input(|i| i.viewport().outer_rect);
+        let step = 28.0 * (self.out.len() as f32 + 1.0);
+        self.pop_out_at(key, main.map(|r| r.min + egui::vec2(80.0 + step, 60.0 + step)));
+    }
+
     pub fn dock(&mut self, key: PopKey) {
-        self.out.retain(|k| *k != key);
+        self.out.retain(|(k, _)| *k != key);
+    }
+
+    /// Pop out or dock back.
+    pub fn toggle(&mut self, key: PopKey, ctx: &egui::Context) {
+        if self.is_out(key) {
+            self.dock(key);
+        } else {
+            self.pop_out_near(key, ctx);
+        }
     }
 
     /// Every panel out, in order.
     pub fn keys(&self) -> Vec<PopKey> {
-        self.out.clone()
+        self.out.iter().map(|(k, _)| *k).collect()
+    }
+
+    /// Where a panel's window first opens.
+    pub fn origin(&self, key: PopKey) -> Option<egui::Pos2> {
+        self.out.iter().find(|(k, _)| *k == key).and_then(|(_, at)| *at)
     }
 
     /// Dock the panels of documents that were closed.
     pub fn retain_docs(&mut self, open: impl Fn(DocKey) -> bool) {
-        self.out.retain(|k| open(k.doc));
+        self.out.retain(|(k, _)| open(k.doc));
     }
 
     pub fn is_empty(&self) -> bool {
@@ -123,21 +153,16 @@ impl<'a> Panel<'a> {
                 ui.set_width(ui.available_width());
                 contents(ui)
             }),
-            Frame::Inspector => egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 12)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                contents(ui)
-            }),
+            // No `set_width` here: in a resizable side panel, rounding
+            // would widen the panel a little every frame.
+            Frame::Inspector => egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 12)).show(ui, contents),
         };
         if self.frame == Frame::Inspector {
             let y = r.response.rect.bottom();
-            ui.painter().hline(r.response.rect.x_range(), y, egui::Stroke::new(1.0_f32, ws.divider));
+            ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(1.0_f32, ws.divider));
         }
         if toggle {
-            if out {
-                pops.dock(self.key);
-            } else {
-                pops.pop_out(self.key);
-            }
+            pops.toggle(self.key, ui.ctx());
         }
         r.inner
     }
@@ -166,8 +191,19 @@ pub fn viewport_id(key: PopKey) -> egui::ViewportId {
 /// contents with the window's `Context` (for dialogs) and `Ui`. Returns
 /// true when the user docked it back (the dock-back button or closing
 /// the window).
-pub fn window(ctx: &egui::Context, key: PopKey, title: &str, icon: Option<std::sync::Arc<egui::IconData>>, dock_label: &str, mut add: impl FnMut(&egui::Context, &mut Ui)) -> bool {
-    let mut builder = egui::ViewportBuilder::default().with_title(format!("{title} — chummer-rs")).with_app_id("chummer-rs").with_inner_size([440.0, 600.0]).with_min_inner_size([260.0, 180.0]);
+#[allow(clippy::too_many_arguments)]
+pub fn window(ctx: &egui::Context, key: PopKey, title: &str, at: Option<egui::Pos2>, icon: Option<std::sync::Arc<egui::IconData>>, dock_label: &str, mut add: impl FnMut(&egui::Context, &mut Ui)) -> bool {
+    // Pages get room for their tables; other panels are narrow.
+    let size = match key.panel {
+        PanelId::Section(_) => [960.0, 680.0],
+        PanelId::Condition => [680.0, 420.0],
+        _ => [440.0, 600.0],
+    };
+    let mut builder = egui::ViewportBuilder::default().with_title(format!("{title} — chummer-rs")).with_app_id("chummer-rs").with_inner_size(size).with_min_inner_size([260.0, 180.0]);
+    if let Some(p) = at {
+        // Honoured on X11, Windows and macOS; Wayland places windows itself.
+        builder = builder.with_position(p);
+    }
     if let Some(i) = icon {
         builder = builder.with_icon(i);
     }
@@ -220,6 +256,11 @@ mod tests {
         // Closing character 2 docks its panels.
         p.retain_docs(|d| d != DocKey::Character(2));
         assert_eq!(p.keys(), vec![c]);
+        // Where a window opens is kept while it is out.
+        let at = Some(egui::pos2(100.0, 50.0));
+        p.pop_out_at(a, at);
+        p.pop_out_at(a, None);
+        assert_eq!((p.origin(a), p.origin(c)), (at, None));
         assert_ne!(viewport_id(a), viewport_id(b));
         assert_eq!(viewport_id(a), viewport_id(PopKey::new(DocKey::Character(1), PanelId::Recent)));
     }
