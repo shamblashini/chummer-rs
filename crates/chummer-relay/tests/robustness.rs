@@ -298,3 +298,46 @@ async fn relay_restart_keeps_mail_and_old_connections_fail_fast() -> Result<()> 
     std::fs::remove_dir_all(&d)?;
     Ok(())
 }
+
+/// A damaged mailbox database used to stop the relay from starting at
+/// all (a crash loop under systemd or Docker). Now it is moved aside and
+/// an empty one is made; a permission problem is still an error.
+#[test]
+fn damaged_database_is_moved_aside_on_start() {
+    let d = dir("recover");
+    let p = d.join("mailbox.redb");
+    {
+        let s = Store::open(&p, Limits::default()).unwrap();
+        s.put(id(), id(), vec![1; 100], T0).unwrap();
+    }
+    let mut b = std::fs::read(&p).unwrap();
+    for i in (0..b.len()).step_by(509) {
+        b[i] ^= 0xa5;
+    }
+    std::fs::write(&p, &b).unwrap();
+    assert!(Store::open(&p, Limits::default()).is_err(), "the damage is detected");
+    let (s, moved) = Store::open_or_recover(&p, Limits::default(), T0).unwrap();
+    let moved = moved.expect("moved aside");
+    assert_eq!(std::fs::read(&moved).unwrap(), b, "the damaged file is kept");
+    assert!(s.is_empty().unwrap());
+    let bob = id();
+    s.put(id(), bob, vec![2], T0).unwrap();
+    assert_eq!(s.fetch(bob, 10, T0).unwrap().0.len(), 1);
+    drop(s);
+    // A healthy database is opened as it is.
+    let (s, moved) = Store::open_or_recover(&p, Limits::default(), T0).unwrap();
+    assert!(moved.is_none());
+    assert_eq!(s.len().unwrap(), 1);
+    drop(s);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::File::open(&p).is_err() {
+            assert!(Store::open_or_recover(&p, Limits::default(), T0).is_err(), "an unreadable file is not moved aside");
+            assert!(p.exists());
+        }
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    std::fs::remove_dir_all(&d).unwrap();
+}

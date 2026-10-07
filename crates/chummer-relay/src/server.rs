@@ -200,10 +200,13 @@ impl RelayNode {
         };
 
         if cfg.mailbox_enabled {
-            let store = Arc::new(
-                Store::open(&data_dir.join(MAILBOX_DB_FILE), cfg.limits.clone())
-                    .context("opening the mailbox database")?,
-            );
+            let (store, moved) =
+                Store::open_or_recover(&data_dir.join(MAILBOX_DB_FILE), cfg.limits.clone(), clock.now())
+                    .context("opening the mailbox database")?;
+            if let Some(m) = moved {
+                tracing::error!("the mailbox database was damaged; it was moved to {} and an empty one was made (mail in it is lost; clients send unanswered mail again)", m.display());
+            }
+            let store = Arc::new(store);
             let key = chummer_net::identity::load_or_create(&data_dir.join(MAILBOX_KEY_FILE))
                 .context("loading the mailbox node key")?;
             let mut net = node.client_config_without_mailbox();

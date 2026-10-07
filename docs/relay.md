@@ -191,6 +191,12 @@ involved.
 
 - Back up `<data_dir>/mailbox.key` (the mailbox identity). `mailbox.redb`
   holds only sealed, expiring messages; losing it loses undelivered mail.
+  The apps mail again what was not answered after a day
+  (`PlayerConfig::remail_after`), so lost mail is sent again.
+- If `mailbox.redb` is damaged, the relay moves it to
+  `mailbox.redb.damaged-<unix time>`, logs an error and starts with an
+  empty one. It does not stop. A file it cannot read (permissions) is an
+  error at start-up.
 - The relay logs connection events at `info` level without message
   contents. It never sees plaintext: campaign traffic is end-to-end
   encrypted QUIC, and mailbox blobs are sealed boxes (X25519 +

@@ -9,7 +9,7 @@
 //! Every call takes `now` (Unix seconds) so limits and expiry can be tested
 //! with a fake clock.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chummer_net::mailbox::{MailItem, MailboxError, MAX_FETCH_BYTES};
 use iroh::EndpointId;
@@ -77,20 +77,61 @@ pub struct Store {
 impl Store {
     /// Opens (or creates) the database at `path`.
     pub fn open(path: &Path, limits: Limits) -> Result<Store, StoreError> {
-        let db = Database::create(path).map_err(|e| StoreError(e.to_string()))?;
-        let txn = db.begin_write().map_err(|e| StoreError(e.to_string()))?;
+        Store::try_open(path, limits).map_err(|(e, _)| e)
+    }
+
+    /// As [`Store::open`], but a damaged database file (not a permission
+    /// or disk problem) is moved aside to `<file>.damaged-<unix time>` and
+    /// an empty one is made, so the relay keeps running: the mailbox only
+    /// holds mail in transit, and clients send what was not answered
+    /// again. Returns where the damaged file went, if it was moved.
+    pub fn open_or_recover(path: &Path, limits: Limits, now: u64) -> Result<(Store, Option<PathBuf>), StoreError> {
+        match Store::try_open(path, limits.clone()) {
+            Ok(s) => Ok((s, None)),
+            Err((e, true)) if path.is_file() => {
+                let mut aside = path.as_os_str().to_owned();
+                aside.push(format!(".damaged-{now}"));
+                let aside = PathBuf::from(aside);
+                std::fs::rename(path, &aside).map_err(|r| StoreError(format!("{e}; and moving it aside failed: {r}")))?;
+                Ok((Store::open(path, limits)?, Some(aside)))
+            }
+            Err((e, _)) => Err(e),
+        }
+    }
+
+    /// Opens; on failure, also says whether the file looks damaged.
+    fn try_open(path: &Path, limits: Limits) -> Result<Store, (StoreError, bool)> {
+        fn io_damage(e: &std::io::Error) -> bool {
+            matches!(e.kind(), std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof)
+        }
+        fn storage_damage(e: &redb::StorageError) -> bool {
+            match e {
+                redb::StorageError::Corrupted(_) => true,
+                redb::StorageError::Io(io) => io_damage(io),
+                _ => false,
+            }
+        }
+        let db = Database::create(path).map_err(|e| {
+            let damaged = match &e {
+                redb::DatabaseError::Storage(s) => storage_damage(s),
+                redb::DatabaseError::RepairAborted => true,
+                _ => false,
+            };
+            (StoreError(e.to_string()), damaged)
+        })?;
+        let fail = |e: redb::Error| {
+            let damaged = matches!(&e, redb::Error::Corrupted(_)) || matches!(&e, redb::Error::Io(io) if io_damage(io));
+            (StoreError(e.to_string()), damaged)
+        };
+        let txn = db.begin_write().map_err(|e| fail(e.into()))?;
         {
             // Create the tables so read transactions never miss them.
-            txn.open_table(MESSAGES)
-                .map_err(|e| StoreError(e.to_string()))?;
-            txn.open_table(INBOX)
-                .map_err(|e| StoreError(e.to_string()))?;
-            txn.open_table(QUOTA)
-                .map_err(|e| StoreError(e.to_string()))?;
-            txn.open_table(META)
-                .map_err(|e| StoreError(e.to_string()))?;
+            txn.open_table(MESSAGES).map_err(|e| fail(e.into()))?;
+            txn.open_table(INBOX).map_err(|e| fail(e.into()))?;
+            txn.open_table(QUOTA).map_err(|e| fail(e.into()))?;
+            txn.open_table(META).map_err(|e| fail(e.into()))?;
         }
-        txn.commit().map_err(|e| StoreError(e.to_string()))?;
+        txn.commit().map_err(|e| fail(e.into()))?;
         Ok(Store { db, limits })
     }
 
