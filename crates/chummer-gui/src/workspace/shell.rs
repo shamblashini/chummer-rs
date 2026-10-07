@@ -798,21 +798,18 @@ impl App {
         if self.ws.pops.is_empty() {
             return;
         }
-        let keys = self.ws.pops.keys();
+        // A closed tool's window goes away (docked).
+        let keys = self.ws_shown_pops();
+        for k in self.ws.pops.keys() {
+            if !keys.contains(&k) {
+                self.ws.pops.dock(k);
+            }
+        }
         let dock = self.lang.tr("Dock back");
         let icon = super::app_icon();
         let active = self.ws_doc();
         let mut seen: Vec<DocKey> = Vec::new();
         for key in keys {
-            let shown = match key.panel {
-                PanelId::Dice => self.show_dice,
-                PanelId::Initiative => self.show_initiative,
-                _ => true,
-            };
-            if !shown {
-                self.ws.pops.dock(key);
-                continue;
-            }
             // A background character's first window runs its frame
             // (taking what arrived, its dialogs, recomputing).
             let own_frame = key.doc != active && !seen.contains(&key.doc);
