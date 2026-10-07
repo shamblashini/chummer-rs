@@ -179,6 +179,9 @@ impl App {
             .map(|s| s.lines().filter(|l| !l.is_empty()).map(PathBuf::from).collect())
             .unwrap_or_default();
         app.roster = chummer_core::roster::scan(&app.roster_folders);
+        if let Some(t) = storage.and_then(|s| s.get_string(workspace::POPOUTS_KEY)) {
+            app.ws.pops.restore(&t);
+        }
         for f in files {
             app.open(&f);
         }
@@ -1009,6 +1012,7 @@ impl eframe::App for App {
         storage.set_string(LANG_KEY, self.lang.code.clone());
         let folders: Vec<String> = self.roster_folders.iter().map(|p| p.display().to_string()).collect();
         storage.set_string(ROSTER_KEY, folders.join("\n"));
+        storage.set_string(workspace::POPOUTS_KEY, self.ws_popouts_text());
     }
 }
 

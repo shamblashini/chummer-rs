@@ -231,6 +231,10 @@ pub struct PacksWindow {
 }
 
 impl PacksWindow {
+    pub fn is_open(&self) -> bool {
+        self.mode.is_some()
+    }
+
     pub fn open(&mut self, mode: PacksMode) {
         self.mode = Some(mode);
         self.doc = None;

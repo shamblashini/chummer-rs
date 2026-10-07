@@ -44,6 +44,8 @@ impl App {
         let open = self.ws_docs();
         self.ws.pops.retain_docs(|d| open.contains(&d));
         let doc = self.ws_doc();
+        self.ws_dialog_homes(doc);
+        self.ws_restore_pops(ctx);
         if doc == DocKey::Campaign {
             let engine = self.engine.clone();
             if let Some(gm) = self.gm.as_mut() {
@@ -515,6 +517,7 @@ impl App {
         let Some(i) = self.ws_index(id) else { return };
         let ws = theme::current(ctx).ws;
         let engine = self.engine.clone();
+        self.views[i].ws_track_dialogs(ctx);
         let mut changed = self.views[i].ws_begin();
         let mut roll = None;
         // Budget strip.
@@ -666,7 +669,10 @@ impl App {
     fn ws_campaign(&mut self, ctx: &egui::Context) {
         let engine = self.engine.clone();
         let action = match self.gm.as_mut() {
-            Some(gm) => gm.ws_ui(ctx, &mut gm_env(&engine, &self.lang, &mut self.views, &mut self.status, &mut self.online, &mut self.ws.pops)),
+            Some(gm) => {
+                gm.ws_track_dialogs(ctx);
+                gm.ws_ui(ctx, &mut gm_env(&engine, &self.lang, &mut self.views, &mut self.status, &mut self.online, &mut self.ws.pops))
+            }
             None => {
                 self.home = Some(Home::Roster);
                 None
@@ -720,34 +726,106 @@ impl App {
         }
     }
 
+    /// The pop-outs as kept between sessions (eframe storage).
+    pub(crate) fn ws_popouts_text(&self) -> String {
+        self.ws.pops.to_text(|d| self.ws_saved_doc(d))
+    }
+
+    /// A document as named between sessions (`None`: never saved).
+    fn ws_saved_doc(&self, d: DocKey) -> Option<popout::SavedDoc> {
+        match d {
+            DocKey::Home => Some(popout::SavedDoc::Home),
+            DocKey::Campaign => self.gm.as_ref().and_then(|g| g.path.clone()).map(|p| popout::SavedDoc::Campaign(absolute(p))),
+            DocKey::Character(id) => self.ws_index(id).and_then(|i| self.views[i].path()).map(|p| popout::SavedDoc::Character(absolute(p))),
+        }
+    }
+
+    /// Pop out again what was out when the app last closed: the tools at
+    /// once, a character's or campaign's panels when its file opens.
+    fn ws_restore_pops(&mut self, ctx: &egui::Context) {
+        // Only when documents open (and at start, for the tools).
+        let docs = self.ws_docs();
+        if !self.ws.pops.has_pending() || docs == self.ws.restored_for {
+            return;
+        }
+        self.ws.restored_for = docs.clone();
+        for d in docs {
+            let Some(saved) = self.ws_saved_doc(d) else { continue };
+            for panel in self.ws.pops.take_pending(&saved) {
+                match panel {
+                    PanelId::Dice => self.show_dice = true,
+                    PanelId::Initiative => self.show_initiative = true,
+                    _ => {}
+                }
+                self.ws.pops.pop_out_near(PopKey::new(d, panel), ctx);
+            }
+        }
+    }
+
+    /// Check each document's dialogs still have a window: a docked
+    /// pop-out's dialogs come back to the main window (or, behind
+    /// another document, to the document's first pop-out).
+    fn ws_dialog_homes(&mut self, active: DocKey) {
+        let keys = self.ws_shown_pops();
+        let homes = |doc: DocKey| {
+            let windows: Vec<egui::ViewportId> = keys.iter().filter(|k| k.doc == doc).map(|k| popout::viewport_id(*k)).collect();
+            let main = doc == active;
+            let fallback = if main { egui::ViewportId::ROOT } else { windows.first().copied().unwrap_or(egui::ViewportId::ROOT) };
+            (move |vp: egui::ViewportId| (main && vp == egui::ViewportId::ROOT) || windows.contains(&vp), fallback)
+        };
+        for v in &mut self.views {
+            let (shown, fallback) = homes(DocKey::Character(v.ws_id()));
+            v.ws_dialog_home().resolve(shown, fallback);
+        }
+        if let Some(gm) = self.gm.as_mut() {
+            let (shown, fallback) = homes(DocKey::Campaign);
+            gm.ws_dialog_home().resolve(shown, fallback);
+        }
+    }
+
+    /// The panels out whose windows show (the dice roller and the
+    /// initiative tracker only while they are open).
+    fn ws_shown_pops(&self) -> Vec<PopKey> {
+        self.ws
+            .pops
+            .keys()
+            .into_iter()
+            .filter(|k| match k.panel {
+                PanelId::Dice => self.show_dice,
+                PanelId::Initiative => self.show_initiative,
+                _ => true,
+            })
+            .collect()
+    }
+
     /// Draw every popped-out panel in its window.
     fn ws_popped(&mut self, ctx: &egui::Context) {
         if self.ws.pops.is_empty() {
             return;
         }
-        let keys = self.ws.pops.keys();
+        // A closed tool's window goes away (docked).
+        let keys = self.ws_shown_pops();
+        for k in self.ws.pops.keys() {
+            if !keys.contains(&k) {
+                self.ws.pops.dock(k);
+            }
+        }
         let dock = self.lang.tr("Dock back");
         let icon = super::app_icon();
         let active = self.ws_doc();
         let mut seen: Vec<DocKey> = Vec::new();
         for key in keys {
-            let shown = match key.panel {
-                PanelId::Dice => self.show_dice,
-                PanelId::Initiative => self.show_initiative,
-                _ => true,
-            };
-            if !shown {
-                self.ws.pops.dock(key);
-                continue;
-            }
             // A background character's first window runs its frame
             // (taking what arrived, its dialogs, recomputing).
             let own_frame = key.doc != active && !seen.contains(&key.doc);
             seen.push(key.doc);
             let title = self.ws_panel_title(key);
-            let at = self.ws.pops.origin(key);
-            let docked = popout::window(ctx, key, &title, at, icon.clone(), &dock, |vctx, ui| self.ws_panel(vctx, ui, key, own_frame));
-            if docked {
+            let (at, size) = (self.ws.pops.origin(key), self.ws.pops.first_size(key));
+            let shown = popout::window(ctx, key, &title, at, size, icon.clone(), &dock, |vctx, ui| self.ws_panel(vctx, ui, key, own_frame));
+            if let Some(g) = shown.geometry {
+                self.ws.pops.remember(key, g);
+            }
+            if shown.docked {
                 self.ws.pops.dock(key);
                 // The main window was drawn with the placeholder.
                 ctx.request_repaint();
@@ -764,6 +842,7 @@ impl App {
         match key.doc {
             DocKey::Character(id) => {
                 let Some(i) = self.ws_index(id) else { return };
+                self.views[i].ws_track_dialogs(vctx);
                 let mut changed = own_frame && self.views[i].ws_begin();
                 let mut roll = None;
                 let lang = &self.lang;
@@ -800,6 +879,9 @@ impl App {
                 }
                 if own_frame {
                     v.ws_end(vctx, &engine, lang, &self.pdfs, &mut self.status, changed);
+                } else {
+                    // Dialogs opened from this window show here.
+                    v.ws_dialogs_in(vctx, &engine, lang, &self.pdfs, &mut self.status);
                 }
                 if let Some(pool) = roll {
                     self.dice.set_pool(pool);
@@ -809,6 +891,7 @@ impl App {
             DocKey::Campaign => {
                 let mut action = None;
                 if let Some(gm) = self.gm.as_mut() {
+                    gm.ws_track_dialogs(vctx);
                     // Behind another document, the first popped panel
                     // runs the campaign's frame (new log lines, sheets).
                     if own_frame {
@@ -820,6 +903,7 @@ impl App {
                     };
                     let mut env = gm_env(&engine, &self.lang, &mut self.views, &mut self.status, &mut self.online, &mut self.ws.pops);
                     scroll(ui, &mut |ui| action = gm.ws_panel(ui, panel, &mut env));
+                    gm.ws_dialogs_in(vctx, &mut env);
                 }
                 if let Some(crate::gm_screen::Action::Open(id)) = action {
                     self.open_member(id);
@@ -1091,4 +1175,10 @@ fn search_field(ui: &mut egui::Ui, hint: &str) -> egui::Response {
     painter.rect(k, CornerRadius::same(3), ws.well, Stroke::new(1.0_f32, ws.divider), egui::StrokeKind::Inside);
     painter.galley(k.center() - kbd.size() / 2.0, kbd, ws.muted);
     resp.on_hover_cursor(egui::CursorIcon::Text)
+}
+
+/// A file's path as kept between sessions (the same file opened from
+/// another folder matches).
+fn absolute(p: std::path::PathBuf) -> std::path::PathBuf {
+    std::fs::canonicalize(&p).unwrap_or(p)
 }

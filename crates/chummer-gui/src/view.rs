@@ -180,6 +180,9 @@ pub struct CharacterView {
     ws_build: workspace::build::State,
     /// The Workspace's item pages: the inline catalog and item inspector.
     ws_gear: ws_items::GearState,
+    /// Which window the dialogs below show in (a pop-out's, when opened
+    /// from it).
+    ws_dialogs: crate::workspace::popout::DialogHome,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -301,6 +304,7 @@ impl CharacterView {
             play: Default::default(),
             ws_build: Default::default(),
             ws_gear: Default::default(),
+            ws_dialogs: Default::default(),
         };
         v.refresh_budget();
         v.set_guided(guided_preference());
@@ -429,6 +433,8 @@ impl CharacterView {
     }
 
     pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<u32> {
+        // Classic has one window.
+        self.ws_dialogs = Default::default();
         let mut changed = self.begin_frame();
         let mut roll: Option<u32> = None;
         egui::SidePanel::right("sheet_panel").resizable(true).default_width(310.0).min_width(220.0).show(ctx, |ui| {
@@ -490,13 +496,28 @@ impl CharacterView {
     /// End of a frame: the dialogs, a career purchase picked while
     /// drawing, and the sheet and budgets after a change.
     fn end_frame(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, mut changed: bool) {
-        changed |= self.confirm_dialog(ctx, lang);
+        if self.ws_dialogs.here(ctx) {
+            changed |= self.frame_dialogs(ctx, engine, lang, pdfs, status);
+        }
+        self.finish_frame(engine, status, changed);
+    }
+
+    /// The dialogs (in the window `ctx` draws). Returns true if the
+    /// character changed.
+    fn frame_dialogs(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+        let mut changed = self.confirm_dialog(ctx, lang);
         changed |= self.select_dialog(ctx, lang, pdfs, status);
         changed |= self.drug_builder.window(ctx, &mut self.doc, &self.store, lang, status);
         changed |= self.custom_improvements.window(ctx, &mut self.doc, &self.store, self.settings.as_ref(), lang);
         changed |= self.packs.window(ctx, &mut self.doc, &self.store, self.settings.as_ref(), &self.sheet, lang, status);
         changed |= self.spell_designer.window(ctx, &mut self.doc, engine, &self.store, lang, status);
         changed |= self.finish_dialog(ctx, lang);
+        changed
+    }
+
+    /// A career purchase picked while drawing, and the sheet and budgets
+    /// after a change.
+    fn finish_frame(&mut self, engine: &Arc<Engine>, status: &mut Status, mut changed: bool) {
         if let Some(a) = self.action.take() {
             changed |= self.run_action(a, status);
         }
