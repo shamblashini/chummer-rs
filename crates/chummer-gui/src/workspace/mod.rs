@@ -9,17 +9,24 @@
 //!
 //! * A **section** is an entry of the sidebar: add a [`Section`] variant,
 //!   give it a label and icon ([`Section::label`], [`Section::icon`]),
-//!   list it in the sidebar model (`character::ws_nav` for characters,
-//!   `shell::home_nav` / `shell::campaign_nav` otherwise) and draw it in
-//!   `CharacterView::ws_page` (characters) or the shell's
-//!   `section_page`. Until a screen is rebuilt, `Section::Page(tab)`
-//!   draws the Classic tab page.
-//! * A **panel** that can pop out is drawn with [`popout::Panel`]; give
-//!   it a [`PanelId`] and draw the same contents in `shell::popped` so
-//!   its window shows them.
-//! * **Inspector** sections are `popout::Panel::inspector` panels drawn in
-//!   `shell::inspector`.
-//! * Widgets in the mockups' style are in [`widgets`], icons in [`icons`],
+//!   list it in the sidebar model (`CharacterView::ws_nav` in
+//!   `character.rs` for characters, `App::ws_nav` in `shell.rs` for Home
+//!   and the campaign) and draw it in `CharacterView::ws_page`
+//!   (characters) or the shell (`App::ws_home`, `App::ws_campaign`).
+//!   Until a screen is rebuilt, `Section::Page(tab)` draws the Classic
+//!   tab page; [`Section::Play`] is the first rebuilt one.
+//! * A **panel** that can pop out is drawn with [`popout::Panel`]
+//!   (`Panel::card` in a page, `Panel::inspector` in the inspector); give
+//!   it a [`PanelId`] and draw the same contents in `App::ws_panel`
+//!   (`shell.rs`) so its window shows them. [`popout::window`] makes the
+//!   native window; [`popout::PopOuts`] remembers what is out.
+//! * **Inspector** sections are `Panel::inspector` panels drawn in
+//!   `App::ws_inspector`.
+//! * Menu actions are [`palette::Cmd`]s, run by `App::ws_run`; the
+//!   palette's entries come from `App::ws_entries`.
+//! * Widgets in the mockups' style are in [`widgets`] (buttons, badge,
+//!   nav item, card frame, budget chip, segmented switch, check box,
+//!   condition monitor, Edge boxes, `clip_to`), icons in [`icons`],
 //!   colours in `crate::theme::ws`.
 
 pub mod icons;

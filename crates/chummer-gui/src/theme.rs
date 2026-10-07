@@ -365,7 +365,7 @@ impl Theme {
         self
     }
 
-    /// The Workspace layout's theme (see the mockups in `ui-concepts`):
+    /// The Workspace layout's theme (from the owner's approved mockups):
     /// compact (13px body, 26px controls), IBM Plex, 5px corners.
     pub fn workspace(light: bool) -> Theme {
         let w = if light { WsPalette::LIGHT } else { WsPalette::DARK };
@@ -688,6 +688,7 @@ fn phosphor_for(emoji: &'static str) -> &'static str {
         "☰" => ph::DOTS_SIX_VERTICAL,
         "⚠" => ph::WARNING,
         "✔" => ph::CHECK,
+        "🎭" => ph::MASK_HAPPY,
         other => other,
     }
 }
@@ -1059,7 +1060,7 @@ mod tests {
 
     #[test]
     fn glyphs_have_phosphor_icons() {
-        for e in ["➕", "🗑", "📖", "🎲", "✖", "✨", "📂", "📝", "🔍", "💾", "⟲", "⟳", "✏", "🔗", "📎", "📁", "🔥", "🧪", "☰", "⚠", "✔"] {
+        for e in ["➕", "🗑", "📖", "🎲", "✖", "✨", "📂", "📝", "🔍", "💾", "⟲", "⟳", "✏", "🔗", "📎", "📁", "🔥", "🧪", "☰", "⚠", "✔", "🎭"] {
             let p = phosphor_for(e);
             assert_ne!(p, e, "{e} has no Phosphor icon");
             assert!(p.chars().all(|c| ('\u{E000}'..='\u{F8FF}').contains(&c)), "{e} maps outside the icon font");

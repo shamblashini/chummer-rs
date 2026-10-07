@@ -1,4 +1,4 @@
-//! Workspace widgets, drawn as in the mockups (`ui-concepts/project`):
+//! Workspace widgets, drawn as in the owner's approved mockups:
 //! buttons, badges, the sidebar entry, cards, budget chips, the
 //! dark/light switch, a check box, and the condition monitor and Edge
 //! boxes of the Play screen. Colours come from [`crate::theme::ws`].

@@ -143,6 +143,15 @@ impl CharacterView {
         self.tab
     }
 
+    /// The Street Gear sub-tab.
+    pub fn ws_gear_tab(&self) -> usize {
+        self.gear_tab
+    }
+
+    pub fn ws_set_gear_tab(&mut self, i: usize) {
+        self.gear_tab = i;
+    }
+
     fn tab_badge(&self, t: Tab) -> Option<Badge> {
         badge(self.issues.iter().filter(|i| i.tab().map(tab_of) == Some(t)))
     }

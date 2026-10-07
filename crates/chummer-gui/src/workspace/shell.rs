@@ -719,7 +719,13 @@ impl App {
                 let lang = &self.lang;
                 let v = &mut self.views[i];
                 match key.panel {
-                    PanelId::Section(s) => changed |= v.ws_page(ui, s, &engine, lang, &self.pdfs, &mut self.status, &mut roll, &mut self.ws.pops),
+                    PanelId::Section(s) => {
+                        // A popped Street Gear sub-tab must not move the
+                        // main window's page to it.
+                        let gear = v.ws_gear_tab();
+                        changed |= v.ws_page(ui, s, &engine, lang, &self.pdfs, &mut self.status, &mut roll, &mut self.ws.pops);
+                        v.ws_set_gear_tab(gear);
+                    }
                     PanelId::Condition => scroll(ui, &mut |ui| changed |= v.ws_condition(ui, lang, &mut roll)),
                     PanelId::Issues => scroll(ui, &mut |ui| v.ws_issues(ui, lang)),
                     PanelId::Item => scroll(ui, &mut |ui| {

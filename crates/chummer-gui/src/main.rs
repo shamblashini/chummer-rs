@@ -659,7 +659,7 @@ impl App {
     fn mdi_tabs(&self) -> Vec<(Mdi, String)> {
         let mut tabs = vec![(Mdi::Home(Home::MasterIndex), self.lang.tr("Master Index")), (Mdi::Home(Home::Roster), self.lang.tr("Character Roster"))];
         if let Some(gm) = &self.gm {
-            tabs.push((Mdi::Home(Home::Campaign), format!("🎭 {}", gm.title(&self.views))));
+            tabs.push((Mdi::Home(Home::Campaign), format!("{} {}", crate::theme::glyph("🎭"), gm.title(&self.views))));
         }
         tabs.extend(self.views.iter().enumerate().map(|(i, v)| (Mdi::Character(i), v.title())));
         tabs
