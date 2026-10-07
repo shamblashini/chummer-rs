@@ -194,6 +194,9 @@ pub const POPOUTS_KEY: &str = "workspace_popouts";
 #[derive(Default)]
 pub struct Workspace {
     pub pops: popout::PopOuts,
+    /// The documents open when the pop-outs of the last session were
+    /// last looked for (`shell::ws_restore_pops`).
+    restored_for: Vec<DocKey>,
     pub palette: palette::Palette,
     /// The logo for the top bar, once loaded.
     logo: Option<egui::TextureHandle>,

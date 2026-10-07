@@ -1503,9 +1503,15 @@ fn pool_lines(ui: &mut egui::Ui, lines: &[pool_diff::Line], lang: &Language) {
                 flush(ui, &mut hidden);
                 let name = lang.data_name("weapons.xml", "", name);
                 let title = if *new { format!("{name} ({})", lang.tr("New")) } else { name };
-                ui.add(egui::Label::new(RichText::new(title).size(12.5).color(ws.text)).truncate());
-                for p in &l.parts {
-                    row(ui, &lang.tr(p.field.label()), true, p);
+                match l.parts.as_slice() {
+                    // Only its pool: one line ("Ares Predator V 12 → 14").
+                    [p] if p.field == pool_diff::Field::Pool => row(ui, &title, false, p),
+                    parts => {
+                        ui.add(egui::Label::new(RichText::new(title).size(12.5).color(ws.text)).truncate());
+                        for p in parts {
+                            row(ui, &lang.tr(p.field.label()), true, p);
+                        }
+                    }
                 }
             }
         }

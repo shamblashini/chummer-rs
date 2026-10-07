@@ -730,18 +730,21 @@ impl App {
     fn ws_saved_doc(&self, d: DocKey) -> Option<popout::SavedDoc> {
         match d {
             DocKey::Home => Some(popout::SavedDoc::Home),
-            DocKey::Campaign => self.gm.as_ref().and_then(|g| g.path.clone()).map(popout::SavedDoc::Campaign),
-            DocKey::Character(id) => self.ws_index(id).and_then(|i| self.views[i].path()).map(popout::SavedDoc::Character),
+            DocKey::Campaign => self.gm.as_ref().and_then(|g| g.path.clone()).map(|p| popout::SavedDoc::Campaign(absolute(p))),
+            DocKey::Character(id) => self.ws_index(id).and_then(|i| self.views[i].path()).map(|p| popout::SavedDoc::Character(absolute(p))),
         }
     }
 
     /// Pop out again what was out when the app last closed: the tools at
     /// once, a character's or campaign's panels when its file opens.
     fn ws_restore_pops(&mut self, ctx: &egui::Context) {
-        if !self.ws.pops.has_pending() {
+        // Only when documents open (and at start, for the tools).
+        let docs = self.ws_docs();
+        if !self.ws.pops.has_pending() || docs == self.ws.restored_for {
             return;
         }
-        for d in self.ws_docs() {
+        self.ws.restored_for = docs.clone();
+        for d in docs {
             let Some(saved) = self.ws_saved_doc(d) else { continue };
             for panel in self.ws.pops.take_pending(&saved) {
                 match panel {
@@ -1170,4 +1173,10 @@ fn search_field(ui: &mut egui::Ui, hint: &str) -> egui::Response {
     painter.rect(k, CornerRadius::same(3), ws.well, Stroke::new(1.0_f32, ws.divider), egui::StrokeKind::Inside);
     painter.galley(k.center() - kbd.size() / 2.0, kbd, ws.muted);
     resp.on_hover_cursor(egui::CursorIcon::Text)
+}
+
+/// A file's path as kept between sessions (the same file opened from
+/// another folder matches).
+fn absolute(p: std::path::PathBuf) -> std::path::PathBuf {
+    std::fs::canonicalize(&p).unwrap_or(p)
 }

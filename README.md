@@ -441,7 +441,12 @@ was.
   install it, and a preview made by applying the purchase to a copy of
   the character: essence before and after (with a bar), cost,
   availability against the limit, nuyen (left) after, and initiative,
-  attributes, armor, limits and condition monitor where they change; the
+  attributes, armor, limits and condition monitor where they change;
+  the dice pools it changes ("Pistols 5 → 7": Defense, Damage
+  Resistance, Composure, Judge Intentions, Memory, Lift/Carry, astral
+  and Matrix initiative, the active skills with their specialization
+  pool, and each weapon's dice pool, DV, AP and accuracy; a new weapon
+  shows its values); the
   checks (requirements, availability, money); "Add", which runs the same
   command as the dialog (career mode pays for it), with the same
   question for bonus selections; and a comparison of up to three
@@ -477,13 +482,21 @@ was.
 - **Pop-out windows**: the button in a panel's header (page, inspector
   section, every block of At the table and the GM screen, dice roller,
   initiative tracker) moves it into its own window; "Dock back" or
-  closing the window puts it back. Which panels are out is kept for the
-  session. On Wayland the system places new windows; on X11, Windows and
-  macOS they open next to the main window.
+  closing the window puts it back. Dialogs opened from a popped-out
+  panel (confirmations, the selection dialog, the editors, pickers,
+  menus) show in its window; the inline catalog shows wherever its page
+  is. Each kind of window opens where it was last and as big (kept
+  between sessions), and the panels that were out when the app closed
+  come back out when their character or campaign opens again (the dice
+  roller and initiative tracker at once). On Wayland the system places
+  windows (only the size is kept); on X11, Windows and macOS a new
+  window opens next to the main window.
 
 ![Command palette](docs/screenshots/workspace-palette.png)
 ![At the table, light](docs/screenshots/workspace-play-light.png)
 ![The recent rolls in their own window](docs/screenshots/workspace-play-popout.png)
+![A confirmation inside a popped-out Weapons page](docs/screenshots/workspace-popout-dialog.png)
+![The catalog's preview with the dice pools a Muscle Toner changes](docs/screenshots/workspace-catalog-pools.png)
 ![The GM screen with an encounter, dark](docs/screenshots/workspace-gm-dark.png)
 ![The GM screen, light](docs/screenshots/workspace-gm-light.png)
 ![Workspace, light, Skills during creation](docs/screenshots/workspace-light-creation.png)
@@ -728,12 +741,15 @@ cargo test --workspace
   foci, spirits, metamagic) and of Relationships and custom improvements
   keep their Classic controls inside Workspace cards. The design's
   training time and "Saving for" goals are not there. The catalog's
-  preview does not show changes to skills or dice pools, and its table
-  shows essence, cost and availability from the data at the chosen
+  table shows essence, cost and availability from the data at the chosen
   rating and grade (the inspector's preview is exact). Home's recent
   activity lists joined campaigns only (the GM's own feed is on the GM
-  screen). The window positions of popped-out panels are not saved
-  between sessions. At the table: rolls and the rolled initiative are
+  screen). Pop-outs: on Wayland the system places the windows (only
+  their size is kept); with an item page popped out, the catalog's
+  record and preview stay in the main window's inspector (pop out its
+  Item panel too); the app's own windows (Character Settings, Export,
+  Character Sheet, Sourcebooks, the New Character wizard) open in the
+  main window. At the table: rolls and the rolled initiative are
   kept for the session only; gear at hand is listed, not used up (career
   mode has no quantity change); the design's situational modifiers, Edge
   actions (Push the Limit, Second Chance) and "Share to GM" are not there
