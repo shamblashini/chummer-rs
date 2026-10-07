@@ -1,3 +1,4 @@
 /target
 *.swp
 /target-*
+/tests/e2e/out/

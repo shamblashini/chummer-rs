@@ -1,0 +1,26 @@
+name: E2E (relay and mailbox in Docker)
+# Manual only: the scenarios take about an hour. See docs/testing.md.
+on:
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: "Scenarios to run (space-separated; empty = all)"
+        required: false
+        default: ""
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run the scenarios
+        run: tests/e2e/run.sh ${{ github.event.inputs.scenarios }}
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-out
+          path: tests/e2e/out/

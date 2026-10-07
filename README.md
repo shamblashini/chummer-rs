@@ -605,7 +605,9 @@ Copy the campaign file, its `.authority` file and the GM's `node.key`
 to the server (the key is the campaign's address). `invite` and
 `assign` work while it runs. It writes the characters back into the
 campaign file every few minutes and when it stops, so the GM can later
-open the file in the app again. A systemd unit is in
+open the file in the app again. Every change it accepts is journaled
+(`<name>.authority.journal`) before players are told, so a crash or
+power cut loses none. A systemd unit is in
 `packaging/authority/`; relays come from `online.json` or `--relay`.
 
 **Settings.** Tools → Online Settings: your name, your node id (a GM
@@ -657,6 +659,14 @@ the same budgets ([docs/interop.md](docs/interop.md)).
 cargo test --workspace
 ```
 
+Beyond the oracles: fuzzed and mutated character, `.chum5lz`, campaign
+and settings files; random command sequences (determinism, round trips,
+undo/redo); a headless run of the GUI over every fixture, layout and
+page; randomised sync with a lossy, reordering network and crashes; and
+`tests/e2e/run.sh`, which runs the relay, a GM and players in Docker
+under packet loss, partitions, kills, a full disk and hostile mail. See
+[docs/testing.md](docs/testing.md).
+
 ## Not done yet
 
 - Places where chummer-rs copies (or fixes) what looks like a Chummer5a
@@ -686,6 +696,10 @@ cargo test --workspace
   - The authority file keeps a compressed copy of each character plus
     the state 256 changes back, so characters with large mugshots make
     it large.
+  - The relay mailbox accepts mail for anyone from anyone: a stranger
+    can fill a member's mailbox (1000 messages) within the default daily
+    sender quota (2000), which blocks play-by-post to that member until
+    the mail expires. There is no relay-side membership yet.
 - Some career-mode details:
   - Enchantments, rituals and enhancements learned at a grade.
   - Binding stacked foci (undo of a stacked focus binding works).
@@ -769,6 +783,7 @@ cargo test --workspace
 | `crates/chummer-sync` | Online campaigns: the GM's authority (with revert), player replicas with an outbox, mailbox play-by-post, the hosted campaign file (`hosted.rs`) and the app's node |
 | `crates/chummer-authority` | Headless campaign host (`packaging/authority/`) |
 | `crates/chummer-relay` | Relay server and mailbox (`packaging/relay/`, [docs/relay.md](docs/relay.md)) |
+| `crates/chummer-testpeer`, `tests/e2e/` | Headless test player and the Docker end-to-end tests ([docs/testing.md](docs/testing.md)) |
 | `tools/gen_bonus_table.py` | Generates simple bonus handlers from Chummer5a's C# |
 | `resources/` | Data, translations, custom data, sheets and export templates from Chummer5a |
 
