@@ -363,8 +363,9 @@ impl CharacterView {
         self.ws_gear.catalog = Catalog::new(page, &tags, tag, &self.store, parent);
     }
 
+    /// The catalog has a record selected and is on the page shown.
     pub(crate) fn ws_catalog_has_selection(&self) -> bool {
-        self.ws_gear.catalog.as_ref().is_some_and(|c| c.selected.is_some())
+        self.ws_gear.catalog.as_ref().is_some_and(|c| c.selected.is_some() && self.ws_item_page(self.tab) == Some(c.page))
     }
 
     pub(crate) fn ws_catalog_deselect(&mut self) {

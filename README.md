@@ -703,7 +703,7 @@ cargo test --workspace
 | `print.rs`, `export.rs`, `roster.rs`, `calendar.rs` | Sheets, export, roster, calendar |
 | `tree.rs` | Item lists as Chummer's trees (root nodes, locations, nesting) |
 | `crates/chummer-gui` | egui desktop application |
-| `chummer-gui/src/workspace/` | The Workspace layout: shell, widgets, command palette, pop-out windows |
+| `chummer-gui/src/workspace/` | The Workspace layout: shell, widgets, command palette, pop-out windows, item pages, inline catalog, item inspector, Home |
 | `crates/chummer-cli` | Command-line tool |
 | `crates/chummer-net` | Online campaigns: iroh endpoints, campaign protocol, invites, mailbox client, sealing |
 | `crates/chummer-sync` | Online campaigns: the GM's authority (with revert), player replicas with an outbox, mailbox play-by-post, the hosted campaign file (`hosted.rs`) and the app's node |
