@@ -18,10 +18,10 @@ use crate::pdf_ui::Status;
 
 /// The guide of one character view.
 pub(super) struct Guide {
-    steps: Vec<Step>,
-    current: usize,
+    pub(super) steps: Vec<Step>,
+    pub(super) current: usize,
     /// The furthest step reached; steps before it count as done.
-    reached: usize,
+    pub(super) reached: usize,
 }
 
 /// `guide.ini`: one `step<TAB>path` line per character file.
@@ -82,7 +82,7 @@ impl CharacterView {
         self.go_to_step(current);
     }
 
-    fn build_method(&self) -> String {
+    pub(super) fn build_method(&self) -> String {
         match self.doc.field("buildmethod") {
             b if b.is_empty() => "Priority".into(),
             b => b,
@@ -97,7 +97,7 @@ impl CharacterView {
 
     /// Steps follow the character (a new Adept quality adds the powers
     /// step); keep the current step where it was.
-    fn refresh_steps(&mut self) {
+    pub(super) fn refresh_steps(&mut self) {
         let method = self.build_method();
         let Some(g) = self.guide.as_mut() else { return };
         let steps = guide::steps_for(&method, &self.doc);
@@ -110,7 +110,7 @@ impl CharacterView {
         }
     }
 
-    fn go_to_step(&mut self, index: usize) {
+    pub(super) fn go_to_step(&mut self, index: usize) {
         let Some(g) = self.guide.as_mut() else { return };
         g.current = index.min(g.steps.len().saturating_sub(1));
         g.reached = g.reached.max(g.current);

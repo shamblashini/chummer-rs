@@ -140,6 +140,10 @@ pub enum PanelId {
     Summary,
     /// Inspector: recent changes.
     Recent,
+    /// Inspector: the selected attribute, skill or skill group.
+    Selected,
+    /// Inspector, career: karma and nuyen, and the ledger.
+    Ledger,
     /// Play: the condition monitor and Edge.
     Condition,
     Dice,

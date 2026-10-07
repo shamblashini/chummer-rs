@@ -593,6 +593,23 @@ impl App {
                 v.ws_close_item();
             }
         }
+        if v.ws_selected().is_some() {
+            let mut close = false;
+            let title = v.ws_selected_title(lang);
+            Panel::inspector(key(PanelId::Selected), &title).show(
+                ui,
+                &mut self.ws.pops,
+                lang,
+                |ui| close = widgets::icon_button(ui, icons::X, 22.0).on_hover_text(lang.tr("Close")).clicked(),
+                |ui| changed |= v.ws_selected_ui(ui, &engine, lang, &self.pdfs, &mut self.status, roll),
+            );
+            if close {
+                v.ws_clear_selected();
+            }
+        }
+        if !v.ws_creating() {
+            Panel::inspector(key(PanelId::Ledger), &lang.tr("Karma & Nuyen")).show(ui, &mut self.ws.pops, lang, |_| {}, |ui| changed |= v.ws_ledger_panel(ui, &engine, lang));
+        }
         let title = if v.ws_creating() { lang.tr("Karma Summary") } else { lang.tr("Other Info") };
         Panel::inspector(key(PanelId::Summary), &title).show(ui, &mut self.ws.pops, lang, |_| {}, |ui| changed |= v.ws_summary(ui, lang, roll));
         let undo = v.doc().undo_label().map(str::to_owned);
@@ -654,6 +671,8 @@ impl App {
             PanelId::Item => self.lang.tr("Item"),
             PanelId::Summary => self.lang.tr("Summary"),
             PanelId::Recent => self.lang.tr("History"),
+            PanelId::Selected => self.lang.tr("Selected"),
+            PanelId::Ledger => self.lang.tr("Karma & Nuyen"),
             PanelId::Condition => self.lang.tr("Condition Monitor"),
             PanelId::Dice => self.lang.tr("Dice Roller"),
             PanelId::Initiative => self.lang.tr("Initiative tracker"),
@@ -737,6 +756,14 @@ impl App {
                     }),
                     PanelId::Summary => scroll(ui, &mut |ui| changed |= v.ws_summary(ui, lang, &mut roll)),
                     PanelId::Recent => scroll(ui, &mut |ui| changed |= v.ws_history(ui, lang)),
+                    PanelId::Selected => scroll(ui, &mut |ui| {
+                        if v.ws_selected().is_some() {
+                            changed |= v.ws_selected_ui(ui, &engine, lang, &self.pdfs, &mut self.status, &mut roll);
+                        } else {
+                            ui.label(RichText::new(lang.tr("Select an attribute or skill to see its details.")).color(theme::ws(ui).muted));
+                        }
+                    }),
+                    PanelId::Ledger => scroll(ui, &mut |ui| changed |= v.ws_ledger_panel(ui, &engine, lang)),
                     _ => {}
                 }
                 if own_frame {
@@ -857,6 +884,7 @@ impl App {
                     target: Target::Item { section: it.section, guid: it.guid },
                 });
             }
+            out.extend(self.views[i].ws_raise_entries(&self.engine, lang));
         }
         out
     }
@@ -872,6 +900,11 @@ impl App {
                 }
             }
             Target::Document(d) => self.ws_select(d),
+            Target::Raise { raise, .. } => {
+                if let Some(i) = self.current() {
+                    self.views[i].ws_raise(raise);
+                }
+            }
             Target::Record { kind, index } => {
                 self.home = Some(Home::MasterIndex);
                 self.ws.home = Some(Section::DataBrowser);

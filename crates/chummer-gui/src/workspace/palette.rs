@@ -177,12 +177,30 @@ pub enum Target {
     /// A game-data record in the Master Index: (`data::BROWSABLE` index,
     /// record index).
     Record { kind: usize, index: usize },
+    /// Career: buy an advance for the open character; `preview` is the
+    /// line under the list ("Pistols 7 · karma 14 → 0").
+    Raise { raise: Raise, preview: String },
+}
+
+/// A career advance the palette can buy (`CharacterView::ws_raise`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Raise {
+    /// An attribute by abbreviation.
+    Attribute(String),
+    /// An active or knowledge skill by guid.
+    Skill(String),
+    /// A skill group by name.
+    Group(String),
+    /// A new specialization: (skill guid, name).
+    Specialize(String, String),
 }
 
 /// Kinds of entries, in the order they rank on ties.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
     Command,
+    /// Career: raise an attribute or skill.
+    Advance,
     Navigate,
     Document,
     Item,
@@ -484,6 +502,7 @@ fn preview(e: &Entry, lang: &Language) -> String {
         Target::Item { .. } => lang.tr("Show in the inspector"),
         Target::Document(_) => lang.tr("Switch to"),
         Target::Record { .. } => lang.tr("Master Index"),
+        Target::Raise { preview, .. } => preview.clone(),
     }
 }
 
