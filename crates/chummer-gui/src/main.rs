@@ -31,6 +31,7 @@ mod wizard;
 mod workspace;
 #[cfg(test)]
 mod tr_coverage;
+#[cfg(test)] mod ui_tests;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
