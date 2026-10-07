@@ -1163,7 +1163,7 @@ impl CharacterView {
             }
             if matches!(tag, "gear" | "drug") {
                 caption(ui, &lang.tr("Quantity"));
-                ui.add(egui::DragValue::new(&mut c.purchase.qty).range(1.0..=1000.0).max_decimals(0));
+                widgets::qty_stepper(ui, "ws_catalog_qty", &mut c.purchase.qty, 1.0, 1000.0, 1.0, 0, &lang.tr("Lower"), &lang.tr("Raise"));
                 ui.end_row();
             }
             if let Some(n) = &locked_parent {

@@ -646,33 +646,12 @@ pub fn wide_button(ui: &mut Ui, glyph: Option<&str>, text: &str, look: Look, hei
 
 // ----- item pages, catalog and home (added for the gear and home screens) -----
 
-/// A number field with − and + buttons, 26px high (the catalog's
-/// Rating). Returns the response of the value; `changed` when a button
-/// or a drag moved it.
+/// A number field with − and + buttons (the catalog's Rating): a
+/// [`num_stepper`]. Returns the response of the value; `changed` when a
+/// button, a drag or typing moved it.
 pub fn rating_stepper(ui: &mut Ui, value: &mut i32, min: i32, max: i32, lower_tip: &str, raise_tip: &str) -> Response {
-    let ws = theme::ws(ui);
-    let old = *value;
-    let inner = egui::Frame::new().fill(ws.well).stroke(Stroke::new(1.0_f32, ws.control)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::same(0)).show(ui, |ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.horizontal(|ui| {
-            let down = ui.add_enabled_ui(*value > min, |ui| icon_button(ui, icons::MINUS, 24.0)).inner.on_hover_text(lower_tip);
-            if down.clicked() {
-                *value -= 1;
-            }
-            let mut r = ui.add_sized([34.0, 24.0], egui::DragValue::new(value).range(min..=max));
-            let up = ui.add_enabled_ui(*value < max, |ui| icon_button(ui, icons::PLUS, 24.0)).inner.on_hover_text(raise_tip);
-            if up.clicked() {
-                *value += 1;
-            }
-            *value = (*value).clamp(min, max);
-            if *value != old {
-                r.mark_changed();
-            }
-            r
-        })
-        .inner
-    });
-    inner.inner
+    let id = ui.next_auto_id();
+    num_stepper(ui, id, value, min, max, lower_tip, raise_tip)
 }
 
 /// A 24px line: a muted label, a monospace value in `color`, and an
@@ -880,37 +859,10 @@ pub fn pips(ui: &mut Ui, value: i32, max: i32) -> Response {
     resp
 }
 
-/// An inline number field with − and + buttons (26px high), clamped to
-/// `min..=max`. The value can also be dragged or typed. Returns true if
-/// it changed.
+/// An inline number field with − and + buttons, clamped to
+/// `min..=max` (a [`num_stepper`]). Returns true if it changed.
 pub fn stepper(ui: &mut Ui, id: impl std::hash::Hash, value: &mut i32, min: i32, max: i32, lower_tip: &str, raise_tip: &str) -> bool {
-    let ws = theme::ws(ui);
-    let old = *value;
-    let enabled = ui.is_enabled();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(24.0 * 2.0 + 34.0 + 2.0, 26.0), Sense::hover());
-    ui.painter().rect(rect, CornerRadius::same(5), ws.well, Stroke::new(1.0_f32, if enabled { ws.control } else { ws.divider }), StrokeKind::Inside);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(1.0)).layout(egui::Layout::left_to_right(egui::Align::Center)).id_salt(("stepper", id)));
-    child.spacing_mut().item_spacing.x = 0.0;
-    let down = child.add_enabled_ui(*value > min, |ui| icon_button(ui, icons::MINUS, 24.0)).inner.on_hover_text(lower_tip);
-    if down.clicked() {
-        *value -= 1;
-    }
-    {
-        let v = child.visuals_mut();
-        for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active] {
-            w.bg_fill = Color32::TRANSPARENT;
-            w.weak_bg_fill = Color32::TRANSPARENT;
-            w.bg_stroke = Stroke::NONE;
-        }
-        v.override_text_color = Some(ws.text);
-    }
-    child.add_sized(egui::vec2(34.0, 24.0), egui::DragValue::new(value).range(min..=max.max(min)).speed(0.1));
-    let up = child.add_enabled_ui(*value < max, |ui| icon_button(ui, icons::PLUS, 24.0)).inner.on_hover_text(raise_tip);
-    if up.clicked() {
-        *value += 1;
-    }
-    *value = (*value).clamp(min, max.max(min));
-    *value != old
+    num_stepper(ui, id, value, min, max, lower_tip, raise_tip).changed()
 }
 
 /// A career advance button: "+1 · 14 k" with an arrow; disabled when
@@ -1012,6 +964,164 @@ pub fn text_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Res
         r = Some(ui.add(egui::TextEdit::singleline(text).frame(false).hint_text(hint).desired_width(width - 14.0)));
     });
     r.expect("drawn")
+}
+
+// ----- compact number steppers -----
+
+/// Width of a stepper's − and + buttons.
+const STEP_BUTTON: f32 = 18.0;
+/// Height of a stepper.
+const STEP_HEIGHT: f32 = 24.0;
+
+/// Characters a stepper's field is sized for: the widest of the range's
+/// ends (at most 4, so a large range does not make a wide field) and the
+/// current value (so it always fits).
+pub fn stepper_chars(min: &str, max: &str, value: &str) -> usize {
+    min.chars().count().max(max.chars().count()).clamp(1, 4).max(value.chars().count())
+}
+
+/// Width of a stepper's value field for `chars` characters `char_w` wide.
+pub fn stepper_field_width(chars: usize, char_w: f32) -> f32 {
+    (chars.max(1) as f32 * char_w + 8.0).ceil()
+}
+
+/// One of a stepper's − / + buttons: `STEP_BUTTON` wide, `height` tall.
+fn step_button(ui: &mut Ui, glyph: &str, height: f32, enabled: bool, tip: &str) -> Response {
+    let ws = theme::ws(ui);
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(STEP_BUTTON, height), sense);
+    if ui.is_rect_visible(rect) {
+        let on = enabled && ui.is_enabled();
+        let hovered = on && resp.hovered();
+        if hovered {
+            ui.painter().rect_filled(rect.shrink(1.0), CornerRadius::same(3), ws.hover);
+        }
+        let color = if !on { ws.muted.gamma_multiply(0.4) } else if hovered { ws.text } else { ws.muted };
+        icons::paint(ui.painter(), rect, glyph, 11.0, color);
+    }
+    let resp = resp.on_hover_text(tip);
+    if enabled {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp
+    }
+}
+
+/// The body of every stepper: a bordered field with a small − button, the
+/// value (drag it, click to type, arrow keys while typing) and a small +
+/// button, all inside the border. The field is as wide as the values of
+/// the range need, so nothing spills over at any value. `step` is what
+/// the buttons add, `speed` the drag speed.
+#[allow(clippy::too_many_arguments)]
+fn step_field(ui: &mut Ui, id: egui::Id, value: &mut f64, min: f64, max: f64, step: f64, decimals: usize, speed: f64, lower_tip: &str, raise_tip: &str) -> Response {
+    let ws = theme::ws(ui);
+    let max = max.max(min);
+    let old = *value;
+    let font = FontId::monospace(12.5);
+    let fmt = |v: f64| format!("{v:.decimals$}");
+    let char_w = ui.painter().layout_no_wrap("0".to_owned(), font.clone(), Color32::PLACEHOLDER).size().x;
+    let field_w = stepper_field_width(stepper_chars(&fmt(min), &fmt(max), &fmt(*value)), char_w);
+    let enabled = ui.is_enabled();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(STEP_BUTTON * 2.0 + field_w + 2.0, STEP_HEIGHT), Sense::hover());
+    let radius = CornerRadius::same(theme::current(ui.ctx()).widget_radius.min(5));
+    ui.painter().rect(rect, radius, ws.well, Stroke::new(1.0_f32, if enabled { ws.control } else { ws.divider }), StrokeKind::Inside);
+    let inner = rect.shrink(1.0);
+    let resp = clip_to(ui, rect, |ui| {
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)).id_salt(("stepper", id)));
+        child.spacing_mut().item_spacing.x = 0.0;
+        if step_button(&mut child, icons::MINUS, inner.height(), *value > min, lower_tip).clicked() {
+            *value -= step;
+        }
+        {
+            let style = child.style_mut();
+            style.spacing.interact_size = egui::vec2(field_w, inner.height());
+            style.spacing.button_padding = egui::vec2(2.0, 0.0);
+            style.drag_value_text_style = egui::TextStyle::Monospace;
+            style.text_styles.insert(egui::TextStyle::Monospace, font.clone());
+            let v = &mut style.visuals;
+            for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active] {
+                w.bg_fill = Color32::TRANSPARENT;
+                w.weak_bg_fill = Color32::TRANSPARENT;
+                w.bg_stroke = Stroke::NONE;
+                w.expansion = 0.0;
+            }
+            v.widgets.hovered.weak_bg_fill = ws.hover;
+            v.extreme_bg_color = Color32::TRANSPARENT;
+            v.text_edit_bg_color = Some(Color32::TRANSPARENT);
+            v.override_text_color = Some(ws.text);
+        }
+        let r = child.add(egui::DragValue::new(value).range(min..=max).speed(speed).max_decimals(decimals));
+        if step_button(&mut child, icons::PLUS, inner.height(), *value < max, raise_tip).clicked() {
+            *value += step;
+        }
+        r
+    });
+    let mut resp = resp;
+    *value = value.clamp(min, max);
+    if *value != old {
+        resp.mark_changed();
+    }
+    resp
+}
+
+/// A whole-number stepper (attributes, skills, ratings, months), clamped
+/// to `min..=max`. Returns the value's response; `changed` when a button,
+/// a drag or typing moved it.
+pub fn num_stepper(ui: &mut Ui, id: impl std::hash::Hash, value: &mut i32, min: i32, max: i32, lower_tip: &str, raise_tip: &str) -> Response {
+    let mut v = f64::from(*value);
+    let id = egui::Id::new(id);
+    let r = step_field(ui, id, &mut v, f64::from(min), f64::from(max), 1.0, 0, 0.1, lower_tip, raise_tip);
+    *value = v.round() as i32;
+    r
+}
+
+/// A stepper for a quantity that may have decimals: the buttons add
+/// `step`, a drag moves it by `step` per point.
+#[allow(clippy::too_many_arguments)]
+pub fn qty_stepper(ui: &mut Ui, id: impl std::hash::Hash, value: &mut f64, min: f64, max: f64, step: f64, decimals: usize, lower_tip: &str, raise_tip: &str) -> Response {
+    let decimals = if step.fract() == 0.0 && value.fract() == 0.0 { 0 } else { decimals };
+    step_field(ui, egui::Id::new(id), value, min, max, step, decimals, step.max(0.01) * 0.1, lower_tip, raise_tip)
+}
+
+#[cfg(test)]
+mod stepper_tests {
+    use super::*;
+
+    #[test]
+    fn field_fits_the_range_and_the_value() {
+        assert_eq!(stepper_chars("0", "6", "3"), 1);
+        assert_eq!(stepper_chars("1", "12", "1"), 2);
+        assert_eq!(stepper_chars("0", "999", "128"), 3);
+        // A huge range does not widen the field past 4 characters...
+        assert_eq!(stepper_chars("1", "100000", "1"), 4);
+        // ...but a value that needs more gets it.
+        assert_eq!(stepper_chars("1", "100000", "25000"), 5);
+        assert_eq!(stepper_chars("-12", "12", "0"), 3);
+        assert!(stepper_field_width(3, 7.5) >= 3.0 * 7.5 + 8.0);
+        assert_eq!(stepper_field_width(0, 7.0), stepper_field_width(1, 7.0));
+    }
+
+    /// Steppers drawn headlessly stay inside their border at 1, 12, 128
+    /// and 9999, and the buttons move the value.
+    #[test]
+    fn stays_inside_its_border() {
+        let ctx = egui::Context::default();
+        for v0 in [1, 12, 128, 9999] {
+            let mut v = v0;
+            let mut outer = egui::Rect::NOTHING;
+            let mut field = egui::Rect::NOTHING;
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let before = ui.cursor().min;
+                    let r = num_stepper(ui, "t", &mut v, 0, 9999, "-", "+");
+                    field = r.rect;
+                    outer = egui::Rect::from_min_size(before, egui::vec2(ui.min_rect().right() - before.x, STEP_HEIGHT));
+                });
+            });
+            assert!(field.left() >= outer.left() + STEP_BUTTON && field.right() <= outer.right() - STEP_BUTTON + 0.5, "{v0}: field {field:?} in {outer:?}");
+            assert_eq!(v, v0);
+        }
+    }
 }
 
 #[cfg(test)]
