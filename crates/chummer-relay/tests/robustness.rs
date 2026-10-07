@@ -341,3 +341,74 @@ fn damaged_database_is_moved_aside_on_start() {
     }
     std::fs::remove_dir_all(&d).unwrap();
 }
+
+/// Storage in memory whose writes can be made to fail like a full disk.
+#[derive(Debug, Clone, Default)]
+struct Flaky {
+    data: Arc<std::sync::Mutex<Vec<u8>>>,
+    full: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Flaky {
+    fn check(&self) -> std::io::Result<()> {
+        if self.full.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(std::io::Error::from_raw_os_error(28)); // ENOSPC
+        }
+        Ok(())
+    }
+}
+
+impl redb::StorageBackend for Flaky {
+    fn len(&self) -> Result<u64, std::io::Error> {
+        Ok(self.data.lock().unwrap().len() as u64)
+    }
+    fn read(&self, offset: u64, out: &mut [u8]) -> Result<(), std::io::Error> {
+        let d = self.data.lock().unwrap();
+        let o = offset as usize;
+        out.copy_from_slice(&d[o..o + out.len()]);
+        Ok(())
+    }
+    fn set_len(&self, len: u64) -> Result<(), std::io::Error> {
+        let mut d = self.data.lock().unwrap();
+        if len as usize > d.len() {
+            self.check()?;
+        }
+        d.resize(len as usize, 0);
+        Ok(())
+    }
+    fn sync_data(&self) -> Result<(), std::io::Error> {
+        self.check()
+    }
+    fn write(&self, offset: u64, data: &[u8]) -> Result<(), std::io::Error> {
+        self.check()?;
+        let mut d = self.data.lock().unwrap();
+        let o = offset as usize;
+        d[o..o + data.len()].copy_from_slice(data);
+        Ok(())
+    }
+}
+
+/// After an I/O error (the disk filled up) redb refuses every later call
+/// ("Previous I/O error occurred. Please close and re-open the
+/// database"), so the mailbox stayed broken after the disk was freed,
+/// until the relay was restarted (found by the Docker disk-full
+/// scenario). The store now reopens the database.
+#[test]
+fn mailbox_works_again_after_the_disk_was_full() {
+    let flaky = Flaky::default();
+    let backend = flaky.clone();
+    let opener: chummer_relay::store::Opener = Box::new(move || redb::Database::builder().create_with_backend(backend.clone()));
+    let s = Store::open_with(opener, Limits::default()).unwrap();
+    let bob = id();
+    let first = s.put(id(), bob, vec![1; 1000], T0).unwrap();
+    flaky.full.store(true, std::sync::atomic::Ordering::SeqCst);
+    for _ in 0..3 {
+        assert!(matches!(s.put(id(), bob, vec![2; 50_000], T0), Err(MailboxError::Internal(_))));
+    }
+    // The disk has room again.
+    flaky.full.store(false, std::sync::atomic::Ordering::SeqCst);
+    let second = s.put(id(), bob, vec![3; 1000], T0).expect("works again without a restart");
+    let (items, _) = s.fetch(bob, 10, T0).unwrap();
+    assert_eq!(items.iter().map(|i| i.id).collect::<Vec<_>>(), [first, second]);
+    assert_eq!(s.ack(bob, &[first, second]).unwrap(), 2);
+}

@@ -67,11 +67,22 @@ fn db_err(e: impl std::fmt::Display) -> MailboxError {
     MailboxError::Internal(e.to_string())
 }
 
+/// Opens the database again (after an I/O error redb refuses all work
+/// until it is reopened).
+pub type Opener = Box<dyn Fn() -> Result<Database, redb::DatabaseError> + Send + Sync>;
+
 /// The mailbox database.
-#[derive(Debug)]
 pub struct Store {
-    db: Database,
+    /// `None` after a failed reopen; the next call tries again.
+    db: std::sync::RwLock<Option<Database>>,
+    opener: Opener,
     limits: Limits,
+}
+
+impl std::fmt::Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store").field("limits", &self.limits).finish_non_exhaustive()
+    }
 }
 
 impl Store {
@@ -104,35 +115,58 @@ impl Store {
         fn io_damage(e: &std::io::Error) -> bool {
             matches!(e.kind(), std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof)
         }
-        fn storage_damage(e: &redb::StorageError) -> bool {
-            match e {
-                redb::StorageError::Corrupted(_) => true,
-                redb::StorageError::Io(io) => io_damage(io),
-                _ => false,
-            }
-        }
-        let db = Database::create(path).map_err(|e| {
+        let owned = path.to_owned();
+        let opener: Opener = Box::new(move || Database::create(&owned));
+        Store::open_with(opener, limits).map_err(|e| {
             let damaged = match &e {
-                redb::DatabaseError::Storage(s) => storage_damage(s),
-                redb::DatabaseError::RepairAborted => true,
+                redb::Error::Corrupted(_) | redb::Error::RepairAborted => true,
+                redb::Error::Io(io) => io_damage(io),
                 _ => false,
             };
             (StoreError(e.to_string()), damaged)
-        })?;
-        let fail = |e: redb::Error| {
-            let damaged = matches!(&e, redb::Error::Corrupted(_)) || matches!(&e, redb::Error::Io(io) if io_damage(io));
-            (StoreError(e.to_string()), damaged)
-        };
-        let txn = db.begin_write().map_err(|e| fail(e.into()))?;
+        })
+    }
+
+    /// A store on whatever `opener` opens (for tests and other backends).
+    pub fn open_with(opener: Opener, limits: Limits) -> Result<Store, redb::Error> {
+        let db = Store::prepare(&opener)?;
+        Ok(Store { db: std::sync::RwLock::new(Some(db)), opener, limits })
+    }
+
+    /// Opens and makes the tables, so read transactions never miss them.
+    fn prepare(opener: &Opener) -> Result<Database, redb::Error> {
+        let db = opener()?;
+        let txn = db.begin_write()?;
+        txn.open_table(MESSAGES)?;
+        txn.open_table(INBOX)?;
+        txn.open_table(QUOTA)?;
+        txn.open_table(META)?;
+        txn.commit()?;
+        Ok(db)
+    }
+
+    /// Runs `f` on the database. After an error the database is opened
+    /// again and `f` retried once: redb refuses everything after an I/O
+    /// error (a full disk) until it is reopened, which used to leave the
+    /// mailbox failing until the relay was restarted.
+    fn with_db<T>(&self, f: impl Fn(&Database) -> Result<T, MailboxError>) -> Result<T, MailboxError> {
         {
-            // Create the tables so read transactions never miss them.
-            txn.open_table(MESSAGES).map_err(|e| fail(e.into()))?;
-            txn.open_table(INBOX).map_err(|e| fail(e.into()))?;
-            txn.open_table(QUOTA).map_err(|e| fail(e.into()))?;
-            txn.open_table(META).map_err(|e| fail(e.into()))?;
+            let g = self.db.read().expect("poisoned");
+            if let Some(db) = g.as_ref() {
+                match f(db) {
+                    Err(MailboxError::Internal(e)) => tracing::warn!("mailbox database: {e}; opening it again"),
+                    r => return r,
+                }
+            }
         }
-        txn.commit().map_err(|e| fail(e.into()))?;
-        Ok(Store { db, limits })
+        {
+            let mut g = self.db.write().expect("poisoned");
+            // Close first: the file is locked while open.
+            drop(g.take());
+            *g = Some(Store::prepare(&self.opener).map_err(db_err)?);
+        }
+        let g = self.db.read().expect("poisoned");
+        f(g.as_ref().expect("just opened"))
     }
 
     pub fn limits(&self) -> &Limits {
@@ -161,7 +195,13 @@ impl Store {
         }
         let rcpt = *recipient.as_bytes();
         let snd = *sender.as_bytes();
-        let txn = self.db.begin_write().map_err(db_err)?;
+        self.with_db(|db| self.put_in(db, snd, rcpt, &blob, now))
+    }
+
+    fn put_in(&self, db: &Database, snd: [u8; 32], rcpt: [u8; 32], blob: &[u8], now: u64) -> Result<u64, MailboxError> {
+        let l = &self.limits;
+        let len = blob.len() as u64;
+        let txn = db.begin_write().map_err(db_err)?;
         let id;
         {
             let mut inbox = txn.open_table(INBOX).map_err(db_err)?;
@@ -210,7 +250,7 @@ impl Store {
                 recipient: rcpt,
                 sender: snd,
                 received: now,
-                blob,
+                blob: blob.to_vec(),
             };
             let bytes = postcard::to_stdvec(&stored).map_err(db_err)?;
             let mut messages = txn.open_table(MESSAGES).map_err(db_err)?;
@@ -224,14 +264,19 @@ impl Store {
     /// Up to `limit` of `recipient`'s oldest unexpired messages (at most
     /// [`MAX_FETCH_BYTES`] of blobs, but always at least one), and whether
     /// there are more.
-    pub fn fetch(
-        &self,
+    pub fn fetch(&self,
         recipient: EndpointId,
         limit: u32,
-        now: u64,
-    ) -> Result<(Vec<MailItem>, bool), MailboxError> {
+        now: u64,) -> Result<(Vec<MailItem>, bool), MailboxError> {
+        self.with_db(|db| self.fetch_in(db, recipient, limit, now))
+    }
+
+    fn fetch_in(&self, db: &Database,
+        recipient: EndpointId,
+        limit: u32,
+        now: u64,) -> Result<(Vec<MailItem>, bool), MailboxError> {
         let rcpt = *recipient.as_bytes();
-        let txn = self.db.begin_read().map_err(db_err)?;
+        let txn = db.begin_read().map_err(db_err)?;
         let inbox = txn.open_table(INBOX).map_err(db_err)?;
         let messages = txn.open_table(MESSAGES).map_err(db_err)?;
         let mut items = Vec::new();
@@ -265,8 +310,12 @@ impl Store {
     /// Deletes `recipient`'s messages `ids`; ids of other recipients are
     /// ignored. Returns how many were deleted.
     pub fn ack(&self, recipient: EndpointId, ids: &[u64]) -> Result<u32, MailboxError> {
+        self.with_db(|db| self.ack_in(db, recipient, ids))
+    }
+
+    fn ack_in(&self, db: &Database, recipient: EndpointId, ids: &[u64]) -> Result<u32, MailboxError> {
         let rcpt = *recipient.as_bytes();
-        let txn = self.db.begin_write().map_err(db_err)?;
+        let txn = db.begin_write().map_err(db_err)?;
         let mut removed = 0;
         {
             let mut inbox = txn.open_table(INBOX).map_err(db_err)?;
@@ -285,7 +334,11 @@ impl Store {
     /// Deletes expired messages and old quota counters. Returns how many
     /// messages were deleted.
     pub fn purge(&self, now: u64) -> Result<u64, MailboxError> {
-        let txn = self.db.begin_write().map_err(db_err)?;
+        self.with_db(|db| self.purge_in(db, now))
+    }
+
+    fn purge_in(&self, db: &Database, now: u64) -> Result<u64, MailboxError> {
+        let txn = db.begin_write().map_err(db_err)?;
         let mut removed = 0;
         {
             let mut inbox = txn.open_table(INBOX).map_err(db_err)?;
@@ -312,7 +365,11 @@ impl Store {
 
     /// Number of stored messages (expired ones included until purged).
     pub fn len(&self) -> Result<u64, MailboxError> {
-        let txn = self.db.begin_read().map_err(db_err)?;
+        self.with_db(|db| self.len_in(db))
+    }
+
+    fn len_in(&self, db: &Database) -> Result<u64, MailboxError> {
+        let txn = db.begin_read().map_err(db_err)?;
         let messages = txn.open_table(MESSAGES).map_err(db_err)?;
         messages.len().map_err(db_err)
     }
