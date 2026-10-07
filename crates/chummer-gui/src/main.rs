@@ -28,6 +28,7 @@ mod theme;
 mod tree_table;
 mod view;
 mod wizard;
+mod workspace;
 #[cfg(test)]
 mod tr_coverage;
 
@@ -110,6 +111,8 @@ struct App {
     appearance: theme::Appearance,
     /// Online campaigns: the network node, joined campaigns, settings.
     online: online::Online,
+    /// The Workspace layout's state.
+    ws: workspace::Workspace,
 }
 
 impl App {
@@ -165,6 +168,7 @@ impl App {
             allow_close: false,
             appearance,
             online: online::Online::new(),
+            ws: Default::default(),
         };
         app.online.start_joined(&app.engine);
         if let Some(link) = join {
@@ -449,201 +453,205 @@ impl App {
 
     /// Chummer's main menu: File, Edit, Tools, Special, View, Window, Help.
     fn menu(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        egui::MenuBar::new().ui(ui, |ui| self.menus(ctx, ui));
+    }
+
+    /// The menus themselves; the Workspace shows them under its menu
+    /// button.
+    fn menus(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let has = self.current().is_some();
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button(self.lang.tr("File"), |ui| {
-                if ui.add(egui::Button::new(self.lang.tr("New Character…")).shortcut_text("Ctrl+N")).clicked() {
-                    ui.close();
-                    self.wizard = Some(wizard::Wizard::new());
+        ui.menu_button(self.lang.tr("File"), |ui| {
+            if ui.add(egui::Button::new(self.lang.tr("New Character…")).shortcut_text("Ctrl+N")).clicked() {
+                ui.close();
+                self.wizard = Some(wizard::Wizard::new());
+            }
+            if ui.button(self.lang.tr("New Critter…")).clicked() {
+                ui.close();
+                self.critter = Some(gm_ui::CritterWizard::new());
+            }
+            if ui.add(egui::Button::new(self.lang.tr("Open…")).shortcut_text("Ctrl+O")).clicked() {
+                ui.close();
+                self.open_dialog();
+            }
+            ui.separator();
+            if ui.button(self.lang.tr("New Campaign")).on_hover_text(self.lang.tr("A GM screen: players, NPCs, critters, initiative and damage")).clicked() {
+                ui.close();
+                self.new_campaign();
+            }
+            if ui.button(self.lang.tr("Open Campaign…")).clicked() {
+                ui.close();
+                self.open_campaign_dialog();
+            }
+            let has_gm = self.gm.is_some();
+            if ui.add_enabled(has_gm, egui::Button::new(self.lang.tr("Save Campaign"))).clicked() {
+                ui.close();
+                self.save_campaign(false);
+            }
+            if ui.add_enabled(has_gm, egui::Button::new(self.lang.tr("Save Campaign As…"))).clicked() {
+                ui.close();
+                self.save_campaign(true);
+            }
+            if ui.add_enabled(has_gm, egui::Button::new(self.lang.tr("Close Campaign"))).clicked() {
+                ui.close();
+                self.close_campaign(false);
+            }
+            if ui.button(self.lang.tr("Join Campaign…")).on_hover_text(self.lang.tr("Play in a GM's online campaign with an invite link")).clicked() {
+                ui.close();
+                self.online.join = Some((String::new(), self.online.display_name()));
+            }
+            ui.separator();
+            ui.menu_button(self.lang.tr("Open recent"), |ui| {
+                if self.recent.is_empty() {
+                    ui.weak(self.lang.tr("No recent files"));
                 }
-                if ui.button(self.lang.tr("New Critter…")).clicked() {
-                    ui.close();
-                    self.critter = Some(gm_ui::CritterWizard::new());
-                }
-                if ui.add(egui::Button::new(self.lang.tr("Open…")).shortcut_text("Ctrl+O")).clicked() {
-                    ui.close();
-                    self.open_dialog();
-                }
-                ui.separator();
-                if ui.button(self.lang.tr("New Campaign")).on_hover_text(self.lang.tr("A GM screen: players, NPCs, critters, initiative and damage")).clicked() {
-                    ui.close();
-                    self.new_campaign();
-                }
-                if ui.button(self.lang.tr("Open Campaign…")).clicked() {
-                    ui.close();
-                    self.open_campaign_dialog();
-                }
-                let has_gm = self.gm.is_some();
-                if ui.add_enabled(has_gm, egui::Button::new(self.lang.tr("Save Campaign"))).clicked() {
-                    ui.close();
-                    self.save_campaign(false);
-                }
-                if ui.add_enabled(has_gm, egui::Button::new(self.lang.tr("Save Campaign As…"))).clicked() {
-                    ui.close();
-                    self.save_campaign(true);
-                }
-                if ui.add_enabled(has_gm, egui::Button::new(self.lang.tr("Close Campaign"))).clicked() {
-                    ui.close();
-                    self.close_campaign(false);
-                }
-                if ui.button(self.lang.tr("Join Campaign…")).on_hover_text(self.lang.tr("Play in a GM's online campaign with an invite link")).clicked() {
-                    ui.close();
-                    self.online.join = Some((String::new(), self.online.display_name()));
-                }
-                ui.separator();
-                ui.menu_button(self.lang.tr("Open recent"), |ui| {
-                    if self.recent.is_empty() {
-                        ui.weak(self.lang.tr("No recent files"));
-                    }
-                    for p in self.recent.clone() {
-                        let label = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-                        if ui.button(label).on_hover_text(p.display().to_string()).clicked() {
-                            ui.close();
-                            self.open(&p);
-                        }
-                    }
-                });
-                ui.separator();
-                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Save")).shortcut_text("Ctrl+S")).clicked() {
-                    ui.close();
-                    self.save(self.active, false);
-                }
-                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Save As…"))).clicked() {
-                    ui.close();
-                    self.save(self.active, true);
-                }
-                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Print…")).shortcut_text("Ctrl+P")).clicked() {
-                    ui.close();
-                    self.show_print = true;
-                }
-                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Export…"))).clicked() {
-                    ui.close();
-                    self.show_export = true;
-                }
-                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Close")).shortcut_text("Ctrl+W")).clicked() {
-                    ui.close();
-                    self.close_tab(self.active, false);
-                }
-                ui.separator();
-                if ui.add(egui::Button::new(self.lang.tr("Exit")).shortcut_text("Ctrl+Q")).clicked() {
-                    ui.close();
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            });
-            ui.menu_button(self.lang.tr("Edit"), |ui| {
-                let doc = self.current().map(|i| self.views[i].doc());
-                let undo = doc.and_then(|d| d.undo_label()).map(str::to_owned);
-                let redo = doc.and_then(|d| d.redo_label()).map(str::to_owned);
-                let online = doc.is_some_and(doc::Doc::is_online);
-                let undo_text = undo.as_ref().map_or_else(|| self.lang.tr("Undo"), |w| self.lang.tr_fmt("Undo: {0}", &[w]));
-                let redo_text = redo.as_ref().map_or_else(|| self.lang.tr("Redo"), |w| self.lang.tr_fmt("Redo: {0}", &[w]));
-                let r = ui.add_enabled(undo.is_some(), egui::Button::new(undo_text).shortcut_text("Ctrl+Z"));
-                let r = if online { r.on_disabled_hover_text(self.lang.tr(doc::ONLINE_UNDO)) } else { r };
-                if r.clicked() {
-                    ui.close();
-                    self.undo();
-                }
-                if ui.add_enabled(redo.is_some(), egui::Button::new(redo_text).shortcut_text("Ctrl+Y")).clicked() {
-                    ui.close();
-                    self.redo();
-                }
-            });
-            ui.menu_button(self.lang.tr("Tools"), |ui| {
-                if ui.button(self.lang.tr("Dice Roller")).clicked() {
-                    ui.close();
-                    self.show_dice = true;
-                }
-                if ui.button(self.lang.tr("Master Index")).clicked() {
-                    ui.close();
-                    self.home = Some(Home::MasterIndex);
-                }
-                if ui.button(self.lang.tr("Character Roster")).clicked() {
-                    ui.close();
-                    self.home = Some(Home::Roster);
-                }
-                if ui.button(self.lang.tr("Initiative tracker")).clicked() {
-                    ui.close();
-                    self.show_initiative = true;
-                }
-                ui.separator();
-                if ui.button(self.lang.tr("Character Settings…")).clicked() {
-                    ui.close();
-                    self.show_settings = true;
-                }
-                if ui.button(self.lang.tr("Sourcebooks (PDFs)…")).clicked() {
-                    ui.close();
-                    self.show_sources = true;
-                }
-                if ui.button(self.lang.tr("Online Settings…")).on_hover_text(self.lang.tr("Your name, relays and the mailbox for online campaigns")).clicked() {
-                    ui.close();
-                    self.online.show_settings = true;
-                }
-            });
-            ui.menu_button(self.lang.tr("Special"), |ui| {
-                let creating = self.current().is_some_and(|i| !self.views[i].ch().created);
-                for (label, mode) in [("Add PACKS Kit…", gm_ui::PacksMode::Add), ("Create PACKS Kit…", gm_ui::PacksMode::Create)] {
-                    if ui.add_enabled(creating, egui::Button::new(self.lang.tr(label))).clicked() {
+                for p in self.recent.clone() {
+                    let label = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                    if ui.button(label).on_hover_text(p.display().to_string()).clicked() {
                         ui.close();
-                        self.views[self.active].open_packs(mode);
+                        self.open(&p);
                     }
                 }
             });
-            ui.menu_button(self.lang.tr("View"), |ui| {
-                if ui.add_enabled(has, egui::Button::new(self.lang.tr("History"))).on_hover_text(self.lang.tr("This session's changes to the character")).clicked() {
+            ui.separator();
+            if ui.add_enabled(has, egui::Button::new(self.lang.tr("Save")).shortcut_text("Ctrl+S")).clicked() {
+                ui.close();
+                self.save(self.active, false);
+            }
+            if ui.add_enabled(has, egui::Button::new(self.lang.tr("Save As…"))).clicked() {
+                ui.close();
+                self.save(self.active, true);
+            }
+            if ui.add_enabled(has, egui::Button::new(self.lang.tr("Print…")).shortcut_text("Ctrl+P")).clicked() {
+                ui.close();
+                self.show_print = true;
+            }
+            if ui.add_enabled(has, egui::Button::new(self.lang.tr("Export…"))).clicked() {
+                ui.close();
+                self.show_export = true;
+            }
+            if ui.add_enabled(has, egui::Button::new(self.lang.tr("Close")).shortcut_text("Ctrl+W")).clicked() {
+                ui.close();
+                self.close_tab(self.active, false);
+            }
+            ui.separator();
+            if ui.add(egui::Button::new(self.lang.tr("Exit")).shortcut_text("Ctrl+Q")).clicked() {
+                ui.close();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+        ui.menu_button(self.lang.tr("Edit"), |ui| {
+            let doc = self.current().map(|i| self.views[i].doc());
+            let undo = doc.and_then(|d| d.undo_label()).map(str::to_owned);
+            let redo = doc.and_then(|d| d.redo_label()).map(str::to_owned);
+            let online = doc.is_some_and(doc::Doc::is_online);
+            let undo_text = undo.as_ref().map_or_else(|| self.lang.tr("Undo"), |w| self.lang.tr_fmt("Undo: {0}", &[w]));
+            let redo_text = redo.as_ref().map_or_else(|| self.lang.tr("Redo"), |w| self.lang.tr_fmt("Redo: {0}", &[w]));
+            let r = ui.add_enabled(undo.is_some(), egui::Button::new(undo_text).shortcut_text("Ctrl+Z"));
+            let r = if online { r.on_disabled_hover_text(self.lang.tr(doc::ONLINE_UNDO)) } else { r };
+            if r.clicked() {
+                ui.close();
+                self.undo();
+            }
+            if ui.add_enabled(redo.is_some(), egui::Button::new(redo_text).shortcut_text("Ctrl+Y")).clicked() {
+                ui.close();
+                self.redo();
+            }
+        });
+        ui.menu_button(self.lang.tr("Tools"), |ui| {
+            if ui.button(self.lang.tr("Dice Roller")).clicked() {
+                ui.close();
+                self.show_dice = true;
+            }
+            if ui.button(self.lang.tr("Master Index")).clicked() {
+                ui.close();
+                self.home = Some(Home::MasterIndex);
+            }
+            if ui.button(self.lang.tr("Character Roster")).clicked() {
+                ui.close();
+                self.home = Some(Home::Roster);
+            }
+            if ui.button(self.lang.tr("Initiative tracker")).clicked() {
+                ui.close();
+                self.show_initiative = true;
+            }
+            ui.separator();
+            if ui.button(self.lang.tr("Character Settings…")).clicked() {
+                ui.close();
+                self.show_settings = true;
+            }
+            if ui.button(self.lang.tr("Sourcebooks (PDFs)…")).clicked() {
+                ui.close();
+                self.show_sources = true;
+            }
+            if ui.button(self.lang.tr("Online Settings…")).on_hover_text(self.lang.tr("Your name, relays and the mailbox for online campaigns")).clicked() {
+                ui.close();
+                self.online.show_settings = true;
+            }
+        });
+        ui.menu_button(self.lang.tr("Special"), |ui| {
+            let creating = self.current().is_some_and(|i| !self.views[i].ch().created);
+            for (label, mode) in [("Add PACKS Kit…", gm_ui::PacksMode::Add), ("Create PACKS Kit…", gm_ui::PacksMode::Create)] {
+                if ui.add_enabled(creating, egui::Button::new(self.lang.tr(label))).clicked() {
                     ui.close();
-                    self.views[self.active].show_history();
+                    self.views[self.active].open_packs(mode);
                 }
-                let mut guided = view::guided_preference();
-                if ui.checkbox(&mut guided, self.lang.tr("Guided creation")).on_hover_text(self.lang.tr("Walk through character creation one step at a time")).changed() {
-                    self.set_guided(guided);
-                }
-                ui.menu_button(self.lang.tr("Appearance"), |ui| {
-                    // Each layout with its themes under it.
-                    let a = self.appearance;
-                    for (layout, kinds) in [(theme::Layout::Classic, theme::ThemeKind::CLASSIC), (theme::Layout::Workspace, theme::ThemeKind::WORKSPACE)] {
-                        if crate::combo::selectable_label(ui, a.layout == layout, crate::theme::strong(ui, self.lang.tr(layout.label()))).clicked() {
-                            ui.close();
-                            self.set_appearance(ctx, a.with_layout(layout));
-                        }
-                        ui.indent(layout.as_str(), |ui| {
-                            for k in kinds {
-                                if crate::combo::selectable_label(ui, a.kind() == k, self.lang.tr(k.label())).clicked() {
-                                    ui.close();
-                                    self.set_appearance(ctx, a.with_kind(k));
-                                }
+            }
+        });
+        ui.menu_button(self.lang.tr("View"), |ui| {
+            if ui.add_enabled(has, egui::Button::new(self.lang.tr("History"))).on_hover_text(self.lang.tr("This session's changes to the character")).clicked() {
+                ui.close();
+                self.views[self.active].show_history();
+            }
+            let mut guided = view::guided_preference();
+            if ui.checkbox(&mut guided, self.lang.tr("Guided creation")).on_hover_text(self.lang.tr("Walk through character creation one step at a time")).changed() {
+                self.set_guided(guided);
+            }
+            ui.menu_button(self.lang.tr("Appearance"), |ui| {
+                // Each layout with its themes under it.
+                let a = self.appearance;
+                for (layout, kinds) in [(theme::Layout::Classic, theme::ThemeKind::CLASSIC), (theme::Layout::Workspace, theme::ThemeKind::WORKSPACE)] {
+                    if crate::combo::selectable_label(ui, a.layout == layout, crate::theme::strong(ui, self.lang.tr(layout.label()))).clicked() {
+                        ui.close();
+                        self.set_appearance(ctx, a.with_layout(layout));
+                    }
+                    ui.indent(layout.as_str(), |ui| {
+                        for k in kinds {
+                            if crate::combo::selectable_label(ui, a.kind() == k, self.lang.tr(k.label())).clicked() {
+                                ui.close();
+                                self.set_appearance(ctx, a.with_kind(k));
                             }
-                        });
-                    }
-                });
-                ui.menu_button(self.lang.tr("Language"), |ui| {
-                    for (code, name) in self.languages.clone() {
-                        if crate::combo::selectable_label(ui, self.lang.code == code, name).clicked() {
-                            ui.close();
-                            self.lang = Language::load(&self.lang_dir, &code);
                         }
-                    }
-                });
+                    });
+                }
             });
-            ui.menu_button(self.lang.tr("Window"), |ui| {
-                let current = self.mdi();
-                for (m, label) in self.mdi_tabs() {
-                    if crate::combo::selectable_label(ui, current == m, label).clicked() {
+            ui.menu_button(self.lang.tr("Language"), |ui| {
+                for (code, name) in self.languages.clone() {
+                    if crate::combo::selectable_label(ui, self.lang.code == code, name).clicked() {
                         ui.close();
-                        self.select(m);
+                        self.lang = Language::load(&self.lang_dir, &code);
                     }
                 }
-                ui.separator();
-                if ui.add_enabled(has, egui::Button::new(self.lang.tr("Close"))).clicked() {
-                    ui.close();
-                    self.close_tab(self.active, false);
-                }
             });
-            ui.menu_button(self.lang.tr("Help"), |ui| {
-                if ui.button(self.lang.tr("About")).clicked() {
+        });
+        ui.menu_button(self.lang.tr("Window"), |ui| {
+            let current = self.mdi();
+            for (m, label) in self.mdi_tabs() {
+                if crate::combo::selectable_label(ui, current == m, label).clicked() {
                     ui.close();
-                    self.show_about = true;
+                    self.select(m);
                 }
-            });
+            }
+            ui.separator();
+            if ui.add_enabled(has, egui::Button::new(self.lang.tr("Close"))).clicked() {
+                ui.close();
+                self.close_tab(self.active, false);
+            }
+        });
+        ui.menu_button(self.lang.tr("Help"), |ui| {
+            if ui.button(self.lang.tr("About")).clicked() {
+                ui.close();
+                self.show_about = true;
+            }
         });
     }
 
@@ -980,6 +988,34 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(Pending::Quit);
         }
+        if self.appearance.layout == theme::Layout::Workspace {
+            self.workspace_update(ctx);
+        } else {
+            self.classic_update(ctx);
+        }
+        self.windows(ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(gm) = self.gm.as_mut() {
+            gm.close_online(&mut self.online);
+        }
+        self.online.shutdown();
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        let recent: Vec<String> = self.recent.iter().map(|p| p.display().to_string()).collect();
+        storage.set_string(RECENT_KEY, recent.join("\n"));
+        storage.set_string(LANG_KEY, self.lang.code.clone());
+        let folders: Vec<String> = self.roster_folders.iter().map(|p| p.display().to_string()).collect();
+        storage.set_string(ROSTER_KEY, folders.join("\n"));
+    }
+}
+
+impl App {
+    /// A frame of the Classic layout: menu, toolbar, MDI tabs, status
+    /// strip and the selected tab.
+    fn classic_update(&mut self, ctx: &egui::Context) {
         self.shortcuts(ctx);
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
@@ -1015,7 +1051,7 @@ impl eframe::App for App {
             Mdi::Home(Home::Campaign) => {
                 let engine = self.engine.clone();
                 let action = match self.gm.as_mut() {
-                    Some(gm) => gm.ui(ctx, &engine, &self.lang, &mut self.views, &mut self.status, &mut self.online),
+                    Some(gm) => gm.ui(ctx, &engine, &self.lang, &mut self.views, &mut self.status, &mut self.online, true),
                     None => {
                         self.home = Some(Home::Roster);
                         None
@@ -1044,10 +1080,21 @@ impl eframe::App for App {
                 }
             }
         }
+    }
 
-        let mut open = self.show_dice;
-        egui::Window::new(self.lang.tr("Dice Roller")).id(egui::Id::new("dice_roller")).open(&mut open).default_width(360.0).show(ctx, |ui| self.dice.ui(ui, &self.lang));
-        self.show_dice = open;
+    /// The tool windows and dialogs of both layouts.
+    fn windows(&mut self, ctx: &egui::Context) {
+        let dice = workspace::PanelId::Dice;
+        if !self.ws_out(dice) {
+            let mut open = self.show_dice;
+            let mut pop = false;
+            egui::Window::new(self.lang.tr("Dice Roller")).id(egui::Id::new("dice_roller")).open(&mut open).default_width(360.0).show(ctx, |ui| {
+                pop = self.ws_pop_button(ui);
+                self.dice.ui(ui, &self.lang)
+            });
+            self.show_dice = open;
+            self.ws_pop(dice, pop);
+        }
         let mut open = self.show_sources;
         egui::Window::new(self.lang.tr("Sourcebooks")).id(egui::Id::new("sourcebooks")).open(&mut open).default_size([820.0, 620.0]).show(ctx, |ui| {
             if self.sources_window.ui(ui, &mut self.pdfs, &self.lang) {
@@ -1063,10 +1110,18 @@ impl eframe::App for App {
         let mut open = self.show_print;
         egui::Window::new(self.lang.tr("Character Sheet")).id(egui::Id::new("character_sheet")).open(&mut open).default_width(460.0).show(ctx, |ui| self.print_ui(ui));
         self.show_print = open;
-        let mut open = self.show_initiative;
-        let chars: Vec<(String, i32, u32)> = self.views.iter().map(|v| (v.ch().display_name(), v.sheet.initiative, v.sheet.initiative_dice.max(1) as u32)).collect();
-        egui::Window::new(self.lang.tr("Initiative tracker")).id(egui::Id::new("initiative_tracker")).open(&mut open).default_width(480.0).show(ctx, |ui| self.initiative.ui(ui, &self.lang, &chars));
-        self.show_initiative = open;
+        let initiative = workspace::PanelId::Initiative;
+        if !self.ws_out(initiative) {
+            let mut open = self.show_initiative;
+            let mut pop = false;
+            let chars = self.initiative_characters();
+            egui::Window::new(self.lang.tr("Initiative tracker")).id(egui::Id::new("initiative_tracker")).open(&mut open).default_width(480.0).show(ctx, |ui| {
+                pop = self.ws_pop_button(ui);
+                self.initiative.ui(ui, &self.lang, &chars)
+            });
+            self.show_initiative = open;
+            self.ws_pop(initiative, pop);
+        }
         let mut open = self.show_settings;
         let mut reload = false;
         if ruleset_ui::take_import_request(ctx) {
@@ -1130,19 +1185,9 @@ impl eframe::App for App {
         self.dialogs(ctx);
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if let Some(gm) = self.gm.as_mut() {
-            gm.close_online(&mut self.online);
-        }
-        self.online.shutdown();
-    }
-
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        let recent: Vec<String> = self.recent.iter().map(|p| p.display().to_string()).collect();
-        storage.set_string(RECENT_KEY, recent.join("\n"));
-        storage.set_string(LANG_KEY, self.lang.code.clone());
-        let folders: Vec<String> = self.roster_folders.iter().map(|p| p.display().to_string()).collect();
-        storage.set_string(ROSTER_KEY, folders.join("\n"));
+    /// The open characters' initiative, for the tracker.
+    fn initiative_characters(&self) -> Vec<(String, i32, u32)> {
+        self.views.iter().map(|v| (v.ch().display_name(), v.sheet.initiative, v.sheet.initiative_dice.max(1) as u32)).collect()
     }
 }
 
@@ -1199,7 +1244,7 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
     };
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("chummer-rs")
             .with_app_id("chummer-rs")
@@ -1208,6 +1253,9 @@ fn main() -> anyhow::Result<()> {
             .with_drag_and_drop(true),
         ..Default::default()
     };
+    if let Some(icon) = workspace::app_icon() {
+        options.viewport = options.viewport.with_icon(icon);
+    }
     eframe::run_native("chummer-rs", options, Box::new(move |cc| {
         let mut app = App::new(cc, engine, files, tab, (theme_arg, layout_arg), join);
         match window.as_deref() {

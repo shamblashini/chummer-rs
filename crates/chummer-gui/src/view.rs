@@ -33,6 +33,9 @@ mod guide_ui;
 #[path = "issues_ui.rs"]
 mod issues_ui;
 pub use guide_ui::{guided_offer, guided_preference, save_guided_preference};
+// The Workspace layout's access to the view (`crate::workspace`).
+#[path = "workspace/character.rs"]
+pub(crate) mod workspace;
 
 /// The character tabs, in Chummer5a's order (CharacterCareer.Designer.cs).
 /// Magic, resonance and critter tabs only show when the character has
@@ -159,6 +162,8 @@ pub struct CharacterView {
     info_text: &'static str,
     /// The campaign member this tab edits (`gm_screen`), if any.
     pub campaign_member: Option<chummer_core::campaign::MemberId>,
+    /// Names the tab for the Workspace (`workspace::DocKey`).
+    ws_id: u64,
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -273,6 +278,10 @@ impl CharacterView {
             gear_tab: 0,
             info_text: "description",
             campaign_member: None,
+            ws_id: {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
         };
         v.refresh_budget();
         v.set_guided(guided_preference());
@@ -401,12 +410,8 @@ impl CharacterView {
     }
 
     pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<u32> {
-        // An online character takes what arrived from the campaign.
-        let mut changed = self.doc.refresh();
+        let mut changed = self.begin_frame();
         let mut roll: Option<u32> = None;
-        if !self.visible(self.tab) {
-            self.tab = Tab::Common;
-        }
         egui::SidePanel::right("sheet_panel").resizable(true).default_width(310.0).min_width(220.0).show(ctx, |ui| {
             changed |= self.side_panel(ui, lang, &mut roll);
         });
@@ -419,32 +424,54 @@ impl CharacterView {
             let tabs: Vec<(Tab, String)> = TABS.iter().filter(|(t, _)| self.visible(*t)).map(|(t, l)| (*t, lang.tr(l))).collect();
             let tabs = self.decorated_tabs(tabs);
             crate::theme::tab_strip_with(ui, &mut self.tab, &tabs);
-            self.issue_panel(ui, lang);
-            let salt = self.tab as u8;
-            let page = |ui: &mut egui::Ui, f: &mut dyn FnMut(&mut egui::Ui) -> bool| egui::ScrollArea::both().id_salt(("tab_page", salt)).auto_shrink(false).show(ui, |ui| f(ui)).inner;
-            changed |= match self.tab {
-                Tab::Common => self.common_tab(ui, engine, lang, pdfs, status),
-                Tab::Skills => self.skills_tab(ui, engine, lang, pdfs, status, &mut roll),
-                Tab::Limits => page(ui, &mut |ui| self.limits_tab(ui, lang)),
-                Tab::MartialArts | Tab::Magician | Tab::Adept | Tab::Technomancer | Tab::Critter | Tab::Initiation => {
-                    let tab = self.tab;
-                    page(ui, &mut |ui| self.magic_page(ui, engine, lang, pdfs, status, tab))
-                }
-                Tab::AdvancedPrograms => page(ui, &mut |ui| {
-                    self.add_buttons(ui, engine, lang, "aiprograms");
-                    crate::ai_ui::tab(ui, &mut self.doc, engine, lang, status)
-                }),
-                Tab::Cyberware => page(ui, &mut |ui| self.gear_page(ui, engine, lang, pdfs, status, sections::CYBERWARE)),
-                Tab::StreetGear => self.street_gear_tab(ui, engine, lang, pdfs, status),
-                Tab::Vehicles => page(ui, &mut |ui| self.gear_page(ui, engine, lang, pdfs, status, sections::VEHICLES)),
-                Tab::CharacterInfo => self.info_tab(ui, lang),
-                Tab::Karma => self.log_tab(ui, engine, lang),
-                Tab::Calendar => page(ui, &mut |ui| self.calendar_ui(ui, lang)),
-                Tab::Notes => self.notes_tab(ui, lang),
-                Tab::Improvements => self.improvements_tab(ui, lang),
-                Tab::Relationships => self.relationships.ui(ui, &mut self.doc, &self.store, lang, status),
-            };
+            self.issue_panel(ui, lang, self.tab);
+            changed |= self.tab_page(ui, self.tab, engine, lang, pdfs, status, &mut roll);
         });
+        self.end_frame(ctx, engine, lang, pdfs, status, changed);
+        roll
+    }
+
+    /// Start of a frame: take what arrived for an online character, and
+    /// leave a tab the character no longer has. Returns true if the
+    /// character changed.
+    fn begin_frame(&mut self) -> bool {
+        // An online character takes what arrived from the campaign.
+        let changed = self.doc.refresh();
+        if !self.visible(self.tab) {
+            self.tab = Tab::Common;
+        }
+        changed
+    }
+
+    /// One tab's page. Returns true if the character changed.
+    #[allow(clippy::too_many_arguments)]
+    fn tab_page(&mut self, ui: &mut egui::Ui, tab: Tab, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, roll: &mut Option<u32>) -> bool {
+        let salt = tab as u8;
+        let page = |ui: &mut egui::Ui, f: &mut dyn FnMut(&mut egui::Ui) -> bool| egui::ScrollArea::both().id_salt(("tab_page", salt)).auto_shrink(false).show(ui, |ui| f(ui)).inner;
+        match tab {
+            Tab::Common => self.common_tab(ui, engine, lang, pdfs, status),
+            Tab::Skills => self.skills_tab(ui, engine, lang, pdfs, status, roll),
+            Tab::Limits => page(ui, &mut |ui| self.limits_tab(ui, lang)),
+            Tab::MartialArts | Tab::Magician | Tab::Adept | Tab::Technomancer | Tab::Critter | Tab::Initiation => page(ui, &mut |ui| self.magic_page(ui, engine, lang, pdfs, status, tab)),
+            Tab::AdvancedPrograms => page(ui, &mut |ui| {
+                self.add_buttons(ui, engine, lang, "aiprograms");
+                crate::ai_ui::tab(ui, &mut self.doc, engine, lang, status)
+            }),
+            Tab::Cyberware => page(ui, &mut |ui| self.gear_page(ui, engine, lang, pdfs, status, sections::CYBERWARE)),
+            Tab::StreetGear => self.street_gear_tab(ui, engine, lang, pdfs, status),
+            Tab::Vehicles => page(ui, &mut |ui| self.gear_page(ui, engine, lang, pdfs, status, sections::VEHICLES)),
+            Tab::CharacterInfo => self.info_tab(ui, lang),
+            Tab::Karma => self.log_tab(ui, engine, lang),
+            Tab::Calendar => page(ui, &mut |ui| self.calendar_ui(ui, lang)),
+            Tab::Notes => self.notes_tab(ui, lang),
+            Tab::Improvements => self.improvements_tab(ui, lang),
+            Tab::Relationships => self.relationships.ui(ui, &mut self.doc, &self.store, lang, status),
+        }
+    }
+
+    /// End of a frame: the dialogs, a career purchase picked while
+    /// drawing, and the sheet and budgets after a change.
+    fn end_frame(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, mut changed: bool) {
         changed |= self.confirm_dialog(ctx, lang);
         changed |= self.select_dialog(ctx, lang, pdfs, status);
         changed |= self.drug_builder.window(ctx, &mut self.doc, &self.store, lang, status);
@@ -458,7 +485,6 @@ impl CharacterView {
         if changed || self.doc.revision() != self.seen_revision {
             self.recompute(engine);
         }
-        roll
     }
 
     /// Chummer's status strip: karma, essence and nuyen at a glance.
@@ -1374,17 +1400,30 @@ impl CharacterView {
 
     /// The item detail pane, when an item is selected (see `item_editor`).
     fn item_editor_panel(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, status: &mut Status) -> bool {
+        if self.item_editor.is_none() {
+            return false;
+        }
+        let mut changed = false;
+        egui::SidePanel::right("item_editor").resizable(true).default_width(300.0).show(ctx, |ui| {
+            changed = self.item_pane(ui, engine, lang, status, true);
+        });
+        changed
+    }
+
+    /// The item detail pane's contents; `header` adds the "Item ✖" line
+    /// (the Workspace inspector draws its own).
+    fn item_pane(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, status: &mut Status, header: bool) -> bool {
         let Some((guid, mut ed)) = self.item_editor.take() else { return false };
         let store = self.store.clone();
         let mut res = crate::item_editor::EditorResult::default();
         let mut close = false;
-        egui::SidePanel::right("item_editor").resizable(true).default_width(300.0).show(ctx, |ui| {
+        if header {
             ui.horizontal(|ui| {
                 ui.strong(lang.tr("Item"));
                 close = ui.small_button("✖").on_hover_text(lang.tr("Close")).clicked();
             });
-            egui::ScrollArea::vertical().show(ui, |ui| res = ed.ui(ui, &mut self.doc, &store, engine, lang, &guid));
-        });
+        }
+        egui::ScrollArea::vertical().id_salt("item_pane").show(ui, |ui| res = ed.ui(ui, &mut self.doc, &store, engine, lang, &guid));
         if let Some(s) = res.status.take() {
             *status = Some(s);
         }

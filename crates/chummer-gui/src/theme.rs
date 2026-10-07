@@ -170,7 +170,7 @@ impl Appearance {
     }
 
     /// `text` with this appearance's lines set; other lines are kept.
-    pub fn to_config(&self, text: &str) -> String {
+    pub fn to_config(self, text: &str) -> String {
         let s = config_set(text, "layout", self.layout.as_str());
         let s = config_set(&s, "theme", self.classic.as_str());
         config_set(&s, "workspace", self.workspace.as_str())
@@ -916,6 +916,7 @@ pub fn config_set(text: &str, key: &str, value: &str) -> String {
 }
 
 /// The `theme=` line of a gui.ini.
+#[cfg(test)]
 pub fn parse_config(text: &str) -> Option<ThemeKind> {
     config_get(text, "theme").and_then(|v| ThemeKind::parse(&v))
 }

@@ -148,7 +148,7 @@ fn filter(scope: Option<&mut Scope>, atoms: &Atoms) -> Visible {
 }
 
 /// Every word of the search appears in the entry, in any order.
-fn matches(text: &str, needle: &str) -> bool {
+pub(crate) fn matches(text: &str, needle: &str) -> bool {
     needle.split_whitespace().all(|w| text.contains(w))
 }
 

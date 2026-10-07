@@ -127,9 +127,23 @@ impl CharacterView {
         }
     }
 
+    /// Whether the guide bar shows: creation mode with the guide on.
+    pub(super) fn guide_shown(&self) -> bool {
+        self.budget.is_some() && self.guide.is_some()
+    }
+
     /// The guide bar, above the tabs. Creation mode only.
     pub(super) fn guide_bar(&mut self, ctx: &egui::Context, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) {
-        if self.budget.is_none() || self.guide.is_none() {
+        if !self.guide_shown() {
+            return;
+        }
+        egui::TopBottomPanel::top("guide_bar").show(ctx, |ui| self.guide_inner(ui, lang, pdfs, status));
+    }
+
+    /// The guide bar's contents, in any `ui` (the Workspace draws it at
+    /// the top of the page).
+    pub(super) fn guide_inner(&mut self, ui: &mut egui::Ui, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) {
+        if !self.guide_shown() {
             return;
         }
         self.refresh_steps();
@@ -145,7 +159,7 @@ impl CharacterView {
         let mut jump: Option<Issue> = None;
         let mut finish = false;
         let mut hide = false;
-        egui::TopBottomPanel::top("guide_bar").show(ctx, |ui| {
+        {
             let p = crate::theme::palette(ui);
             ui.add_space(4.0);
             // The steps, as a row of numbered chips.
@@ -230,7 +244,7 @@ impl CharacterView {
                 });
             }
             ui.add_space(4.0);
-        });
+        }
         if let Some(i) = go {
             self.go_to_step(i);
         }

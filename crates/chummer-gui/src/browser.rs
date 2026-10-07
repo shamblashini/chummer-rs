@@ -26,8 +26,17 @@ impl Default for DataBrowser {
 }
 
 impl DataBrowser {
-    pub fn ui(&mut self, ui: &mut egui::Ui, store: &DataStore, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) {
-        let (label, file, container, item) = data::BROWSABLE[self.kind];
+    /// Show record `index` of kind `kind` (an index into
+    /// `data::BROWSABLE`), as the Workspace's palette does.
+    pub fn show_record(&mut self, store: &DataStore, kind: usize, index: usize) {
+        self.kind = kind.min(data::BROWSABLE.len() - 1);
+        self.search.clear();
+        self.load(store);
+        self.selected = Some(index);
+    }
+
+    fn load(&mut self, store: &DataStore) {
+        let (_, file, _, _) = data::BROWSABLE[self.kind];
         if self.loaded_kind != Some(self.kind) {
             match store.doc(file) {
                 Ok(d) => {
@@ -42,6 +51,11 @@ impl DataBrowser {
             self.loaded_kind = Some(self.kind);
             self.selected = None;
         }
+    }
+
+    pub fn ui(&mut self, ui: &mut egui::Ui, store: &DataStore, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) {
+        let (label, file, container, item) = data::BROWSABLE[self.kind];
+        self.load(store);
 
         ui.horizontal(|ui| {
             crate::combo::Combo::from_id_salt("browser_kind").selected_text(lang.tr(label)).width(180.0).show_ui(ui, |ui| {

@@ -11,9 +11,10 @@ use chummer_core::lang::Language;
 /// Every string literal passed to `.tr(`, `.tr_fmt(` or `.tr_all([` in the
 /// GUI sources.
 fn gui_labels() -> BTreeSet<String> {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let src = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
     let mut out = BTreeSet::new();
-    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+    let files = [src.to_owned(), format!("{src}/workspace")].into_iter().flat_map(|d| std::fs::read_dir(d).unwrap().flatten());
+    for entry in files {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("rs") || path.ends_with("tr_coverage.rs") {
             continue;
@@ -51,6 +52,8 @@ fn table_labels() -> BTreeSet<String> {
     out.extend(chargen::CATEGORIES.iter().map(|c| (*c).to_owned()));
     out.extend(attributes::PHYSICAL.iter().chain(attributes::MENTAL).chain(attributes::SPECIAL).map(|a| attributes::long_name(a).to_owned()));
     out.extend(crate::view::TABS.iter().map(|(_, l)| (*l).to_owned()));
+    out.extend(crate::workspace::palette::Cmd::ALL.iter().flat_map(|c| [c.label(), c.menu()]).map(str::to_owned));
+    out.extend(crate::theme::ThemeKind::ALL.iter().map(|k| k.label().to_owned()).chain(crate::theme::Layout::ALL.iter().map(|l| l.label().to_owned())));
     out.extend(crate::settings_ui::LABELS.iter().map(|(_, l)| (*l).to_owned()));
     out.extend(chargen::issues::templates().into_iter().map(str::to_owned));
     out.extend(chargen::guide::ALL.iter().flat_map(|s| [s.title(), s.explanation("Priority"), s.explanation("Karma"), s.explanation("LifeModule"), s.explanation("SumtoTen")]).map(str::to_owned));

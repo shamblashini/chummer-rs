@@ -150,13 +150,11 @@ impl CharacterView {
         }
     }
 
-    /// The focused tab's issues, above its page, until closed. Creation
-    /// mode only.
-    pub(super) fn issue_panel(&mut self, ui: &mut egui::Ui, lang: &Language) {
+    /// A tab's issues, above its page, until closed. Creation mode only.
+    pub(super) fn issue_panel(&mut self, ui: &mut egui::Ui, lang: &Language, tab: Tab) {
         if self.budget.is_none() {
             return;
         }
-        let tab = self.tab;
         // The guide bar already lists what is left on its own tab.
         if self.guide_tab() == Some(tab) {
             return;

@@ -296,8 +296,10 @@ impl GmScreen {
         Some(InitStats { base: s.initiative, dice: s.initiative_dice.max(1) as u32, edge: s.attr("EDG"), reaction: s.attr("REA"), intuition: s.attr("INT") })
     }
 
+    /// The GM screen. `feed` false leaves out the activity panel (the
+    /// Workspace shows it in its own window, see [`GmScreen::activity`]).
     #[allow(clippy::too_many_arguments)]
-    pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status, net: &mut crate::online::Online) -> Option<Action> {
+    pub fn ui(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status, net: &mut crate::online::Online, feed: bool) -> Option<Action> {
         self.online_tick(engine, views);
         self.take_mail_request(net);
         self.sync(engine, views);
@@ -305,15 +307,20 @@ impl GmScreen {
         egui::SidePanel::left("gm_roster").resizable(true).default_width(340.0).min_width(260.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("gm_roster_scroll").auto_shrink(false).show(ui, |ui| self.roster(ui, engine, lang, views, status, &mut action));
         });
-        egui::SidePanel::right("gm_feed").resizable(true).default_width(320.0).min_width(220.0).max_width(520.0).show(ctx, |ui| {
-            self.online_panel(ui, net, engine, lang, views, status);
-            self.feed(ui, lang, views, status);
-        });
+        if feed {
+            egui::SidePanel::right("gm_feed").resizable(true).default_width(320.0).min_width(220.0).max_width(520.0).show(ctx, |ui| self.activity(ui, engine, lang, views, status, net));
+        }
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("gm_board_scroll").auto_shrink(false).show(ui, |ui| self.board(ui, engine, lang, views, status, &mut action));
         });
         self.windows(ctx, engine, lang, views, status);
         action
+    }
+
+    /// The online panel and the activity feed (the right-hand panel).
+    pub fn activity(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status, net: &mut crate::online::Online) {
+        self.online_panel(ui, net, engine, lang, views, status);
+        self.feed(ui, lang, views, status);
     }
 
     // ----- roster -----
