@@ -52,6 +52,10 @@ struct Shared {
     /// With `path`: the changes made since the last save
     /// ([`crate::journal`]). Locked after the authority, never before.
     journal: Mutex<Option<Journal>>,
+    /// Held across a whole save, so saves happen one after the other (the
+    /// journal must not be set aside by a newer save that an older one
+    /// then overwrites).
+    saving: Mutex<()>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -92,6 +96,7 @@ impl Shared {
 
     fn save_now(&self) -> std::io::Result<()> {
         let Some(p) = &self.path else { return Ok(()) };
+        let _one_at_a_time = self.saving.lock().expect("poisoned");
         let bytes = {
             let mut a = self.lock();
             self.journal(&mut a);
@@ -221,7 +226,7 @@ impl AuthorityHost {
             authority.take_applied();
         }
         let journal = Mutex::new(path.as_deref().map(Journal::new));
-        let shared = Arc::new(Shared { authority: Mutex::new(authority), engine, secret, path, dirty: AtomicBool::new(replayed > 0), blob_limit: Mutex::new(DEFAULT_BLOB_LIMIT), events, journal });
+        let shared = Arc::new(Shared { authority: Mutex::new(authority), engine, secret, path, dirty: AtomicBool::new(replayed > 0), blob_limit: Mutex::new(DEFAULT_BLOB_LIMIT), events, journal, saving: Mutex::new(()) });
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<EndpointId>>();
         let host = CampaignHost::new(Handler { shared: shared.clone(), sweep: tx.clone() });
         let me = AuthorityHost { shared: shared.clone(), host: host.clone(), sweep: tx };

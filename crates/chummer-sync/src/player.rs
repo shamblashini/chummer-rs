@@ -87,6 +87,8 @@ struct Inner {
     /// knows; and when we last mailed a join message.
     mailed_at: Mutex<std::collections::HashMap<OpId, Instant>>,
     joined_by_mail: Mutex<Instant>,
+    /// Held across a save, so an older state never overwrites a newer one.
+    saving: Mutex<()>,
 }
 
 /// A player's session. Cheap to clone.
@@ -140,6 +142,7 @@ impl PlayerSession {
                 closed: std::sync::atomic::AtomicBool::new(false),
                 mailed_at: Mutex::default(),
                 joined_by_mail: Mutex::new(Instant::now()),
+                saving: Mutex::new(()),
             }),
             events: Arc::new(tokio::sync::Mutex::new(rx)),
         }
@@ -296,6 +299,7 @@ impl PlayerSession {
     pub fn save(&self) -> std::io::Result<()> {
         match &self.inner.cfg.path {
             Some(p) => {
+                let _one_at_a_time = self.inner.saving.lock().expect("poisoned");
                 let bytes = self.replica().to_bytes();
                 crate::persist::write_atomic(p, &bytes)
             }

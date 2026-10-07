@@ -39,21 +39,30 @@ pub(crate) fn from_bytes<T: DeserializeOwned>(magic: &[u8; 4], what: &'static st
 }
 
 /// Writes `bytes` to `path` through a temporary file and a rename, so a
-/// crash leaves the old file or the new one, never half of one.
+/// crash leaves the old file or the new one, never half of one. Each call
+/// has its own temporary file, so saves of one file from several tasks
+/// at once do not clash (the last rename wins; callers that care about
+/// order hold a lock across taking the state and writing it).
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
             std::fs::create_dir_all(dir)?;
         }
     }
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(".tmp-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     let tmp = std::path::PathBuf::from(tmp);
-    {
+    let written = (|| {
         use std::io::Write;
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
-    std::fs::rename(&tmp, path)
+    written
 }

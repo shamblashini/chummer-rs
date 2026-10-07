@@ -226,3 +226,35 @@ async fn acknowledged_changes_survive_an_authority_crash() {
     assert_eq!(again.version(&c), Some(5));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Two saves of the same file at once (a player's edit and an incoming
+/// push are saved from different tasks) shared one temporary file: one
+/// rename failed with "No such file or directory", and a file could end
+/// up with another save's half-written bytes (found by the Docker
+/// disk-full scenario's logs).
+#[test]
+fn concurrent_saves_of_one_file_do_not_clash() {
+    let dir = std::env::temp_dir().join(format!("chummer-sync-atomic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("campaign.replica");
+    let threads: Vec<_> = (0..8u8)
+        .map(|t| {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                for _ in 0..20 {
+                    chummer_sync::persist::write_atomic(&path, &vec![t; 256 * 1024])?;
+                }
+                Ok::<(), std::io::Error>(())
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap().expect("every save succeeds");
+    }
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes.len(), 256 * 1024);
+    assert!(bytes.iter().all(|b| *b == bytes[0]), "the file is one whole save");
+    let leftovers: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path() != path).collect();
+    assert!(leftovers.is_empty(), "temporary files left: {leftovers:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
