@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-authority"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chummer-core",
@@ -798,7 +798,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chummer-core",
@@ -807,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "lzma-rs",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-gui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chummer-core",
@@ -836,7 +836,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-net"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crypto_box",
  "dirs",
@@ -855,7 +855,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-relay"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chummer-net",
@@ -876,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "chummer-sync"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chummer-core",
