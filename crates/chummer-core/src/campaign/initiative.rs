@@ -135,7 +135,8 @@ impl Encounter {
     /// stats (`stats` gives a member's from its sheet; `None` keeps the
     /// combatant's own) and roll for everyone.
     pub fn new_round(&mut self, rng: &mut Rng, stats: impl Fn(&Combatant) -> Option<InitStats>) {
-        self.round += 1;
+        // Saturating: the counters and scores come from the campaign file.
+        self.round = self.round.saturating_add(1);
         self.pass = 1;
         for c in &mut self.combatants {
             c.acted = false;
@@ -157,7 +158,8 @@ impl Encounter {
         }
         c.roll(rng);
         // Later passes have already taken their 10s.
-        c.score -= 10 * self.pass.saturating_sub(1) as i32;
+        let taken = i32::try_from(self.pass.saturating_sub(1)).unwrap_or(i32::MAX).saturating_mul(10);
+        c.score = c.score.saturating_sub(taken);
     }
 
     /// Blitz: roll 5d6 for this round (the caller spends the Edge).
@@ -223,9 +225,9 @@ impl Encounter {
         if !self.has_next_pass() {
             return false;
         }
-        self.pass += 1;
+        self.pass = self.pass.saturating_add(1);
         for c in &mut self.combatants {
-            c.score -= 10;
+            c.score = c.score.saturating_sub(10);
             c.acted = false;
             c.delayed = false;
         }
@@ -235,7 +237,7 @@ impl Encounter {
     /// An action that costs initiative (e.g. an interrupt: −5 or −10).
     pub fn spend(&mut self, i: usize, points: i32) {
         if let Some(c) = self.combatants.get_mut(i) {
-            c.score -= points;
+            c.score = c.score.saturating_sub(points);
         }
     }
 

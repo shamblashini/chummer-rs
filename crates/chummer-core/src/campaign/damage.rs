@@ -90,15 +90,16 @@ pub struct Tracks {
 /// The filled boxes after `boxes` of damage. Physical is capped at its
 /// track plus the overflow boxes (beyond that the character is dead).
 pub fn apply(t: Tracks, boxes: i32, physical: bool) -> (i32, i32) {
-    let cap = t.physical + t.overflow;
+    // Saturating: ad-hoc tracks come from the campaign file.
+    let cap = t.physical.saturating_add(t.overflow);
     let mut p = t.physical_filled;
     let mut s = t.stun_filled;
     if physical || t.stun <= 0 {
-        p += boxes;
+        p = p.saturating_add(boxes);
     } else {
-        s += boxes;
+        s = s.saturating_add(boxes);
         if s > t.stun {
-            p += (s - t.stun) / STUN_PER_PHYSICAL;
+            p = p.saturating_add(s.saturating_sub(t.stun) / STUN_PER_PHYSICAL);
             s = t.stun;
         }
     }

@@ -474,7 +474,7 @@ impl Campaign {
             .iter()
             .filter_map(|m| m.name.strip_prefix(base)?.strip_prefix(' ')?.parse::<u32>().ok())
             .max()
-            .map_or(1, |n| n + 1)
+            .map_or(1, |n| n.saturating_add(1))
     }
 
     /// Add `count` copies of `template` (with `ch`, its character), each
@@ -486,7 +486,7 @@ impl Campaign {
         let first = self.next_number(&base);
         (0..count)
             .map(|i| {
-                let name = format!("{base} {}", first + i);
+                let name = format!("{base} {}", first.saturating_add(i));
                 let copy = named_copy(engine, ch, &name);
                 let mut m = Member::embedded(template.kind.clone(), &copy);
                 m.player = template.player.clone();

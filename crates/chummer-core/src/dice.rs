@@ -138,7 +138,7 @@ pub fn roll(rng: &mut Rng, pool: u32, rule_of_six: bool, limit: Option<u32>) -> 
 /// Initiative: base + Nd6.
 pub fn initiative(rng: &mut Rng, base: i32, dice: u32) -> (i32, Vec<u8>) {
     let rolled: Vec<u8> = (0..dice).map(|_| rng.d6()).collect();
-    (base + rolled.iter().map(|&d| i32::from(d)).sum::<i32>(), rolled)
+    (base.saturating_add(rolled.iter().map(|&d| i32::from(d)).sum::<i32>()), rolled)
 }
 
 #[cfg(test)]

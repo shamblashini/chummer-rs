@@ -44,14 +44,28 @@ pub fn compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
     w.finish().map_err(io_err)
 }
 
+/// The most memory (KiB) the decoder may use. The header declares the
+/// dictionary size and the decoder allocates it in full, so without a
+/// limit a forged 13-byte header asks for 4 GiB. Chummer's largest preset
+/// ("Ultra", `LzmaHelper`) uses a 2^27 byte dictionary; this allows that
+/// plus the largest probability tables.
+const MEM_LIMIT_KB: u32 = (1 << 27) / 1024 + 8192;
+
+/// The most a stream may decompress to. The largest real saves are a few
+/// MB of XML; a small forged stream could otherwise expand to gigabytes.
+pub const MAX_DECOMPRESSED: u64 = 256 << 20;
+
 /// Decompress a `.chum5lz` byte stream.
 pub fn decompress(data: &[u8]) -> std::io::Result<Vec<u8>> {
     if data.len() < 13 {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "input .lzma is too short"));
     }
-    let mut r = LzmaReader::new_mem_limit(data, u32::MAX, None).map_err(io_err)?;
-    let mut out = Vec::with_capacity(data.len() * 8);
-    r.read_to_end(&mut out)?;
+    let r = LzmaReader::new_mem_limit(data, MEM_LIMIT_KB, None).map_err(io_err)?;
+    let mut out = Vec::with_capacity(data.len().saturating_mul(8).min(MAX_DECOMPRESSED as usize));
+    r.take(MAX_DECOMPRESSED + 1).read_to_end(&mut out)?;
+    if out.len() as u64 > MAX_DECOMPRESSED {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("decompresses to more than {MAX_DECOMPRESSED} bytes")));
+    }
     Ok(out)
 }
 

@@ -85,7 +85,8 @@ impl SettingsLibrary {
             if let Ok(rd) = std::fs::read_dir(dir) {
                 for entry in rd.flatten() {
                     let p = entry.path();
-                    if p.extension().and_then(|e| e.to_str()) != Some("xml") {
+                    // Any case: an import keeps the shared file's name, e.g. `X.XML`.
+                    if !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("xml")) {
                         continue;
                     }
                     let Ok(src) = std::fs::read_to_string(&p) else { continue };

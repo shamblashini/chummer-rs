@@ -40,6 +40,15 @@ fn reject<E: std::fmt::Display>(e: E) -> Rejected {
     Rejected::new(e.to_string())
 }
 
+/// A field a command names becomes an element name in the save.
+fn field_name(key: &str) -> Result<(), Rejected> {
+    if crate::xml::is_name(key) {
+        Ok(())
+    } else {
+        Err(Rejected::new(format!("{key:?} is not a field name")))
+    }
+}
+
 /// A record of kind `tag` (`items::KINDS`).
 fn with_record<T>(store: &DataStore, file: &str, container: &str, item: &str, r: &RecordRef, f: impl FnOnce(Record<'_>) -> Result<T, Rejected>) -> Result<T, Rejected> {
     let doc = store.doc(file).map_err(reject)?;
@@ -82,6 +91,7 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
     match cmd {
         // ----- fields and settings -----
         SetField { key, value } => {
+            field_name(key)?;
             ch.set_field(key, value.clone());
             changed()
         }
@@ -238,7 +248,10 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
         SetItemQuantity { guid, qty } => flag(edit::set_quantity(ch, guid, *qty)),
         SetItemEquipped { guid, on } => flag(edit::set_equipped(ch, store, guid, *on)),
         SetItemWireless { guid, on } => flag(edit::set_wireless(ch, store, guid, *on)),
-        SetItemText { guid, field, value } => flag(edit::set_text(ch, guid, field, value)),
+        SetItemText { guid, field, value } => {
+            field_name(field)?;
+            flag(edit::set_text(ch, guid, field, value))
+        }
         AddItemLocation { guid, name } => match edit::add_location(ch, guid, name) {
             Some(loc) => flag(edit::set_text(ch, guid, "location", &loc)),
             None => Ok(Done::Unchanged),
@@ -402,7 +415,10 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
             }
             Ok(Done::Changed { message: None, count: Some(n) })
         }
-        SetContactField { contact, key, value } => flag(contacts::set_field(ch, contact, key, value)),
+        SetContactField { contact, key, value } => {
+            field_name(key)?;
+            flag(contacts::set_field(ch, contact, key, value))
+        }
         SetContactNotes { contact, notes, color } => {
             let text = notes.as_ref().is_some_and(|n| contacts::set_field(ch, contact, "notes", n));
             flag(text | contacts::set_notes_color(ch, contact, *color))

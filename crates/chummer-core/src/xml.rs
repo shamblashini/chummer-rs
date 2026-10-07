@@ -17,7 +17,15 @@ pub enum XmlError {
     NoRoot,
     #[error("unbalanced end tag </{0}>")]
     Unbalanced(String),
+    #[error("elements nested more than {MAX_DEPTH} deep")]
+    TooDeep,
 }
+
+/// Deepest element nesting [`parse`] accepts. Chummer's files nest a few
+/// dozen levels; the tree is written, cloned and dropped recursively, so a
+/// hostile file nested a hundred thousand deep would overflow the stack
+/// (an abort, not an error).
+pub const MAX_DEPTH: usize = 1000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -266,6 +274,14 @@ pub(crate) fn escape(s: &str, attr: bool) -> String {
     out
 }
 
+/// Whether `s` can be an element name: a letter or `_`, then letters,
+/// digits, `-`, `_` and `.` (no spaces, no markup). Commands that name
+/// a field check this, or a save would not load again.
+pub fn is_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_') && chars.all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 /// Parse an integer the way .NET's lenient invariant parsing would accept it:
 /// surrounding whitespace and a leading `+` are fine.
 pub fn parse_int(s: &str) -> Option<i32> {
@@ -370,6 +386,9 @@ pub fn parse(src: &str) -> Result<Element, XmlError> {
         match ev {
             Event::Start(e) => {
                 flush_text(&mut stack, &mut pending_text);
+                if stack.len() >= MAX_DEPTH {
+                    return Err(XmlError::TooDeep);
+                }
                 stack.push(start_to_element(&e));
             }
             Event::Empty(e) => {

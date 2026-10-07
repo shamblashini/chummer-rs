@@ -186,7 +186,7 @@ impl Session {
         let key = env.cmd.coalesce_key();
         let merge = key.is_some()
             && self.undo.last().is_some_and(|u| !u.sealed)
-            && self.log.last().is_some_and(|l| l.envelope.cmd.coalesce_key() == key && env.at - l.envelope.at <= COALESCE_MS && l.envelope.author == env.author);
+            && self.log.last().is_some_and(|l| l.envelope.cmd.coalesce_key() == key && env.at.saturating_sub(l.envelope.at) <= COALESCE_MS && l.envelope.author == env.author);
         if merge {
             // The newer value replaces the older; the step still undoes
             // to the state before the first edit. `before` is the state

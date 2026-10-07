@@ -90,7 +90,15 @@ fn main() -> ExitCode {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `std::env::args` panics on an argument that is not UTF-8.
+    let args: Result<Vec<String>, _> = std::env::args_os().skip(1).map(|a| a.into_string()).collect();
+    let args = match args {
+        Ok(a) => a,
+        Err(bad) => {
+            eprintln!("error: argument {:?} is not valid UTF-8", bad);
+            return ExitCode::FAILURE;
+        }
+    };
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
