@@ -277,16 +277,9 @@ impl ImprovementsPanel {
                     }
                     let opts = d.options.as_ref().map(|(_, o)| o.as_slice()).unwrap_or_default();
                     ui.label(lang.tr("Selected Value:"));
-                    if opts.is_empty() {
-                        ui.add(egui::TextEdit::singleline(&mut d.form.select).desired_width(320.0));
-                    } else {
-                        let form = &mut d.form;
-                        crate::combo::Combo::from_id_salt("imp_select").width(320.0).selected_text(form.select.clone()).height(360.0).show_ui(ui, |ui| {
-                            for o in opts.iter() {
-                                crate::combo::selectable_value(ui, &mut form.select, o.clone(), o);
-                            }
-                        });
-                    }
+                    // Free text, with the values the selection offers as presets.
+                    let presets: Vec<(String, String)> = opts.iter().map(|o| (o.clone(), o.clone())).collect();
+                    crate::workspace::widgets::preset_input(ui, "imp_select", &mut d.form.select, &presets, "", 320.0);
                     ui.end_row();
                 }
                 let num = |ui: &mut egui::Ui, label: &str, v: &mut f64, decimals: usize| {

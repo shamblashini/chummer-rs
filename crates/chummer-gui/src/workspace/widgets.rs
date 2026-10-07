@@ -1124,6 +1124,174 @@ mod stepper_tests {
     }
 }
 
+// ----- text input with presets -----
+
+/// What a [`preset_input`] remembers between frames.
+#[derive(Clone, Copy, Default)]
+struct PresetState {
+    open: bool,
+    /// Opened by typing: the list shows the presets matching the text.
+    filter: bool,
+    /// The entry chosen with the arrow keys (an index into the shown ones).
+    highlight: Option<usize>,
+}
+
+/// The presets of `presets` (value, label) to show for `text`: all of
+/// them, or with `filter` those whose label or value has every word typed
+/// (as in [`crate::combo`]'s search).
+pub fn preset_matches<'a>(presets: &'a [(String, String)], text: &str, filter: bool) -> Vec<&'a (String, String)> {
+    let needle = text.trim().to_lowercase();
+    presets.iter().filter(|(v, l)| !filter || needle.is_empty() || crate::combo::matches(&l.to_lowercase(), &needle) || crate::combo::matches(&v.to_lowercase(), &needle)).collect()
+}
+
+/// A free-text field with presets: a text input with a small chevron
+/// inside its right edge that opens the list of `presets` (value stored,
+/// label shown). Typing filters the list; any text is still allowed. Up and
+/// Down pick an entry, Enter takes it, Escape closes the list. Returns the
+/// text's response, `changed` on typing and on a pick. Drawn in the
+/// Workspace style or as a Classic field, after the active layout.
+pub fn preset_input(ui: &mut Ui, id: impl std::hash::Hash, text: &mut String, presets: &[(String, String)], hint: &str, width: f32) -> Response {
+    let th = theme::current(ui.ctx());
+    let ws = th.ws;
+    let wsl = th.workspace_layout();
+    let id = ui.id().with(("preset_input", id));
+    let edit_id = id.with("edit");
+    let mut state: PresetState = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+    let enabled = ui.is_enabled();
+    let height = if wsl { 24.0 } else { ui.spacing().interact_size.y };
+    let (rect, frame_resp) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
+    let focused = ui.memory(|m| m.has_focus(edit_id));
+    let visuals = ui.visuals().clone();
+    let (fill, stroke, radius) = if wsl {
+        (ws.well, Stroke::new(1.0_f32, if focused { ws.primary } else if enabled { ws.control } else { ws.divider }), CornerRadius::same(5))
+    } else {
+        let s = if focused { visuals.selection.stroke } else { visuals.widgets.inactive.bg_stroke };
+        (visuals.text_edit_bg_color(), s, visuals.widgets.inactive.corner_radius)
+    };
+    ui.painter().rect(rect, radius, fill, stroke, StrokeKind::Inside);
+    let has_list = !presets.is_empty();
+    let chevron_w = if has_list { 18.0 } else { 0.0 };
+    let chevron = egui::Rect::from_min_max(egui::pos2(rect.right() - chevron_w - 1.0, rect.top() + 1.0), rect.right_bottom() - egui::vec2(1.0, 1.0));
+    let mut pick: Option<String> = None;
+    let shown_now = if state.open { preset_matches(presets, text, state.filter) } else { Vec::new() };
+    // Keys for the list, before the text field sees them.
+    if focused && state.open {
+        ui.input_mut(|i| {
+            let n = shown_now.len();
+            if n > 0 && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                state.highlight = Some(state.highlight.map_or(0, |h| (h + 1).min(n - 1)));
+            }
+            if n > 0 && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                state.highlight = state.highlight.and_then(|h| h.checked_sub(1));
+            }
+            if let Some(h) = state.highlight.filter(|h| *h < n) {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                    pick = Some(shown_now[h].0.clone());
+                }
+            }
+            if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                state.open = false;
+            }
+        });
+    }
+    let text_rect = egui::Rect::from_min_max(rect.min + egui::vec2(if wsl { 7.0 } else { 4.0 }, 0.0), egui::pos2(chevron.left() - 2.0, rect.bottom()));
+    let mut edit = {
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text_rect).layout(egui::Layout::left_to_right(egui::Align::Center)).id_salt(id.with("child")));
+        if wsl {
+            child.visuals_mut().override_text_color = Some(ws.text);
+        }
+        child.add(egui::TextEdit::singleline(text).id(edit_id).frame(false).margin(egui::Margin::ZERO).hint_text(hint).desired_width(text_rect.width()))
+    };
+    if edit.changed() && has_list {
+        state.open = true;
+        state.filter = true;
+        state.highlight = None;
+    }
+    if has_list {
+        let resp = ui.interact(chevron, id.with("chevron"), if enabled { Sense::click() } else { Sense::hover() });
+        let hovered = enabled && resp.hovered();
+        if hovered {
+            ui.painter().rect_filled(chevron.shrink(1.0), CornerRadius::same(3), if wsl { ws.hover } else { visuals.widgets.hovered.weak_bg_fill });
+        }
+        let ink = if !enabled {
+            ws.muted.gamma_multiply(0.45)
+        } else if hovered || state.open {
+            if wsl { ws.text } else { visuals.strong_text_color() }
+        } else if wsl {
+            ws.muted
+        } else {
+            visuals.weak_text_color()
+        };
+        icons::paint(ui.painter(), chevron, icons::CARET_DOWN, 11.0, ink);
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            state.open = !state.open;
+            state.filter = false;
+            state.highlight = None;
+            if state.open {
+                ui.memory_mut(|m| m.request_focus(edit_id));
+            }
+        }
+    }
+    if state.open && has_list && pick.is_none() {
+        let shown = preset_matches(presets, text, state.filter);
+        let mut open = true;
+        let popup = egui::Popup::new(id.with("popup"), ui.ctx().clone(), &frame_resp, ui.layer_id())
+            .open_bool(&mut open)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .gap(2.0);
+        popup.show(|ui| {
+            ui.set_min_width(width - 12.0);
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            egui::ScrollArea::vertical().max_height(260.0).auto_shrink([false, true]).show(ui, |ui| {
+                if shown.is_empty() {
+                    ui.weak("—");
+                }
+                for (k, (value, label)) in shown.iter().enumerate() {
+                    let on = state.highlight == Some(k) || *value == *text;
+                    let r = ui.add(egui::Button::selectable(on, label.as_str()));
+                    if state.highlight == Some(k) {
+                        r.scroll_to_me(None);
+                    }
+                    if r.clicked() {
+                        pick = Some(value.clone());
+                    }
+                }
+            });
+        });
+        // A click in the text field keeps the list (the field is part of it).
+        if !open && !ui.input(|i| i.pointer.interact_pos().is_some_and(|p| rect.contains(p))) {
+            state.open = false;
+        }
+    }
+    if let Some(v) = pick {
+        if *text != v {
+            *text = v;
+            edit.mark_changed();
+        }
+        state = PresetState::default();
+    }
+    ui.data_mut(|d| d.insert_temp(id, state));
+    edit
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+
+    #[test]
+    fn typing_filters_the_presets() {
+        let p: Vec<(String, String)> = ["Fixer", "Fence", "Street Doc", "Bartender"].iter().map(|s| (s.to_string(), s.to_string())).collect();
+        assert_eq!(preset_matches(&p, "f", true).len(), 2, "Fixer and Fence");
+        assert_eq!(preset_matches(&p, "doc street", true)[0].0, "Street Doc");
+        assert_eq!(preset_matches(&p, "fixer", false).len(), 4, "opened with the chevron: every preset");
+        assert_eq!(preset_matches(&p, "", true).len(), 4);
+        assert!(preset_matches(&p, "decker", true).is_empty(), "free text matches nothing");
+        // The stored value is searched too ("Troll (Fomori)" shown, "Fomori" stored).
+        let m = vec![("Fomori".to_string(), "Troll (Fomori)".to_string())];
+        assert_eq!(preset_matches(&m, "fomo", true).len(), 1);
+    }
+}
+
 #[cfg(test)]
 mod build_tests {
     #[test]

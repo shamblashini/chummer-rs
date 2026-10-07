@@ -16,9 +16,9 @@ use chummer_core::lang::Language;
 use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
 
-use crate::combo::{self, Combo};
 use crate::doc::Doc;
 use crate::pdf_ui::Status;
+use crate::workspace::widgets;
 
 const OPEN_REQUEST: &str = "relationships_open_request";
 
@@ -563,23 +563,19 @@ fn flag_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &st
 }
 
 /// An editable drop-down (Chummer's combo boxes accept free text): a text
-/// box with a list button of `choices` beside it.
+/// box with the `choices` behind a chevron inside it.
 #[allow(clippy::too_many_arguments)]
 fn combo_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &str, choices: &[String], data_file: &str, lang: &Language, width: f32, enabled: bool) -> bool {
-    let mut changed = text_field(ui, ch, guid, c, key, width, enabled);
-    let cur = c.get(key);
-    let mut pick = None;
-    Combo::from_id_salt(("contact_combo", key)).selected_text("").width(16.0).show_ui(ui, |ui| {
-        for v in choices {
-            if combo::selectable_label(ui, *v == cur, lang.data_name(data_file, "", v)).clicked() {
-                pick = Some(v.clone());
-            }
-        }
-    });
-    if let Some(v) = pick {
-        changed |= set_field(ch, guid, key, v);
-    }
-    changed
+    let presets: Vec<(String, String)> = choices.iter().map(|v| (v.clone(), lang.data_name(data_file, "", v))).collect();
+    preset_field(ui, ch, guid, c, key, &presets, width, enabled)
+}
+
+/// A contact's text field with presets (value, label).
+#[allow(clippy::too_many_arguments)]
+fn preset_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &str, presets: &[(String, String)], width: f32, enabled: bool) -> bool {
+    let mut v = c.get(key);
+    let r = ui.add_enabled_ui(enabled, |ui| widgets::preset_input(ui, key, &mut v, presets, "", width + 18.0)).inner;
+    r.changed() && set_field(ch, guid, key, v)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -595,20 +591,13 @@ fn linked_or_combo(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key
 
 /// The metatype box: free text or a metatype / "Metatype (Metavariant)".
 fn metatype_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, choices: &[(String, String, String)], lang: &Language, width: f32) -> bool {
-    let mut changed = text_field(ui, ch, guid, c, "metatype", width, true);
-    let cur = c.get("metatype");
-    let mut pick = None;
-    Combo::from_id_salt("contact_metatype").selected_text("").width(16.0).height(320.0).show_ui(ui, |ui| {
-        for (value, metatype, variant) in choices {
+    let presets: Vec<(String, String)> = choices
+        .iter()
+        .map(|(value, metatype, variant)| {
             let mt = lang.data_name("metatypes.xml", "", metatype);
             let shown = if variant.is_empty() { mt } else { format!("{mt} ({})", lang.data_name("metatypes.xml", "", variant)) };
-            if combo::selectable_label(ui, *value == cur, shown).clicked() {
-                pick = Some(value.clone());
-            }
-        }
-    });
-    if let Some(v) = pick {
-        changed |= set_field(ch, guid, "metatype", v);
-    }
-    changed
+            (value.clone(), shown)
+        })
+        .collect();
+    preset_field(ui, ch, guid, c, "metatype", &presets, width, true)
 }
