@@ -260,7 +260,10 @@ impl WsItemEditor {
         }
 
         // At the table: ammunition, matrix, vehicle damage.
-        res.changed |= self.play.ui(ui, ch, store, lang, guid, &mut res.status);
+        // In a horizontal scroll area: its tables would widen the inspector.
+        let play = &mut self.play;
+        let status = &mut res.status;
+        res.changed |= egui::ScrollArea::horizontal().id_salt(("ws_item_play", guid)).show(ui, |ui| play.ui(ui, ch, store, lang, guid, status)).inner;
 
         // Notes.
         ui.add_space(2.0);

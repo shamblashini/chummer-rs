@@ -550,7 +550,13 @@ pub fn icon_line(ui: &mut Ui, glyph: &str, text: &str, color: Color32, text_colo
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.label(icons::icon(glyph, 13.0, color));
-        ui.add(egui::Label::new(RichText::new(text).size(12.0).color(text_color)).wrap());
+        // Wrap within the space left (a wrapping label in a row would
+        // widen a side panel instead).
+        let w = ui.available_width();
+        ui.allocate_ui_with_layout(egui::vec2(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_max_width(w);
+            ui.add(egui::Label::new(RichText::new(text).size(12.0).color(text_color)).wrap());
+        });
     })
     .response
 }

@@ -28,6 +28,11 @@
 //!   nav item, card frame, budget chip, segmented switch, check box,
 //!   condition monitor, Edge boxes, `clip_to`), icons in [`icons`],
 //!   colours in `crate::theme::ws`.
+//! * Rebuilt pages so far: Play (`character.rs`); the item pages
+//!   (`items.rs`), the inline catalog that replaces the selection dialog
+//!   (`catalog.rs`) and the Workspace item inspector (`inspector.rs`),
+//!   all three child modules of `view` like `character.rs`; and Home
+//!   (`home.rs`, `App::ws_home_page`).
 
 mod home;
 pub mod icons;

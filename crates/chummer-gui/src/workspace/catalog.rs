@@ -129,6 +129,9 @@ struct Preview {
     nuyen: f64,
     /// The answer the preview used for a bonus selection.
     assumed: Option<String>,
+    /// Why Add would be refused (career: not enough nuyen); the sheet is
+    /// then the purchase's effect as if it were free.
+    refused: Option<String>,
 }
 
 /// A record kept for comparison.
@@ -138,7 +141,6 @@ struct Compared {
     ess: String,
     init: String,
     cost: String,
-    avail: String,
 }
 
 /// The catalog's state: one per character, for one item page.
@@ -722,15 +724,21 @@ fn preview(ch: &Character, settings: Option<&chummer_core::settings::CharacterSe
             assumed = Some(first.clone());
         }
     }
-    let cmd = Command::AddItem { tag: tag.to_owned(), record: RecordRef::of(Record(rec)), purchase: p };
-    command::apply(&mut copy, engine, &Envelope::new(cmd, 0, 0, "")).map_err(|e| e.reason)?;
+    let cmd = |p: Purchase| Command::AddItem { tag: tag.to_owned(), record: RecordRef::of(Record(rec)), purchase: p };
+    let mut refused = None;
+    if let Err(e) = command::apply(&mut copy, engine, &Envelope::new(cmd(p.clone()), 0, 0, "")) {
+        // Show what it would do anyway (a refused career purchase).
+        let free = Purchase { free: true, ..p };
+        command::apply(&mut copy, engine, &Envelope::new(cmd(free), 0, 0, "")).map_err(|_| e.reason.clone())?;
+        refused = Some(e.reason);
+    }
     let rules = engine.rules_for(&copy);
     let sheet = calc::compute(&copy, &rules, Some(&store), Some(&engine.catalog));
     let nuyen = match (settings, copy.created) {
         (Some(st), false) => chargen::budget_with(&copy, &sheet, &rules, st, Some(&store)).nuyen_left(),
         _ => copy.nuyen,
     };
-    Ok(Preview { sheet, nuyen, assumed })
+    Ok(Preview { sheet, nuyen, assumed, refused })
 }
 
 /// Attributes the preview compares.
@@ -1202,7 +1210,11 @@ impl CharacterView {
         }
         widgets::divider(ui);
         let base_cost = select::preview_cost(r, &c.purchase);
-        let cost = after.map(|a| nuyen_now - a.nuyen).or(base_cost.map(|b| b * grade.as_ref().map_or(1.0, |g| g.cost)));
+        let static_cost = base_cost.map(|b| b * grade.as_ref().map_or(1.0, |g| g.cost));
+        let cost = match after {
+            Some(a) if a.refused.is_none() => Some(nuyen_now - a.nuyen),
+            _ => static_cost,
+        };
         let cost_note = match (&grade, base_cost) {
             (Some(g), Some(b)) if (g.cost - 1.0).abs() > 1e-9 => format!("{} × {}", format::nuyen(b), chummer_core::improvement::fmt_num(g.cost)),
             _ => String::new(),
@@ -1218,7 +1230,8 @@ impl CharacterView {
         }
         if let Some(a) = after {
             let label = if creating { lang.tr("Nuyen left after") } else { lang.tr("Nuyen after") };
-            widgets::value_row(ui, &label, &format::nuyen(a.nuyen), if a.nuyen < 0.0 { ws.error } else { ws.accent }, "");
+            let nuyen = if a.refused.is_some() { cost.map_or(a.nuyen, |c| nuyen_now - c) } else { a.nuyen };
+            widgets::value_row(ui, &label, &format::nuyen(nuyen), if nuyen < 0.0 { ws.error } else { ws.accent }, "");
             let init = |s: &Sheet| format!("{} + {}d6", s.initiative, s.initiative_dice);
             if init(&a.sheet) != init(sheet) {
                 widgets::value_row(ui, &lang.tr("Initiative after"), &init(&a.sheet), ws.accent, &lang.tr_fmt("was {0}", &[&init(sheet)]));
@@ -1264,7 +1277,10 @@ impl CharacterView {
             }
         }
         if let Some(a) = after {
-            if a.nuyen < 0.0 {
+            if let Some(r) = &a.refused {
+                widgets::icon_line(ui, icons::X_CIRCLE, r, ws.error, ws.text);
+                blocked = true;
+            } else if a.nuyen < 0.0 {
                 widgets::icon_line(ui, icons::WARNING, &lang.tr("Not enough nuyen."), ws.warning, ws.text);
             }
             if a.sheet.essence < 0.0 {
@@ -1275,6 +1291,7 @@ impl CharacterView {
             }
         }
         if let Some(Err(e)) = pv {
+            // Not blocking: Add may still ask a question the preview could not answer.
             widgets::icon_line(ui, icons::X_CIRCLE, e, ws.error, ws.text);
         }
         let needs_parent = select::parent_of(tag).is_some() && c.purchase.parent.is_none();
@@ -1346,7 +1363,7 @@ impl CharacterView {
                     (d, dd) => format!("{d:+} {dd:+}d6"),
                 }
             });
-            let entry = Compared { name: short, ess, init, cost: cost.map_or("—".into(), format::nuyen), avail: avail.as_ref().map_or("—".into(), |a| a.to_string()) };
+            let entry = Compared { name: short, ess, init, cost: cost.map_or("—".into(), format::nuyen) };
             c.compare.retain(|x| x.name != entry.name);
             c.compare.push(entry);
         }
@@ -1362,24 +1379,49 @@ impl CharacterView {
                     clear = widgets::button(ui, None, &lang.tr("Clear"), Look::Ghost, 20.0).clicked();
                 });
             });
-            egui::Grid::new("ws_compare").num_columns(6).spacing([8.0, 2.0]).min_row_height(20.0).show(ui, |ui| {
-                for h in lang.tr_all(["Item", "Ess", "Init", "Avail", "Cost"]) {
-                    ui.label(RichText::new(h).size(10.5).color(ws.muted));
-                }
-                ui.label("");
-                ui.end_row();
-                for (i, e) in c.compare.iter().enumerate() {
-                    ui.add(egui::Label::new(RichText::new(&e.name).size(12.0).color(ws.text)).truncate());
-                    ui.label(widgets::mono(&e.ess, 11.5, ws.text));
-                    ui.label(widgets::mono(&e.init, 11.5, ws.text));
-                    ui.label(widgets::mono(&e.avail, 11.5, ws.text));
-                    ui.label(widgets::mono(&e.cost, 11.5, ws.text));
-                    if widgets::icon_button(ui, icons::X, 20.0).on_hover_text(lang.tr("Remove")).clicked() {
-                        drop = Some(i);
+            // Fixed columns (a grid would widen the inspector).
+            let widths = [40.0_f32, 54.0, 70.0, 20.0];
+            let name_w = (ui.available_width() - widths.iter().sum::<f32>() - 5.0 * 4.0 - 4.0).max(40.0);
+            let row = |ui: &mut egui::Ui, cells: [RichText; 4], name: RichText| -> egui::Response {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 5.0;
+                    ui.allocate_ui_with_layout(egui::vec2(name_w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_width(name_w);
+                        ui.add(egui::Label::new(name).truncate());
+                    });
+                    let mut last = None;
+                    for (k, (c, w)) in cells.into_iter().zip(widths).enumerate() {
+                        if k == 3 {
+                            last = Some(ui.allocate_ui(egui::vec2(w, 20.0), |ui| widgets::icon_button(ui, icons::X, 20.0)).inner);
+                        } else {
+                            ui.allocate_ui_with_layout(egui::vec2(w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                ui.set_width(w);
+                                ui.add(egui::Label::new(c).truncate());
+                            });
+                        }
                     }
-                    ui.end_row();
+                    last
+                })
+                .inner
+                .unwrap_or_else(|| ui.label(""))
+            };
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                let h = |t: &str| RichText::new(lang.tr(t)).size(10.5).color(ws.muted);
+                for (t, w) in ["Item", "Ess", "Init", "Cost"].into_iter().zip(std::iter::once(name_w).chain(widths)) {
+                    ui.allocate_ui_with_layout(egui::vec2(w, 16.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_width(w);
+                        ui.label(h(t));
+                    });
                 }
             });
+            for (i, e) in c.compare.iter().enumerate() {
+                let m = |t: &str| widgets::mono(t, 11.5, ws.text);
+                let r = row(ui, [m(&e.ess), m(&e.init), m(&e.cost), RichText::new("")], RichText::new(&e.name).size(12.0).color(ws.text));
+                if r.on_hover_text(lang.tr("Remove")).clicked() {
+                    drop = Some(i);
+                }
+            }
             if clear {
                 c.compare.clear();
             } else if let Some(i) = drop {

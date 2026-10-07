@@ -132,7 +132,9 @@ impl App {
             h.recent_for = self.recent.clone();
             // Campaign files are in the list too; Continue shows characters.
             let campaign = |p: &PathBuf| p.extension().is_some_and(|e| e.eq_ignore_ascii_case(chummer_core::campaign::EXTENSION));
-            h.recent = self.recent.iter().filter(|p| p.exists() && !campaign(p)).take(CONTINUE).map(|p| roster::summarize(p)).collect();
+            // The same file may be in the list as a relative and an absolute path.
+            let mut seen = std::collections::HashSet::new();
+            h.recent = self.recent.iter().filter(|p| p.exists() && !campaign(p) && seen.insert(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()))).take(CONTINUE).map(|p| roster::summarize(p)).collect();
             for p in &self.recent {
                 h.modified.insert(p.clone(), std::fs::metadata(p).and_then(|m| m.modified()).ok());
             }
