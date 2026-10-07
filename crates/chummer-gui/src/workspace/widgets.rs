@@ -1149,7 +1149,8 @@ pub fn preset_matches<'a>(presets: &'a [(String, String)], text: &str, filter: b
 /// label shown). Typing filters the list; any text is still allowed. Up and
 /// Down pick an entry, Enter takes it, Escape closes the list. Returns the
 /// text's response, `changed` on typing and on a pick. Drawn in the
-/// Workspace style or as a Classic field, after the active layout.
+/// Workspace style or as a Classic field, after the active layout. With no
+/// presets it is a plain text field of the same look.
 pub fn preset_input(ui: &mut Ui, id: impl std::hash::Hash, text: &mut String, presets: &[(String, String)], hint: &str, width: f32) -> Response {
     let th = theme::current(ui.ctx());
     let ws = th.ws;
@@ -1197,10 +1198,9 @@ pub fn preset_input(ui: &mut Ui, id: impl std::hash::Hash, text: &mut String, pr
     let text_rect = egui::Rect::from_min_max(rect.min + egui::vec2(if wsl { 7.0 } else { 4.0 }, 0.0), egui::pos2(chevron.left() - 2.0, rect.bottom()));
     let mut edit = {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text_rect).layout(egui::Layout::left_to_right(egui::Align::Center)).id_salt(id.with("child")));
-        if wsl {
-            child.visuals_mut().override_text_color = Some(ws.text);
-        }
-        child.add(egui::TextEdit::singleline(text).id(edit_id).frame(false).margin(egui::Margin::ZERO).hint_text(hint).desired_width(text_rect.width()))
+        let mut te = egui::TextEdit::singleline(text).id(edit_id).frame(false).margin(egui::Margin::ZERO).desired_width(text_rect.width());
+        te = if wsl { te.text_color(ws.text).hint_text(RichText::new(hint).color(ws.muted)) } else { te.hint_text(hint) };
+        child.add(te)
     };
     if edit.changed() && has_list {
         state.open = true;
