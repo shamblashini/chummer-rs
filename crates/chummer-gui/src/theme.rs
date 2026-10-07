@@ -1,4 +1,7 @@
-//! Look of the GUI: two themes on the same (Chummer5a) layout.
+//! Look of the GUI: two layouts (see [`Layout`]) and their themes.
+//!
+//! The Classic layout is Chummer5a's (menu, toolbar, tab pages) with two
+//! themes:
 //!
 //! * Classic imitates Chummer5a's WinForms look: SystemColors.Control
 //!   greys, white input fields, square corners, Windows-blue selection and
@@ -6,10 +9,15 @@
 //! * Graphite is the dark "pro tool" style: neutral greys, one teal accent,
 //!   IBM Plex Sans and Plex Mono.
 //!
+//! The Workspace layout (`crate::workspace`) has a dark and a light theme
+//! whose colours come from the chummer-rs logo (#151515, #738FFF,
+//! #B3C2FF); see [`WsPalette`].
+//!
 //! The active [`Theme`] lives in the egui context (see [`apply`]); widgets
-//! read their colours with [`palette`] or the small helpers ([`accent`],
-//! [`warn`], ...) so switching themes recolours everything. The choice is
-//! kept in `$XDG_CONFIG_HOME/chummer-rs/gui.ini`.
+//! read their colours with [`palette`] (or [`ws`] for Workspace roles) or
+//! the small helpers ([`accent`], [`warn`], ...) so switching themes
+//! recolours everything. The choice is kept in
+//! `$XDG_CONFIG_HOME/chummer-rs/gui.ini` (see [`Appearance`]).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,20 +29,66 @@ pub enum ThemeKind {
     Classic,
     #[default]
     Graphite,
+    /// The Workspace layout, dark.
+    WorkspaceDark,
+    /// The Workspace layout, light.
+    WorkspaceLight,
+}
+
+/// Where things are: Chummer5a's menu, toolbar and tab pages, or the
+/// Workspace shell (sidebar, inspector, command palette).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Layout {
+    #[default]
+    Classic,
+    Workspace,
+}
+
+impl Layout {
+    pub const ALL: [Layout; 2] = [Layout::Classic, Layout::Workspace];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Layout::Classic => "classic",
+            Layout::Workspace => "workspace",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Layout> {
+        Layout::ALL.into_iter().find(|l| l.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+
+    /// Menu label (English; goes through `lang.tr`).
+    pub fn label(self) -> &'static str {
+        match self {
+            Layout::Classic => "Classic",
+            Layout::Workspace => "Workspace",
+        }
+    }
 }
 
 impl ThemeKind {
-    pub const ALL: [ThemeKind; 2] = [ThemeKind::Classic, ThemeKind::Graphite];
+    pub const ALL: [ThemeKind; 4] = [ThemeKind::Classic, ThemeKind::Graphite, ThemeKind::WorkspaceDark, ThemeKind::WorkspaceLight];
+    /// The Classic layout's themes.
+    pub const CLASSIC: [ThemeKind; 2] = [ThemeKind::Classic, ThemeKind::Graphite];
+    /// The Workspace layout's themes.
+    pub const WORKSPACE: [ThemeKind; 2] = [ThemeKind::WorkspaceDark, ThemeKind::WorkspaceLight];
 
     pub fn as_str(self) -> &'static str {
         match self {
             ThemeKind::Classic => "classic",
             ThemeKind::Graphite => "graphite",
+            ThemeKind::WorkspaceDark => "dark",
+            ThemeKind::WorkspaceLight => "light",
         }
     }
 
+    /// `classic`, `graphite`, `dark` or `light` (also `workspace-dark`,
+    /// `workspace-light`).
     pub fn parse(s: &str) -> Option<ThemeKind> {
-        ThemeKind::ALL.into_iter().find(|k| k.as_str().eq_ignore_ascii_case(s.trim()))
+        let s = s.trim();
+        let s = s.strip_prefix("workspace-").unwrap_or(s);
+        ThemeKind::ALL.into_iter().find(|k| k.as_str().eq_ignore_ascii_case(s))
     }
 
     /// Menu label (English; goes through `lang.tr`).
@@ -42,7 +96,84 @@ impl ThemeKind {
         match self {
             ThemeKind::Classic => "Classic",
             ThemeKind::Graphite => "Graphite",
+            ThemeKind::WorkspaceDark => "Dark",
+            ThemeKind::WorkspaceLight => "Light",
         }
+    }
+
+    pub fn layout(self) -> Layout {
+        match self {
+            ThemeKind::Classic | ThemeKind::Graphite => Layout::Classic,
+            ThemeKind::WorkspaceDark | ThemeKind::WorkspaceLight => Layout::Workspace,
+        }
+    }
+
+    /// The WinForms look (square tabs, warning triangles); every other
+    /// theme draws like Graphite.
+    pub fn is_classic(self) -> bool {
+        self == ThemeKind::Classic
+    }
+}
+
+/// The saved look: the layout, and the last theme picked for each layout
+/// so switching layouts brings it back. gui.ini keeps them as `layout=`,
+/// `theme=` (Classic layout; as before Workspace existed) and
+/// `workspace=` (dark or light).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Appearance {
+    pub layout: Layout,
+    /// Classic or Graphite.
+    pub classic: ThemeKind,
+    /// WorkspaceDark or WorkspaceLight.
+    pub workspace: ThemeKind,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Appearance { layout: Layout::Classic, classic: ThemeKind::default(), workspace: ThemeKind::WorkspaceDark }
+    }
+}
+
+impl Appearance {
+    /// The theme in use.
+    pub fn kind(&self) -> ThemeKind {
+        match self.layout {
+            Layout::Classic => self.classic,
+            Layout::Workspace => self.workspace,
+        }
+    }
+
+    /// Use `kind`, switching to its layout.
+    pub fn with_kind(mut self, kind: ThemeKind) -> Appearance {
+        self.layout = kind.layout();
+        match self.layout {
+            Layout::Classic => self.classic = kind,
+            Layout::Workspace => self.workspace = kind,
+        }
+        self
+    }
+
+    pub fn with_layout(mut self, layout: Layout) -> Appearance {
+        self.layout = layout;
+        self
+    }
+
+    /// The appearance saved in a gui.ini text.
+    pub fn from_config(text: &str) -> Appearance {
+        let d = Appearance::default();
+        let pick = |key: &str, layout: Layout, fallback: ThemeKind| config_get(text, key).and_then(|v| ThemeKind::parse(&v)).filter(|k| k.layout() == layout).unwrap_or(fallback);
+        Appearance {
+            layout: config_get(text, "layout").and_then(|v| Layout::parse(&v)).unwrap_or(d.layout),
+            classic: pick("theme", Layout::Classic, d.classic),
+            workspace: pick("workspace", Layout::Workspace, d.workspace),
+        }
+    }
+
+    /// `text` with this appearance's lines set; other lines are kept.
+    pub fn to_config(&self, text: &str) -> String {
+        let s = config_set(text, "layout", self.layout.as_str());
+        let s = config_set(&s, "theme", self.classic.as_str());
+        config_set(&s, "workspace", self.workspace.as_str())
     }
 }
 
@@ -70,6 +201,11 @@ pub struct Palette {
     pub accent: Color32,
     /// Text drawn on an `accent` fill.
     pub on_accent: Color32,
+    /// Fill of the main action of a form ([`primary_button`]); `accent`
+    /// is for text.
+    pub primary: Color32,
+    /// Text drawn on a `primary` fill.
+    pub on_primary: Color32,
     pub selection: Color32,
     pub selection_text: Color32,
     /// Alternate table rows.
@@ -83,10 +219,121 @@ pub struct Palette {
     pub bad: Color32,
 }
 
+/// The Workspace roles, named as in the mockups. Text roles (`text`,
+/// `muted`, `accent`, `physical`, `stun`, `warning`, `error`) stay readable
+/// (4.5:1) on `ground`, `chrome`, `raised` and `well`; see the contrast
+/// test.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WsPalette {
+    /// The page behind the content.
+    pub ground: Color32,
+    /// Top bar, sidebar, inspector and status bar.
+    pub chrome: Color32,
+    /// Cards, buttons, menus and dialogs.
+    pub raised: Color32,
+    /// Inputs and other sunken fields.
+    pub well: Color32,
+    /// Selected rows and the current sidebar entry.
+    pub selection: Color32,
+    /// Lines between areas and around cards.
+    pub divider: Color32,
+    /// Borders of inputs, toggles and empty boxes.
+    pub control: Color32,
+    pub text: Color32,
+    pub muted: Color32,
+    /// Filled buttons, the current-entry bar, filled Edge boxes.
+    pub primary: Color32,
+    pub on_primary: Color32,
+    /// Accent text (values, links, the sync state).
+    pub accent: Color32,
+    pub physical: Color32,
+    pub stun: Color32,
+    pub warning: Color32,
+    pub error: Color32,
+    /// Text on a filled badge or damage box.
+    pub on_badge: Color32,
+    /// Hovered rows and buttons.
+    pub hover: Color32,
+}
+
+impl WsPalette {
+    pub const DARK: WsPalette = WsPalette {
+        ground: hex(0x1A1C22),
+        chrome: hex(0x15161B),
+        raised: hex(0x21242C),
+        well: hex(0x101115),
+        selection: hex(0x252C48),
+        divider: hex(0x2D313C),
+        control: hex(0x4A5065),
+        text: hex(0xECEEF6),
+        muted: hex(0xA3A9BD),
+        primary: hex(0x738FFF),
+        on_primary: hex(0x0F1220),
+        accent: hex(0xB3C2FF),
+        physical: hex(0xF2727C),
+        stun: hex(0x5FCFDC),
+        warning: hex(0xE8B55C),
+        error: hex(0xFF7B84),
+        on_badge: hex(0x121318),
+        hover: hex(0x262A34),
+    };
+
+    /// The light mockup (A-light); physical, stun and warning text is a
+    /// shade darker than drawn there so it reaches 4.5:1 on every
+    /// background.
+    pub const LIGHT: WsPalette = WsPalette {
+        ground: hex(0xF6F7FB),
+        chrome: hex(0xEEF0F6),
+        raised: hex(0xFFFFFF),
+        well: hex(0xFFFFFF),
+        selection: hex(0xE3E8FF),
+        divider: hex(0xD7DBE7),
+        control: hex(0xA9B0C3),
+        text: hex(0x16171D),
+        muted: hex(0x535A6E),
+        primary: hex(0x738FFF),
+        on_primary: hex(0x0F1220),
+        accent: hex(0x3A54CF),
+        physical: hex(0xC8303F),
+        stun: hex(0x097783),
+        warning: hex(0x8F5B00),
+        error: hex(0xC42B3A),
+        on_badge: hex(0xFFFFFF),
+        hover: hex(0xE6E9F2),
+    };
+
+    /// Workspace roles for a Classic-layout theme, so Workspace widgets
+    /// drawn there still fit.
+    fn from_palette(p: &Palette) -> WsPalette {
+        WsPalette {
+            ground: p.panel,
+            chrome: p.panel,
+            raised: p.window,
+            well: p.field,
+            selection: p.selection,
+            divider: p.stroke,
+            control: p.stroke,
+            text: p.text,
+            muted: p.weak,
+            primary: p.primary,
+            on_primary: p.on_primary,
+            accent: p.accent,
+            physical: p.physical,
+            stun: p.stun,
+            warning: p.warning,
+            error: p.bad,
+            on_badge: p.on_primary,
+            hover: p.surface_hover,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Theme {
     pub kind: ThemeKind,
     pub palette: Palette,
+    /// Workspace roles (derived from `palette` for Classic and Graphite).
+    pub ws: WsPalette,
     /// Corner radius of buttons, fields and condition boxes.
     pub widget_radius: u8,
     /// Corner radius of windows, menus and group frames.
@@ -108,6 +355,56 @@ impl Theme {
         match kind {
             ThemeKind::Classic => Theme::classic(),
             ThemeKind::Graphite => Theme::graphite(),
+            ThemeKind::WorkspaceDark => Theme::workspace(false),
+            ThemeKind::WorkspaceLight => Theme::workspace(true),
+        }
+    }
+
+    fn with_ws(mut self) -> Theme {
+        self.ws = WsPalette::from_palette(&self.palette);
+        self
+    }
+
+    /// The Workspace layout's theme (see the mockups in `ui-concepts`):
+    /// compact (13px body, 26px controls), IBM Plex, 5px corners.
+    pub fn workspace(light: bool) -> Theme {
+        let w = if light { WsPalette::LIGHT } else { WsPalette::DARK };
+        Theme {
+            kind: if light { ThemeKind::WorkspaceLight } else { ThemeKind::WorkspaceDark },
+            palette: Palette {
+                panel: w.ground,
+                window: w.raised,
+                field: w.well,
+                surface: w.raised,
+                surface_hover: w.hover,
+                surface_active: w.selection,
+                stroke: w.divider,
+                stroke_focus: w.primary,
+                text: w.text,
+                weak: w.muted,
+                accent: w.accent,
+                on_accent: w.ground,
+                primary: w.primary,
+                on_primary: w.on_primary,
+                selection: w.selection,
+                selection_text: w.accent,
+                stripe: if light { hex(0xF0F2F8) } else { hex(0x1E2027) },
+                physical: w.physical,
+                stun: w.stun,
+                edge: w.primary,
+                matrix: if light { hex(0x1E7A4C) } else { hex(0x7FD1A8) },
+                warning: w.warning,
+                good: if light { hex(0x1E7A4C) } else { hex(0x7FD1A8) },
+                bad: w.error,
+            },
+            ws: w,
+            widget_radius: 5,
+            frame_radius: 7,
+            item_spacing: egui::vec2(6.0, 4.0),
+            button_padding: egui::vec2(10.0, 3.0),
+            stroke_width: 1.0,
+            body_size: 13.0,
+            heading_size: 17.0,
         }
     }
 
@@ -128,6 +425,8 @@ impl Theme {
                 weak: hex(0x5F5F5F),
                 accent: hex(0x0063B1),
                 on_accent: hex(0xFFFFFF),
+                primary: hex(0x0063B1),
+                on_primary: hex(0xFFFFFF),
                 selection: hex(0x0072CE),
                 selection_text: hex(0xFFFFFF),
                 stripe: hex(0xFAFAFA),
@@ -139,6 +438,7 @@ impl Theme {
                 good: hex(0x107C10),
                 bad: hex(0xC42B1C),
             },
+            ws: WsPalette::DARK,
             widget_radius: 0,
             frame_radius: 0,
             item_spacing: egui::vec2(6.0, 4.0),
@@ -147,6 +447,7 @@ impl Theme {
             body_size: 12.0,
             heading_size: 14.0,
         }
+        .with_ws()
     }
 
     /// The "Graphite" direction of the style study.
@@ -166,6 +467,8 @@ impl Theme {
                 weak: hex(0x9BA4AE),
                 accent: hex(0x3FCFB3),
                 on_accent: hex(0x04201A),
+                primary: hex(0x3FCFB3),
+                on_primary: hex(0x04201A),
                 selection: hex(0x163430),
                 selection_text: hex(0x3FCFB3),
                 stripe: hex(0x1E2227),
@@ -177,6 +480,7 @@ impl Theme {
                 good: hex(0x7FD1A8),
                 bad: hex(0xF0767B),
             },
+            ws: WsPalette::DARK,
             widget_radius: 4,
             frame_radius: 6,
             item_spacing: egui::vec2(8.0, 6.0),
@@ -185,10 +489,15 @@ impl Theme {
             body_size: 13.0,
             heading_size: 17.0,
         }
+        .with_ws()
     }
 
     pub fn dark(&self) -> bool {
-        self.kind == ThemeKind::Graphite
+        matches!(self.kind, ThemeKind::Graphite | ThemeKind::WorkspaceDark)
+    }
+
+    pub fn workspace_layout(&self) -> bool {
+        self.kind.layout() == Layout::Workspace
     }
 
     pub fn visuals(&self) -> egui::Visuals {
@@ -250,6 +559,19 @@ impl Theme {
         w.open.bg_stroke = Stroke::new(sw, p.stroke_focus);
         w.open.fg_stroke = Stroke::new(sw, p.text);
         w.open.corner_radius = wr;
+        if self.workspace_layout() {
+            // Inputs, toggles and buttons have the stronger `control`
+            // border of the mockups; dividers stay `divider`.
+            let ws = &self.ws;
+            v.widgets.inactive.bg_stroke = Stroke::new(sw, ws.control);
+            v.window_stroke = Stroke::new(sw, ws.control);
+            let shadow = |y: i8, blur: u8, alpha: u8| egui::epaint::Shadow { offset: [0, y], blur, spread: 0, color: Color32::from_black_alpha(alpha) };
+            v.window_shadow = if self.dark() { shadow(12, 32, 115) } else { shadow(8, 24, 40) };
+            v.popup_shadow = if self.dark() { shadow(6, 16, 90) } else { shadow(4, 12, 32) };
+            v.menu_corner_radius = CornerRadius::same(self.widget_radius + 1);
+            v.window_corner_radius = CornerRadius::same(8);
+            v.indent_has_left_vline = false;
+        }
         v
     }
 
@@ -257,13 +579,15 @@ impl Theme {
         let mut s = egui::Style { visuals: self.visuals(), ..Default::default() };
         s.spacing.item_spacing = self.item_spacing;
         s.spacing.button_padding = self.button_padding;
-        s.spacing.interact_size.y = if self.dark() { 22.0 } else { 20.0 };
-        s.spacing.menu_margin = egui::Margin::same(if self.dark() { 6 } else { 3 });
-        s.spacing.window_margin = egui::Margin::same(if self.dark() { 10 } else { 6 });
-        s.spacing.indent = if self.dark() { 16.0 } else { 14.0 };
+        let roomy = self.kind != ThemeKind::Classic;
+        s.spacing.interact_size.y = if self.workspace_layout() { 26.0 } else if roomy { 22.0 } else { 20.0 };
+        s.spacing.menu_margin = egui::Margin::same(if roomy { 6 } else { 3 });
+        s.spacing.window_margin = egui::Margin::same(if roomy { 10 } else { 6 });
+        s.spacing.indent = if roomy { 16.0 } else { 14.0 };
         let body = self.body_size;
+        let small = if self.workspace_layout() { body - 1.5 } else { body - 2.0 };
         s.text_styles = [
-            (TextStyle::Small, FontId::proportional(body - 2.0)),
+            (TextStyle::Small, FontId::proportional(small)),
             (TextStyle::Body, FontId::proportional(body)),
             (TextStyle::Button, FontId::proportional(body)),
             (TextStyle::Monospace, FontId::monospace(body)),
@@ -286,7 +610,7 @@ impl Theme {
                 add("Selawik Bold", include_bytes!("../assets/fonts/Selawik-Bold.ttf"));
                 ("Selawik", "Selawik Bold", None)
             }
-            ThemeKind::Graphite => {
+            ThemeKind::Graphite | ThemeKind::WorkspaceDark | ThemeKind::WorkspaceLight => {
                 add("IBM Plex Sans", include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf"));
                 add("IBM Plex Sans SemiBold", include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf"));
                 add("IBM Plex Mono", include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf"));
@@ -301,12 +625,26 @@ impl Theme {
         let mut b = vec![bold.to_owned(), regular.to_owned()];
         b.extend(defaults);
         f.families.insert(FontFamily::Name(BOLD.into()), b);
+        // Phosphor icons (`crate::workspace::icons`). Workspace puts them
+        // right after the text font, ahead of egui's emoji fonts; the
+        // Classic layout's themes only get them as a last fallback, so
+        // their glyphs stay as they were.
+        f.font_data.insert(PHOSPHOR.to_owned(), Arc::new(egui_phosphor::Variant::Regular.font_data()));
+        let at = |list: &Vec<String>| if self.workspace_layout() { 1.min(list.len()) } else { list.len() };
+        for family in [FontFamily::Proportional, FontFamily::Name(BOLD.into())] {
+            let list = f.families.entry(family).or_default();
+            let i = at(list);
+            list.insert(i, PHOSPHOR.to_owned());
+        }
         f
     }
 }
 
 /// Font family name of the bold/semibold face (headings, [`strong`]).
 pub const BOLD: &str = "bold";
+
+/// Font data name of the Phosphor icon font.
+pub const PHOSPHOR: &str = "phosphor";
 
 fn theme_id() -> egui::Id {
     egui::Id::new("chummer-rs-theme")
@@ -332,6 +670,11 @@ pub fn palette(ui: &egui::Ui) -> Palette {
     current(ui.ctx()).palette
 }
 
+/// The Workspace roles of the active theme.
+pub fn ws(ui: &egui::Ui) -> WsPalette {
+    current(ui.ctx()).ws
+}
+
 pub fn accent(ui: &egui::Ui) -> Color32 {
     palette(ui).accent
 }
@@ -352,9 +695,10 @@ pub fn strong(ui: &egui::Ui, text: impl Into<String>) -> egui::RichText {
 pub fn primary_button(ui: &egui::Ui, text: impl Into<String>) -> egui::Button<'static> {
     let t = current(ui.ctx());
     let p = t.palette;
-    match t.kind {
-        ThemeKind::Graphite => egui::Button::new(strong(ui, text).color(p.on_accent)).fill(p.accent).stroke(Stroke::new(1.0_f32, p.accent)),
-        ThemeKind::Classic => egui::Button::new(egui::RichText::new(text)).stroke(Stroke::new(1.0_f32, p.stroke_focus)),
+    if t.kind.is_classic() {
+        egui::Button::new(egui::RichText::new(text)).stroke(Stroke::new(1.0_f32, p.stroke_focus))
+    } else {
+        egui::Button::new(strong(ui, text).color(p.on_primary)).fill(p.primary).stroke(Stroke::new(1.0_f32, p.primary))
     }
 }
 
@@ -363,7 +707,7 @@ pub fn pool_chip(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
     let t = current(ui.ctx());
     let p = t.palette;
     match t.kind {
-        ThemeKind::Graphite => {
+        ThemeKind::Graphite | ThemeKind::WorkspaceDark | ThemeKind::WorkspaceLight => {
             let b = egui::Button::new(egui::RichText::new(text).monospace().color(p.accent))
                 .fill(p.selection)
                 .stroke(Stroke::NONE)
@@ -408,8 +752,8 @@ fn mark_color(t: &Theme, error: bool) -> Color32 {
     match (t.kind, error) {
         (ThemeKind::Classic, false) => Color32::from_rgb(0xFF, 0xCC, 0x00),
         (ThemeKind::Classic, true) => Color32::from_rgb(0xD0, 0x21, 0x21),
-        (ThemeKind::Graphite, false) => t.palette.warning,
-        (ThemeKind::Graphite, true) => t.palette.bad,
+        (_, false) => t.palette.warning,
+        (_, true) => t.palette.bad,
     }
 }
 
@@ -427,7 +771,7 @@ pub fn paint_mark(painter: &egui::Painter, rect: egui::Rect, t: &Theme, error: b
             painter.line_segment([egui::pos2(c.x, c.y - h / 2.0 + 4.0), egui::pos2(c.x, c.y + h / 2.0 - 4.0)], Stroke::new(1.5_f32, ink));
             painter.circle_filled(egui::pos2(c.x, c.y + h / 2.0 - 2.0), 0.9, ink);
         }
-        ThemeKind::Graphite => {
+        ThemeKind::Graphite | ThemeKind::WorkspaceDark | ThemeKind::WorkspaceLight => {
             painter.circle_filled(c, 3.5, fill);
         }
     }
@@ -597,18 +941,77 @@ pub fn save_value(key: &str, value: &str) -> std::io::Result<()> {
     std::fs::write(path, config_set(&old, key, value))
 }
 
-/// The saved theme; Graphite for new installs.
-pub fn load_kind() -> ThemeKind {
-    config_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| parse_config(&t)).unwrap_or_default()
+/// The saved appearance; the Classic layout in Graphite for new installs.
+pub fn load_appearance() -> Appearance {
+    Appearance::from_config(&config_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default())
 }
 
-pub fn save_kind(kind: ThemeKind) -> std::io::Result<()> {
-    save_value("theme", kind.as_str())
+pub fn save_appearance(a: &Appearance) -> std::io::Result<()> {
+    let Some(path) = config_path() else { return Ok(()) };
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, a.to_config(&old))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_persists() {
+        // Old gui.ini files: only a Classic-layout theme.
+        let a = Appearance::from_config("theme=classic\n");
+        assert_eq!((a.layout, a.kind()), (Layout::Classic, ThemeKind::Classic));
+        assert_eq!(Appearance::from_config(""), Appearance::default());
+        assert_eq!(Appearance::default().kind(), ThemeKind::Graphite);
+        // Switching to Workspace light keeps the Classic theme for later.
+        let a = a.with_kind(ThemeKind::WorkspaceLight);
+        assert_eq!((a.layout, a.classic, a.workspace), (Layout::Workspace, ThemeKind::Classic, ThemeKind::WorkspaceLight));
+        let text = a.to_config("other=1\ntheme=graphite\n");
+        assert_eq!(text, "other=1\ntheme=classic\nlayout=workspace\nworkspace=light\n");
+        assert_eq!(Appearance::from_config(&text), a);
+        assert_eq!(Appearance::from_config(&text).with_layout(Layout::Classic).kind(), ThemeKind::Classic);
+        // A value for the wrong layout is ignored.
+        let b = Appearance::from_config("layout=workspace\ntheme=dark\nworkspace=graphite\n");
+        assert_eq!((b.classic, b.workspace, b.kind()), (ThemeKind::Graphite, ThemeKind::WorkspaceDark, ThemeKind::WorkspaceDark));
+        assert_eq!(Layout::parse(" Workspace "), Some(Layout::Workspace));
+        assert_eq!(Layout::parse("tabs"), None);
+        assert_eq!(ThemeKind::parse("workspace-light"), Some(ThemeKind::WorkspaceLight));
+        for k in ThemeKind::ALL {
+            assert_eq!(Theme::of(k).kind, k);
+            assert_eq!(Theme::of(k).workspace_layout(), k.layout() == Layout::Workspace);
+        }
+        assert!(Theme::of(ThemeKind::WorkspaceDark).dark() && !Theme::of(ThemeKind::WorkspaceLight).dark());
+    }
+
+    #[test]
+    fn workspace_text_is_readable() {
+        for w in [WsPalette::DARK, WsPalette::LIGHT] {
+            for (name, fg) in [("text", w.text), ("muted", w.muted), ("accent", w.accent), ("physical", w.physical), ("stun", w.stun), ("warning", w.warning), ("error", w.error)] {
+                for (bg_name, bg) in [("ground", w.ground), ("chrome", w.chrome), ("raised", w.raised), ("well", w.well)] {
+                    let c = contrast(fg, bg);
+                    assert!(c >= 4.5, "{name} on {bg_name} is {c:.2}:1");
+                }
+                // The current sidebar entry, selected and hovered rows.
+                for (bg_name, bg) in [("selection", w.selection), ("hover", w.hover)] {
+                    let c = contrast(fg, bg);
+                    assert!(c >= 4.0, "{name} on {bg_name} is {c:.2}:1");
+                }
+            }
+            assert!(contrast(w.on_primary, w.primary) >= 4.5, "text on primary");
+            // Badges and filled damage boxes.
+            for (name, fill) in [("warning", w.warning), ("error", w.error), ("physical", w.physical), ("stun", w.stun)] {
+                let c = contrast(w.on_badge, fill);
+                assert!(c >= 4.5, "badge text on {name} is {c:.2}:1");
+            }
+            // Empty boxes and inputs must be visible against the cards.
+            assert!(contrast(w.control, w.raised) >= 1.9, "control border on raised");
+            // Empty boxes also have a `control` border.
+            assert!(contrast(w.primary, w.well) >= 2.5, "filled Edge box against an empty one");
+        }
+    }
 
     #[test]
     fn kind_round_trip() {

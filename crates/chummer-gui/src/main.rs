@@ -106,15 +106,22 @@ struct App {
     status: Option<(String, bool)>,
     pending: Option<Pending>,
     allow_close: bool,
-    theme: theme::ThemeKind,
+    /// Layout and theme (View → Appearance).
+    appearance: theme::Appearance,
     /// Online campaigns: the network node, joined campaigns, settings.
     online: online::Online,
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, engine: Engine, files: Vec<PathBuf>, tab: Option<view::Tab>, theme_arg: Option<theme::ThemeKind>, join: Option<String>) -> Self {
-        let theme = theme_arg.unwrap_or_else(theme::load_kind);
-        theme::apply(&cc.egui_ctx, &theme::Theme::of(theme));
+    fn new(cc: &eframe::CreationContext<'_>, engine: Engine, files: Vec<PathBuf>, tab: Option<view::Tab>, look: (Option<theme::ThemeKind>, Option<theme::Layout>), join: Option<String>) -> Self {
+        let mut appearance = theme::load_appearance();
+        if let Some(k) = look.0 {
+            appearance = appearance.with_kind(k);
+        }
+        if let Some(l) = look.1 {
+            appearance = appearance.with_layout(l);
+        }
+        theme::apply(&cc.egui_ctx, &theme::Theme::of(appearance.kind()));
         let lang_dir = data::resource_dir("lang").unwrap_or_default();
         let storage = cc.storage;
         let code = storage.and_then(|s| s.get_string(LANG_KEY)).unwrap_or_else(|| "en-us".into());
@@ -156,7 +163,7 @@ impl App {
             status: None,
             pending: None,
             allow_close: false,
-            theme,
+            appearance,
             online: online::Online::new(),
         };
         app.online.start_joined(&app.engine);
@@ -179,10 +186,11 @@ impl App {
         app
     }
 
-    fn set_theme(&mut self, ctx: &egui::Context, kind: theme::ThemeKind) {
-        self.theme = kind;
-        theme::apply(ctx, &theme::Theme::of(kind));
-        if let Err(e) = theme::save_kind(kind) {
+    /// View → Appearance: switch layout and theme, and remember them.
+    fn set_appearance(&mut self, ctx: &egui::Context, a: theme::Appearance) {
+        self.appearance = a;
+        theme::apply(ctx, &theme::Theme::of(a.kind()));
+        if let Err(e) = theme::save_appearance(&a) {
             self.status = Some((format!("Could not save the theme choice: {e}"), true));
         }
     }
@@ -589,12 +597,22 @@ impl App {
                 if ui.checkbox(&mut guided, self.lang.tr("Guided creation")).on_hover_text(self.lang.tr("Walk through character creation one step at a time")).changed() {
                     self.set_guided(guided);
                 }
-                ui.menu_button(self.lang.tr("Theme"), |ui| {
-                    for k in theme::ThemeKind::ALL {
-                        if crate::combo::selectable_label(ui, self.theme == k, self.lang.tr(k.label())).clicked() {
+                ui.menu_button(self.lang.tr("Appearance"), |ui| {
+                    // Each layout with its themes under it.
+                    let a = self.appearance;
+                    for (layout, kinds) in [(theme::Layout::Classic, theme::ThemeKind::CLASSIC), (theme::Layout::Workspace, theme::ThemeKind::WORKSPACE)] {
+                        if crate::combo::selectable_label(ui, a.layout == layout, crate::theme::strong(ui, self.lang.tr(layout.label()))).clicked() {
                             ui.close();
-                            self.set_theme(ctx, k);
+                            self.set_appearance(ctx, a.with_layout(layout));
                         }
+                        ui.indent(layout.as_str(), |ui| {
+                            for k in kinds {
+                                if crate::combo::selectable_label(ui, a.kind() == k, self.lang.tr(k.label())).clicked() {
+                                    ui.close();
+                                    self.set_appearance(ctx, a.with_kind(k));
+                                }
+                            }
+                        });
                     }
                 });
                 ui.menu_button(self.lang.tr("Language"), |ui| {
@@ -1153,6 +1171,7 @@ fn main() -> anyhow::Result<()> {
     let mut tab = None;
     let mut window: Option<String> = None;
     let mut theme_arg = None;
+    let mut layout_arg = None;
     let mut join = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -1160,9 +1179,10 @@ fn main() -> anyhow::Result<()> {
             "--tab" => tab = args.next().and_then(|t| view::Tab::parse(&t)),
             "--window" => window = args.next(),
             "--theme" => theme_arg = args.next().and_then(|t| theme::ThemeKind::parse(&t)),
+            "--layout" => layout_arg = args.next().and_then(|t| theme::Layout::parse(&t)),
             "--new" => window = Some("new".into()),
             "-h" | "--help" => {
-                println!("usage: chummer-rs [chummer-rs://join/... invite link] [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--theme <classic|graphite>] [file.chum5|file.chum5lz|file.chummercampaign ...]");
+                println!("usage: chummer-rs [chummer-rs://join/... invite link] [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--layout <classic|workspace>] [--theme <classic|graphite|dark|light>] [file.chum5|file.chum5lz|file.chummercampaign ...]");
                 return Ok(());
             }
             // An invite link (the chummer-rs:// handler passes it as an argument).
@@ -1189,7 +1209,7 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     eframe::run_native("chummer-rs", options, Box::new(move |cc| {
-        let mut app = App::new(cc, engine, files, tab, theme_arg, join);
+        let mut app = App::new(cc, engine, files, tab, (theme_arg, layout_arg), join);
         match window.as_deref() {
             Some("sources") => app.show_sources = true,
             Some("browser") => app.home = Some(Home::MasterIndex),
