@@ -22,12 +22,15 @@
 //! - [`hosted`]: [`HostedCampaign`], a GM's `.chummercampaign` file with
 //!   its authority sidecar (the glue the GUI and `chummer-authority` share).
 //! - [`joined`]: the campaigns a player has joined, as the app lists them.
+//! - [`journal`]: the authority's journal of acknowledged changes, so a
+//!   crash between saves loses none of them.
 
 pub mod authority;
 pub mod feed;
 pub mod host;
 pub mod hosted;
 pub mod joined;
+pub mod journal;
 pub mod mail;
 pub mod msg;
 pub mod node;

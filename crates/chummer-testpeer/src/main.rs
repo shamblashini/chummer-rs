@@ -115,6 +115,9 @@ enum Cmd {
     },
     /// The authority sidecar as JSON.
     Inspect { sidecar: PathBuf },
+    /// Times state_hash, snapshot and restore on a character (what the
+    /// authority does per change and per save).
+    Bench { character: PathBuf },
     /// Hostile mailbox traffic.
     Abuse {
         #[arg(long)]
@@ -184,6 +187,21 @@ async fn main() -> Result<()> {
             player(&key, &link, &net, &state, &status, &name, script).await
         }
         Cmd::Inspect { sidecar } => inspect(&sidecar),
+        Cmd::Bench { character } => {
+            let ch = Character::load(&character)?;
+            let t = std::time::Instant::now();
+            let h = command::state_hash(&ch);
+            let hash = t.elapsed();
+            let t = std::time::Instant::now();
+            let snap = command::snapshot(&ch);
+            let snapshot = t.elapsed();
+            let t = std::time::Instant::now();
+            let back = command::restore(&snap)?;
+            let restore = t.elapsed();
+            assert_eq!(command::state_hash(&back), h);
+            println!("{}", serde_json::json!({ "hash_ms": hash.as_millis(), "snapshot_ms": snapshot.as_millis(), "restore_ms": restore.as_millis(), "snapshot_bytes": snap.len() }));
+            Ok(())
+        }
         Cmd::Abuse { key, net, target, mode, count, pose_as } => abuse(&key, &net, &target, mode, count, pose_as.as_deref()).await,
     }
 }

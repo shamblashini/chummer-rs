@@ -21,6 +21,7 @@ use chummer_net::{EndpointId, NetError, RelayUrl, SecretKey};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::authority::{Authority, LocalApplied};
+use crate::journal::Journal;
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
 use crate::msg::{self, CharacterId, ClientMessage, MailMessage, ServerMessage};
 
@@ -48,6 +49,9 @@ struct Shared {
     dirty: AtomicBool,
     blob_limit: Mutex<usize>,
     events: broadcast::Sender<HostEvent>,
+    /// With `path`: the changes made since the last save
+    /// ([`crate::journal`]). Locked after the authority, never before.
+    journal: Mutex<Option<Journal>>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -61,19 +65,47 @@ impl Shared {
         self.authority.lock().expect("authority lock poisoned")
     }
 
+    /// Writes the changes `a` made to the journal, before anyone is told
+    /// about them. Call with the authority still locked.
+    fn journal(&self, a: &mut Authority) {
+        let applied = a.take_applied();
+        if let Some(j) = self.journal.lock().expect("poisoned").as_mut() {
+            if let Err(e) = j.append(&applied) {
+                tracing::warn!("could not write the campaign journal (a crash now would lose the last changes): {e}");
+            }
+        }
+    }
+
     fn touch(&self) {
         self.dirty.store(true, Ordering::Release);
     }
 
     fn save_if_dirty(&self) -> std::io::Result<()> {
         if self.dirty.swap(false, Ordering::AcqRel) {
-            if let Some(p) = &self.path {
-                let bytes = self.lock().to_bytes();
-                if let Err(e) = crate::persist::write_atomic(p, &bytes) {
-                    self.dirty.store(true, Ordering::Release);
-                    return Err(e);
-                }
+            if let Err(e) = self.save_now() {
+                self.dirty.store(true, Ordering::Release);
+                return Err(e);
             }
+        }
+        Ok(())
+    }
+
+    fn save_now(&self) -> std::io::Result<()> {
+        let Some(p) = &self.path else { return Ok(()) };
+        let bytes = {
+            let mut a = self.lock();
+            self.journal(&mut a);
+            let bytes = a.to_bytes();
+            // The journal so far is in `bytes`; set it aside until they
+            // are on disk.
+            if let Some(j) = self.journal.lock().expect("poisoned").as_mut() {
+                j.rotate()?;
+            }
+            bytes
+        };
+        crate::persist::write_atomic(p, &bytes)?;
+        if let Some(j) = self.journal.lock().expect("poisoned").as_mut() {
+            j.saved()?;
         }
         Ok(())
     }
@@ -98,6 +130,7 @@ impl Shared {
                 Err(e) => (ServerMessage::Error(e), Vec::new(), None),
             },
         };
+        self.journal(&mut a);
         drop(a);
         self.touch();
         (reply, notify, changed)
@@ -169,9 +202,26 @@ impl AuthorityHost {
     /// mail and signs what is mailed). With `path`, the authority is saved
     /// there (every couple of seconds when it changed, and by
     /// [`AuthorityHost::save`]). Must be called inside a tokio runtime.
-    pub fn new(authority: Authority, engine: Arc<Engine>, secret: SecretKey, path: Option<PathBuf>) -> AuthorityHost {
+    pub fn new(mut authority: Authority, engine: Arc<Engine>, secret: SecretKey, path: Option<PathBuf>) -> AuthorityHost {
         let (events, _) = broadcast::channel(256);
-        let shared = Arc::new(Shared { authority: Mutex::new(authority), engine, secret, path, dirty: AtomicBool::new(false), blob_limit: Mutex::new(DEFAULT_BLOB_LIMIT), events });
+        let mut replayed = 0;
+        if let Some(p) = &path {
+            // Changes acknowledged after the last save (a crash).
+            for (id, entry) in Journal::read(p) {
+                match authority.replay(&engine, &id, &entry) {
+                    Ok(true) => replayed += 1,
+                    Ok(false) => {}
+                    Err(e) => tracing::warn!("campaign journal: {e}"),
+                }
+            }
+            if replayed > 0 {
+                tracing::info!("took back {replayed} change(s) made after the last save from the journal");
+            }
+            // They are journaled already.
+            authority.take_applied();
+        }
+        let journal = Mutex::new(path.as_deref().map(Journal::new));
+        let shared = Arc::new(Shared { authority: Mutex::new(authority), engine, secret, path, dirty: AtomicBool::new(replayed > 0), blob_limit: Mutex::new(DEFAULT_BLOB_LIMIT), events, journal });
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<EndpointId>>();
         let host = CampaignHost::new(Handler { shared: shared.clone(), sweep: tx.clone() });
         let me = AuthorityHost { shared: shared.clone(), host: host.clone(), sweep: tx };
@@ -253,7 +303,12 @@ impl AuthorityHost {
     /// author, pushed to its owner (or mailed by the next
     /// [`AuthorityHost::sync_mail`]).
     pub fn gm_edit(&self, id: &CharacterId, cmd: Command) -> Result<LocalApplied, Rejected> {
-        let r = self.shared.lock().apply_local(&self.shared.engine, id, cmd)?;
+        let r = {
+            let mut a = self.shared.lock();
+            let r = a.apply_local(&self.shared.engine, id, cmd);
+            self.shared.journal(&mut a);
+            r?
+        };
         self.shared.touch();
         if r.accepted.changed {
             let _ = self.shared.events.send(HostEvent::Changed(id.clone()));
@@ -267,7 +322,12 @@ impl AuthorityHost {
     /// The GM reverts the change that made `version` of `id`
     /// ([`Authority::revert`]); pushed or mailed like any GM edit.
     pub fn gm_revert(&self, id: &CharacterId, version: u64) -> Result<crate::authority::Reverted, String> {
-        let r = self.shared.lock().revert(&self.shared.engine, id, version)?;
+        let r = {
+            let mut a = self.shared.lock();
+            let r = a.revert(&self.shared.engine, id, version);
+            self.shared.journal(&mut a);
+            r?
+        };
         self.shared.touch();
         let _ = self.shared.events.send(HostEvent::Changed(id.clone()));
         if !r.applied.notify.is_empty() {

@@ -171,3 +171,58 @@ fn partial_mail_is_bounded() {
     }
     assert!(matches!(done, Some(chummer_sync::msg::MailMessage::Server(ServerMessage::Error(_)))));
 }
+
+/// The authority used to acknowledge changes before saving them (it saves
+/// every couple of seconds), so a crash lost changes players had been
+/// told were accepted (found by the Docker gm-crash scenario). Now each
+/// is journaled before the answer goes out and replayed on start.
+#[tokio::test(flavor = "multi_thread")]
+async fn acknowledged_changes_survive_an_authority_crash() {
+    use chummer_net::campaign::CampaignHandler;
+    use chummer_sync::msg;
+    use chummer_sync::AuthorityHost;
+    let dir = std::env::temp_dir().join(format!("chummer-sync-journal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let crash = dir.join("crash");
+    std::fs::create_dir_all(&crash).unwrap();
+    let path = dir.join("campaign.authority");
+    let (auth, p, c, mut r) = setup();
+    let gm_key = SecretKey::from_bytes(&[1; 32]);
+    let host = AuthorityHost::new(auth, engine().clone(), gm_key.clone(), Some(path.clone()));
+    host.save().unwrap();
+    let handler = host.protocol();
+    let handler = handler.handler();
+    for round in 0..3 {
+        r.edit(engine(), &c, gain(1.0 + round as f64)).unwrap();
+        let bytes = handler.submit(p, Role::Player, msg::encode(&ClientMessage::Submit(r.batch(&c).unwrap()))).await.unwrap();
+        r.handle(engine(), msg::decode(&bytes).unwrap());
+    }
+    host.gm_edit(&c, gain(10.0)).unwrap();
+    let want = {
+        let a = host.authority();
+        (a.version(&c), a.hash(&c))
+    };
+    assert_eq!(want.0, Some(4));
+    // "kill -9": copy the files as they are now, without saving.
+    for f in std::fs::read_dir(&dir).unwrap().flatten() {
+        if f.path().is_file() {
+            std::fs::copy(f.path(), crash.join(f.file_name())).unwrap();
+        }
+    }
+    let side = crash.join("campaign.authority");
+    let back = AuthorityHost::new(Authority::load(&side).unwrap(), engine().clone(), gm_key.clone(), Some(side.clone()));
+    {
+        let a = back.authority();
+        assert_eq!((a.version(&c), a.hash(&c)), want, "every acknowledged change is back");
+        assert_eq!(a.character(&c).unwrap().karma, 36);
+    }
+    // The GM's own sequence numbers go on (no op id reused).
+    back.gm_edit(&c, gain(1.0)).unwrap();
+    assert_eq!(back.authority().version(&c), Some(5));
+    // After a save the journal is empty, and loading needs nothing from it.
+    back.save().unwrap();
+    assert!(chummer_sync::journal::Journal::read(&side).is_empty());
+    let again = Authority::load(&side).unwrap();
+    assert_eq!(again.version(&c), Some(5));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

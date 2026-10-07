@@ -256,6 +256,9 @@ pub struct Authority {
     pub inbox: Inbox,
     /// Answers to mailed submissions, waiting to be mailed back.
     mail_out: Vec<(EndpointId, ServerMessage)>,
+    /// Log entries made since [`Authority::take_applied`] (for the
+    /// journal; not saved).
+    applied: Vec<(CharacterId, Entry)>,
 }
 
 impl std::fmt::Debug for Authority {
@@ -286,6 +289,7 @@ impl Authority {
             feed: VecDeque::new(),
             inbox: Inbox::default(),
             mail_out: Vec::new(),
+            applied: Vec::new(),
         }
     }
 
@@ -487,6 +491,7 @@ impl Authority {
                 c.hash = command::state_hash(&c.ch);
                 let entry = Entry { version: c.version, op: op.id, env, author, description: applied.description.clone() };
                 let line = feed::from_entry(&members, id, &c.name, &entry);
+                self.applied.push((id.clone(), entry.clone()));
                 match c.log.back() {
                     Some(prev) if feed::coalesces(&prev.entry, &entry) => feed::merge(&mut self.feed, line, prev.entry.version),
                     _ => feed::push(&mut self.feed, line),
@@ -659,6 +664,34 @@ impl Authority {
             return Err("reverting it changes nothing (a later change already undid it)".into());
         }
         Ok(Reverted { applied, reverted, dropped })
+    }
+
+    /// The log entries made since the last call, oldest first (what
+    /// [`crate::journal`] keeps until the next save).
+    pub fn take_applied(&mut self) -> Vec<(CharacterId, Entry)> {
+        std::mem::take(&mut self.applied)
+    }
+
+    /// Applies a journal entry again after a restart: `Ok(true)` when it
+    /// was the next change of its character, `Ok(false)` when the saved
+    /// state already has it (or the character is gone), `Err` when it
+    /// does not fit (a gap, or it no longer applies the same way).
+    pub fn replay(&mut self, engine: &Engine, id: &CharacterId, entry: &Entry) -> Result<bool, String> {
+        let Some(c) = self.chars.get(id) else { return Ok(false) };
+        if entry.version <= c.version {
+            return Ok(false);
+        }
+        if entry.version != c.version + 1 {
+            return Err(format!("{id}: the journal has version {} but the saved state is at {}", entry.version, c.version));
+        }
+        if entry.op.origin == self.origin {
+            self.next_seq = self.next_seq.max(entry.op.seq);
+        }
+        let op = Op { id: entry.op, env: entry.env.clone() };
+        match self.run_op(engine, id, entry.author, &op, false) {
+            Outcome::Accepted(a) if a.changed && a.version == entry.version => Ok(true),
+            other => Err(format!("{id}: version {} did not apply again ({other:?})", entry.version)),
+        }
     }
 
     // ----- what members are sent -----
@@ -896,6 +929,7 @@ impl Authority {
             feed: f.feed.into(),
             inbox: f.inbox,
             mail_out: f.mail_out,
+            applied: Vec::new(),
         })
     }
 
