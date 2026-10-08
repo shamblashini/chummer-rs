@@ -324,6 +324,11 @@ impl Harness {
 
     /// Close everything a click may have opened, and every character.
     fn reset(&mut self) {
+        // A random click may have started loading a file (Recent, Open):
+        // let those loads land before closing, or the character appears
+        // after the reset and the next open finds it already open.
+        crate::bg::wait("load:", std::time::Duration::from_secs(60));
+        self.frame(Vec::new());
         self.close_all();
         let a = &mut self.app;
         (a.show_dice, a.show_initiative, a.show_print, a.show_export, a.show_about, a.show_sources, a.show_settings) = (false, false, false, false, false, false, false);
