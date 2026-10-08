@@ -193,8 +193,15 @@ mod tests {
     #[test]
     fn results_come_back_once() {
         let ctx = egui::Context::default();
-        assert!(spawn(&ctx, "test:once", "Testing", || 41 + 1));
+        // The job waits for `go`, so it is surely still running at the
+        // second spawn (a finished, untaken job may be replaced).
+        let (go, wait_go) = std::sync::mpsc::channel::<()>();
+        assert!(spawn(&ctx, "test:once", "Testing", move || {
+            let _ = wait_go.recv();
+            41 + 1
+        }));
         assert!(!spawn(&ctx, "test:once", "Testing", || 0), "one at a time per id");
+        go.send(()).unwrap();
         let start = Instant::now();
         let v = loop {
             if let Some(v) = take::<i32>("test:once") {
