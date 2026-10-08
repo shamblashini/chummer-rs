@@ -20,3 +20,7 @@ chummer-sync.workspace = true
 chummer-net.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macros"] }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
+
+# Windows: the app icon and version info in chummer-rs.exe (build.rs).
+[target.'cfg(windows)'.build-dependencies]
+winresource = { version = "0.1", default-features = false }

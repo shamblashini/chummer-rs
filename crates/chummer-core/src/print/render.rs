@@ -10,6 +10,10 @@
 //!   not valid in a URI reference. The copy gives every file a plain name.
 //! - libxslt has no `msxsl:node-set()`. It has the same function as
 //!   `exsl:node-set()`, so the copy maps the `msxsl` prefix to EXSLT.
+//!
+//! Windows has no xsltproc, so the Windows packages carry one (MSYS2's
+//! build, with its DLLs) in an `xsltproc` folder next to `chummer-rs.exe`;
+//! [`xsltproc_path`] finds it before looking on `PATH`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -31,7 +35,7 @@ pub enum RenderError {
     NoSheet(PathBuf),
     #[error("{0}: {1}")]
     Io(PathBuf, std::io::Error),
-    #[error("cannot run xsltproc (install libxslt): {0}")]
+    #[error("cannot run xsltproc: {0}. {hint}", hint = XSLTPROC_HINT)]
     NoXsltproc(std::io::Error),
     #[error("no HTML-to-PDF converter found (tried chromium, google-chrome, wkhtmltopdf, weasyprint); open the HTML in a browser and print it to PDF")]
     NoPdfConverter,
@@ -61,20 +65,61 @@ pub fn render_report(xml: &Element, xsl_path: &Path, out: &Path) -> Result<Rende
     }
     let dir = TempDir::new()?;
     let main_xsl = copy_stylesheet(xsl_path, dir.path())?;
-    let input = dir.path().join("print.xml");
-    write(&input, xml.to_xml_string().as_bytes())?;
-    run_xsltproc(&main_xsl, &input, out, xsl_path)
+    debug_assert_eq!(main_xsl, dir.path().join("sheet0.xslt"));
+    write(&dir.path().join("print.xml"), xml.to_xml_string().as_bytes())?;
+    let report = run_xsltproc(dir.path(), xsl_path)?;
+    let html = dir.path().join("out.html");
+    std::fs::copy(&html, out).map_err(|e| RenderError::Io(out.to_owned(), e))?;
+    Ok(report)
 }
 
-/// `xsltproc` with arguments passed directly (no shell).
-fn run_xsltproc(xsl: &Path, input: &Path, out: &Path, shown: &Path) -> Result<RenderReport, RenderError> {
-    let output = Command::new("xsltproc")
-        .arg("--nonet")
-        .arg("--novalid")
-        .arg("--output")
-        .arg(out)
-        .arg(xsl)
-        .arg(input)
+/// How to get xsltproc, for the "cannot run xsltproc" error.
+#[cfg(windows)]
+const XSLTPROC_HINT: &str = "Character sheets use the xsltproc.exe that comes with chummer-rs (in its xsltproc folder); reinstall chummer-rs to restore it";
+#[cfg(target_os = "macos")]
+const XSLTPROC_HINT: &str = "Character sheets need xsltproc, which macOS includes in /usr/bin; if it is missing, install it with `brew install libxslt` or `xcode-select --install`";
+#[cfg(not(any(windows, target_os = "macos")))]
+const XSLTPROC_HINT: &str = "Character sheets need xsltproc. Install it with your package manager: `sudo apt install xsltproc` (Debian, Ubuntu), `sudo dnf install libxslt` (Fedora), `sudo pacman -S libxslt` (Arch)";
+
+const XSLTPROC_EXE: &str = if cfg!(windows) { "xsltproc.exe" } else { "xsltproc" };
+
+/// The xsltproc to run: `$CHUMMER_XSLTPROC`, else one shipped with
+/// chummer-rs (an `xsltproc` folder next to the executable, or next to its
+/// resources), else the first on `PATH`. `None` when there is none.
+pub fn xsltproc_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("CHUMMER_XSLTPROC").filter(|p| !p.is_empty()) {
+        return Some(PathBuf::from(p));
+    }
+    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_owned));
+    let bundled = exe_dir.into_iter().flat_map(|d| {
+        [
+            d.join("xsltproc").join(XSLTPROC_EXE),
+            d.join(XSLTPROC_EXE),
+            d.join("../share/chummer-rs/xsltproc").join(XSLTPROC_EXE),
+            d.join("../Resources/xsltproc").join(XSLTPROC_EXE),
+        ]
+    });
+    let on_path = std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).map(|d| d.join(XSLTPROC_EXE)).collect::<Vec<_>>());
+    bundled.chain(on_path).find(|p| p.is_file())
+}
+
+/// `xsltproc` with arguments passed directly (no shell), in `dir`:
+/// `sheet0.xslt` + `print.xml` -> `out.html`. Plain relative names, so the
+/// user's temp path (perhaps not ASCII, which a Windows build of libxml2
+/// may not read from its command line) never reaches xsltproc.
+fn run_xsltproc(dir: &Path, shown: &Path) -> Result<RenderReport, RenderError> {
+    let exe = xsltproc_path().ok_or_else(|| RenderError::NoXsltproc(std::io::Error::new(std::io::ErrorKind::NotFound, "not found")))?;
+    let mut cmd = Command::new(exe);
+    // The GUI has no console; without this each run flashes a console window.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd
+        .current_dir(dir)
+        .args(["--nonet", "--novalid", "--output", "out.html", "sheet0.xslt", "print.xml"])
         .output()
         .map_err(RenderError::NoXsltproc)?;
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();

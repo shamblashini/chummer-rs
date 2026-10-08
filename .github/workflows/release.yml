@@ -1,17 +1,41 @@
 name: Release
-# Push a tag like v0.2.0 to build Linux, Windows and macOS packages and
-# publish them as a GitHub release.
+# Push a tag like v0.5.0 to build the Linux, Windows and macOS packages
+# and installers, publish them as a GitHub release (with SHA256SUMS), and
+# publish the chummer-relay Docker image to ghcr.io.
 on:
   push:
     tags: ["v*"]
-  # Manual runs build the packages (as artifacts) without publishing.
+  # Manual runs build everything (as workflow artifacts) without
+  # publishing a release or pushing the image.
   workflow_dispatch:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
+  version:
+    # The in-app updater compares the running version with the release
+    # tag: a tag that does not match Cargo.toml would offer the update
+    # forever. Also gives the other jobs the version.
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      label: ${{ steps.v.outputs.label }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          ver=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "v$ver" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match the workspace version $ver in Cargo.toml"
+            exit 1
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "label=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +52,9 @@ jobs:
             ext: ".exe"
             servers: ""
     runs-on: ${{ matrix.os }}
+    env:
+      LABEL: ${{ needs.version.outputs.label }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -41,10 +68,52 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --release --locked -p chummer-gui -p chummer-cli -p chummer-authority ${{ matrix.servers }} --target ${{ matrix.target }}
+
+      # Windows has no xsltproc for the character sheets: ship MSYS2's
+      # build with the DLLs it needs and their licences.
+      - name: xsltproc (MSYS2)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-libxslt
+      - name: Bundle xsltproc
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          out=xslt-bundle
+          mkdir -p "$out/licenses"
+          exe=/mingw64/bin/xsltproc.exe
+          files="$exe $(ldd "$exe" | awk '$3 ~ /^\/mingw64\// {print $3}')"
+          cp $files "$out/"
+          {
+            echo "xsltproc and its libraries, from MSYS2 (https://packages.msys2.org/),"
+            echo "used by chummer-rs to render character sheets. Packages:"
+            echo
+          } > "$out/README.txt"
+          for p in $(pacman -Qoq $files | sort -u); do
+            pacman -Q "$p" >> "$out/README.txt"
+            mkdir -p "$out/licenses/$p"
+            pacman -Qlq "$p" | grep -E '/share/licenses/.+[^/]$' | xargs -r cp -t "$out/licenses/$p/" || true
+            # Packages without a licence directory: their copying files.
+            if [ -z "$(ls -A "$out/licenses/$p")" ]; then
+              pacman -Qlq "$p" | grep -iE '/(copying|license)[^/]*$' | xargs -r cp -t "$out/licenses/$p/" || true
+            fi
+          done
+          ls -la "$out" "$out/licenses"/*
+          "$out/xsltproc.exe" --version
+      - name: Character sheets with the bundled xsltproc
+        if: runner.os == 'Windows'
+        shell: bash
+        run: CHUMMER_XSLTPROC="$PWD/xslt-bundle/xsltproc.exe" cargo test --locked -p chummer-core --test print_sheets
+
       - name: Package
         shell: bash
         run: |
-          dir="chummer-rs-${GITHUB_REF_NAME//\//-}-${{ matrix.name }}"
+          set -euo pipefail
+          dir="chummer-rs-$LABEL-${{ matrix.name }}"
           mkdir -p "$dir"
           cp "target/${{ matrix.target }}/release/chummer-rs${{ matrix.ext }}" "$dir/"
           cp "target/${{ matrix.target }}/release/chummer-cli${{ matrix.ext }}" "$dir/"
@@ -58,21 +127,65 @@ jobs:
           cp -r resources/data resources/lang resources/sheets resources/customdata resources/export resources/xml_license.txt "$dir/resources/"
           cp LICENSE README.md "$dir/"
           if [ "${{ runner.os }}" = "Windows" ]; then
+            cp -r xslt-bundle "$dir/xsltproc"
+            # The packaged app renders every sheet with its own xsltproc.
+            "$dir/chummer-cli.exe" sheet "crates/chummer-core/tests/fixtures/Soma (Career).chum5" --all-sheets sheet-smoke
             7z a "$dir.zip" "$dir" > /dev/null
             echo "ASSET=$dir.zip" >> "$GITHUB_ENV"
+            echo "PKGDIR=$dir" >> "$GITHUB_ENV"
           else
             cp packaging/chummer-rs.desktop packaging/chummer-rs.svg packaging/chummer-rs-mime.xml "$dir/"
             tar czf "$dir.tar.gz" "$dir"
             echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"
           fi
+
+      - name: Installer (Inno Setup)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -x "$iscc" ]; then
+            choco install innosetup -y --no-progress
+          fi
+          name="chummer-rs-$LABEL-${{ matrix.name }}-setup"
+          "$iscc" /Qp "/DAppVersion=$VERSION" "/DSourceDir=$(cygpath -w "$PWD/$PKGDIR")" "/DOutputDir=$(cygpath -w "$PWD")" "/DOutputName=$name" packaging/windows/chummer-rs.iss
+          echo "SETUP=$name.exe" >> "$GITHUB_ENV"
+      - name: Test the installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = "$env:RUNNER_TEMP\chummer-rs-install"
+          Start-Process -Wait -FilePath ".\$env:SETUP" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER',"/DIR=$dir"
+          foreach ($f in 'chummer-rs.exe','chummer-cli.exe','unins000.exe','xsltproc\xsltproc.exe','resources\data\skills.xml') {
+            if (-not (Test-Path "$dir\$f")) { throw "missing $f" }
+          }
+          foreach ($k in 'chummer-rs\shell\open\command','.chumrs','.chummercampaign','.chum5\OpenWithProgids') {
+            if (-not (Test-Path "HKCU:\Software\Classes\$k")) { throw "missing registry key $k" }
+          }
+          (Get-Item "$dir\chummer-rs.exe").VersionInfo | Format-List ProductName,ProductVersion,FileDescription
+          & "$dir\chummer-cli.exe" sheet "crates\chummer-core\tests\fixtures\Soma (Career).chum5" -o "$env:RUNNER_TEMP\soma.html"
+          if ($LASTEXITCODE -ne 0) { throw "sheet failed" }
+          Start-Process -Wait -FilePath "$dir\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'
+          Start-Sleep -Seconds 3
+          if (Test-Path "$dir\chummer-rs.exe") { throw "uninstall left chummer-rs.exe" }
+          if (Test-Path "HKCU:\Software\Classes\chummer-rs") { throw "uninstall left the URL handler" }
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.SETUP }}
 
   macos:
-    # One universal (Apple Silicon + Intel) binary in a .app bundle.
+    # One universal (Apple Silicon + Intel) binary in a .app bundle, as a
+    # zip and as a disk image.
+    needs: version
     runs-on: macos-latest
+    env:
+      LABEL: ${{ needs.version.outputs.label }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -87,15 +200,14 @@ jobs:
       - name: Package
         run: |
           set -e
-          ver=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          dir="chummer-rs-${GITHUB_REF_NAME//\//-}-macos-universal"
+          dir="chummer-rs-$LABEL-macos-universal"
           app="$dir/chummer-rs.app/Contents"
           mkdir -p "$app/MacOS" "$app/Resources/resources"
           for b in chummer-rs chummer-cli chummer-authority; do
             lipo -create -output "$app/MacOS/$b" \
               "target/aarch64-apple-darwin/release/$b" "target/x86_64-apple-darwin/release/$b"
           done
-          sed "s/@VERSION@/$ver/g" packaging/Info.plist > "$app/Info.plist"
+          sed "s/@VERSION@/$VERSION/g" packaging/Info.plist > "$app/Info.plist"
           cp -r resources/data resources/lang resources/sheets resources/customdata resources/export resources/xml_license.txt "$app/Resources/resources/"
           # Icon from the SVG, if librsvg is available.
           if brew install librsvg >/dev/null 2>&1; then
@@ -109,23 +221,88 @@ jobs:
           # Ad-hoc signature: required for Apple Silicon; not notarised.
           codesign --force --deep -s - "$dir/chummer-rs.app"
           cp LICENSE README.md "$dir/"
+          # The sheets use the xsltproc macOS ships in /usr/bin.
+          "$app/MacOS/chummer-cli" sheet "crates/chummer-core/tests/fixtures/Soma (Career).chum5" -o soma.html
           ditto -c -k --keepParent "$dir" "$dir.zip"
           echo "ASSET=$dir.zip" >> "$GITHUB_ENV"
+          # Disk image: drag chummer-rs.app onto Applications.
+          stage=dmg-stage
+          mkdir -p "$stage"
+          ditto "$dir/chummer-rs.app" "$stage/chummer-rs.app"
+          cp LICENSE "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "chummer-rs $VERSION" -srcfolder "$stage" -ov -format UDZO "$dir.dmg"
+          hdiutil verify "$dir.dmg"
+          echo "DMG=$dir.dmg" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-universal
-          path: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.DMG }}
 
-  release:
-    needs: [build, macos]
-    if: startsWith(github.ref, 'refs/tags/')
+  relay-image:
+    # ghcr.io/shamblashini/chummer-relay:<version> and :latest, for amd64
+    # and arm64. Manual runs build the image without pushing it.
+    needs: version
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.ref_type == 'tag'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/chummer-relay
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/relay/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref_type == 'tag' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    needs: [build, macos, relay-image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: packaging/relay
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: Relay files and checksums
+        run: |
+          cp packaging/relay/docker-compose.yml packaging/relay/relay.example.toml dist/
+          # The in-app updater checks downloads against this file.
+          (cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+      # TODO: sign SHA256SUMS (minisign / ed25519) once a signing key is
+      # stored as a repository secret; the updater would then check the
+      # signature with the public key built into it.
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        with:
+          name: release-files
+          path: |
+            dist/SHA256SUMS
+            dist/docker-compose.yml
+            dist/relay.example.toml
       - uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
         with:
           files: dist/*
           generate_release_notes: true

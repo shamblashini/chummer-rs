@@ -26,7 +26,7 @@ fn fixtures() -> Vec<PathBuf> {
 }
 
 fn have_xsltproc() -> bool {
-    std::process::Command::new("xsltproc").arg("--version").output().is_ok()
+    print::xsltproc_path().is_some_and(|p| std::process::Command::new(p).arg("--version").output().is_ok())
 }
 
 /// Decode the entities libxslt's HTML output uses for non-ASCII text.

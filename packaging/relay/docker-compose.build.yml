@@ -1,0 +1,8 @@
+# Override for docker-compose.yml: build the image from this source checkout.
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  chummer-relay:
+    image: chummer-relay
+    build:
+      context: ../..
+      dockerfile: packaging/relay/Dockerfile

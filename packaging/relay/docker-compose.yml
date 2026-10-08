@@ -1,11 +1,14 @@
-# Run from this directory:  docker compose up -d
-# Edit relay.toml first (copy relay.example.toml): hostname, contact_email.
+# chummer-relay with Docker Compose. In an empty directory, next to this file:
+#   cp relay.example.toml relay.toml   # then set hostname and contact_email
+#   docker compose up -d
+# Both files are attached to every GitHub release. The image is published
+# for amd64 and arm64; pin a version (ghcr.io/shamblashini/chummer-relay:0.5.0)
+# instead of :latest to update only when you choose.
+# To build the image from a source checkout instead, run from this
+# directory: docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 services:
   chummer-relay:
-    build:
-      context: ../..
-      dockerfile: packaging/relay/Dockerfile
-    image: chummer-relay
+    image: ghcr.io/shamblashini/chummer-relay:latest
     restart: unless-stopped
     # Host networking: the relay sees clients' real addresses (QUIC address
     # discovery reports them back) and IPv6 works without extra setup.
