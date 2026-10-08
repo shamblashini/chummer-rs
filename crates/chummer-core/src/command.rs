@@ -24,6 +24,7 @@
 //! `docs/online-design.md`.
 
 mod describe;
+mod numbers;
 mod run;
 mod session;
 
@@ -40,6 +41,7 @@ use crate::items::magic::spell::SpellOptions;
 use crate::items::Purchase;
 use crate::play::ammo::FireMode;
 
+pub use numbers::FLOAT_LIMIT;
 pub use session::{LogEntry, Report, Session, HISTORY_LIMIT};
 
 /// A data record named by its `<id>` (preferred) and `<name>` (fallback,
@@ -221,6 +223,15 @@ pub enum Command {
 }
 
 impl Command {
+    /// Every number in the command is a usable game value: integers within
+    /// ±[`crate::xml::NUM_LIMIT`], decimals finite and within
+    /// ±[`FLOAT_LIMIT`]. [`apply`] refuses other commands, and the wire
+    /// forms do not decode them (LB-44, LB-45): NaN cannot be written as
+    /// JSON, and absurd values would overflow the rules math.
+    pub fn check_numbers(&self) -> Result<(), Rejected> {
+        numbers::check(self).map_err(|e| Rejected::new(e.0))
+    }
+
     /// Commands that set a value outright (text boxes, spinners): a later
     /// one with the same key replaces an earlier one, so a [`Session`]
     /// merges a burst of them into one undo step and one log entry.
@@ -375,7 +386,11 @@ impl Command {
 /// A command with what makes it deterministic: the seed new GUIDs come
 /// from, the time (Unix milliseconds) ledger dates and calendar entries
 /// use, and who made it.
+///
+/// Decoding (JSON, postcard, inside sync messages) refuses a command with
+/// an unusable number ([`Command::check_numbers`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "RawEnvelope")]
 pub struct Envelope {
     pub cmd: Command,
     pub seed: u64,
@@ -383,6 +398,23 @@ pub struct Envelope {
     pub at: i64,
     /// Who made the change; empty for the local user.
     pub author: String,
+}
+
+/// [`Envelope`] as decoded, before its numbers are checked.
+#[derive(Deserialize)]
+struct RawEnvelope {
+    cmd: Command,
+    seed: u64,
+    at: i64,
+    author: String,
+}
+
+impl TryFrom<RawEnvelope> for Envelope {
+    type Error = Rejected;
+    fn try_from(r: RawEnvelope) -> Result<Envelope, Rejected> {
+        r.cmd.check_numbers()?;
+        Ok(Envelope { cmd: r.cmd, seed: r.seed, at: r.at, author: r.author })
+    }
 }
 
 impl Envelope {
@@ -417,13 +449,17 @@ impl Envelope {
 /// [`Command`]s (given seed = their index and time `at`, for hand-written
 /// scripts).
 pub fn parse_log(json: &str, at: i64) -> Result<Vec<Envelope>, serde_json::Error> {
-    match serde_json::from_str::<Vec<Envelope>>(json) {
-        Ok(v) => Ok(v),
+    let log = match serde_json::from_str::<Vec<Envelope>>(json) {
+        Ok(v) => v,
         Err(_) => {
             let cmds: Vec<Command> = serde_json::from_str(json)?;
-            Ok(cmds.into_iter().enumerate().map(|(i, c)| Envelope::new(c, i as u64, at, "")).collect())
+            cmds.into_iter().enumerate().map(|(i, c)| Envelope::new(c, i as u64, at, "")).collect()
         }
+    };
+    for env in &log {
+        env.cmd.check_numbers().map_err(<serde_json::Error as serde::de::Error>::custom)?;
     }
+    Ok(log)
 }
 
 /// A command that ran.
@@ -472,6 +508,7 @@ impl std::error::Error for Rejected {}
 /// after any edit and the character is marked modified; on failure it is
 /// left exactly as it was.
 pub fn apply(ch: &mut Character, engine: &Engine, env: &Envelope) -> Result<Applied, Rejected> {
+    env.cmd.check_numbers()?;
     let before = ch.clone();
     let _scope = crate::dice::deterministic(env.seed, env.at_iso());
     let rules_matter = env.cmd.affects_rules();

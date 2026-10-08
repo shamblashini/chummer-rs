@@ -130,14 +130,17 @@ pub fn free_levels(ch: &Character, p: &Element, mag: i32) -> i32 {
         if extra_cost >= 0.0 {
             levels += 1;
         }
+        // The result is capped at MAG: stop counting there, so absurd
+        // points in a file cannot spin for ages (LB-44).
         let mut i = extra_cost;
-        while i >= 1.0 {
+        while i >= 1.0 && levels < mag {
             levels += 1;
             i -= 1.0;
         }
-    } else if ppl != 0.0 {
+    } else if ppl > 0.0 {
+        // Chummer tests `!= 0`; a negative cost per level would loop forever.
         let mut i = extra_cost;
-        while i >= ppl {
+        while i >= ppl && levels < mag {
             levels += 1;
             i -= ppl;
         }

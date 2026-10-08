@@ -95,7 +95,7 @@ fn child_bool(node: &Element, k: &str) -> bool {
 
 /// Plain decimal parse used by the `*level` handlers (no Rating substitution).
 fn plain_dec(node: &Element, k: &str, default: f64) -> f64 {
-    node.child_text(k).and_then(|t| t.trim().parse().ok()).unwrap_or(default)
+    node.child_text(k).and_then(|t| crate::xml::parse_f64(&t)).unwrap_or(default)
 }
 
 /// Returns false when the node type is not handled.

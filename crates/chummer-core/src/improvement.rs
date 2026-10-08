@@ -37,7 +37,9 @@ pub struct Improvement {
 
 impl Improvement {
     pub fn from_xml(e: &Element) -> Self {
-        let f = |k: &str| e.get_f64(k).unwrap_or(0.0);
+        // Clamped like file integers, so `as i32` and the sums stay in range (LB-44).
+        let lim = f64::from(crate::xml::NUM_LIMIT);
+        let f = |k: &str| e.get_f64(k).unwrap_or(0.0).clamp(-lim, lim);
         Improvement {
             target: e.get("target"),
             improved_name: e.get("improvedname"),

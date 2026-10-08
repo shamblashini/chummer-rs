@@ -29,30 +29,7 @@ None open: every recommended fix is done (see "Already fixed").
 
 ## Ask
 
-Two open items, found by the fuzz tests (not Chummer bugs: chummer-rs's
-own). Both have an ignored test that shows them (`cargo test -p
-chummer-core -- --ignored`).
-
-- **LB-44 (c), ask: integer overflow on extreme values.** A file or a
-  command with values near `i32::MAX` (`<base>2147483647</base>`, a
-  number like `1e308` read as `i32::MAX`, `SetGroupKarma { value:
-  i32::MAX }`, `AddCustomSpell` with `effects = i32::MAX`) overflows the
-  rules math: `calc.rs` (lines 332, 338, 348, 782, 872),
-  `calc/karma_cost.rs:183`, `gm/custom_spell.rs:267`. Debug builds
-  panic; release builds wrap and show nonsense. Chummer uses `int` too
-  (and would throw an `OverflowException` only in checked contexts).
-  Options: clamp values when loading and in commands to a sane range
-  (e.g. ±1,000,000), or saturating arithmetic throughout the calc and
-  cost code. Tests: `tests/fuzz_load.rs`
-  `bug_extreme_numbers_overflow_rules_math`, `tests/prop_commands.rs`
-  `bug_extreme_command_values_overflow`.
-- **LB-45 (c), ask: NaN or infinite numbers in commands.** A command
-  such as `SetNuyen { value: NaN }` applies, but `serde_json` writes the
-  value as `null` and cannot read it back, so a command log with it
-  cannot be replayed from JSON (postcard keeps it). Options: refuse
-  non-finite numbers in `command::apply` (they are never valid game
-  values), or encode floats as strings in the JSON form. Test:
-  `tests/prop_commands.rs` `bug_non_finite_numbers_do_not_survive_json`.
+None open.
 
 ## Already fixed in chummer-rs
 
@@ -65,6 +42,8 @@ chummer-core -- --ignored`).
 | LB-24 | Career: buy karma with nuyen | Logs the nuyen at `NuyenPerBPWftP` but deducts it at `NuyenPerBPWftM`. | Uses WftP for both, so the log matches the balance. Same result with the default settings (both 2,000). | Chummer house-rule setting; no RAW career exchange. | (b) |
 | LB-25 | Empty-looking bonuses | `IsNullOrInnerTextIsEmpty` treats `<bonus><unarmeddvphysical/></bonus>` as empty, so the bonus is lost on save. | Keeps such bonuses (as the 5.18x–5.20x saves did). | n/a. | (b) |
 | LB-26 | Career undo: A.I. programs | Undo of an A.I. program / Advanced Program purchase refunds the karma and keeps the program. | Fixed: undo removes the program, and is refused while another program on the character requires it. | DT p. 145 (A.I.s). | (b) — fixed |
+| LB-44 | Extreme numbers (chummer-rs's own, found by fuzzing) | Chummer uses `int` and would overflow too (silently, outside checked contexts). | Integers read from a file are clamped to ±1,000,000 (`xml::NUM_LIMIT`; the largest in the data is the 1,000,000 "no limit" rating), as are improvement values and the integers the rules round out of decimals (`expr::standard_round`, `trunc_int`). The cost formulas that multiply levels (attribute, skill, knowledge and group karma, essence-loss minima, armor sums) work in `i64` and clamp back. Commands with an integer beyond ±1,000,000 or a decimal beyond ±10^12 are refused ("out of range"). Two loops that counted levels one by one stop at the cap (adept free levels), and a recoil group index is bounded. | n/a. | (c) — fixed |
+| LB-45 | NaN or infinite numbers in commands (chummer-rs's own) | n/a. | `command::apply` refuses a command with NaN or an infinity ("… is not a number that can be used"), and decoding an `Envelope` (JSON, postcard, inside sync messages) or a command log refuses it, so a log always replays. Such floats in a file read as absent. | n/a. | (c) — fixed |
 | LB-03 | Skill karma cost windows (Jack of All Trades) | `Skill.RangeCost` adds `Value × (min(upper, Max) − max(lower, Min − 1))`. (1) When `lower ≥ Max` the count is negative: 6 → 7 pays +1 from the −1 window (17, not 16). (2) A window is only used when `Minimum ≤ lower`: 3 → 7 skips the +2 window for levels 6–7 (42, not 46). | Fixed: the level count is clamped at 0 and every window that overlaps the range counts (16 and 46). This applies to all karma cost windows (attributes, active and knowledge skills, skill groups); multipliers keep Chummer's Minimum test. | RF p. 147, Jack of All Trades: −1 karma per level up to rating 5 (minimum 1), +2 karma per level above 5. | (b) — fixed |
 | LB-04 | Weapon accessory cost multiplier (Vintage) | `WeaponAccessory.Create` reads `<accessorycostmultiplier>` from the data, but `Save` does not write it, so the multiplier is lost after a reload. | Fixed: `accessory_element` copies the multiplier into the saved accessory (Chummer's `Load` reads it), and an accessory without it (a Chummer save) takes it from its data record. Apex Predator's saved nuyen is 800 higher than chummer-rs computes (tests/nuyen_oracle.rs). | GH3 p. 3, Vintage: physical upgrades cost twice the listed amount. | (b) — fixed |
 | LB-05 | Custom drug grade cost | `CreateCustomDrug` reads the grade's `<cost>` into `_dblCostMultiplier` and never uses it. `Drug.Cost` sums the components only. | Fixed: `drug::cost_with` multiplies the sum by the grade's `<cost>` from drugcomponents.xml. | CF p. 190: street-cooked drugs cost half. Data: Street Cooked 0.5, Pharmaceutical 2, Designer 6. | (b) — fixed |
@@ -127,6 +106,8 @@ Tests that pin the current behaviour change with a fix.
 | LB-32 | `items/magic/spirit.rs` `powers`, `print/magic.rs` `spirit` | `tests/career_actions.rs` `fettered_spirits_gain_banishing_resistance` |
 | LB-33 | `essence_loss.rs` `raw_career`, `chummer-gui/src/view.rs` `recompute` | `tests/essence_loss.rs` `career_mode_essence_loss_matches_saved`, `career_mode_essence_loss_lowers_mag_and_burns_karma` |
 | LB-40 | `career/actions.rs:55` | — |
+| LB-44 | `xml.rs` (`NUM_LIMIT`, `parse_int`), `expr.rs` (`standard_round`, `trunc_int`, `clamp_int`), `calc/karma_cost.rs`, `calc.rs`, `essence_loss.rs`, `command/numbers.rs` | `tests/fuzz_load.rs` `extreme_numbers_in_numeric_fields`, `extreme_numbers_are_clamped_on_load`; `tests/prop_commands.rs` `extreme_command_values_are_refused` |
+| LB-45 | `command/numbers.rs`, `command.rs` (`Envelope` decoding, `parse_log`) | `tests/prop_commands.rs` `non_finite_numbers_are_refused`, `random_command_sequences` |
 
 Code paths are under `crates/chummer-core/src/` and test paths under
 `crates/chummer-core/tests/`, unless shown otherwise.

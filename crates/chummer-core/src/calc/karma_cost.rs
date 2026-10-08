@@ -9,7 +9,7 @@
 
 use super::{AttributeValues, Rules, SkillValues};
 use crate::character::Character;
-use crate::expr::standard_round;
+use crate::expr::{clamp_int, standard_round};
 use crate::improvement::{Field, Improvement, Query};
 use crate::skills::{SkillGroup, Specialization};
 
@@ -49,7 +49,7 @@ fn apply(cost: i32, extra: f64, mult: f64) -> i32 {
     if mult != 1.0 {
         standard_round(f64::from(cost) * mult + extra)
     } else {
-        cost + standard_round(extra)
+        clamp_int(i64::from(cost) + i64::from(standard_round(extra)))
     }
 }
 
@@ -65,18 +65,21 @@ pub fn attribute(ch: &Character, v: &AttributeValues, rules: &Rules) -> i32 {
     apply(cost, extra, mult).max(0)
 }
 
+/// The levels `lower+1..=upper` summed (`(u(u+1) - l(l+1)) / 2`), in
+/// `i64` so absurd ratings cannot overflow (LB-44).
+fn triangle(lower: i32, upper: i32) -> i64 {
+    let (l, u) = (i64::from(lower), i64::from(upper));
+    (u * (u + 1) - l * (l + 1)) / 2
+}
+
 /// Triangle cost of raising a skill from `lower` to `upper` with no
 /// improvements (the first level costs `new_cost`).
 pub fn skill_range_cost(lower: i32, upper: i32, new_cost: i32, improve_cost: i32) -> i32 {
     if lower >= upper {
         return 0;
     }
-    let tri = (upper * (upper + 1) - lower * (lower + 1)) / 2;
-    if lower == 0 {
-        (tri - 1) * improve_cost + new_cost
-    } else {
-        tri * improve_cost
-    }
+    let tri = triangle(lower, upper);
+    clamp_int(if lower == 0 { (tri - 1) * i64::from(improve_cost) + i64::from(new_cost) } else { tri * i64::from(improve_cost) })
 }
 
 /// What an active skill's cost depends on besides its ratings.
@@ -114,7 +117,7 @@ fn spec_cost(ch: &Character, category: &str, count: i32, per: i32, total: i32) -
     for i in named(ch, "SkillCategorySpecializationKarmaCostMultiplier", category).iter().filter(|i| i.min as i32 <= total) {
         mult *= i.val / 100.0;
     }
-    apply(count * per, extra, mult)
+    apply(clamp_int(i64::from(count) * i64::from(per)), extra, mult)
 }
 
 /// `Skill.CurrentKarmaCost`. `group_range` is the skill group's karma
@@ -125,7 +128,7 @@ pub fn active_skill(ch: &Character, s: &ActiveSkill<'_>, lower: i32, total: i32,
         return 0;
     }
     let cost = match group_range {
-        Some((group_lower, group_upper)) => active_range_cost(ch, s, lower, group_lower, rules) + active_range_cost(ch, s, group_upper, total, rules),
+        Some((group_lower, group_upper)) => clamp_int(i64::from(active_range_cost(ch, s, lower, group_lower, rules)) + i64::from(active_range_cost(ch, s, group_upper, total, rules))),
         None => active_range_cost(ch, s, lower, total, rules),
     };
     if s.exotic {
@@ -133,7 +136,7 @@ pub fn active_skill(ch: &Character, s: &ActiveSkill<'_>, lower: i32, total: i32,
     }
     let priority = crate::character::uses_priority_tables(&ch.field("buildmethod"));
     let count = if s.buy_with_karma || !priority { s.specs.iter().filter(|x| !x.free).count() as i32 } else { 0 };
-    (cost + spec_cost(ch, s.category, count, rules.karma_specialization, total)).max(0)
+    clamp_int(i64::from(cost) + i64::from(spec_cost(ch, s.category, count, rules.karma_specialization, total))).max(0)
 }
 
 /// `KnowledgeSkill.CurrentKarmaCost` without specializations (Chummer
@@ -141,7 +144,7 @@ pub fn active_skill(ch: &Character, s: &ActiveSkill<'_>, lower: i32, total: i32,
 /// knowledge skills; they come out of knowledge points).
 pub fn knowledge_skill(ch: &Character, name: &str, category: &str, lower: i32, total: i32, rules: &Rules) -> i32 {
     let improve = rules.karma_improve_knowledge_skill;
-    let mut cost = f64::from((total * (total + 1) - lower * (lower + 1)) / 2 * improve);
+    let mut cost = (triangle(lower, total) * i64::from(improve)) as f64;
     if lower == 0 && cost > 0.0 {
         cost += f64::from(rules.karma_new_knowledge_skill - improve);
     }
@@ -179,9 +182,9 @@ pub fn skill_group(ch: &Character, g: &SkillGroup, members: &[&SkillValues], rul
         return 0;
     }
     let upper = members.iter().filter(|m| !m.disabled).map(|m| m.total_base).min().unwrap_or(0);
-    let lower = upper - g.karma;
-    let tri = (upper * (upper + 1) - lower * (lower + 1)) / 2;
-    let cost = tri * if tri == 1 { rules.karma_new_skill_group } else { rules.karma_improve_skill_group };
+    let lower = clamp_int(i64::from(upper) - i64::from(g.karma));
+    let tri = triangle(lower, upper);
+    let cost = clamp_int(tri * i64::from(if tri == 1 { rules.karma_new_skill_group } else { rules.karma_improve_skill_group }));
     let kinds = [("SkillGroupKarmaCost", "SkillGroupKarmaCostMultiplier", g.name.as_str())];
     let (mut extra, mut mult) = modifiers(ch, &kinds, lower, lower, upper);
     let mut categories: Vec<&str> = members.iter().map(|m| m.category.as_str()).collect();

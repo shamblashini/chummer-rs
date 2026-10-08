@@ -46,7 +46,23 @@ impl std::error::Error for ExprError {}
 /// Chummer's `StandardRound`: ceiling away from zero (2.1 -> 3, -2.1 -> -3).
 pub fn standard_round(d: f64) -> i32 {
     let r = if d >= 0.0 { d.ceil() } else { d.floor() };
-    r.clamp(i32::MIN as f64, i32::MAX as f64) as i32
+    // NaN casts to 0; the clamp keeps sums of results from overflowing (LB-44).
+    let lim = f64::from(crate::xml::NUM_LIMIT);
+    r.clamp(-lim, lim) as i32
+}
+
+/// `(int)d`: truncation, clamped to ±[`crate::xml::NUM_LIMIT`] (NaN is 0)
+/// so sums of results cannot overflow (LB-44).
+pub fn trunc_int(d: f64) -> i32 {
+    let lim = f64::from(crate::xml::NUM_LIMIT);
+    d.trunc().clamp(-lim, lim) as i32
+}
+
+/// An `i64` intermediate back to `i32`, clamped to ±[`crate::xml::NUM_LIMIT`]
+/// (LB-44): cost formulas multiply levels and can leave the `i32` range on
+/// absurd inputs.
+pub fn clamp_int(v: i64) -> i32 {
+    v.clamp(-i64::from(crate::xml::NUM_LIMIT), i64::from(crate::xml::NUM_LIMIT)) as i32
 }
 
 /// `decimal.Round(x, places, MidpointRounding.AwayFromZero)`, used for essence.

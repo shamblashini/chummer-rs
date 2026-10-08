@@ -732,7 +732,7 @@ pub fn budget_with(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &Char
     let nuyen_bp = ch.doc.get_i32("nuyenbp").unwrap_or(0);
     // Files from before 5.214 store the starting karma themselves.
     let start = ch.doc.get_i32("buildkarma").unwrap_or_else(|| settings.int("buildpoints", 25));
-    let spent = karma_breakdown(ch, sheet, rules, settings, store).iter().map(|(_, v)| v).sum();
+    let spent = crate::expr::clamp_int(karma_breakdown(ch, sheet, rules, settings, store).iter().map(|(_, v)| i64::from(*v)).sum());
     b.karma = (start, spent);
 
     let starting = ch.doc.get_f64("startingnuyen").unwrap_or(0.0) + f64::from(nuyen_bp) * f64::from(settings.int("nuyenperbpwftm", 2000));

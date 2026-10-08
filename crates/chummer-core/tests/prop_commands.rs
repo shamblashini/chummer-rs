@@ -209,29 +209,29 @@ fn check_sequence(name: &str, base: &Character, log: &[Envelope]) -> Result<(), 
         return Err(format!("{name}: two clones differ after the same envelopes"));
     }
 
-    // Wire formats.
+    // Wire formats. A command with an unusable number is refused by
+    // `apply` and does not decode (LB-44, LB-45).
     let mut c = base.clone();
     let mut d = base.clone();
-    let mut json_ok = true;
-    for env in log {
+    for (i, env) in log.iter().enumerate() {
+        if !command_numbers_ok(&env.cmd) {
+            if !matches!(outcomes[i], Outcome::Rejected(_)) {
+                return Err(format!("{name}: a command with a bad number ran: {}", env_label(env)));
+            }
+            if Envelope::from_bytes(&env.to_bytes()).is_ok() || Envelope::from_json(&env.to_json()).is_ok() {
+                return Err(format!("{name}: a command with a bad number decoded: {}", env_label(env)));
+            }
+            continue;
+        }
         let wire = Envelope::from_bytes(&env.to_bytes()).map_err(|e| format!("{name}: postcard round trip failed: {e}: {}", env_label(env)))?;
         run(&mut c, &wire);
-        match Envelope::from_json(&env.to_json()) {
-            Ok(back) => {
-                run(&mut d, &back);
-            }
-            Err(e) => {
-                if command_is_finite(&env.cmd) {
-                    return Err(format!("{name}: JSON round trip failed: {e}: {}", env_label(env)));
-                }
-                json_ok = false;
-            }
-        }
+        let back = Envelope::from_json(&env.to_json()).map_err(|e| format!("{name}: JSON round trip failed: {e}: {}", env_label(env)))?;
+        run(&mut d, &back);
     }
     if command::state_hash(&c) != final_hash {
         return Err(format!("{name}: applying postcard copies gave another result"));
     }
-    if json_ok && command::state_hash(&d) != final_hash {
+    if command::state_hash(&d) != final_hash {
         return Err(format!("{name}: applying JSON copies gave another result"));
     }
 
@@ -268,16 +268,9 @@ fn check_sequence(name: &str, base: &Character, log: &[Envelope]) -> Result<(), 
     Ok(())
 }
 
-/// Whether every float in the command is finite. JSON writes NaN and the
-/// infinities as `null`; see `bug_non_finite_numbers_do_not_survive_json`.
-fn command_is_finite(c: &Command) -> bool {
-    let dbg = format!("{c:?}");
-    !(dbg.contains("NaN") || dbg.contains(": inf") || dbg.contains(": -inf"))
-}
-
-/// Known bug class: integer overflow on extreme values (see fuzz_load).
-fn is_known_overflow(panic: &str) -> bool {
-    panic.contains("with overflow")
+/// Whether every number in the command is usable (finite, in range).
+fn command_numbers_ok(c: &Command) -> bool {
+    c.check_numbers().is_ok()
 }
 
 const FIXTURES: &[&str] = &["Davis Jones", "Soma (Career)", "Draught"];
@@ -286,7 +279,6 @@ const FIXTURES: &[&str] = &["Davis Jones", "Soma (Career)", "Draught"];
 fn random_command_sequences() {
     let examples = Command::examples();
     let mut failures = Vec::new();
-    let mut known = Vec::new();
     let mut tally = [0usize; 3];
     let started = std::time::Instant::now();
     for (fi, name) in FIXTURES.iter().enumerate() {
@@ -320,20 +312,12 @@ fn random_command_sequences() {
                 }
                 Err(panic) => {
                     let cmds: Vec<String> = log.iter().map(env_label).collect();
-                    let msg = format!("{name} seed {seed:#x}: panic {panic}\n    commands: {}", cmds.join("\n              "));
-                    if is_known_overflow(&panic) {
-                        known.push(msg);
-                    } else {
-                        failures.push(msg);
-                    }
+                    failures.push(format!("{name} seed {seed:#x}: panic {panic}\n    commands: {}", cmds.join("\n              ")));
                 }
             }
         }
     }
     eprintln!("commands changed/unchanged/rejected (on the base): {tally:?} in {:?}", started.elapsed());
-    if !known.is_empty() {
-        eprintln!("{} known overflow panics:\n{}", known.len(), known.join("\n"));
-    }
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }
 
@@ -345,6 +329,9 @@ fn check_one(name: &str, base: &Character, env: &Envelope) -> Result<(), String>
     let o = run(&mut a, env);
     if o != Outcome::Changed && command::state_hash(&a) != command::state_hash(base) {
         return Err(format!("{name}: {o:?} changed the character: {}", env_label(env)));
+    }
+    if !command_numbers_ok(&env.cmd) {
+        return if matches!(o, Outcome::Rejected(_)) && Envelope::from_bytes(&env.to_bytes()).is_err() { Ok(()) } else { Err(format!("{name}: a bad number was not refused: {}", env_label(env))) };
     }
     let wire = Envelope::from_bytes(&env.to_bytes()).map_err(|e| format!("{name}: postcard: {e}: {}", env_label(env)))?;
     let mut b = base.clone();
@@ -455,11 +442,25 @@ fn extreme_envelope_times() {
 /// JSON writes NaN and the infinities as `null`, which does not read
 /// back: a command log holding one (`SetNuyen`, a quantity typed as
 /// "NaN") cannot be replayed from JSON. Postcard carries them.
+/// NaN and the infinities in a command (LB-45, fixed): `apply` refuses
+/// them with a reason, and no wire form decodes them (JSON cannot even
+/// write them; postcard could).
 #[test]
-#[ignore = "BUG: non-finite f64 in a Command serialises to JSON null and fails to deserialise"]
-fn bug_non_finite_numbers_do_not_survive_json() {
-    let env = Envelope::new(Command::SetNuyen { value: f64::NAN }, 1, T0, "");
-    Envelope::from_json(&env.to_json()).unwrap();
+fn non_finite_numbers_are_refused() {
+    let base = Character::load(&common::fixtures_dir().join("Davis Jones.chum5")).unwrap();
+    let p = pools(&base);
+    for cmd in non_finite_commands(&p, &mut Prng::new(1)) {
+        let env = Envelope::new(cmd, 1, T0, "");
+        let mut ch = base.clone();
+        let err = command::apply(&mut ch, engine(), &env).expect_err(&env_label(&env));
+        assert!(err.reason.contains("not a number"), "{}", err.reason);
+        assert_eq!(command::state_hash(&ch), command::state_hash(&base));
+        assert!(Envelope::from_bytes(&env.to_bytes()).is_err(), "postcard decoded {}", env_label(&env));
+        assert!(Envelope::from_json(&env.to_json()).is_err());
+    }
+    // A hand-written log with an absurd number is refused as a whole.
+    assert!(command::parse_log(r#"[{"SetKarma":{"value":2147483647}}]"#, T0).is_err());
+    assert!(command::parse_log(r#"[{"SetKarma":{"value":5}}]"#, T0).is_ok());
 }
 
 
@@ -492,26 +493,44 @@ fn field_names_must_be_element_names() {
     Character::from_str(&ch.to_xml_string()).unwrap();
 }
 
-/// Extreme numbers in commands reach the same unchecked `i32` arithmetic
-/// as extreme numbers in files (see fuzz_load's
-/// `bug_extreme_numbers_overflow_rules_math`).
+/// Extreme numbers in commands (LB-44, fixed): refused before they reach
+/// the rules math; the limits themselves are accepted and compute.
 #[test]
-#[ignore = "BUG: i32 overflow in karma costs / custom spell drain on extreme command values (debug builds panic, release wraps)"]
-fn bug_extreme_command_values_overflow() {
+fn extreme_command_values_are_refused() {
     let base = Character::load(&common::fixtures_dir().join("Draught.chum5")).unwrap();
     let group = base.skill_groups.first().map(|g| g.name.clone()).unwrap_or_default();
-    let design = chummer_core::gm::custom_spell::SpellDesign {
+    let design = |effects: i32| chummer_core::gm::custom_spell::SpellDesign {
         mods: [true; chummer_core::gm::custom_spell::MODIFIER_SLOTS],
-        effects: i32::MAX,
+        effects,
         name: "Fuzz".into(),
         ..Default::default()
     };
-    let manipulation = chummer_core::gm::custom_spell::SpellDesign { category: "Manipulation".into(), ..design.clone() };
+    let manipulation = |effects: i32| chummer_core::gm::custom_spell::SpellDesign { category: "Manipulation".into(), ..design(effects) };
     let mut failures = Vec::new();
-    for cmd in [Command::SetGroupKarma { group, value: i32::MAX }, Command::AddCustomSpell { design }, Command::AddCustomSpell { design: manipulation }] {
+    for cmd in [
+        Command::SetGroupKarma { group: group.clone(), value: i32::MAX },
+        Command::AddCustomSpell { design: design(i32::MAX) },
+        Command::AddCustomSpell { design: manipulation(i32::MIN) },
+        Command::SetKarma { value: -2_000_000 },
+        Command::SetItemQuantity { guid: "x".into(), qty: 1e300 },
+    ] {
         let env = Envelope::new(cmd, 1, T0, "");
         let mut ch = base.clone();
-        if let Err(p) = no_panic(|| run(&mut ch, &env)) {
+        match no_panic(|| run(&mut ch, &env)) {
+            Ok(Outcome::Rejected(r)) if r.contains("out of range") => {}
+            other => failures.push(format!("{}: {other:?}", env_label(&env))),
+        }
+    }
+    let limit = chummer_core::xml::NUM_LIMIT;
+    for cmd in [Command::SetGroupKarma { group, value: limit }, Command::AddCustomSpell { design: design(limit) }, Command::AddCustomSpell { design: manipulation(-limit) }] {
+        let env = Envelope::new(cmd, 1, T0, "");
+        let mut ch = base.clone();
+        if let Err(p) = no_panic(|| {
+            run(&mut ch, &env);
+            let sheet = engine().sheet(&ch);
+            let _ = chummer_core::print::print_xml(&ch, engine(), &chummer_core::lang::Language::default());
+            sheet.essence
+        }) {
             failures.push(format!("{}: {p}", env_label(&env)));
         }
     }

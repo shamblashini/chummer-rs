@@ -94,7 +94,7 @@ fn specific_power(ctx: &mut Ctx<'_>, node: &Element) -> bool {
     let Ok(doc) = ctx.store.doc("powers.xml") else { return false };
     let Some(rec) = crate::data::find(&doc, "powers", "power", &name) else { return false };
     // int.TryParse: expressions such as "Rating" give 0.
-    let val: i32 = node.get("val").trim().parse().unwrap_or(0);
+    let val: i32 = crate::xml::parse_int(&node.get("val")).unwrap_or(0);
     let (pname, extra, levels_enabled) = grant_power(ctx, rec, None, node.child("bonusoverride"), val);
     let levels = if levels_enabled { val } else { 1 };
     free_levels_improvement(ctx, &pname, &extra, levels, !node.get("pointsperlevel").trim().is_empty());
@@ -286,7 +286,7 @@ pub fn bonus_spirit(ctx: &mut Ctx<'_>, node: &Element) -> bool {
     }
     let mut selections = 1;
     if let Some(skill) = node.attr("skill").filter(|s| !s.is_empty()) {
-        let divisor = node.attr("ratingdivisor").and_then(|d| d.trim().parse::<i32>().ok()).filter(|d| *d > 0).unwrap_or(1);
+        let divisor = node.attr("ratingdivisor").and_then(crate::xml::parse_int).filter(|d| *d > 0).unwrap_or(1);
         let mut i = ctx.imp("AddSpiritSkill", skill);
         i.rating = divisor;
         ctx.push(i);

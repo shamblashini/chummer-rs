@@ -116,6 +116,7 @@ file differences.
 | Writes its own version as `<appversion>`. | Keeps `<appversion>` as loaded (new characters: 5.226.0) and writes `<chummerrsversion>`. Chummer drops `<chummerrsversion>` when it re-saves. | Chummer picks its load fix-ups by `<appversion>`. | yes |
 | Re-saving rewrites the whole file in the current layout. | Writes back only what changed; other elements stay as loaded (lossless round trip). Old files keep old forms, for example `<sex>` instead of `<gender>`. | Nothing in the file is lost. | yes |
 | Writes its calculated values (totals and similar) on save. | Does not write all of them. Chummer computes them again on load. | They are derived. | yes |
+| Reads any `int` and does the rules math with it (an absurd value overflows). | Integers in a file are clamped to ±1,000,000 on load, and NaN or infinite decimals read as absent; a re-save writes the clamped value. Commands with numbers out of that range, NaN or an infinity are refused. (LB-44, LB-45) | Robustness against damaged files and hostile commands; real values are far below the limit. | only for absurd values |
 | Saves only the clips that hold rounds; on load they are put into the slots in order. | Writes every slot up to the last loaded one, empty slots with the empty guid (Chummer loads them as empty clips). A loaded second magazine stays the second one. | Keep the slot the user loaded. | yes |
 
 ## GUI and layout

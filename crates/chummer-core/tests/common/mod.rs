@@ -97,7 +97,15 @@ pub fn no_panic<T>(f: impl FnOnce() -> T) -> Result<T, String> {
                 .map(|s| s.to_string())
                 .or_else(|| info.payload().downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "(non-string payload)".into());
-            let loc = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+            let mut loc = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+            // A panic inside the standard library (an overflowing `sum`):
+            // name the caller in chummer-core too.
+            if !loc.starts_with("crates/") {
+                let bt = std::backtrace::Backtrace::force_capture().to_string();
+                if let Some(at) = bt.lines().map(str::trim).find(|l| l.starts_with("at ./src/") || l.starts_with("at crates/chummer-core/src/")) {
+                    loc = format!("{loc} (from {})", at.trim_start_matches("at "));
+                }
+            }
             LAST_PANIC.with(|p| *p.borrow_mut() = Some(format!("{loc}: {msg}")));
         }));
     });

@@ -91,22 +91,24 @@ pub fn minimum_maximum_no_essence_loss(ch: &Character, abbrev: &str, use_start: 
     }
     let a = ch.attribute(abbrev).cloned().unwrap_or(Attribute { metatype_min: 0, metatype_max: 0, ..Default::default() });
     let base = format!("{abbrev}Base");
-    let (mut min, mut max) = (a.metatype_min, a.metatype_max);
-    let (mut min_loss, mut max_loss) = (0, 0);
+    // i64, clamped back: absurd values in a file must not overflow (LB-44).
+    let (mut min, mut max) = (i64::from(a.metatype_min), i64::from(a.metatype_max));
+    let (mut min_loss, mut max_loss) = (0i64, 0i64);
     for i in ch.improvements.of_kind("Attribute") {
         if i.improved_name == abbrev || i.improved_name == base {
+            let (lo, hi) = (i.min as i64 * i64::from(i.rating), i.max as i64 * i64::from(i.rating));
             if matches!(i.source.as_str(), CHARGEN | CAREER | "CyberadeptDaemon") {
-                min_loss += i.min as i32 * i.rating;
-                max_loss += i.max as i32 * i.rating;
+                min_loss += lo;
+                max_loss += hi;
             } else {
-                min += i.min as i32 * i.rating;
-                max += i.max as i32 * i.rating;
+                min += lo;
+                max += hi;
             }
         }
     }
-    let floor = use_start.unwrap_or(0);
-    min += min_loss.max(floor);
-    max += max_loss.max(floor);
+    let floor = i64::from(use_start.unwrap_or(0));
+    let mut min = crate::expr::clamp_int(min + min_loss.max(floor));
+    let max = crate::expr::clamp_int(max + max_loss.max(floor));
     if min < 1 {
         let zero = ch.flag("iscritter") || a.metatype_max == 0 || matches!(abbrev, "EDG" | "MAG" | "MAGAdept" | "RES" | "DEP");
         min = if zero { 0 } else { 1 };
