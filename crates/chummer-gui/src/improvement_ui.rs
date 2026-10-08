@@ -12,7 +12,7 @@ use chummer_core::settings::CharacterSettings;
 use eframe::egui::{self, RichText};
 
 use crate::doc::Doc;
-use crate::workspace::icons;
+use crate::workspace::{dialog, icons};
 use crate::workspace::widgets::{self, Look};
 
 #[derive(Default)]
@@ -460,9 +460,9 @@ impl ImprovementsPanel {
         let mut open = true;
         let mut done = false;
         let title = if d.edit.is_some() { lang.tr("Edit Improvement") } else { lang.tr("Create Improvement") };
-        egui::Window::new(title).id(egui::Id::new("create_improvement")).open(&mut open).default_width(520.0).collapsible(false).show(ctx, |ui| {
-            egui::Grid::new("create_imp").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label(lang.tr("Improvement Type:"));
+        dialog::window(ctx, "create_improvement", &title, &mut open, egui::vec2(520.0, 0.0), false, |ui| {
+            egui::Grid::new("create_imp").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                dialog::label(ui, &lang.tr("Improvement Type:"));
                 let shown = d.current().map(|t| type_name(lang, t)).unwrap_or_default();
                 let before = d.pick;
                 crate::combo::Combo::from_id_salt("imp_type").width(320.0).selected_text(shown).height(420.0).show_ui(ui, |ui| {
@@ -478,8 +478,8 @@ impl ImprovementsPanel {
                     d.error = None;
                 }
                 ui.end_row();
-                ui.label(lang.tr("Name:"));
-                ui.add(egui::TextEdit::singleline(&mut d.form.name).desired_width(320.0));
+                dialog::label(ui, &lang.tr("Name:"));
+                dialog::text_input(ui, &mut d.form.name, "", 320.0);
                 ui.end_row();
                 let Some(t) = d.current().cloned() else { return };
                 d.form.type_id = t.id.clone();
@@ -489,14 +489,14 @@ impl ImprovementsPanel {
                         d.options = Some((pick, custom::options(ch, store, settings, sel)));
                     }
                     let opts = d.options.as_ref().map(|(_, o)| o.as_slice()).unwrap_or_default();
-                    ui.label(lang.tr("Selected Value:"));
+                    dialog::label(ui, &lang.tr("Selected Value:"));
                     // Free text, with the values the selection offers as presets.
                     let presets: Vec<(String, String)> = opts.iter().map(|o| (o.clone(), o.clone())).collect();
                     crate::workspace::widgets::preset_input(ui, "imp_select", &mut d.form.select, &presets, "", 320.0);
                     ui.end_row();
                 }
                 let num = |ui: &mut egui::Ui, label: &str, v: &mut f64, decimals: usize| {
-                    ui.label(lang.tr(label));
+                    dialog::label(ui, &lang.tr(label));
                     ui.add(egui::DragValue::new(v).speed(0.1).max_decimals(decimals));
                     ui.end_row();
                 };
@@ -516,27 +516,26 @@ impl ImprovementsPanel {
                 }
                 if t.has(&Field::ApplyToRating) {
                     ui.label("");
-                    ui.checkbox(&mut d.form.apply_to_rating, lang.tr("Apply to Rating"));
+                    dialog::check(ui, &mut d.form.apply_to_rating, &lang.tr("Apply to Rating"));
                     ui.end_row();
                 }
                 if t.has(&Field::Free) {
                     ui.label("");
-                    ui.checkbox(&mut d.form.free, lang.tr("Free!"));
+                    dialog::check(ui, &mut d.form.free, &lang.tr("Free!"));
                     ui.end_row();
                 }
             });
             if let Some(t) = d.current() {
-                ui.separator();
+                dialog::rule(ui);
                 egui::ScrollArea::vertical().id_salt("imp_help").max_height(140.0).show(ui, |ui| {
-                    ui.weak(&t.page);
+                    dialog::note(ui, t.page.clone());
                 });
             }
             if let Some(e) = &d.error {
-                ui.colored_label(crate::theme::warn(ui), e);
+                dialog::warning(ui, e.clone());
             }
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.add_enabled_ui(d.pick.is_some(), |ui| dialog_button(ui, &lang.tr("OK"), true)).inner.clicked() {
+            dialog::buttons(ui, |ui| {
+                if ui.add_enabled_ui(d.pick.is_some(), |ui| dialog::button(ui, &lang.tr("OK"), true)).inner.clicked() {
                     match ch.apply(Command::CreateImprovement { form: d.form.clone(), group: d.group.clone(), edit: d.edit.clone() }) {
                         Ok(_) => {
                             changed = true;
@@ -545,7 +544,7 @@ impl ImprovementsPanel {
                         Err(e) => d.error = Some(lang.tr(&e.reason)),
                     }
                 }
-                if dialog_button(ui, &lang.tr("Cancel"), false).clicked() {
+                if dialog::button(ui, &lang.tr("Cancel"), false).clicked() {
                     done = true;
                 }
             });
@@ -566,17 +565,21 @@ impl ImprovementsPanel {
             ),
         };
         let mut answer = None;
-        egui::Window::new(lang.tr("Remove")).id(egui::Id::new("confirm_imp_delete")).collapsible(false).resizable(false).show(ctx, |ui| {
+        let mut open = true;
+        dialog::window(ctx, "confirm_imp_delete", &lang.tr("Remove"), &mut open, egui::vec2(380.0, 0.0), false, |ui| {
             ui.label(text);
-            ui.horizontal(|ui| {
-                if dialog_button(ui, &lang.tr("Remove"), true).clicked() {
+            dialog::buttons(ui, |ui| {
+                if dialog::button(ui, &lang.tr("Remove"), true).clicked() {
                     answer = Some(true);
                 }
-                if dialog_button(ui, &lang.tr("Cancel"), false).clicked() {
+                if dialog::button(ui, &lang.tr("Cancel"), false).clicked() {
                     answer = Some(false);
                 }
             });
         });
+        if !open {
+            answer = Some(false);
+        }
         match answer {
             Some(true) => {
                 let changed = match self.confirm.take() {
@@ -624,11 +627,3 @@ fn ws_layout(ui: &egui::Ui) -> bool {
     crate::theme::current(ui.ctx()).workspace_layout()
 }
 
-/// A dialog button: a Workspace button (`primary` filled) or a Classic one.
-fn dialog_button(ui: &mut egui::Ui, text: &str, primary: bool) -> egui::Response {
-    if ws_layout(ui) {
-        widgets::button(ui, None, text, if primary { Look::Primary } else { Look::Secondary }, 26.0)
-    } else {
-        ui.button(text)
-    }
-}

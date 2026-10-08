@@ -14,10 +14,11 @@ use chummer_core::lang::Language;
 use chummer_core::requirements::{self, Check};
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
 use chummer_core::xml::Element;
-use eframe::egui::{self, RichText};
+use eframe::egui;
 
 use crate::browser::record_fields;
 use crate::pdf_ui::{self, Status};
+use crate::workspace::dialog;
 
 /// Extra list columns per kind: (header, data field).
 pub(crate) fn columns(tag: &str) -> &'static [(&'static str, &'static str)] {
@@ -129,31 +130,33 @@ impl SelectDialog {
         let doc = self.doc.clone();
         let recs = data::records(&doc, self.kind.data_container, self.kind.data_item);
         let title = lang.tr_fmt("Add {0}", &[&crate::view::kind_noun(lang, self.kind.label)]);
-        egui::Window::new(title).id(egui::Id::new(("select_dialog", self.kind.tag))).open(&mut open).default_size([960.0, 640.0]).collapsible(false).show(ctx, |ui| {
+        dialog::window(ctx, ("select_dialog", self.kind.tag), &title, &mut open, egui::vec2(960.0, 640.0), true, |ui| {
             if let Step::Answer { index, choices, answer } = &mut self.step {
                 let index = *index;
                 let c = &choices[0];
-                ui.heading(recs[index].name());
-                ui.label(&c.prompt);
+                dialog::heading(ui, &recs[index].name());
+                dialog::caption(ui, &c.prompt);
                 if c.options.is_empty() {
-                    ui.text_edit_singleline(answer);
+                    dialog::text_input(ui, answer, "", 280.0);
                 } else {
-                    egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
-                        for o in &c.options {
-                            if crate::combo::selectable_label(ui, answer == o, o).clicked() {
-                                *answer = o.clone();
+                    dialog::list_frame(ui).show(ui, |ui| {
+                        egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+                            for o in &c.options {
+                                if dialog::list_row(ui, answer == o, o, "", false).clicked() {
+                                    *answer = o.clone();
+                                }
                             }
-                        }
+                        });
                     });
                 }
                 let mut back = false;
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(!answer.trim().is_empty(), egui::Button::new(lang.tr("Add"))).clicked() {
+                dialog::buttons(ui, |ui| {
+                    if ui.add_enabled_ui(!answer.trim().is_empty(), |ui| dialog::button(ui, &lang.tr("Add"), true)).inner.clicked() {
                         let mut p = self.purchase.clone();
                         p.answer = Some(answer.trim().to_owned());
                         result = Outcome::Done { index, purchase: p };
                     }
-                    back = ui.button(lang.tr("Back")).clicked();
+                    back = dialog::button(ui, &lang.tr("Back"), false).clicked();
                 });
                 if back {
                     self.step = Step::Pick;
@@ -163,7 +166,7 @@ impl SelectDialog {
 
             let cats = data::categories(&doc);
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.search).hint_text(lang.tr("Search")).desired_width(220.0));
+                dialog::search(ui, &mut self.search, &lang.tr("Search"), 240.0);
                 if !cats.is_empty() {
                     crate::combo::Combo::from_id_salt("sel_cat")
                         .selected_text(if self.category.is_empty() { lang.tr("All categories") } else { lang.data_name(self.kind.file, "", &self.category) })
@@ -174,7 +177,7 @@ impl SelectDialog {
                             }
                         });
                 }
-                ui.checkbox(&mut self.show_unavailable, lang.tr("Show unavailable"));
+                dialog::check(ui, &mut self.show_unavailable, &lang.tr("Show unavailable"));
             });
             let check = Check { ch, sheet, ignore_quality: None };
             let needle = self.search.to_lowercase();
@@ -194,19 +197,18 @@ impl SelectDialog {
                     (self.show_unavailable || why.is_empty()).then_some((i, name, why))
                 })
                 .collect();
-            ui.weak(lang.tr_fmt("{0} shown", &[&rows.len()]));
-            ui.separator();
+            dialog::note(ui, lang.tr_fmt("{0} shown", &[&rows.len()]));
+            dialog::rule(ui);
             let mut confirm: Option<usize> = None;
             ui.columns(2, |colsui| {
-                egui::ScrollArea::vertical().id_salt("sel_list").auto_shrink([false; 2]).max_height(470.0).show_rows(&mut colsui[0], 20.0, rows.len(), |ui, range| {
+                let row_h = if dialog::ws(colsui[0].ctx()) { 25.0 } else { 20.0 };
+                let list = dialog::list_frame(&colsui[0]);
+                list.show(&mut colsui[0], |ui| egui::ScrollArea::vertical().id_salt("sel_list").auto_shrink([false; 2]).max_height(470.0).show_rows(ui, row_h, rows.len(), |ui, range| {
+                    ui.spacing_mut().item_spacing.y = if dialog::ws(ui.ctx()) { 1.0 } else { ui.spacing().item_spacing.y };
                     for (i, name, why) in &rows[range] {
                         let r = recs[*i];
                         let extra: Vec<String> = cols.iter().map(|(_, f)| r.get(f)).filter(|v| !v.is_empty()).collect();
-                        let mut text = RichText::new(format!("{name}   {}", extra.join(" · ")));
-                        if !why.is_empty() {
-                            text = text.weak();
-                        }
-                        let resp = crate::combo::selectable_label(ui, self.selected == Some(*i), text);
+                        let resp = dialog::list_row(ui, self.selected == Some(*i), name, &extra.join(" · "), !why.is_empty());
                         if resp.clicked() && self.selected != Some(*i) {
                             self.selected = Some(*i);
                             self.purchase.rating = rating_default(r);
@@ -216,35 +218,34 @@ impl SelectDialog {
                             confirm = Some(*i);
                         }
                     }
-                });
+                }));
                 let ui = &mut colsui[1];
                 egui::ScrollArea::vertical().id_salt("sel_detail").max_height(470.0).show(ui, |ui| match self.selected {
                     Some(i) => {
                         let r = recs[i];
-                        ui.heading(lang.data_name(self.kind.file, &r.id(), &r.name()));
+                        dialog::heading(ui, &lang.data_name(self.kind.file, &r.id(), &r.name()));
                         pdf_ui::source_link(ui, pdfs, lang, SourceRef::of(r.el()), status);
                         for w in requirements::unmet(r.el(), &check) {
-                            ui.colored_label(ui.visuals().warn_fg_color, w);
+                            dialog::warning(ui, w);
                         }
                         self.purchase_options(ui, ch, lang, r);
-                        ui.separator();
+                        dialog::rule(ui);
                         record_fields(ui, r.el(), 0);
                     }
                     None => {
-                        ui.weak(lang.tr("Select an entry."));
+                        dialog::note(ui, lang.tr("Select an entry."));
                     }
                 });
             });
-            ui.separator();
-            ui.horizontal(|ui| {
+            dialog::buttons(ui, |ui| {
                 let needs_parent = parent_of(self.kind.tag).is_some() && self.purchase.parent.is_none();
                 let can = !needs_parent && self.selected.is_some_and(|i| rows.iter().any(|(j, _, w)| *j == i && w.is_empty()));
-                let add = ui.add_enabled(can, egui::Button::new(lang.tr("Add")));
+                let add = ui.add_enabled_ui(can, |ui| dialog::button(ui, &lang.tr("Add"), true)).inner;
                 let add = if needs_parent { add.on_disabled_hover_text(lang.tr("Choose where to install it")) } else { add };
                 if add.clicked() {
                     confirm = self.selected;
                 }
-                if ui.button(lang.tr("Cancel")).clicked() {
+                if dialog::button(ui, &lang.tr("Cancel"), false).clicked() {
                     result = Outcome::Cancel;
                 }
             });

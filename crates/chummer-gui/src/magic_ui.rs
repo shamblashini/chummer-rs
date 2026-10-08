@@ -25,8 +25,8 @@ use eframe::egui::{self, RichText};
 use crate::doc::Doc;
 use crate::pdf_ui::Status;
 use crate::select::{self, SelectDialog};
-use crate::workspace::icons;
 use crate::workspace::widgets::{self, Look};
+use crate::workspace::{dialog, icons};
 
 /// Read-only context the editors need.
 pub struct Ctx<'a> {
@@ -114,7 +114,8 @@ impl Picker {
         let recs = data::records(&doc, self.container, self.item);
         let mut open = true;
         let mut result = Pick::None;
-        egui::Window::new(self.title.clone()).id(egui::Id::new(("picker", self.file, self.container))).open(&mut open).default_size([720.0, 520.0]).collapsible(false).show(ctx, |ui| {
+        let title = self.title.clone();
+        dialog::window(ctx, ("picker", self.file, self.container), &title, &mut open, egui::vec2(720.0, 520.0), true, |ui| {
             let cats: Vec<String> = {
                 let mut c: Vec<String> = recs.iter().map(|r| r.category()).filter(|c| !c.is_empty()).collect();
                 c.sort();
@@ -122,7 +123,7 @@ impl Picker {
                 c
             };
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.search).hint_text(lang.tr("Search")).desired_width(220.0));
+                dialog::search(ui, &mut self.search, &lang.tr("Search"), 240.0);
                 if cats.len() > 1 {
                     crate::combo::Combo::from_id_salt("picker_cat")
                         .selected_text(if self.category.is_empty() { lang.tr("All categories") } else { lang.data_name(self.file, "", &self.category) })
@@ -144,41 +145,40 @@ impl Picker {
                 .filter(|r| needle.is_empty() || r.name().to_lowercase().contains(&needle))
                 .map(|r| (r, check.map(|c| requirements::unmet(r.el(), c)).unwrap_or_default()))
                 .collect();
-            ui.separator();
+            dialog::rule(ui);
             let mut confirm = false;
             ui.columns(2, |cols| {
-                egui::ScrollArea::vertical().id_salt("picker_list").auto_shrink([false; 2]).max_height(380.0).show(&mut cols[0], |ui| {
-                    for (r, why) in &rows {
-                        let name = r.name();
-                        let extra = note(*r);
-                        let mut text = RichText::new(if extra.is_empty() { name.clone() } else { format!("{name}   {extra}") });
-                        if !why.is_empty() {
-                            text = text.weak();
+                dialog::list_frame(&cols[0]).show(&mut cols[0], |ui| {
+                    egui::ScrollArea::vertical().id_salt("picker_list").auto_shrink([false; 2]).max_height(380.0).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        for (r, why) in &rows {
+                            let name = r.name();
+                            let extra = note(*r);
+                            let resp = dialog::list_row(ui, self.selected.as_deref() == Some(&name), &name, &extra, !why.is_empty());
+                            if resp.clicked() && self.selected.as_deref() != Some(&name) {
+                                self.selected = Some(name.clone());
+                                self.answer.clear();
+                            }
+                            if resp.double_clicked() && why.is_empty() {
+                                self.selected = Some(name);
+                                confirm = true;
+                            }
                         }
-                        let resp = crate::combo::selectable_label(ui, self.selected.as_deref() == Some(&name), text);
-                        if resp.clicked() && self.selected.as_deref() != Some(&name) {
-                            self.selected = Some(name.clone());
-                            self.answer.clear();
-                        }
-                        if resp.double_clicked() && why.is_empty() {
-                            self.selected = Some(name);
-                            confirm = true;
-                        }
-                    }
+                    });
                 });
                 let ui = &mut cols[1];
                 let sel = self.selected.as_ref().and_then(|n| rows.iter().find(|(r, _)| &r.name() == n));
                 egui::ScrollArea::vertical().id_salt("picker_detail").max_height(380.0).show(ui, |ui| match sel {
                     Some((r, why)) => {
-                        ui.heading(r.name());
+                        dialog::heading(ui, &r.name());
                         for w in why {
-                            ui.colored_label(ui.visuals().warn_fg_color, w);
+                            dialog::warning(ui, w.clone());
                         }
                         let ch = choices(*r);
                         if let Some(c) = ch.first() {
-                            ui.label(&c.prompt);
+                            dialog::caption(ui, &c.prompt);
                             if c.options.is_empty() {
-                                ui.text_edit_singleline(&mut self.answer);
+                                dialog::text_input(ui, &mut self.answer, "", 260.0);
                             } else {
                                 if c.options.len() == 1 && self.answer.is_empty() {
                                     self.answer = c.options[0].clone();
@@ -190,23 +190,22 @@ impl Picker {
                                 });
                             }
                         }
-                        ui.separator();
+                        dialog::rule(ui);
                         crate::browser::record_fields(ui, r.el(), 0);
                     }
                     None => {
-                        ui.weak(lang.tr("Select an entry."));
+                        dialog::note(ui, lang.tr("Select an entry."));
                     }
                 });
             });
-            ui.separator();
             let ready = self.selected.as_ref().and_then(|n| rows.iter().find(|(r, _)| &r.name() == n)).map(|(r, why)| (why.is_empty(), !choices(*r).is_empty()));
             let can = matches!(ready, Some((true, needs)) if !needs || !self.answer.trim().is_empty());
-            ui.horizontal(|ui| {
-                if ui.add_enabled_ui(can, |ui| dialog_button(ui, &lang.tr("Add"), true)).inner.clicked() || (confirm && can) {
+            dialog::buttons(ui, |ui| {
+                if ui.add_enabled_ui(can, |ui| dialog::button(ui, &lang.tr("Add"), true)).inner.clicked() || (confirm && can) {
                     let answer = Some(self.answer.trim().to_owned()).filter(|a| !a.is_empty());
                     result = Pick::Done(self.selected.clone().unwrap_or_default(), answer);
                 }
-                if dialog_button(ui, &lang.tr("Cancel"), false).clicked() {
+                if dialog::button(ui, &lang.tr("Cancel"), false).clicked() {
                     result = Pick::Cancel;
                 }
             });
@@ -315,9 +314,10 @@ impl MagicEditor {
         let mut cancel = false;
         let mut open = true;
         let lang = cx.lang;
-        egui::Window::new(lang.tr("Spell Options")).id(egui::Id::new("spell_options")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
-            ui.heading(rec.name());
-            ui.weak(format!("{} · {} · DV {}", rec.category(), rec.get("range"), rec.get("dv")));
+        dialog::window(ctx, "spell_options", &lang.tr("Spell Options"), &mut open, egui::vec2(360.0, 0.0), false, |ui| {
+            dialog::heading(ui, &rec.name());
+            dialog::note(ui, format!("{} · {} · DV {}", rec.category(), rec.get("range"), rec.get("dv")));
+            ui.add_space(4.0);
             let descriptors = rec.get("descriptor");
             let extended_area = descriptors.split(',').any(|d| d.trim().eq_ignore_ascii_case("Extended Area"));
             check_box(ui, &mut p.opts.limited, &lang.tr("Limited")).on_hover_text(lang.tr("−2 drain, needs a fetish or focus"));
@@ -336,11 +336,12 @@ impl MagicEditor {
                 };
                 let cost = career::spell_karma_cost(cx.engine, ch, category);
                 let t = RichText::new(lang.tr_fmt("Cost: {0} karma (you have {1})", &[&cost, &ch.karma]));
-                ui.label(if cost > ch.karma { t.color(ui.visuals().error_fg_color) } else { t });
+                let short = if ws_layout(ui) { crate::theme::ws(ui).error } else { ui.visuals().error_fg_color };
+                ui.label(if cost > ch.karma { t.color(short) } else { t });
             }
-            ui.horizontal(|ui| {
-                add = dialog_button(ui, &lang.tr("Add"), true).clicked();
-                cancel = dialog_button(ui, &lang.tr("Cancel"), false).clicked();
+            dialog::buttons(ui, |ui| {
+                add = dialog::button(ui, &lang.tr("Add"), true).clicked();
+                cancel = dialog::button(ui, &lang.tr("Cancel"), false).clicked();
             });
         });
         if cancel || !open {
@@ -882,15 +883,6 @@ fn add_button(ui: &mut egui::Ui, text: &str, primary: bool) -> egui::Response {
 fn action_button(ui: &mut egui::Ui, glyph: Option<&str>, text: &str, primary: bool) -> egui::Response {
     if ws_layout(ui) {
         widgets::button(ui, glyph, text, if primary { Look::Primary } else { Look::Secondary }, 24.0)
-    } else {
-        ui.button(text)
-    }
-}
-
-/// A dialog's Add / Cancel button.
-fn dialog_button(ui: &mut egui::Ui, text: &str, primary: bool) -> egui::Response {
-    if ws_layout(ui) {
-        widgets::button(ui, None, text, if primary { Look::Primary } else { Look::Secondary }, 26.0)
     } else {
         ui.button(text)
     }

@@ -19,7 +19,7 @@ use eframe::egui::{self, RichText};
 use crate::doc::Doc;
 use crate::pdf_ui::Status;
 use crate::workspace::widgets::{self, Look};
-use crate::workspace::icons;
+use crate::workspace::{dialog, icons};
 
 const OPEN_REQUEST: &str = "relationships_open_request";
 
@@ -602,12 +602,12 @@ impl RelationshipsPanel {
         let Some(edit) = &mut self.notes_edit else { return false };
         let mut choice = None;
         let title = if edit.kind == ContactType::Enemy { lang.tr("Edit Enemy Notes.") } else { lang.tr("Edit Contact Notes.") };
-        egui::Modal::new(egui::Id::new("contact_notes")).show(ctx, |ui| {
-            ui.set_width(520.0);
-            ui.heading(title.trim_end_matches('.'));
+        dialog::modal(ctx, "contact_notes", 520.0, |ui| {
+            dialog::heading(ui, title.trim_end_matches('.'));
+            ui.add_space(4.0);
             let color = shown_color(ui, edit.color);
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                ui.add(egui::TextEdit::multiline(&mut edit.text).text_color(color).desired_rows(10).desired_width(f32::INFINITY));
+                dialog::text_area(ui, &mut edit.text, 10, color);
             });
             if edit.picking && !edit.text.is_empty() {
                 // The picker edits the stored (light-mode) colour.
@@ -619,16 +619,16 @@ impl RelationshipsPanel {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(!edit.text.is_empty(), |ui| {
-                    let swatch = RichText::new("⏹").color(color);
-                    if ui.button(swatch).clicked() | ui.button(lang.tr("Select Colour")).clicked() {
+                    let select = if ws_layout(ui) { widgets::button(ui, Some(icons::PALETTE), &lang.tr("Select Colour"), Look::Secondary, 26.0) } else { ui.button(lang.tr("Select Colour")) };
+                    if dialog::swatch(ui, color).clicked() | select.clicked() {
                         edit.picking = !edit.picking;
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if dialog_button(ui, &lang.tr("Cancel"), false).clicked() {
+                    if dialog::button(ui, &lang.tr("Cancel"), false).clicked() {
                         choice = Some(false);
                     }
-                    if dialog_button(ui, &lang.tr("OK"), true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.ctrl) {
+                    if dialog::button(ui, &lang.tr("OK"), true).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.ctrl) {
                         choice = Some(true);
                     }
                 });
@@ -657,15 +657,14 @@ impl RelationshipsPanel {
             ),
         };
         let mut choice = None;
-        egui::Modal::new(egui::Id::new("relationships_confirm")).show(ctx, |ui| {
-            ui.heading(title);
+        dialog::modal(ctx, "relationships_confirm", 380.0, |ui| {
+            dialog::heading(ui, &title);
             ui.label(text.replace("\\n", "\n"));
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if dialog_button(ui, &ok, true).clicked() {
+            dialog::buttons(ui, |ui| {
+                if dialog::button(ui, &ok, true).clicked() {
                     choice = Some(true);
                 }
-                if dialog_button(ui, &lang.tr("Cancel"), false).clicked() {
+                if dialog::button(ui, &lang.tr("Cancel"), false).clicked() {
                     choice = Some(false);
                 }
             });
@@ -833,16 +832,6 @@ fn read_only_field(ui: &mut egui::Ui, key: &str, text: &str, width: f32) {
         ui.add_enabled_ui(false, |ui| widgets::preset_input(ui, key, &mut text.to_owned(), &[], "", width));
     } else {
         ui.add_enabled(false, egui::TextEdit::singleline(&mut text.to_owned()).desired_width(width - 18.0));
-    }
-}
-
-/// OK / Cancel of the dialogs: Workspace buttons (`primary` filled) or
-/// Classic ones.
-fn dialog_button(ui: &mut egui::Ui, text: &str, primary: bool) -> egui::Response {
-    if ws_layout(ui) {
-        widgets::button(ui, None, text, if primary { Look::Primary } else { Look::Secondary }, 26.0)
-    } else {
-        ui.button(text)
     }
 }
 

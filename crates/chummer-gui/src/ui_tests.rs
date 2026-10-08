@@ -949,6 +949,44 @@ fn workspace_catalog_add_then_undo_redo() {
     }
 }
 
+/// Workspace: the dialogs the magic page opens are Workspace dialogs
+/// (their own header, Workspace rows and buttons): "Add Spell…", pick a
+/// spell, its options, Add. Escape closes a dialog.
+#[test]
+fn workspace_spell_dialogs() {
+    let mut h = Harness::new(ThemeKind::WorkspaceLight);
+    let i = h.open(&fixture("Harmony.chum5"));
+    h.app.views[i].ws_go(Section::Page(Tab::Magician));
+    h.size = WIDE;
+    h.frames(2);
+    let spells = |h: &Harness| h.app.views[i].doc().items("spells", "spell").len();
+    let before = spells(&h);
+    h.click_text("Add Spell…");
+    h.frames(2);
+    let title = h.app.lang.tr_fmt("Add {0}", &[&crate::view::kind_noun(&h.app.lang, "Spell")]);
+    assert!(h.find_text(&title).is_some(), "{title}; shown: {:?}", h.on_screen());
+    // Escape closes it.
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert!(h.find_text(&title).is_none(), "{:?}", h.on_screen());
+    h.click_text("Add Spell…");
+    h.frames(2);
+    h.click_text(&h.app.lang.tr("Search"));
+    h.type_text("Stunbolt");
+    h.frames(2);
+    h.click_text("Stunbolt");
+    h.frames(2);
+    h.click_text(&h.app.lang.tr("Add"));
+    h.frames(2);
+    assert!(h.find_text(&h.app.lang.tr("Spell Options")).is_some(), "{:?}", h.on_screen());
+    sizes(&mut h, 2);
+    h.size = WIDE;
+    h.frames(2);
+    h.click_text(&h.app.lang.tr("Add"));
+    h.frames(2);
+    assert_eq!(spells(&h), before + 1, "{:?}", h.app.status);
+}
+
 /// Classic: the "Add Gear…" button opens the selection dialog; search,
 /// pick a row and Add.
 #[test]
