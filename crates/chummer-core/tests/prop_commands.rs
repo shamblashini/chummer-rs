@@ -536,3 +536,21 @@ fn extreme_command_values_are_refused() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// Improvement values are clamped on load (LB-44); a command that makes a
+/// bigger one is refused or clamped too, so the character in memory and
+/// the saved one stay the same (same hash after a reload).
+#[test]
+fn improvement_values_agree_with_a_reload() {
+    use chummer_core::custom_improvement::Form;
+    let base = Character::load(&common::fixtures_dir().join("Davis Jones.chum5")).unwrap();
+    let mut ch = base.clone();
+    let form = Form { type_id: "specificattribute".into(), name: "Huge".into(), val: 5_000_000.0, select: "BOD".into(), ..Default::default() };
+    let r = command::apply(&mut ch, engine(), &Envelope::new(Command::CreateImprovement { form, group: String::new(), edit: None }, 1, T0, ""));
+    assert!(r.is_ok_and(|a| a.changed), "a valid custom improvement");
+    {
+        let back = Character::from_str(&ch.to_xml_string()).unwrap();
+        assert_eq!(command::state_hash(&back), command::state_hash(&ch));
+        assert!(ch.improvements.list.iter().all(|i| i.val.abs() <= f64::from(chummer_core::xml::NUM_LIMIT)));
+    }
+}

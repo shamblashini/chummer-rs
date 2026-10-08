@@ -534,6 +534,8 @@ pub fn apply(ch: &mut Character, engine: &Engine, env: &Envelope) -> Result<Appl
             Ok(Applied { description: String::new(), message: None, count: None, changed: false, before: Box::new(before) })
         }
         Ok(run::Done::Changed { message, count }) => {
+            // As loading does (LB-44): what is saved is what is in memory.
+            ch.improvements.list.iter_mut().for_each(crate::improvement::Improvement::clamp_values);
             if let Some(key) = essence_before {
                 refresh_derived(ch, engine, key, matches!(env.cmd, Command::FinishCreation));
             }

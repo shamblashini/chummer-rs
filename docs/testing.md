@@ -27,7 +27,7 @@ The suites added for robustness, by crate:
 | `chummer-relay/tests/robustness.rs` | The mailbox store with damaged, empty or unreadable database files. Concurrent writers. Paging of big mail. Clock jumps against expiry and quotas. Hostile frames on raw mailbox streams. A relay restart while a client is connected. |
 | `chummer-core/tests/fuzz_*.rs`, `prop_commands.rs`, `roundtrip_saves.rs` | Mutated `.chum5`, `.chum5lz`, campaign and settings files never panic. All fixtures save and load to the same state. Random command sequences are deterministic and survive postcard and JSON round trips. Undo and redo restore the exact state. |
 | `chummer-cli/tests/cli_robustness.rs` | The CLI on missing, empty, binary, deep, non-UTF-8 and odd inputs: an error and no panic. |
-| `chummer-gui/src/ui_tests.rs` | Headless egui: opens every character fixture in both layouts and draws every section for a few frames. Also the command palette, catalog add, undo/redo, and the GM's Players & invites panel (new invite, new link, revoke through its buttons) in Classic and Workspace. |
+| `chummer-gui/src/ui_tests.rs` | Headless egui: opens every character fixture in both layouts and draws every section for a few frames. Also the command palette, catalog add, undo/redo, and the GM's Players & invites panel (new invite, new link, revoke, new campaign key through its buttons) in Classic and Workspace; the Workspace dialogs (Add spell, Spell Options, Escape closes), Change Priority Selection in both layouts and the priority swap on the Attributes page, and the contact Sort menu. |
 
 Tuning knobs (environment variables):
 
@@ -40,7 +40,8 @@ Tuning knobs (environment variables):
 | `CHUMMER_UI_FULL=1` | Runs the whole GUI matrix (every fixture × layout × section × size). |
 
 Tests marked `#[ignore = "BUG: ..."]` reproduce known bugs that are not
-fixed yet. Run them with `cargo test -- --ignored`.
+fixed yet (there are none at the moment; the remaining ignored tests are
+timing benchmarks). Run them with `cargo test -- --ignored`.
 
 ## End-to-end tests in Docker
 
