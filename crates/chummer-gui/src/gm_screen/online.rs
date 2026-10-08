@@ -1,5 +1,6 @@
-//! The GM screen's online side: hosting the campaign, invites, members,
-//! the authority's activity feed with Revert, and the mailbox.
+//! The GM screen's online side: hosting the campaign, per-player invites
+//! and members ("Players & invites"), the authority's activity feed with
+//! Revert, and the mailbox.
 //!
 //! A campaign becomes online the first time the GM hosts it (the
 //! authority sidecar is made next to the campaign file, see
@@ -12,10 +13,12 @@ use std::sync::{Arc, Mutex};
 use chummer_core::campaign::MemberId;
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
-use chummer_net::invite::Role;
+use chummer_net::invite::{InviteId, Role};
+use chummer_net::EndpointId;
 use chummer_sync::hosted::{self, HostedCampaign, GM_OWNER};
+use chummer_sync::invites::InviteState;
 use chummer_sync::MailReport;
-use eframe::egui::{self, RichText};
+use eframe::egui::{self, Color32, RichText};
 
 use super::{FeedRow, GmScreen, Live, AUTHOR};
 
@@ -52,7 +55,119 @@ pub(crate) struct OnlineView {
     pub mail_busy: bool,
     /// The last mailbox round: when, and (read, applied, sent) or the error.
     pub mail: Option<(String, MailResult)>,
-    pub invite: Option<String>,
+    /// Every invite and every member added by node id.
+    pub invites: Vec<InviteRow>,
+    /// The GM's relay mailbox: (messages waiting, puts refused today).
+    pub mailbox: Option<(u64, u64)>,
+}
+
+/// How long an unclaimed invite works.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Expiry {
+    #[default]
+    Never,
+    Day,
+    Week,
+    Month,
+}
+
+impl Expiry {
+    pub const ALL: [Expiry; 4] = [Expiry::Never, Expiry::Day, Expiry::Week, Expiry::Month];
+
+    /// English; goes through `lang.tr`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Expiry::Never => "Until claimed",
+            Expiry::Day => "1 day",
+            Expiry::Week => "7 days",
+            Expiry::Month => "30 days",
+        }
+    }
+
+    /// Unix seconds when it ends, from `now`.
+    pub fn at(self, now: u64) -> Option<u64> {
+        let days = match self {
+            Expiry::Never => return None,
+            Expiry::Day => 1,
+            Expiry::Week => 7,
+            Expiry::Month => 30,
+        };
+        Some(now + days * 86_400)
+    }
+}
+
+/// The New invite form.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct InviteForm {
+    pub label: String,
+    /// The character to give the player when they claim the invite.
+    pub assign: Option<MemberId>,
+    pub expires: Expiry,
+}
+
+/// One row of the Players & invites list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowKey {
+    Invite(InviteId),
+    /// A member the GM added by node id (no invite).
+    Member(EndpointId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RowState {
+    Unclaimed { expires: Option<String> },
+    Expired,
+    /// By which device (short node id, with the player's own name) and when.
+    Claimed { by: String, on: String },
+    Revoked { on: String },
+    /// Added by node id.
+    Direct,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InviteRow {
+    pub key: RowKey,
+    /// The GM's name for the player ("Anna").
+    pub label: String,
+    pub state: RowState,
+    /// The node id in full (tooltip).
+    pub node: Option<String>,
+    pub connected: bool,
+    pub last_seen: Option<String>,
+    /// The characters the player has.
+    pub characters: Vec<String>,
+    /// The character they get on claiming.
+    pub assign: Option<String>,
+    /// Mail from them waiting in the GM's mailbox.
+    pub waiting: u64,
+}
+
+/// A step that needs a yes first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Confirm {
+    Revoke(InviteId),
+    Reissue(InviteId),
+    Remove(RowKey),
+}
+
+/// What the Players & invites list asked for (done after drawing).
+enum InviteDo {
+    OpenForm,
+    CloseForm,
+    Create,
+    Copy(InviteId),
+    Ask(Confirm),
+    Do(Confirm),
+    Cancel,
+    Dismiss,
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn when(secs: u64) -> String {
+    crate::history_ui::short_time(secs as i64 * 1000)
 }
 use crate::doc::{Backend, Doc};
 use crate::online::{Online, GM_MAIL_EVERY};
@@ -69,7 +184,12 @@ pub struct GmOnline {
     pub hosted: HostedCampaign,
     mail: Arc<Mutex<MailState>>,
     mail_loop: Option<tokio::task::AbortHandle>,
-    invite: Option<String>,
+    /// The New invite form, while open.
+    form: Option<InviteForm>,
+    /// The link just made (for whom, the link), with Copy.
+    shown: Option<(String, String)>,
+    /// A step waiting for a yes.
+    confirm: Option<Confirm>,
     /// Members and owners last reconciled.
     signature: Vec<(MemberId, Option<String>)>,
     name: String,
@@ -148,7 +268,7 @@ impl GmScreen {
             self.errors.insert(m, e);
         }
         h.adopt_owners(&mut self.campaign);
-        self.online = Some(GmOnline { hosted: h, mail: Default::default(), mail_loop: None, invite: None, signature: self.signature(), name: self.campaign.name.clone() });
+        self.online = Some(GmOnline { hosted: h, mail: Default::default(), mail_loop: None, form: None, shown: None, confirm: None, signature: self.signature(), name: self.campaign.name.clone() });
         crate::trace::time("online docs", || self.online_docs(engine, views));
         if serve {
             if let Err(e) = self.set_hosting(net, engine, views, true) {
@@ -195,6 +315,13 @@ impl GmScreen {
     /// let documents not on screen take what arrived.
     pub(super) fn online_tick(&mut self, net: &mut Online, engine: &Arc<Engine>, views: &mut [CharacterView]) {
         self.take_online(net, engine, views);
+        // A claim gave a player a character: the campaign file says so too.
+        if let Some(o) = &mut self.online {
+            if o.hosted.adopt_owner_changes(&mut self.campaign) {
+                self.dirty = true;
+                o.signature = self.campaign.members.iter().map(|m| (m.id, m.owner.clone())).collect();
+            }
+        }
         let sig = self.signature();
         let Some(o) = &mut self.online else { return };
         if sig != o.signature || self.campaign.name != o.name {
@@ -294,25 +421,345 @@ impl GmScreen {
             (Some(n), true) => Some(n.home_relay().map(|r| r.to_string())),
             _ => None,
         };
-        let players = {
+        let status = o.hosted.host.mailbox_status();
+        let waiting = |k: &chummer_net::PublicKey| status.as_ref().and_then(|s| s.by_key.iter().find(|(x, _)| x == k)).map(|(_, n)| *n).unwrap_or(0);
+        let now = now_secs();
+        let (players, invites) = {
             let a = o.hosted.host.authority();
-            a.members()
+            let char_name = |c: &chummer_sync::CharacterId| hosted::member_id(c).and_then(|m| self.campaign.member(m)).map(|m| m.name.clone()).unwrap_or_else(|| c.to_string());
+            let plays = |node: &EndpointId| a.characters().filter(|c| a.owner(c) == Some(*node)).map(char_name).collect::<Vec<_>>();
+            let players: Vec<PlayerRow> = a
+                .members()
                 .iter()
                 .filter(|(id, _)| **id != a.gm())
-                .map(|(id, m)| PlayerRow { name: if m.name.is_empty() { id.fmt_short().to_string() } else { m.name.clone() }, id: id.to_string(), connected: connected.contains(id) })
-                .collect()
+                .map(|(id, m)| PlayerRow { name: a.invite_of(id).map(|i| i.label.clone()).filter(|l| !l.is_empty()).unwrap_or_else(|| if m.name.is_empty() { id.fmt_short().to_string() } else { m.name.clone() }), id: id.to_string(), connected: connected.contains(id) })
+                .collect();
+            let mut list: Vec<&chummer_sync::invites::Invite> = a.invites().values().collect();
+            list.sort_by_key(|i| (i.created, i.label.clone()));
+            let mut rows: Vec<InviteRow> = list
+                .into_iter()
+                .map(|i| {
+                    let node = i.claimed.as_ref().map(|c| c.node);
+                    let member = node.and_then(|n| a.members().get(&n));
+                    let state = match i.state(now) {
+                        InviteState::Unclaimed { expires } => RowState::Unclaimed { expires: expires.map(when) },
+                        InviteState::Expired => RowState::Expired,
+                        InviteState::Claimed { node, at } => {
+                            let name = member.map(|m| m.name.clone()).filter(|n| !n.is_empty() && *n != i.label);
+                            RowState::Claimed { by: match name {
+                                Some(n) => format!("{n} ({})", node.fmt_short()),
+                                None => node.fmt_short().to_string(),
+                            }, on: when(at) }
+                        }
+                        InviteState::Revoked { at } => RowState::Revoked { on: when(at) },
+                    };
+                    InviteRow {
+                        key: RowKey::Invite(i.id),
+                        label: i.label.clone(),
+                        state,
+                        node: node.map(|n| n.to_string()),
+                        connected: node.is_some_and(|n| connected.contains(&n)),
+                        last_seen: member.and_then(|m| m.last_seen).map(when),
+                        characters: node.map(|n| plays(&n)).unwrap_or_default(),
+                        assign: i.assign.as_ref().map(char_name),
+                        waiting: waiting(&i.key()),
+                    }
+                })
+                .collect();
+            rows.extend(a.members().iter().filter(|(id, m)| **id != a.gm() && m.invite.is_none()).map(|(id, m)| InviteRow {
+                key: RowKey::Member(*id),
+                label: if m.name.is_empty() { id.fmt_short().to_string() } else { m.name.clone() },
+                state: RowState::Direct,
+                node: Some(id.to_string()),
+                connected: connected.contains(id),
+                last_seen: m.last_seen.map(when),
+                characters: plays(id),
+                assign: None,
+                waiting: waiting(id),
+            }));
+            (players, rows)
         };
         let m = o.mail.lock().expect("poisoned");
         let mail = m.last.as_ref().map(|(at, r)| (crate::history_ui::short_time(*at), r.as_ref().map(|r| (r.fetched, r.handled, r.sent)).map_err(Clone::clone)));
-        OnlineView { serving, online: true, relay, players, mail_busy: m.busy, mail, invite: o.invite.clone() }
+        let mailbox = status.map(|s| (s.waiting, s.refused_today));
+        OnlineView { serving, online: true, relay, players, mail_busy: m.busy, mail, invites, mailbox }
     }
 
-    /// A new invite link for players (shown in the online section).
-    pub(crate) fn new_invite(&mut self, net: &Online) {
-        let node = net.node_if_started();
+    /// Opens the New invite form (the Invite buttons).
+    pub(crate) fn new_invite(&mut self, _net: &Online) {
         if let Some(o) = &mut self.online {
-            let link = o.hosted.invite(Role::Player, "", node.as_deref());
-            o.invite = Some(link.to_string());
+            o.form.get_or_insert_with(InviteForm::default);
+            o.confirm = None;
+        }
+    }
+
+    /// After an invite changed: the relay learns the new set of keys at
+    /// once (a revoked key stops putting mail now).
+    fn register_soon(&self, net: &Online) {
+        let (Some(o), Some(node)) = (&self.online, net.node_if_started()) else { return };
+        if node.mailbox_id().is_none() {
+            return;
+        }
+        let host = o.hosted.host.clone();
+        // A failure shows with the next mailbox round, which registers too.
+        net.spawn(async move {
+            let _ = node.register_mail_keys(&host).await;
+        });
+    }
+
+    /// Players & invites: one invite (link) per player, with its state and
+    /// actions, and the members added by node id. Both layouts; `ws` picks
+    /// the Workspace look.
+    pub(crate) fn invites_ui(&mut self, ui: &mut egui::Ui, net: &mut Online, lang: &Language, status: &mut crate::pdf_ui::Status, ws: bool) {
+        let Some(o) = &self.online else { return };
+        let v = self.online_view(net);
+        let (form, shown, confirm) = (o.form.clone(), o.shown.clone(), o.confirm);
+        let pal = crate::theme::ws(ui);
+        let (muted, accent, error, text) = if ws { (pal.muted, pal.accent, pal.error, pal.text) } else { (ui.visuals().weak_text_color(), crate::theme::accent(ui), ui.visuals().error_fg_color, ui.visuals().text_color()) };
+        let small = |t: String, c: Color32| RichText::new(t).size(11.5).color(c);
+        let button = |ui: &mut egui::Ui, glyph: &str, label: &str| -> egui::Response {
+            if ws {
+                crate::workspace::widgets::button(ui, Some(glyph), label, crate::workspace::widgets::Look::Ghost, 22.0)
+            } else {
+                ui.small_button(label)
+            }
+        };
+        let mut todo: Option<InviteDo> = None;
+        let mut form = form;
+
+        ui.label(small(lang.tr("Each player gets their own link. The first device that opens it joins as that player; the link then works for nobody else."), muted));
+        if form.is_none() && button(ui, crate::workspace::icons::USER_PLUS, &lang.tr("New invite…")).on_hover_text(lang.tr("A link for one player")).clicked() {
+            todo = Some(InviteDo::OpenForm);
+        }
+        if let Some(f) = form.as_mut() {
+            let frame = if ws { crate::workspace::widgets::card_frame(&pal) } else { egui::Frame::group(ui.style()) };
+            frame.show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                egui::Grid::new("gm_invite_form").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    ui.label(lang.tr("Player"));
+                    let r = ui.add(egui::TextEdit::singleline(&mut f.label).hint_text(lang.tr("Name, e.g. Anna")).desired_width(170.0));
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !f.label.trim().is_empty() {
+                        todo = Some(InviteDo::Create);
+                    }
+                    ui.end_row();
+                    ui.label(lang.tr("Character"));
+                    let none = lang.tr("None yet");
+                    let current = f.assign.and_then(|m| self.campaign.member(m)).map(|m| m.name.clone()).unwrap_or_else(|| none.clone());
+                    crate::combo::Combo::from_id_salt("gm_invite_assign").width(170.0).selected_text(current).show_ui(ui, |ui| {
+                        if crate::combo::selectable_label(ui, f.assign.is_none(), &none).clicked() {
+                            f.assign = None;
+                        }
+                        for m in &self.campaign.members {
+                            let taken = hosted::owner_of(m).is_some();
+                            let name = if taken { format!("{} ({})", m.name, lang.tr("played")) } else { m.name.clone() };
+                            if crate::combo::selectable_label(ui, f.assign == Some(m.id), name).clicked() {
+                                f.assign = Some(m.id);
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    ui.label(lang.tr("Link works"));
+                    crate::combo::Combo::from_id_salt("gm_invite_expiry").width(170.0).selected_text(lang.tr(f.expires.label())).show_ui(ui, |ui| {
+                        for e in Expiry::ALL {
+                            if crate::combo::selectable_label(ui, f.expires == e, lang.tr(e.label())).clicked() {
+                                f.expires = e;
+                            }
+                        }
+                    });
+                    ui.end_row();
+                });
+                ui.horizontal(|ui| {
+                    let ok = !f.label.trim().is_empty();
+                    let create = if ws {
+                        ui.add_enabled_ui(ok, |ui| crate::workspace::widgets::button(ui, Some(crate::workspace::icons::LINK), &lang.tr("Create link"), crate::workspace::widgets::Look::Primary, 24.0)).inner
+                    } else {
+                        ui.add_enabled(ok, egui::Button::new(lang.tr("Create link")))
+                    };
+                    if create.clicked() {
+                        todo = Some(InviteDo::Create);
+                    }
+                    if button(ui, crate::workspace::icons::X, &lang.tr("Cancel")).clicked() {
+                        todo = Some(InviteDo::CloseForm);
+                    }
+                });
+            });
+        }
+        if let Some((who, link)) = &shown {
+            ui.label(small(lang.tr_fmt("Link for {0}: send it to that player only.", &[who]), accent));
+            ui.horizontal(|ui| {
+                let mut t = link.clone();
+                ui.add(egui::TextEdit::singleline(&mut t).desired_width((ui.available_width() - 110.0).max(80.0)).font(egui::TextStyle::Monospace));
+                if button(ui, crate::workspace::icons::COPY, &lang.tr("Copy")).clicked() {
+                    ui.ctx().copy_text(link.clone());
+                    *status = Some((lang.tr("Invite link copied."), false));
+                }
+                if button(ui, crate::workspace::icons::X, "").on_hover_text(lang.tr("Hide")).clicked() {
+                    todo = Some(InviteDo::Dismiss);
+                }
+            });
+        }
+        if v.invites.is_empty() {
+            ui.label(small(lang.tr("No invites yet."), muted));
+        }
+        for row in &v.invites {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let dot = match (&row.state, row.connected) {
+                    (_, true) => accent,
+                    (RowState::Revoked { .. } | RowState::Expired, _) => error,
+                    _ => muted,
+                };
+                if ws {
+                    crate::workspace::widgets::dot(ui, dot, 7.0);
+                } else {
+                    ui.label(RichText::new("●").color(dot));
+                }
+                let name = ui.label(RichText::new(&row.label).strong().color(text));
+                if let Some(n) = &row.node {
+                    name.on_hover_text(n);
+                }
+                let (tag, c) = match &row.state {
+                    _ if row.connected => (lang.tr("online"), accent),
+                    RowState::Unclaimed { .. } => (lang.tr("waiting for the player"), muted),
+                    RowState::Expired => (lang.tr("expired"), error),
+                    RowState::Claimed { .. } | RowState::Direct => (lang.tr("offline"), muted),
+                    RowState::Revoked { .. } => (lang.tr("revoked"), error),
+                };
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(small(tag, c));
+                });
+            });
+            let mut facts: Vec<String> = Vec::new();
+            match &row.state {
+                RowState::Unclaimed { expires: Some(e) } => facts.push(lang.tr_fmt("not used yet; expires {0}", &[e])),
+                RowState::Unclaimed { expires: None } => facts.push(lang.tr("not used yet")),
+                RowState::Expired => facts.push(lang.tr("expired before anyone used it")),
+                RowState::Claimed { by, on } => facts.push(lang.tr_fmt("joined from {0} on {1}", &[by, on])),
+                RowState::Revoked { on } => facts.push(lang.tr_fmt("revoked {0}", &[on])),
+                RowState::Direct => facts.push(lang.tr("added by node id")),
+            }
+            if let (Some(seen), false) = (&row.last_seen, row.connected) {
+                facts.push(lang.tr_fmt("last seen {0}", &[seen]));
+            }
+            if !row.characters.is_empty() {
+                facts.push(lang.tr_fmt("plays {0}", &[&row.characters.join(", ")]));
+            } else if let Some(a) = &row.assign {
+                facts.push(lang.tr_fmt("gets {0} on joining", &[a]));
+            }
+            if row.waiting > 0 {
+                facts.push(lang.tr_fmt("{0} mailed changes waiting", &[&row.waiting]));
+            }
+            ui.label(small(facts.join(" · "), muted));
+            let here = |c: Confirm| confirm == Some(c);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                match row.key {
+                    RowKey::Invite(id) => {
+                        let live = !matches!(row.state, RowState::Revoked { .. } | RowState::Expired);
+                        if live && button(ui, crate::workspace::icons::COPY, &lang.tr("Copy link")).on_hover_text(lang.tr("The current link of this invite")).clicked() {
+                            todo = Some(InviteDo::Copy(id));
+                        }
+                        if button(ui, crate::workspace::icons::ARROWS_CLOCKWISE, &lang.tr("New link")).on_hover_text(lang.tr("For a new device: the old link and the device that used it stop working")).clicked() {
+                            todo = Some(InviteDo::Ask(Confirm::Reissue(id)));
+                        }
+                        if live && button(ui, crate::workspace::icons::PROHIBIT, &lang.tr("Revoke")).on_hover_text(lang.tr("Cut this player off: their link and device stop working")).clicked() {
+                            todo = Some(InviteDo::Ask(Confirm::Revoke(id)));
+                        }
+                    }
+                    RowKey::Member(_) => {}
+                }
+                if button(ui, crate::workspace::icons::TRASH, &lang.tr("Remove")).on_hover_text(lang.tr("Take this player out of the campaign and the list")).clicked() {
+                    todo = Some(InviteDo::Ask(Confirm::Remove(row.key)));
+                }
+            });
+            let asked = match row.key {
+                RowKey::Invite(id) => [Confirm::Revoke(id), Confirm::Reissue(id), Confirm::Remove(row.key)].into_iter().find(|c| here(*c)),
+                RowKey::Member(_) => here(Confirm::Remove(row.key)).then_some(Confirm::Remove(row.key)),
+            };
+            if let Some(c) = asked {
+                let (q, yes) = match c {
+                    Confirm::Revoke(_) => (lang.tr_fmt("Revoke {0}? Their device is cut off at once and the link stops working.", &[&row.label]), lang.tr("Revoke")),
+                    Confirm::Reissue(_) => (lang.tr_fmt("Give {0} a new link? The old link and the device that used it stop working; the new device gets their characters.", &[&row.label]), lang.tr("New link")),
+                    Confirm::Remove(_) => (lang.tr_fmt("Remove {0} from the campaign? Their characters stay; give them to someone else.", &[&row.label]), lang.tr("Remove")),
+                };
+                ui.label(small(q, error));
+                ui.horizontal(|ui| {
+                    let go = if ws { crate::workspace::widgets::button(ui, None, &yes, crate::workspace::widgets::Look::Primary, 22.0) } else { ui.button(RichText::new(&yes).color(error)) };
+                    if go.clicked() {
+                        todo = Some(InviteDo::Do(c));
+                    }
+                    if button(ui, crate::workspace::icons::X, &lang.tr("Cancel")).clicked() {
+                        todo = Some(InviteDo::Cancel);
+                    }
+                });
+            }
+        }
+        if let Some((waiting, refused)) = v.mailbox {
+            ui.add_space(4.0);
+            let mut t = lang.tr_fmt("Mailbox: {0} waiting", &[&waiting]);
+            if refused > 0 {
+                t = format!("{t} · {}", lang.tr_fmt("{0} refused today (not from your players)", &[&refused]));
+            }
+            ui.label(small(t, muted));
+        }
+
+        // Do it.
+        let node = net.node_if_started();
+        let Some(o) = self.online.as_mut() else { return };
+        o.form = form;
+        let mut changed = false;
+        match todo {
+            None => {}
+            Some(InviteDo::OpenForm) => o.form = Some(InviteForm::default()),
+            Some(InviteDo::CloseForm) => o.form = None,
+            Some(InviteDo::Dismiss) => o.shown = None,
+            Some(InviteDo::Cancel) => o.confirm = None,
+            Some(InviteDo::Ask(c)) => o.confirm = Some(c),
+            Some(InviteDo::Create) => {
+                if let Some(f) = o.form.take() {
+                    let (_, link) = o.hosted.create_invite(f.label.trim(), f.assign.map(hosted::character_id), f.expires.at(now_secs()), node.as_deref());
+                    o.shown = Some((f.label.trim().to_owned(), link.to_string()));
+                    changed = true;
+                }
+            }
+            Some(InviteDo::Copy(id)) => {
+                if let Some(link) = o.hosted.invite_link(&id, node.as_deref()) {
+                    ui.ctx().copy_text(link.to_string());
+                    *status = Some((lang.tr("Invite link copied."), false));
+                }
+            }
+            Some(InviteDo::Do(c)) => {
+                o.confirm = None;
+                let label = |id: &InviteId| o.hosted.host.authority().invite(id).map(|i| i.label.clone()).unwrap_or_default();
+                let r = match c {
+                    Confirm::Revoke(id) => o.hosted.revoke_invite(&id).map(|_| lang.tr_fmt("Revoked {0}.", &[&label(&id)])),
+                    Confirm::Reissue(id) => {
+                        let who = label(&id);
+                        o.hosted.reissue_invite(&id, None, node.as_deref()).map(|l| {
+                            o.shown = Some((who.clone(), l.to_string()));
+                            lang.tr_fmt("New link for {0}; the old one no longer works.", &[&who])
+                        })
+                    }
+                    Confirm::Remove(RowKey::Invite(id)) => {
+                        let who = label(&id);
+                        o.hosted.remove_invite(&id);
+                        Ok(lang.tr_fmt("Removed {0}.", &[&who]))
+                    }
+                    Confirm::Remove(RowKey::Member(p)) => {
+                        o.hosted.remove_member(&p);
+                        Ok(lang.tr("Removed the player."))
+                    }
+                };
+                *status = Some(match r {
+                    Ok(m) => (m, false),
+                    Err(e) => (e, true),
+                });
+                changed = true;
+            }
+        }
+        if changed {
+            self.register_soon(net);
         }
     }
 
@@ -360,24 +807,10 @@ impl GmScreen {
             }
         }
         ui.horizontal(|ui| {
-            if ui.button(lang.tr("Invite player")).on_hover_text(lang.tr("A link for players; it stays valid for the whole group")).clicked() {
-                self.new_invite(net);
-            }
             if ui.add_enabled(!v.mail_busy, egui::Button::new(lang.tr("Check mail"))).on_hover_text(lang.tr("Collect changes players mailed while you were offline, and mail them yours")).clicked() {
                 self.ask_mail();
             }
         });
-        if let Some(link) = v.invite.clone() {
-            ui.horizontal(|ui| {
-                let mut text = link.clone();
-                // A fixed width: the panel must not grow with the link.
-                ui.add(egui::TextEdit::singleline(&mut text).desired_width(200.0).font(egui::TextStyle::Monospace));
-                if ui.button(lang.tr("Copy")).clicked() {
-                    ui.ctx().copy_text(link.clone());
-                    *status = Some((lang.tr("Invite link copied."), false));
-                }
-            });
-        }
         if v.mail_busy {
             ui.weak(lang.tr("Checking mail…"));
         } else if let Some((when, r)) = &v.mail {
@@ -386,19 +819,9 @@ impl GmScreen {
                 Err(e) => ui.colored_label(ui.visuals().error_fg_color, format!("{when}: {e}")),
             };
         }
-        if !v.players.is_empty() {
-            ui.label(RichText::new(lang.tr("Players")).strong());
-            for p in &v.players {
-                ui.horizontal(|ui| {
-                    ui.label(&p.name).on_hover_text(&p.id);
-                    if p.connected {
-                        ui.label(RichText::new(lang.tr("connected")).color(crate::theme::accent(ui)));
-                    } else {
-                        ui.weak(lang.tr("not connected"));
-                    }
-                });
-            }
-        }
+        egui::CollapsingHeader::new(RichText::new(lang.tr("Players & invites")).strong()).id_salt("gm_players_invites").default_open(true).show(ui, |ui| {
+            self.invites_ui(ui, net, lang, status, false);
+        });
         ui.separator();
     }
 

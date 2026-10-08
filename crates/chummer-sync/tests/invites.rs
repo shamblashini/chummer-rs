@@ -105,7 +105,7 @@ fn reissue_supersedes_the_old_link_and_moves_the_characters() {
     // The new device claims the new link and gets Anna's character.
     assert!(a.admit(dev2, c, Some(new_key), NOW + 20).unwrap().claimed);
     assert_eq!(a.owner(&ch), Some(dev2));
-    assert_eq!(a.take_owner_changes().into_iter().collect::<Vec<_>>(), [ch.clone()]);
+    assert_eq!(a.take_owner_changes().into_iter().collect::<Vec<_>>(), std::slice::from_ref(&ch));
     assert_eq!(a.visible(&dev2), [ch]);
     // The old device, even with the new link, is too late.
     assert_eq!(a.admit(dev1, c, Some(new_key), NOW), Err(DenyReason::Claimed));

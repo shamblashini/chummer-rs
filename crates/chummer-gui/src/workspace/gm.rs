@@ -36,7 +36,7 @@ pub enum Panel {
     Encounter,
     /// The combatant's card.
     Card,
-    /// Online: hosting, invites, the mailbox and the players.
+    /// Online: hosting, per-player invites, the members and the mailbox.
     Players,
     Award,
     Notes,
@@ -48,7 +48,7 @@ impl Panel {
         match self {
             Panel::Encounter => "Encounter",
             Panel::Card => "Combatant",
-            Panel::Players => "Players",
+            Panel::Players => "Players & invites",
             Panel::Award => "GM award",
             Panel::Notes => "GM Notes",
         }
@@ -153,7 +153,7 @@ impl GmScreen {
                 let r = widgets::button(ui, Some(icons::PLUS), &lang.tr("Add"), Look::Secondary, 24.0);
                 egui::Popup::menu(&r).show(|ui| self.add_menu(ui, env.engine, lang, env.views, env.status));
                 let invite = ui.add_enabled_ui(view.online, |ui| widgets::button(ui, Some(icons::LINK), &lang.tr("Invite"), Look::Secondary, 24.0)).inner;
-                let invite = if view.online { invite.on_hover_text(lang.tr("A link for players; it stays valid for the whole group")) } else { invite.on_disabled_hover_text(lang.tr("Host the campaign to invite players. Their characters then sync with yours; every change is logged here.")) };
+                let invite = if view.online { invite.on_hover_text(lang.tr("A link for one player")) } else { invite.on_disabled_hover_text(lang.tr("Host the campaign to invite players. Their characters then sync with yours; every change is logged here.")) };
                 if invite.clicked() {
                     self.new_invite(env.net);
                 }
@@ -371,7 +371,7 @@ impl GmScreen {
                     }
                 }
                 Panel::Players if online => {
-                    invite = widgets::button(ui, Some(icons::LINK), &lang.tr("Invite"), Look::Ghost, 22.0).on_hover_text(lang.tr("A link for players; it stays valid for the whole group")).clicked();
+                    invite = widgets::button(ui, Some(icons::LINK), &lang.tr("Invite"), Look::Ghost, 22.0).on_hover_text(lang.tr("A link for one player")).clicked();
                 }
                 _ => {}
             },
@@ -886,16 +886,6 @@ impl GmScreen {
                 ui.label(small(lang.tr("Offline: changes for players wait in the mailbox"), ws.muted));
             }
         }
-        if let Some(link) = &v.invite {
-            ui.horizontal(|ui| {
-                let mut text = link.clone();
-                ui.add(egui::TextEdit::singleline(&mut text).desired_width((ui.available_width() - 70.0).max(80.0)).font(egui::TextStyle::Monospace));
-                if widgets::button(ui, Some(icons::COPY), &lang.tr("Copy"), Look::Secondary, 24.0).clicked() {
-                    ui.ctx().copy_text(link.clone());
-                    *env.status = Some((lang.tr("Invite link copied."), false));
-                }
-            });
-        }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let check = ui.add_enabled_ui(!v.mail_busy, |ui| widgets::button(ui, Some(icons::ENVELOPE_SIMPLE), &lang.tr("Check mail"), Look::Secondary, 24.0)).inner;
@@ -912,18 +902,9 @@ impl GmScreen {
                 Err(e) => ui.label(small(format!("{when}: {e}"), ws.error)),
             };
         }
-        ui.spacing_mut().item_spacing.y = 0.0;
-        for p in &v.players {
-            ui.horizontal(|ui| {
-                ui.set_min_height(22.0);
-                ui.spacing_mut().item_spacing.x = 6.0;
-                widgets::dot(ui, if p.connected { ws.primary } else { ws.control }, 6.0);
-                ui.label(RichText::new(&p.name).size(12.0).color(ws.text)).on_hover_text(&p.id);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(small(lang.tr(if p.connected { "connected" } else { "not connected" }), ws.muted));
-                });
-            });
-        }
+        ui.add_space(4.0);
+        ui.separator();
+        self.invites_ui(ui, env.net, lang, env.status, true);
     }
 
     fn ws_award(&mut self, ui: &mut egui::Ui, env: &mut Env) {

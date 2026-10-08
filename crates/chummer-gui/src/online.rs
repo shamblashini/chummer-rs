@@ -193,10 +193,15 @@ impl Online {
         self.open_session(&j, engine)
     }
 
-    /// Forgets a campaign; its local copy file stays.
+    /// Forgets a campaign; its local copy file stays. The GM's key no
+    /// longer puts mail into our mailbox.
     pub fn leave(&mut self, i: usize) {
         let c = self.joined.remove(i);
-        c.session.close();
+        let s = c.session.clone();
+        self.rt.spawn(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(10), s.unregister()).await;
+            s.close();
+        });
         self.list.remove(&c.key);
         self.save_list();
     }
@@ -245,10 +250,15 @@ impl Online {
                 Some(SyncMode::Offline) => lang.tr("offline"),
                 None => lang.tr("connecting…"),
             };
+            let label = c.session.label();
+            let denied = c.session.denied();
             let chars: Vec<(CharacterId, String)> = r.characters().map(|id| (id.clone(), r.name(id).unwrap_or_default().to_owned())).collect();
             drop(r);
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(&name).strong());
+                if let Some(l) = &label {
+                    ui.weak(lang.tr_fmt("as {0}", &[l]));
+                }
                 ui.weak(status);
                 if pending > 0 {
                     ui.weak(lang.tr_fmt("{0} pending", &[&pending]));
@@ -260,7 +270,7 @@ impl Online {
                     c.session.sync_soon();
                 }
                 ui.menu_button("…", |ui| {
-                    if ui.button(lang.tr("Copy invite link")).clicked() {
+                    if ui.button(lang.tr("Copy invite link")).on_hover_text(lang.tr("Your own link: it only works on this device")).clicked() {
                         ui.ctx().copy_text(c.session.link().to_string());
                         ui.close();
                     }
@@ -270,7 +280,9 @@ impl Online {
                     }
                 });
             });
-            if chars.is_empty() {
+            if let Some(d) = &denied {
+                ui.colored_label(ui.visuals().error_fg_color, format!("   {}", lang.tr(&d.to_string())));
+            } else if chars.is_empty() {
                 ui.weak(format!("   {}", lang.tr("The GM has not given you a character yet.")));
             }
             for (id, n) in chars {
@@ -308,6 +320,7 @@ impl Online {
                     ui.add(egui::TextEdit::singleline(&mut name).desired_width(220.0));
                 });
                 ui.weak(lang.tr("The GM sees this name. Your characters sync when the GM's app is online; otherwise changes go through the relay's mailbox."));
+                ui.weak(lang.tr("An invite link is for one player: the first device that joins with it keeps it."));
                 ui.horizontal(|ui| {
                     if ui.add_enabled(parsed.is_ok(), crate::theme::primary_button(ui, lang.tr("Join"))).clicked() {
                         match self.join(&link, &name, engine) {

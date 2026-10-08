@@ -516,7 +516,12 @@ impl App {
                 None => (icons::CLOUD_ARROW_UP, lang.tr("Connecting…"), ws.muted),
             };
             let mut color = color;
-            if refused > 0 {
+            let label = c.session.label();
+            let denied = c.session.denied();
+            if let Some(d) = &denied {
+                state = lang.tr(&d.to_string());
+                color = ws.error;
+            } else if refused > 0 {
                 state = format!("{state} · {}", lang.tr_fmt("{0} refused", &[&refused]));
                 color = ws.error;
             } else if pending > 0 {
@@ -534,11 +539,15 @@ impl App {
                         widgets::tag(ui, &lang.tr("Player"), ws.muted, ws.divider);
                     });
                 });
-                if let Some(g) = gm {
-                    ui.label(RichText::new(lang.tr_fmt("GM {0}", &[&g])).size(11.5).color(ws.muted));
+                let who: Vec<String> = gm.map(|g| lang.tr_fmt("GM {0}", &[&g])).into_iter().chain(label.as_ref().map(|l| lang.tr_fmt("you joined as {0}", &[l]))).collect();
+                if !who.is_empty() {
+                    ui.label(RichText::new(who.join(" · ")).size(11.5).color(ws.muted));
                 }
+                let glyph = if denied.is_some() { icons::PROHIBIT } else { glyph };
                 widgets::icon_line(ui, glyph, &state, color, color);
-                if chars.is_empty() {
+                if denied.is_some() {
+                    ui.label(RichText::new(lang.tr("Ask your GM for a new invite link, then join with it.")).size(11.5).color(ws.muted));
+                } else if chars.is_empty() {
                     ui.label(RichText::new(lang.tr("The GM has not given you a character yet.")).size(11.5).color(ws.muted));
                 }
                 for (id, n) in chars {
@@ -552,7 +561,7 @@ impl App {
                     if widgets::button(ui, Some(icons::ARROWS_CLOCKWISE), &lang.tr("Sync now"), Look::Secondary, 24.0).clicked() {
                         c.session.sync_soon();
                     }
-                    if widgets::icon_button(ui, icons::LINK, 24.0).on_hover_text(lang.tr("Copy invite link")).clicked() {
+                    if widgets::icon_button(ui, icons::LINK, 24.0).on_hover_text(lang.tr("Copy invite link (it only works on this device)")).clicked() {
                         ui.ctx().copy_text(c.session.link().to_string());
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

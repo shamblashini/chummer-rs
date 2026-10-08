@@ -25,7 +25,9 @@ use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, Tab
 use serde::{Deserialize, Serialize};
 
 const MESSAGES: TableDefinition<u64, &[u8]> = TableDefinition::new("messages");
-const INBOX: TableDefinition<([u8; 32], u64), (u64, [u8; 32], [u8; 16])> = TableDefinition::new("inbox");
+/// (received, signing key, nonce) of a waiting message.
+type InboxEntry = (u64, [u8; 32], [u8; 16]);
+const INBOX: TableDefinition<([u8; 32], u64), InboxEntry> = TableDefinition::new("inbox");
 const QUOTA: TableDefinition<([u8; 32], u64), (u64, u64)> = TableDefinition::new("quota");
 const REGISTRATIONS: TableDefinition<([u8; 32], [u8; 16]), &[u8]> = TableDefinition::new("registrations");
 const ALLOWED: TableDefinition<([u8; 32], [u8; 32]), u32> = TableDefinition::new("allowed");
