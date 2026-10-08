@@ -688,7 +688,8 @@ fn all_sheets(xml: &chummer_core::xml::Element, lang_code: &str, dir: &Path) -> 
     }
     let mut failed = 0;
     for (name, xsl) in &sheets {
-        let file_name: String = name.chars().map(|c| if matches!(c, '/' | '\\' | ':') { '_' } else { c }).collect();
+        // Characters Windows does not allow in file names ("Rating > 0").
+        let file_name: String = name.chars().map(|c| if matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*') { '_' } else { c }).collect();
         let out = dir.join(format!("{file_name}.html"));
         match print::render_report(xml, xsl, &out) {
             Ok(r) if r.warnings.trim().is_empty() => println!("OK    {name}"),

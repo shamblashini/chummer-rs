@@ -21,18 +21,63 @@ warnings (see [docs/interop.md](docs/interop.md)).
 ## Download
 
 Prebuilt packages for Linux, Windows and macOS are on the
-[Releases](../../releases) page. Unpack and run `chummer-rs` (`chummer-rs.exe`
-on Windows). Keep the `resources` folder next to the program.
+[Releases](../../releases) page.
 
-On macOS, unzip and move `chummer-rs.app` to Applications. The app is
-not notarised by Apple, so the first time right-click it and choose
-Open (or run `xattr -dr com.apple.quarantine /Applications/chummer-rs.app`).
-`chummer-cli` is inside the bundle, in `chummer-rs.app/Contents/MacOS/`.
+- **Windows**: run `chummer-rs-<version>-windows-x86_64-setup.exe`. It
+  installs for your user only (no administrator rights; the first page
+  lets you install for all users instead) to
+  `%LOCALAPPDATA%\Programs\chummer-rs`, adds a Start menu entry (and,
+  if you tick it, a desktop shortcut), opens `.chumrs` and
+  `.chummercampaign` files and `chummer-rs://` invite links with
+  chummer-rs, and offers it in "Open with" for `.chum5`/`.chum5lz`.
+  Making it the default for `.chum5`/`.chum5lz` is a checkbox, off by
+  default, so an installed Chummer5a keeps them. Uninstall it from
+  Settings → Apps. The installer and the program are not code-signed, so
+  SmartScreen may warn the first time ("More info" → "Run anyway"). The
+  `windows-x86_64.zip` is the same program without installing: unpack
+  and run `chummer-rs.exe`.
+- **macOS**: open `chummer-rs-<version>-macos-universal.dmg` and drag
+  `chummer-rs.app` onto Applications (or unzip the `.zip`). The app is
+  not notarised by Apple, so the first time right-click it and choose
+  Open (or run `xattr -dr com.apple.quarantine /Applications/chummer-rs.app`).
+  `chummer-cli` is inside the bundle, in `chummer-rs.app/Contents/MacOS/`.
+- **Linux**: unpack `chummer-rs-<version>-linux-x86_64.tar.gz` and run
+  `chummer-rs`. Keep the `resources` folder next to the program.
+
+Every release has a `SHA256SUMS` file: `sha256sum -c SHA256SUMS
+--ignore-missing` checks what you downloaded.
 
 Character sheets need `xsltproc`:
-- Linux: it is in the `libxslt` package.
+- Windows: the installer and the zip include it (MSYS2's build of
+  libxslt, in the `xsltproc` folder, with its licences).
 - macOS: it comes with the system.
-- Windows: put `xsltproc.exe` on your PATH.
+- Linux: install the `xsltproc` (Debian, Ubuntu) or `libxslt` (Fedora,
+  Arch) package. Without it, printing says so.
+
+### Updates
+
+At start chummer-rs asks GitHub (in the background) whether there is a
+newer release. If there is, a card in the bottom-right corner offers
+**What's new**, **Update now** and **Later**. **Help → Check for Updates**
+asks at any time; **Help → Check for updates on start** turns the check
+off (`check_updates=false` in `gui.ini`).
+
+**Update now** downloads the package for your system, checks it against
+the release's `SHA256SUMS`, and installs it:
+- Windows (installed with the installer): runs the new installer
+  silently; chummer-rs closes and the new version starts.
+- macOS: replaces the `chummer-rs.app` it runs from (when that folder is
+  writable), then offers a restart.
+- Linux: an `./install.sh` install in your home folder (`~/.local`) or an
+  unpacked release archive is replaced in place (programs and
+  resources), then chummer-rs offers a restart.
+- Anything else (a package manager, a read-only folder, the Windows zip,
+  a build from source) gets a link to the release page instead.
+
+If characters have unsaved changes, chummer-rs asks before updating.
+The checksum file comes from the same release as the package, so it
+detects damaged downloads, not a compromised release; signing it is
+planned.
 
 ## Build from source
 
@@ -818,7 +863,12 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   chummer-rs knowingly differs from Chummer5a (bug fixes, extra
   features, omissions, file differences) is in
   [docs/deviations.md](docs/deviations.md).
-- Hero Lab import, ChummerHub, plugins and the auto-updater.
+- Hero Lab import, ChummerHub and plugins.
+- Releases: the Windows installer and programs are not code-signed and the
+  macOS app is not notarised; `SHA256SUMS` is not signed, so the updater
+  checks downloads for damage only (see `update.rs`). Linux on arm64 and
+  Windows on arm64 have no packages yet (the updater links to the
+  release page there).
 - Online campaigns:
   - The project's public relay is not running yet; its URL and mailbox
     id in `chummer_net::config` are placeholders.
@@ -937,11 +987,23 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
 
 ## Releases
 
-Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a version tag is pushed:
+Releases are built by GitHub Actions (`.github/workflows/release.yml`)
+when a version tag is pushed. The tag must match the workspace version in
+`Cargo.toml` (the updater compares the two):
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.5.0 && git push origin v0.5.0
 ```
+
+The workflow builds the Linux, Windows and macOS packages, the Windows
+installer (Inno Setup, `packaging/windows/chummer-rs.iss`) and the macOS
+disk image, checks that the packaged programs render character sheets
+(on Windows with the bundled xsltproc, and the installer installs and
+uninstalls cleanly), and publishes them with `SHA256SUMS`,
+`docker-compose.yml` and `relay.example.toml`. It also pushes the relay
+image `ghcr.io/shamblashini/chummer-relay:<version>` and `:latest` (amd64
+and arm64). Running the workflow by hand (workflow_dispatch) builds
+everything as workflow artifacts without publishing.
 
 ## License
 

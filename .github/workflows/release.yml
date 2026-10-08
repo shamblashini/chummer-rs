@@ -77,7 +77,7 @@ jobs:
         with:
           msystem: MINGW64
           update: false
-          install: mingw-w64-x86_64-libxslt
+          install: mingw-w64-x86_64-libxslt curl
       - name: Bundle xsltproc
         if: runner.os == 'Windows'
         shell: msys2 {0}
@@ -93,13 +93,30 @@ jobs:
             echo "used by chummer-rs to render character sheets. Packages:"
             echo
           } > "$out/README.txt"
+          # Copy licence files as <dir>-<name>: packages may have two COPYING.
+          copy_licences() {
+            while read -r f; do
+              [ -f "$f" ] && cp "$f" "$out/licenses/$1/$(basename "$(dirname "$f")")-$(basename "$f")"
+            done
+          }
           for p in $(pacman -Qoq $files | sort -u); do
             pacman -Q "$p" >> "$out/README.txt"
             mkdir -p "$out/licenses/$p"
-            pacman -Qlq "$p" | grep -E '/share/licenses/.+[^/]$' | xargs -r cp -t "$out/licenses/$p/" || true
+            pacman -Qlq "$p" | grep -E '/share/licenses/' | copy_licences "$p"
             # Packages without a licence directory: their copying files.
             if [ -z "$(ls -A "$out/licenses/$p")" ]; then
-              pacman -Qlq "$p" | grep -iE '/(copying|license)[^/]*$' | xargs -r cp -t "$out/licenses/$p/" || true
+              pacman -Qlq "$p" | grep -iE '/[^/]*(copying|licen[cs]e|copyright)[^/]*$' | copy_licences "$p"
+            fi
+          done
+          # libxslt's package has carried no licence file: take it from
+          # the upstream release it was built from.
+          if [ -z "$(ls -A "$out/licenses/mingw-w64-x86_64-libxslt")" ]; then
+            v=$(pacman -Q mingw-w64-x86_64-libxslt | awk '{print $2}' | sed 's/-[0-9]*$//')
+            curl -fsSL "https://gitlab.gnome.org/GNOME/libxslt/-/raw/v$v/Copyright" -o "$out/licenses/mingw-w64-x86_64-libxslt/Copyright"
+          fi
+          for p in $(pacman -Qoq $files | sort -u); do
+            if [ -z "$(ls -A "$out/licenses/$p")" ]; then
+              echo "::error::no licence found for $p"; exit 1
             fi
           done
           ls -la "$out" "$out/licenses"/*

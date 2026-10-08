@@ -831,7 +831,11 @@ dependencies = [
  "egui-phosphor",
  "egui_extras",
  "image",
+ "reqwest",
  "rfd",
+ "rustls",
+ "serde_json",
+ "sha2",
  "tokio",
  "winresource",
 ]

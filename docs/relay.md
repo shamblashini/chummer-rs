@@ -24,9 +24,11 @@ point their app at it. How GMs host and players join is in the README's
 [Online campaigns](../README.md#online-campaigns); the design is in
 [online-design.md](online-design.md).
 
-The release's Linux package includes `chummer-relay` (and the files of
-`packaging/relay/`); on other systems build it with
-`cargo build --release -p chummer-relay`, or use Docker (below).
+The easiest way to run it is the Docker image
+`ghcr.io/shamblashini/chummer-relay` (amd64 and arm64, see
+[Deploy with Docker](#deploy-with-docker)). The release's Linux package
+also includes `chummer-relay` (and the files of `packaging/relay/`); on
+other systems build it with `cargo build --release -p chummer-relay`.
 
 ## What you need
 
@@ -122,17 +124,48 @@ relayed traffic.
 
 ## Deploy with Docker
 
+Every release publishes the image `ghcr.io/shamblashini/chummer-relay`
+with two tags: the version (`0.5.0`) and `latest`. Each release also
+carries `docker-compose.yml` and `relay.example.toml`. On the server:
+
 ```bash
-git clone https://github.com/shamblashini/chummer-rs
-cd chummer-rs/packaging/relay
+mkdir chummer-relay && cd chummer-relay
+base=https://github.com/shamblashini/chummer-rs/releases/latest/download
+curl -LO $base/docker-compose.yml -LO $base/relay.example.toml
 cp relay.example.toml relay.toml     # edit hostname and contact_email
 docker compose up -d
 docker compose logs chummer-relay    # shows the mailbox node id
 ```
 
+To update: `docker compose pull && docker compose up -d`. To stay on one
+version, change `:latest` in `docker-compose.yml` to the version you
+want.
+
+Without Compose:
+
+```bash
+docker run -d --name chummer-relay --restart unless-stopped --network host \
+  -v "$PWD/relay.toml:/etc/chummer-relay/relay.toml:ro" \
+  -v chummer-relay-data:/var/lib/chummer-relay \
+  -e RUST_LOG=info,iroh=warn \
+  ghcr.io/shamblashini/chummer-relay:latest
+```
+
 The compose file uses host networking, so the relay sees clients' real
 addresses (QUIC address discovery reports them back) and IPv6 works. The
-data directory is the `chummer-relay-data` volume; back it up (see below).
+relay listens on TCP 80 and 443 and UDP 7842 and 7843; open them in the
+server's firewall. The data directory is the `chummer-relay-data` volume;
+back it up (see below). The container runs as the unprivileged user
+`chummer-relay`.
+
+To build the image from a source checkout instead:
+
+```bash
+git clone https://github.com/shamblashini/chummer-rs
+cd chummer-rs/packaging/relay
+cp relay.example.toml relay.toml     # edit hostname and contact_email
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
 
 ## Deploy with systemd
 

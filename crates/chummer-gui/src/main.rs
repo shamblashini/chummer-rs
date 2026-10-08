@@ -31,6 +31,8 @@ mod theme;
 mod trace;
 mod frame_cap;
 mod tree_table;
+mod open;
+mod update;
 mod view;
 mod wizard;
 mod workspace;
@@ -112,6 +114,7 @@ struct App {
     status: Option<(String, bool)>,
     pending: Option<Pending>,
     allow_close: bool,
+    updater: update::Updater,
     /// Layout and theme (View → Appearance).
     appearance: theme::Appearance,
     /// Online campaigns: the network node, joined campaigns, settings.
@@ -176,6 +179,7 @@ impl App {
             status: None,
             pending: None,
             allow_close: false,
+            updater: update::Updater::start(&cc.egui_ctx),
             appearance,
             online: online::Online::new(),
             ws: Default::default(),
@@ -610,6 +614,7 @@ impl App {
                 ui.close();
                 self.show_about = true;
             }
+            self.updater.menu(ui, &self.lang);
         });
     }
 
@@ -865,8 +870,8 @@ impl App {
                 let name: String = ch.display_name().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
                 let out = std::env::temp_dir().join(format!("chummer-rs-{name}.html"));
                 Some(match trace::time("print render (xslt)", || chummer_core::print::render(&xml, &path, &out)) {
-                    Ok(()) => match std::process::Command::new("xdg-open").arg(&out).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
-                        Ok(_) => (format!("Opened {}", out.display()), false),
+                    Ok(()) => match crate::open::open(&out) {
+                        Ok(()) => (format!("Opened {}", out.display()), false),
                         Err(e) => (format!("Sheet written to {} (could not open it: {e})", out.display()), true),
                     },
                     Err(e) => (e.to_string(), true),
@@ -983,6 +988,10 @@ impl App {
         }
         let _s = trace::span("windows");
         self.windows(ctx);
+        if self.updater.ui(ctx, &self.lang, gm_dirty || self.views.iter().any(|v| v.ch().dirty)) {
+            self.allow_close = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
     /// A frame of the Classic layout: menu, toolbar, MDI tabs, status
     /// strip and the selected tab.
