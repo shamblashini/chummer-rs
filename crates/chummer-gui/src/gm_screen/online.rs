@@ -569,9 +569,10 @@ impl GmScreen {
             }
         });
         if confirm == Some(Confirm::RotateKey) {
+            ui.label(small(lang.tr_fmt("Make a new campaign key (now generation {0})?", &[&v.key_generation]), error));
             ui.label(small(
-                lang.tr_fmt("Make a new campaign key (now generation {0})? Your mail to the players is signed with it. Make a new one only if the current one may be known to someone it should not. Players get the new key with their next sync, live or by mail; until then your mail to them is signed with the old one. Links not used yet keep working; after two new keys in a row, an unused older link only joins live (give that player a New link).", &[&v.key_generation]),
-                error,
+                lang.tr("Your mail to the players is signed with it. Make a new one only if the current one may be known to someone it should not. Players get the new key with their next sync, live or by mail; until then your mail to them is signed with the old one. Links not used yet keep working; after two new keys in a row, an unused older link only joins live (give that player a New link)."),
+                muted,
             ));
             ui.horizontal(|ui| {
                 let yes = lang.tr("New campaign key");

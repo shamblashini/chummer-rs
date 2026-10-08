@@ -215,10 +215,15 @@ pub fn apply(ch: &mut Character, engine: &Engine, choice: &Choice) -> Result<(),
     } else {
         ch.doc.push(ps);
     }
-    let nuyen = priority_node(store, &settings, "Resources", prios.get("Resources")).and_then(|n| n.get_f64("resources")).unwrap_or(0.0);
-    ch.nuyen = nuyen;
-    ch.set_field("nuyen", crate::improvement::fmt_num(nuyen));
-    ch.set_field("startingnuyen", crate::improvement::fmt_num(nuyen));
+    // New starting nuyen from Resources. Chummer sets the nuyen to it and
+    // then recalculates what is left (`CalculateNuyen`); the saved
+    // `<nuyen>` is what is left, so it moves by the difference.
+    let start = priority_node(store, &settings, "Resources", prios.get("Resources")).and_then(|n| n.get_f64("resources")).unwrap_or(0.0);
+    let old_start = ch.doc.get_f64("startingnuyen").unwrap_or(start);
+    if start != old_start {
+        ch.nuyen += start - old_start;
+        ch.set_field("startingnuyen", crate::improvement::fmt_num(start));
+    }
 
     // ----- the talent (when it, its priority or its skills changed) -----
     let talent_changed = old_special != (Some(prios.get("Talent")), talent.value.clone(), skills.clone());

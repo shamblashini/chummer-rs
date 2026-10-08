@@ -199,7 +199,7 @@ fn swapping_priorities_on_a_chummer_save() {
     let mut ch = Character::load(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Miko.chum5")).unwrap();
     let before = budget(&ch);
     let quals = |c: &Character| c.items("qualities", "quality").iter().map(|q| q.get("guid")).collect::<Vec<_>>();
-    let (q0, imps0) = (quals(&ch), ch.improvements.list.len());
+    let (q0, imps0, nuyen0) = (quals(&ch), ch.improvements.list.len(), ch.nuyen);
     let mut choice = Choice::of(&ch);
     assert_eq!(choice.priorities, Some(Priorities(['D', 'A', 'B', 'C', 'E'])));
     assert_eq!(choice.talent, "Magician");
@@ -213,4 +213,13 @@ fn swapping_priorities_on_a_chummer_save() {
     assert_eq!(quals(&ch), q0, "the same qualities, untouched");
     assert_eq!(ch.improvements.list.len(), imps0);
     assert_eq!(Choice::of(&ch).talent_skills, ["Counterspelling", "Spellcasting"]);
+    assert_eq!(ch.nuyen, nuyen0, "Resources did not change: what is left stays");
+    // Resources E <-> Attributes C: what is left moves by the difference.
+    let mut choice = Choice::of(&ch);
+    choice.priorities = Some(Priorities(['D', 'A', 'E', 'B', 'C']));
+    let start0 = budget(&ch).nuyen.0;
+    change(&mut ch, choice).unwrap();
+    let start1 = budget(&ch).nuyen.0;
+    assert!(start1 > start0);
+    assert_eq!(ch.nuyen - nuyen0, start1 - start0);
 }

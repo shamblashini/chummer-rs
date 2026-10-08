@@ -88,6 +88,9 @@ the metatype or talent is not offered at its new letter, the dialog
 opens with the swap and says why. Each change is one command (Undo,
 History).
 
+![Priorities on the Attributes page: Attributes picked, click another to swap](docs/screenshots/workspace-priority-swap-dark.png)
+![Change Priority Selection, Workspace dark](docs/screenshots/workspace-change-priorities-dark.png)
+
 A Creation panel shows what is left of each budget:
 - Karma.
 - Attribute and special attribute points.
@@ -444,6 +447,12 @@ was.
   Character wizard and the confirmations) are Workspace cards with their
   own header and close button (Esc closes them), a search field, list
   rows and Workspace buttons.
+
+  ![Add spell, Workspace dark](docs/screenshots/workspace-dialog-spell-dark.png)
+  ![Spell Options](docs/screenshots/workspace-dialog-spell-options-dark.png)
+  ![Edit Improvement, Workspace light](docs/screenshots/workspace-dialog-improvement-light.png)
+  ![Contact notes](docs/screenshots/workspace-contact-notes-dark.png)
+  ![Relationships: Sort](docs/screenshots/workspace-relationships-sort-dark.png)
 - **Number steppers**: a small − and + inside the border and a value
   field as wide as the range needs (up to four digits; a longer value
   widens it), so nothing spills out at any value. Drag the value, or
@@ -660,6 +669,8 @@ for play-by-post. Each installation's identity is its node key
    after a confirmation that explains it; it is only needed if the old
    one may be known to someone it should not. Players get the new key
    with their next sync (`chummer-authority rotate-key` does the same).
+
+   ![New campaign key: the confirmation](docs/screenshots/workspace-gm-campaign-key-dark.png)
 
    ![Players & invites, Workspace dark: a new link for Carla, Anna online, Bert offline, a revoked and an expired invite](docs/screenshots/workspace-gm-invites-dark.png)
    ![Players & invites, Workspace light: revoking Bert asks first](docs/screenshots/workspace-gm-invites-light.png)

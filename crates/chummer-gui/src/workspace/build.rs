@@ -192,7 +192,9 @@ impl CharacterView {
             if !variant.is_empty() {
                 widgets::tag(ui, &variant, ws.text, ws.divider);
             }
-            if !self.doc.created && widgets::button(ui, Some(icons::USER_SWITCH), &crate::metatype_ui::change_label(lang, &self.doc.field("buildmethod")), Look::Ghost, 24.0).clicked() {
+            // (Priority builds have the button with the priorities.)
+            let priority = chummer_core::character::uses_priority_tables(&self.doc.field("buildmethod"));
+            if !self.doc.created && !priority && widgets::button(ui, Some(icons::USER_SWITCH), &crate::metatype_ui::change_label(lang, &self.doc.field("buildmethod")), Look::Ghost, 24.0).clicked() {
                 self.open_change_metatype(None, None);
             }
             let build = match self.doc.field("buildmethod").as_str() {
