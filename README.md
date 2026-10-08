@@ -355,11 +355,14 @@ Skills and attributes stay flat tables.
 View → Appearance selects the layout (Classic, described above, or
 [Workspace](#workspace-layout)) and its theme. The choice is saved in
 `~/.config/chummer-rs/gui.ini`; `--layout classic|workspace` and
-`--theme classic|graphite|dark|light` override it.
+`--theme classic|graphite|dark|light` override it. New users start in
+the Workspace layout, dark (the [first-start setup](#first-start-setup)
+offers the choice); a gui.ini from an earlier version without a
+`layout=` line keeps the Classic layout.
 
 | Theme | Look |
 |---|---|
-| Graphite (default) | Classic layout. Dark greys with one teal accent, IBM Plex Sans and Plex Mono. |
+| Graphite | Classic layout (its default theme). Dark greys with one teal accent, IBM Plex Sans and Plex Mono. |
 | Classic | Classic layout. Chummer5a's Windows look: light grey panels, white fields, square corners, Windows-blue selection, the Selawik font. |
 | Dark, Light | Workspace layout. Colours from the chummer-rs logo, IBM Plex, Phosphor icons. |
 
@@ -596,6 +599,76 @@ what each command did and the final version and hash.
 
 Settings are stored in `~/.config/chummer-rs/`.
 
+### First-start setup
+
+The very first start (no `gui.ini` yet) opens a short setup. Every step
+can be skipped, and Help → First-start setup… (or Tools → Preferences)
+opens it again. Choices apply at once, so the dialog takes on the
+picked layout's look:
+
+1. Language, from the language files. A language other than English
+   shows a notice that chummer-rs's own texts are only partly
+   translated (Chummer's data names and sheets are translated).
+2. Layout: Workspace or Classic, with a preview of each.
+3. Theme: Dark or Light (Workspace), Graphite or Classic (Classic).
+4. Sourcebooks: import the PDF links from a Chummer5a Wine or Proton
+   prefix, or scan a folder (in the background, with progress).
+5. Online name for campaigns (optional).
+6. Updates: `check_updates=true` in gui.ini, read by the updater.
+7. Shortcuts: New Character, Open, Join Campaign.
+
+Starting with `--theme` or `--layout` skips the setup;
+`setup_done=false` in gui.ini asks for it again.
+
+![Setup: language, with the translation notice](docs/screenshots/setup-language-dark.png)
+![Setup: layout](docs/screenshots/setup-layout-dark.png)
+
+More steps: [theme](docs/screenshots/setup-theme-dark.png),
+[sourcebooks](docs/screenshots/setup-sources-dark.png),
+[online name](docs/screenshots/setup-online-dark.png),
+[updates](docs/screenshots/setup-updates-dark.png),
+[finish](docs/screenshots/setup-finish-dark.png),
+[Classic look](docs/screenshots/setup-layout-classic.png).
+
+Switching View → Language to a language other than English shows the
+same translation notice in a corner of the window; once dismissed it
+stays away for that language (`translation_notice_seen=` in gui.ini).
+
+![Translation notice](docs/screenshots/translation-notice-dark.png)
+
+### Crash recovery, autosave and backups
+
+Everything here is written by background threads, under
+`~/.local/share/chummer-rs/` (`$XDG_DATA_HOME/chummer-rs`):
+
+- **Autosave.** Every 2 minutes, and whenever the window loses focus,
+  each character with unsaved changes is copied to
+  `recovery/<process id>/`. The copy never goes over your file. It is
+  deleted when you save or close the character, and at a normal exit.
+- **Crash log.** If chummer-rs panics, it writes
+  `crashes/crash-<time>-<pid>.log` (message, backtrace, version,
+  operating system, the last actions) and copies every unsaved
+  character to the recovery folder once more before it exits.
+- **Next start.** When the last run did not exit normally and left
+  copies or a crash log, a dialog "chummer-rs closed unexpectedly"
+  lists the recovered characters: reopen the ticked ones (they open as
+  unsaved changes to their original file), discard them, or decide
+  later. It also opens the crash log folder and copies the report for a
+  bug report.
+- **Backups.** Saving over an existing file first keeps the previous
+  version in `backups/<file>-<hash>/`, the newest 5 per file. File →
+  Restore backup… lists them by file and opens one as a modified copy
+  of the file (save to replace it).
+
+Tools → Preferences sets the autosave interval (`autosave_minutes=2`,
+0 turns the timer off; focus loss still saves), the backups per file
+(`backup_count=5`, 0 keeps none) and `check_updates`, and opens the
+recovery and backups folders. Two windows at once each have their own
+recovery folder.
+
+![Recovery dialog after a crash](docs/screenshots/recovery-dialog-dark.png)
+![File → Restore backup…](docs/screenshots/restore-backup-dark.png)
+
 ## Online campaigns
 
 The GM's app is the campaign's host. There is no game server and no
@@ -724,6 +797,15 @@ Settings enter `https://127.0.0.1:3443#<mailbox id>` and its
 
 ## Troubleshooting
 
+### "chummer-rs closed unexpectedly"
+
+The next start offers the characters that were not saved (see
+[Crash recovery](#crash-recovery-autosave-and-backups)). Please attach
+the crash log ("Copy the report" in the dialog, or the newest file in
+`~/.local/share/chummer-rs/crashes/`) to a bug report. Debug builds can
+try the recovery with `CHUMMER_CRASH_AFTER=<seconds>`, which panics in a
+frame after that many seconds.
+
 ### "chummer-rs is not responding"
 
 The desktop shows this when the window does not answer for a few
@@ -819,6 +901,12 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   features, omissions, file differences) is in
   [docs/deviations.md](docs/deviations.md).
 - Hero Lab import, ChummerHub, plugins and the auto-updater.
+- Autosave and recovery cover characters, not campaign files (a
+  campaign's members are saved with the campaign); online characters
+  are kept by the GM. A crash outside a frame (in the window system
+  layer) recovers the copies taken up to 3 seconds before it. Backups
+  are kept for character saves only. The setup and the translation
+  notice are new texts, so they stay in English in other languages.
 - Online campaigns:
   - The project's public relay is not running yet; its URL and mailbox
     id in `chummer_net::config` are placeholders.

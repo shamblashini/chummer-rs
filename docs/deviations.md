@@ -132,6 +132,8 @@ file differences.
 | Sourcebook PDF scan. | The scan matches by title (`&` = "and"), then by each book's known text with `pdftotext`, and lists the PDFs it did not link with the reason. Links can be imported from Chummer in a Wine or Proton prefix. PDFs open in a native viewer (evince, zathura, okular, ...). | Linux; files with odd names. | no |
 | — | `chummer-cli`: info, skills, items, check, new, sheet, export, roster, search, settings, sources, hash, apply, commands. | Extra. | no |
 | No undo; a failed purchase can leave partial changes behind (Chummer rolls some back by hand). | Edit → Undo/Redo (100 steps per character) and a History tab. Every change is a command; a refused command leaves the character exactly as it was. Saving writes the export totals (`<totalvalue>`, `<totaless>`) into the file only, not into the open character. | Extra; groundwork for GM/player sync (docs/online-design.md). | no |
+| Autosaves open characters to an `autosave` folder; opening a file whose autosave is newer offers the autosave instead. No crash log, no recovery dialog at start, no backups of saved files. | Autosave copies unsaved characters to a separate recovery folder (never over the file); a crash writes a crash log and emergency copies, offered on the next start. Saving over a file keeps the last 5 versions (File → Restore backup…). | Never lose work; never damage the user's file. | no |
+| No first-start setup. | A skippable first-start setup (language, layout, theme, sourcebooks, online name, updates); a notice when the chosen language leaves app texts untranslated. | New users. | no |
 
 ## Not implemented
 

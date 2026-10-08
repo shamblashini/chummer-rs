@@ -128,9 +128,10 @@ pub struct Appearance {
     pub workspace: ThemeKind,
 }
 
+/// New users get the Workspace layout, dark.
 impl Default for Appearance {
     fn default() -> Self {
-        Appearance { layout: Layout::Classic, classic: ThemeKind::default(), workspace: ThemeKind::WorkspaceDark }
+        Appearance { layout: Layout::Workspace, classic: ThemeKind::default(), workspace: ThemeKind::WorkspaceDark }
     }
 }
 
@@ -158,12 +159,13 @@ impl Appearance {
         self
     }
 
-    /// The appearance saved in a gui.ini text.
+    /// The appearance saved in a gui.ini text. A gui.ini without a
+    /// `layout=` line is from before the Workspace layout: Classic.
     pub fn from_config(text: &str) -> Appearance {
         let d = Appearance::default();
         let pick = |key: &str, layout: Layout, fallback: ThemeKind| config_get(text, key).and_then(|v| ThemeKind::parse(&v)).filter(|k| k.layout() == layout).unwrap_or(fallback);
         Appearance {
-            layout: config_get(text, "layout").and_then(|v| Layout::parse(&v)).unwrap_or(d.layout),
+            layout: config_get(text, "layout").and_then(|v| Layout::parse(&v)).unwrap_or(Layout::Classic),
             classic: pick("theme", Layout::Classic, d.classic),
             workspace: pick("workspace", Layout::Workspace, d.workspace),
         }
@@ -992,9 +994,12 @@ pub fn save_value(key: &str, value: &str) -> std::io::Result<()> {
     std::fs::write(path, config_set(&old, key, value))
 }
 
-/// The saved appearance; the Classic layout in Graphite for new installs.
+/// The saved appearance; Workspace dark for new installs (no gui.ini).
 pub fn load_appearance() -> Appearance {
-    Appearance::from_config(&config_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default())
+    match config_path().and_then(|p| std::fs::read_to_string(p).ok()) {
+        Some(text) => Appearance::from_config(&text),
+        None => Appearance::default(),
+    }
 }
 
 pub fn save_appearance(a: &Appearance) -> std::io::Result<()> {
@@ -1015,8 +1020,11 @@ mod tests {
         // Old gui.ini files: only a Classic-layout theme.
         let a = Appearance::from_config("theme=classic\n");
         assert_eq!((a.layout, a.kind()), (Layout::Classic, ThemeKind::Classic));
-        assert_eq!(Appearance::from_config(""), Appearance::default());
-        assert_eq!(Appearance::default().kind(), ThemeKind::Graphite);
+        // New users (no gui.ini): Workspace, dark.
+        assert_eq!((Appearance::default().layout, Appearance::default().kind()), (Layout::Workspace, ThemeKind::WorkspaceDark));
+        // A gui.ini from before Workspace (no layout line) stays Classic.
+        assert_eq!(Appearance::from_config(""), Appearance::default().with_layout(Layout::Classic));
+        assert_eq!(Appearance::from_config("guided=true\n").kind(), ThemeKind::Graphite);
         // Switching to Workspace light keeps the Classic theme for later.
         let a = a.with_kind(ThemeKind::WorkspaceLight);
         assert_eq!((a.layout, a.classic, a.workspace), (Layout::Workspace, ThemeKind::Classic, ThemeKind::WorkspaceLight));

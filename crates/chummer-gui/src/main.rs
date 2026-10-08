@@ -3,6 +3,7 @@
 
 mod ai_ui;
 mod app_io;
+mod backups;
 mod bg;
 mod browser;
 mod campaign_ui;
@@ -20,17 +21,22 @@ mod lifestyle_ui;
 mod magic_ui;
 mod memo;
 mod item_editor;
+mod lang_notice;
 mod online;
 mod pdf_ui;
+mod prefs;
 mod relationships_ui;
 mod play_ui;
 mod ruleset_ui;
+mod safety;
 mod select;
 mod settings_ui;
+mod setup_ui;
 mod theme;
 mod trace;
 mod frame_cap;
 mod tree_table;
+mod ux;
 mod view;
 mod wizard;
 mod workspace;
@@ -122,6 +128,8 @@ struct App {
     ctx: egui::Context,
     /// Loads, saves and file dialogs in flight (`app_io`).
     io: app_io::Io,
+    /// Crash recovery, backups, first-start setup, preferences (`ux`).
+    ux: ux::Ux,
 }
 
 impl App {
@@ -181,6 +189,7 @@ impl App {
             ws: Default::default(),
             ctx: cc.egui_ctx.clone(),
             io: Default::default(),
+            ux: Default::default(),
         };
         app.online.start_joined(&app.engine);
         if let Some(link) = join {
@@ -200,6 +209,7 @@ impl App {
             app.open(&f);
         }
         app.io.startup = app.io.has_loads();
+        app.ux_start(storage.and_then(|s| s.get_string(LANG_KEY)).is_some(), look.0.is_some() || look.1.is_some());
         app
     }
 
@@ -457,6 +467,7 @@ impl App {
                 ui.close();
                 self.online.join = Some((String::new(), self.online.display_name()));
             }
+            self.ux_file_menu(ui);
             ui.separator();
             ui.menu_button(self.lang.tr("Open recent"), |ui| {
                 if self.recent.is_empty() {
@@ -545,6 +556,7 @@ impl App {
                 ui.close();
                 self.online.show_settings = true;
             }
+            self.ux_tools_menu(ui);
         });
         ui.menu_button(self.lang.tr("Special"), |ui| {
             let creating = self.current().is_some_and(|i| !self.views[i].ch().created);
@@ -586,7 +598,7 @@ impl App {
                 for (code, name) in self.languages.clone() {
                     if crate::combo::selectable_label(ui, self.lang.code == code, name).clicked() {
                         ui.close();
-                        self.lang = Language::load(&self.lang_dir, &code);
+                        self.set_language(&code);
                     }
                 }
             });
@@ -610,6 +622,7 @@ impl App {
                 ui.close();
                 self.show_about = true;
             }
+            self.ux_help_menu(ui);
         });
     }
 
@@ -942,7 +955,10 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         frame_cap::wait();
         trace::begin_frame(frame.info().cpu_usage);
-        self.frame(ctx);
+        // A panic: copy the unsaved characters to the recovery folder and exit.
+        if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.frame(ctx))) {
+            self.safety_crashed(panic);
+        }
         trace::end_frame();
     }
 
@@ -953,6 +969,7 @@ impl eframe::App for App {
         // Saves still writing (and the campaign's last one) finish first.
         self.finish_io();
         self.online.shutdown();
+        self.ux_exit();
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -983,6 +1000,7 @@ impl App {
         }
         let _s = trace::span("windows");
         self.windows(ctx);
+        self.ux_frame(ctx);
     }
     /// A frame of the Classic layout: menu, toolbar, MDI tabs, status
     /// strip and the selected tab.
@@ -1214,6 +1232,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
     trace::init();
+    safety::start();
     let engine = match trace::time("engine load", Engine::load) {
         Ok(e) => e,
         Err(e) => {

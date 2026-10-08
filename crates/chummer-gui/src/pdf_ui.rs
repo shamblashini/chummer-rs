@@ -56,11 +56,15 @@ pub struct SourcesWindow {
     message: Option<String>,
     /// The book whose PDF is being picked (`bg` dialog).
     choosing: Option<String>,
+    /// PDF files the running scan has read (progress).
+    scan_read: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// The file dialogs of the Sourcebooks window (`bg`).
 const PICK_FOLDER: &str = "dialog:pdf-folder";
 const PICK_BOOK: &str = "dialog:pdf-book";
+/// Importing from a Chummer5a Wine prefix (`bg`).
+const IMPORT: &str = "pdf-import";
 
 impl SourcesWindow {
     pub fn new(store: &DataStore) -> Self {
@@ -75,25 +79,13 @@ impl SourcesWindow {
             unmatched: Vec::new(),
             message: None,
             choosing: None,
+            scan_read: Default::default(),
         }
     }
 
     /// Returns true when the library changed (so the caller saves it).
     pub fn ui(&mut self, ui: &mut egui::Ui, lib: &mut SourcebookLibrary, lang: &Language) -> bool {
-        let mut changed = self.poll_detect(lib);
-        changed |= self.poll_scan(lib);
-        if let Some(Some(dir)) = crate::bg::take::<Option<PathBuf>>(PICK_FOLDER) {
-            self.start_scan(dir);
-        }
-        if let Some(f) = crate::bg::take::<Option<PathBuf>>(PICK_BOOK) {
-            if let (Some(code), Some(f)) = (self.choosing.take(), f) {
-                lib.books.entry(code).or_default().path = Some(f);
-                changed = true;
-            }
-        }
-        if self.scan.is_some() {
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
-        }
+        let mut changed = self.poll(ui, lib);
 
         ui.horizontal(|ui| {
             ui.label(lang.tr("PDF viewer"));
@@ -106,58 +98,7 @@ impl SourcesWindow {
         });
         ui.weak(lang.tr("{page} and {path} are replaced. Chummer5a's {localpath} also works."));
         ui.separator();
-
-        ui.horizontal_wrapped(|ui| {
-            for pfx in self.prefixes.clone() {
-                if ui.button(lang.tr_fmt("Import from Chummer5a ({0})", &[&prefix_label(&pfx)])).on_hover_text(pfx.display().to_string()).clicked() {
-                    match sources::import_from_wine(&pfx) {
-                        Ok(found) => {
-                            let n = found.len();
-                            for (code, path, offset) in found {
-                                lib.books.insert(code, Sourcebook { path: Some(path), offset });
-                            }
-                            self.message = Some(format!("Imported {n} books from {}", pfx.display()));
-                            changed = true;
-                        }
-                        Err(e) => self.message = Some(format!("Import failed: {e}")),
-                    }
-                }
-            }
-            let scanning = self.scan.is_some();
-            let label = if scanning { lang.tr("Scanning…") } else { lang.tr("Scan a Folder for PDF Files…") };
-            if ui.add_enabled(!scanning, egui::Button::new(label)).clicked() {
-                crate::bg::dialog(ui.ctx(), PICK_FOLDER, || rfd::FileDialog::new().pick_folder());
-            }
-            let can_detect = sources::which("pdftotext").is_some();
-            let busy = self.detect.is_some();
-            let r = ui.add_enabled(can_detect && !busy, egui::Button::new(if busy { lang.tr("Detecting offsets…") } else { lang.tr("Detect page offsets") }));
-            let r = if can_detect { r.on_hover_text(lang.tr("Reads each PDF with pdftotext to find where printed page numbers start")) } else { r.on_disabled_hover_text(lang.tr("Install poppler (pdftotext) to detect offsets")) };
-            if r.clicked() {
-                self.start_detect(lib);
-            }
-        });
-        if let Some(m) = &self.message {
-            ui.label(m);
-        }
-        if !self.unmatched.is_empty() {
-            egui::CollapsingHeader::new(lang.tr_fmt("{0} PDF files not linked", &[&self.unmatched.len()])).id_salt("scan_unmatched").show(ui, |ui| {
-                egui::ScrollArea::vertical().id_salt("scan_unmatched_list").max_height(160.0).show(ui, |ui| {
-                    for (path, why) in &self.unmatched {
-                        ui.horizontal(|ui| {
-                            ui.label(path.file_name().unwrap_or_default().to_string_lossy());
-                            ui.weak(unmatched_reason(why, lang));
-                        });
-                    }
-                });
-            });
-        }
-        if self.detect.is_some() {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(lang.tr_fmt("{0} books left", &[&self.detect_pending]));
-            });
-            ui.ctx().request_repaint();
-        }
+        self.actions_ui(ui, lib, lang);
         ui.separator();
 
         ui.horizontal(|ui| {
@@ -213,12 +154,124 @@ impl SourcesWindow {
         changed
     }
 
+    /// The first-start setup's sourcebooks step: the import and scan
+    /// buttons and how many books are linked. Returns true when the
+    /// library changed.
+    pub fn quick_ui(&mut self, ui: &mut egui::Ui, lib: &mut SourcebookLibrary, lang: &Language) -> bool {
+        let changed = self.poll(ui, lib);
+        self.actions_ui(ui, lib, lang);
+        ui.add_space(4.0);
+        ui.label(crate::theme::strong(ui, lang.tr_fmt("{0} of {1} linked", &[&lib.linked_count(), &self.books.len()])));
+        changed
+    }
+
+    /// Take what the background jobs found.
+    fn poll(&mut self, ui: &mut egui::Ui, lib: &mut SourcebookLibrary) -> bool {
+        let mut changed = self.poll_detect(lib);
+        changed |= self.poll_scan(lib);
+        if let Some(Some(dir)) = crate::bg::take::<Option<PathBuf>>(PICK_FOLDER) {
+            self.start_scan(dir);
+        }
+        if let Some(f) = crate::bg::take::<Option<PathBuf>>(PICK_BOOK) {
+            if let (Some(code), Some(f)) = (self.choosing.take(), f) {
+                lib.books.entry(code).or_default().path = Some(f);
+                changed = true;
+            }
+        }
+        if let Some((pfx, r)) = crate::bg::take::<(PathBuf, Result<Vec<(String, PathBuf, i32)>, String>)>(IMPORT) {
+            match r {
+                Ok(found) => {
+                    let n = found.len();
+                    for (code, path, offset) in found {
+                        lib.books.insert(code, Sourcebook { path: Some(path), offset });
+                    }
+                    self.message = Some(format!("Imported {n} books from {}", pfx.display()));
+                    changed = true;
+                }
+                Err(e) => self.message = Some(format!("Import failed: {e}")),
+            }
+        }
+        if self.scan.is_some() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        changed
+    }
+
+    /// Import from Chummer5a, scan a folder, detect offsets; progress and
+    /// the last result.
+    fn actions_ui(&mut self, ui: &mut egui::Ui, lib: &SourcebookLibrary, lang: &Language) {
+        ui.horizontal_wrapped(|ui| {
+            let importing = crate::bg::busy(IMPORT);
+            for pfx in self.prefixes.clone() {
+                if ui.add_enabled(!importing, egui::Button::new(lang.tr_fmt("Import from Chummer5a ({0})", &[&prefix_label(&pfx)]))).on_hover_text(pfx.display().to_string()).clicked() {
+                    // Reading Chummer5a's settings runs on its own thread.
+                    crate::bg::spawn(ui.ctx(), IMPORT, lang.tr("Importing sourcebooks…"), move || {
+                        let r = sources::import_from_wine(&pfx).map_err(|e| e.to_string());
+                        (pfx, r)
+                    });
+                }
+            }
+            let scanning = self.scan.is_some();
+            let label = if scanning { lang.tr("Scanning…") } else { lang.tr("Scan a Folder for PDF Files…") };
+            if ui.add_enabled(!scanning, egui::Button::new(label)).clicked() {
+                crate::bg::dialog(ui.ctx(), PICK_FOLDER, || rfd::FileDialog::new().pick_folder());
+            }
+            let can_detect = sources::which("pdftotext").is_some();
+            let busy = self.detect.is_some();
+            let r = ui.add_enabled(can_detect && !busy, egui::Button::new(if busy { lang.tr("Detecting offsets…") } else { lang.tr("Detect page offsets") }));
+            let r = if can_detect { r.on_hover_text(lang.tr("Reads each PDF with pdftotext to find where printed page numbers start")) } else { r.on_disabled_hover_text(lang.tr("Install poppler (pdftotext) to detect offsets")) };
+            if r.clicked() {
+                self.start_detect(lib);
+            }
+        });
+        if let Some((dir, _)) = &self.scan {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(lang.tr_fmt("Scanning {0}: {1} PDF files read", &[&dir.display(), &self.scan_read.load(std::sync::atomic::Ordering::Relaxed)]));
+            });
+        }
+        if crate::bg::busy(IMPORT) {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(lang.tr("Importing sourcebooks…"));
+            });
+        }
+        if let Some(m) = &self.message {
+            ui.label(m);
+        }
+        if !self.unmatched.is_empty() {
+            egui::CollapsingHeader::new(lang.tr_fmt("{0} PDF files not linked", &[&self.unmatched.len()])).id_salt("scan_unmatched").show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("scan_unmatched_list").max_height(160.0).show(ui, |ui| {
+                    for (path, why) in &self.unmatched {
+                        ui.horizontal(|ui| {
+                            ui.label(path.file_name().unwrap_or_default().to_string_lossy());
+                            ui.weak(unmatched_reason(why, lang));
+                        });
+                    }
+                });
+            });
+        }
+        if self.detect.is_some() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(lang.tr_fmt("{0} books left", &[&self.detect_pending]));
+            });
+            ui.ctx().request_repaint();
+        }
+    }
+
     fn start_scan(&mut self, dir: PathBuf) {
         let books = self.books.clone();
         let (tx, rx) = mpsc::channel();
         let folder = dir.clone();
+        let read = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        self.scan_read = read.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(sources::scan(&folder, &books, sources::pdf_pages));
+            let pages = |p: &std::path::Path, n: usize| {
+                read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                sources::pdf_pages(p, n)
+            };
+            let _ = tx.send(sources::scan(&folder, &books, pages));
         });
         self.scan = Some((dir, rx));
         self.unmatched.clear();

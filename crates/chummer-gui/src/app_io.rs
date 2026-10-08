@@ -157,7 +157,7 @@ impl App {
             return false;
         }
         let revision = v.doc().revision();
-        let job = v.doc().save_job(path.clone());
+        let job = crate::backups::wrap(path.clone(), v.doc().save_job(path.clone()));
         let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
         if !bg::spawn(&self.ctx, id, self.lang.tr_fmt("Saving {0}…", &[&name]), job) {
             return false;
