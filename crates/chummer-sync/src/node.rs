@@ -164,6 +164,18 @@ impl Node {
         r
     }
 
+    /// Tells the relay mailbox at once which keys may mail `host`'s GM
+    /// (after invites changed: a revoked key stops working now, not at
+    /// the next mailbox round).
+    pub async fn register_mail_keys(&self, host: &AuthorityHost) -> Result<chummer_net::mailbox::MailboxStatus, NetError> {
+        let mb = self.mailbox().await?;
+        let r = host.register_mail_keys(&mb, false).await;
+        if matches!(r, Err(NetError::Connect(_) | NetError::Connection(_) | NetError::Frame(_))) {
+            *self.mailbox.lock().await = None;
+        }
+        r
+    }
+
     /// Closes everything.
     pub async fn shutdown(self) {
         self.stop_serving();

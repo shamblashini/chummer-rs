@@ -550,6 +550,13 @@ impl Authority {
                 let had = self.invites.contains_key(&id);
                 (had, self.remove_invite(&id))
             }
+            InviteOp::RotateKey { generation } => {
+                let behind = self.key_gen < generation;
+                while self.key_gen < generation {
+                    self.rotate_campaign_key();
+                }
+                (behind, None)
+            }
         }
     }
 

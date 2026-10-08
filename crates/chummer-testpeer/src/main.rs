@@ -9,7 +9,8 @@
 //!   writes its state as JSON every second for the orchestrator to check.
 //! - `inspect`: the authority sidecar's state as JSON (versions, hashes).
 //! - `abuse`: hostile mailbox traffic (oversized, unsealed, forged,
-//!   flooding, malformed frames) and what the relay answered.
+//!   flooding, unsigned, malformed frames) and what the relay answered;
+//!   signed with the abuser's own key, or with a leaked invite link's.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +23,7 @@ use chummer_core::character::Character;
 use chummer_core::command::{self, Command};
 use chummer_core::engine::Engine;
 use chummer_net::config::{read_pem_certs, NetConfig, RelayEntry};
-use chummer_net::invite::InviteLink;
+use chummer_net::invite::{derive_campaign_key, InviteLink};
 use chummer_net::mailbox::{MailboxClient, MAILBOX_ALPN};
 use chummer_net::node::dial_addr;
 use chummer_net::{EndpointId, SecretKey};
@@ -74,6 +75,8 @@ enum Cmd {
         out: PathBuf,
         #[arg(long)]
         character: PathBuf,
+        /// A player's node id, or `invite` for a character without an
+        /// owner (given to a player through an invite with `--assign`).
         #[arg(long = "owner")]
         owners: Vec<String>,
         #[arg(long)]
@@ -135,6 +138,10 @@ enum Cmd {
         /// For `forged`: the member to pose as.
         #[arg(long)]
         pose_as: Option<String>,
+        /// Sign puts with this invite link's member key (a leaked link)
+        /// instead of this node's key.
+        #[arg(long)]
+        signer_link: Option<String>,
     },
 }
 
@@ -152,6 +159,8 @@ enum Abuse {
     MemberGarbage,
     /// Many puts, until the relay refuses.
     Flood,
+    /// A put without a signature.
+    Unsigned,
     /// Broken frames on raw mailbox streams; then a normal request.
     Frames,
 }
@@ -202,26 +211,32 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::json!({ "hash_ms": hash.as_millis(), "snapshot_ms": snapshot.as_millis(), "restore_ms": restore.as_millis(), "snapshot_bytes": snap.len() }));
             Ok(())
         }
-        Cmd::Abuse { key, net, target, mode, count, pose_as } => abuse(&key, &net, &target, mode, count, pose_as.as_deref()).await,
+        Cmd::Abuse { key, net, target, mode, count, pose_as, signer_link } => abuse(&key, &net, &target, mode, count, pose_as.as_deref(), signer_link.as_deref()).await,
     }
 }
 
 fn make_campaign(out: &Path, character: &Path, owners: &[String], gm_key: &Path, karma: i32) -> Result<()> {
-    let gm = load_key(gm_key)?.public();
+    let gm_secret = load_key(gm_key)?;
+    let gm = gm_secret.public();
     let mut ch = Character::load(character).with_context(|| format!("loading {}", character.display()))?;
     ch.karma = karma;
     let mut c = Campaign::new("e2e campaign");
     let mut members = Vec::new();
     for (i, o) in owners.iter().enumerate() {
-        let owner: EndpointId = o.parse().with_context(|| format!("owner {o}"))?;
         let mut m = Member::embedded(MemberKind::Player, &ch);
         m.name = format!("PC {i}");
         m.player = format!("P{i}");
-        m.owner = Some(owner.to_string());
-        members.push(serde_json::json!({ "member": c.add(m).to_string(), "owner": owner.to_string() }));
+        if o != "invite" {
+            let owner: EndpointId = o.parse().with_context(|| format!("owner {o}"))?;
+            m.owner = Some(owner.to_string());
+        }
+        members.push(serde_json::json!({ "member": c.add(m).to_string(), "owner": o }));
     }
     c.save(out)?;
-    let link = InviteLink { host: gm, campaign: hosted::campaign_id(&c), invite: None, relay: None };
+    // Players added by node id join with a link without a member key; it
+    // carries the GM's campaign key for their mailbox.
+    let campaign = hosted::campaign_id(&c);
+    let link = InviteLink { host: gm, campaign, member: None, gm_key: Some(derive_campaign_key(&gm_secret, campaign, 0).public()), relay: None };
     println!("{}", serde_json::json!({ "link": link.to_string(), "gm": gm.to_string(), "members": members }));
     Ok(())
 }
@@ -260,6 +275,10 @@ struct CopyStatus {
 struct PlayerStatus {
     name: String,
     id: String,
+    /// The invite's label the GM sent, once joined.
+    label: Option<String>,
+    /// Why the GM refused us, if it did.
+    denied: Option<String>,
     mode: Option<String>,
     online: bool,
     progress: Progress,
@@ -361,9 +380,15 @@ fn status_of(s: &PlayerSession, name: &str, progress: &Progress, edits: u64, syn
             needs_resync: r.needs_resync(c),
         })
         .collect();
+    let denied = r.denied().map(|d| format!("{d:?}"));
+    drop(r);
+    let label = s.label();
+    let r = s.replica();
     PlayerStatus {
         name: name.to_owned(),
         id: r.me().map(|m| m.to_string()).unwrap_or_default(),
+        label,
+        denied,
         mode: s.last_mode().map(|m| format!("{m:?}")),
         online: s.is_online(),
         progress: progress.clone(),
@@ -392,14 +417,20 @@ fn inspect(sidecar: &Path) -> Result<()> {
         })
         .collect();
     let members: Vec<_> = a.members().iter().map(|(id, m)| serde_json::json!({ "id": id.to_string(), "name": m.name, "role": format!("{:?}", m.role) })).collect();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let invites: Vec<_> = a.invites().values().map(|i| serde_json::json!({ "id": i.id.to_string(), "label": i.label, "state": format!("{:?}", i.state(now)) })).collect();
     let behind: Vec<String> = a.members_behind().iter().map(|p| p.to_string()).collect();
     let refused = a.feed().iter().filter(|f| f.rejected.is_some()).count();
-    println!("{}", serde_json::json!({ "characters": chars, "members": members, "behind": behind, "feed": a.feed().len(), "refused": refused }));
+    println!("{}", serde_json::json!({ "characters": chars, "members": members, "invites": invites, "behind": behind, "feed": a.feed().len(), "refused": refused }));
     Ok(())
 }
 
-async fn abuse(key: &Path, net: &NetArgs, target: &str, mode: Abuse, count: u32, pose_as: Option<&str>) -> Result<()> {
+async fn abuse(key: &Path, net: &NetArgs, target: &str, mode: Abuse, count: u32, pose_as: Option<&str>, signer_link: Option<&str>) -> Result<()> {
     let secret = load_key(key)?;
+    let signer = match signer_link {
+        Some(l) => l.parse::<InviteLink>().map_err(|e| anyhow::anyhow!("{l}: {e}"))?.member.context("the link has no member key")?.key(),
+        None => secret.clone(),
+    };
     let target: EndpointId = target.parse().context("target node id")?;
     let ep = chummer_net::node::bind(secret.clone(), &net.config()?, vec![]).await?;
     tokio::time::timeout(Duration::from_secs(20), ep.online()).await.context("relay not reachable")?;
@@ -412,18 +443,19 @@ async fn abuse(key: &Path, net: &NetArgs, target: &str, mode: Abuse, count: u32,
         }
     }
     match mode {
-        Abuse::Oversized => results.push(res(mb.put(target, vec![0x55; 300 * 1024]).await)),
-        Abuse::Garbage => results.push(res(mb.put(target, b"definitely not a sealed box".to_vec()).await)),
+        Abuse::Oversized => results.push(res(mb.put(target, vec![0x55; 300 * 1024], &signer).await)),
+        Abuse::Garbage => results.push(res(mb.put(target, b"definitely not a sealed box".to_vec(), &signer).await)),
+        Abuse::Unsigned => results.push(res(mb.put_with(target, b"no signature".to_vec(), None).await)),
         Abuse::Forged => {
             // A well-formed sync message, signed by a key that is not a
             // member (or claiming to be one inside the envelope).
             let payload = forged_payload(pose_as)?;
-            results.push(res(mb.put_sealed(&secret, target, &payload).await));
+            results.push(res(mb.put_sealed(&secret, &signer, target, &payload).await));
         }
-        Abuse::MemberGarbage => results.push(res(mb.put_sealed(&secret, target, b"\x01garbage that is not a chunk").await)),
+        Abuse::MemberGarbage => results.push(res(mb.put_sealed(&secret, &signer, target, b"\x01garbage that is not a chunk").await)),
         Abuse::Flood => {
             for _ in 0..count {
-                let r = mb.put_sealed(&secret, target, &[0u8; 1024]).await;
+                let r = mb.put_sealed(&secret, &signer, target, &[0u8; 1024]).await;
                 let stop = r.is_err();
                 results.push(res(r));
                 if stop {
@@ -456,7 +488,7 @@ async fn abuse(key: &Path, net: &NetArgs, target: &str, mode: Abuse, count: u32,
                 results.push(serde_json::json!({ "frame": i, "result": format!("{r:?}") }));
             }
             // A normal request still works afterwards.
-            results.push(res(mb.put_sealed(&secret, target, b"\x01after the bad frames").await));
+            results.push(res(mb.put_sealed(&secret, &signer, target, b"\x01after the bad frames").await));
         }
     }
     println!("{}", serde_json::json!({ "mode": format!("{mode:?}"), "results": results }));

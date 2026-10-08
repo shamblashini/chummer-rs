@@ -16,9 +16,10 @@ use anyhow::{bail, Context, Result};
 use chummer_core::campaign::{Campaign, MemberId};
 use chummer_core::engine::Engine;
 use chummer_net::config::{OnlineSettings, RelayEntry, DEFAULT_RELAY_URL};
-use chummer_net::invite::{InviteLink, Role};
+use chummer_net::invite::{derive_campaign_key, InviteLink, MemberSecret, Role};
 use chummer_net::SecretKey;
 use chummer_sync::hosted::{self, HostedCampaign, GM_OWNER};
+use chummer_sync::invites::{Invite, InviteOp, InviteState};
 use chummer_sync::{Authority, Node};
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -62,20 +63,16 @@ enum Cmd {
         #[arg(long, default_value_t = 300)]
         write_back_every: u64,
     },
-    /// Print a new invite link. A running host takes it in within seconds.
+    /// Per-player invites: create, list, revoke, re-issue, remove. A
+    /// running host takes changes in within seconds; otherwise the next
+    /// host does when it starts.
     Invite {
-        campaign: PathBuf,
-        #[arg(long, value_enum, default_value_t = RoleArg::Player)]
-        role: RoleArg,
-        /// A note for yourself ("Thursday group").
-        #[arg(long, default_value = "")]
-        label: String,
-        /// The relay to put in the link, for players whose app does not
-        /// have it (default: the first configured one, unless it is the
-        /// project's relay).
-        #[arg(long)]
-        relay: Option<String>,
+        #[command(subcommand)]
+        cmd: InviteCmd,
     },
+    /// Make a new GM campaign key (members get it through normal sync).
+    /// Only needed if the old one may be known to someone it should not.
+    RotateKey { campaign: PathBuf },
     /// Show members, characters, owners and the latest activity.
     Status {
         campaign: PathBuf,
@@ -87,6 +84,49 @@ enum Cmd {
     /// Online Settings shows it, or a joined member's name), or back to
     /// the GM with `gm`. A running host takes it in within seconds.
     Assign { campaign: PathBuf, member: String, owner: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum InviteCmd {
+    /// A new invite for one player; prints the link to send them. The
+    /// first device that joins with it claims it.
+    Create {
+        campaign: PathBuf,
+        /// Who it is for ("Anna"); shown in lists and to the player.
+        #[arg(long)]
+        label: String,
+        /// A character (campaign member name or id) to give the player
+        /// when they claim the invite.
+        #[arg(long)]
+        assign: Option<String>,
+        /// How long the link works if nobody claims it: `7d`, `12h`,
+        /// `30m`, or `never`.
+        #[arg(long, default_value = "never")]
+        expires: String,
+        #[arg(long, value_enum, default_value_t = RoleArg::Player)]
+        role: RoleArg,
+        /// The relay to put in the link, for players whose app does not
+        /// have it (default: the first configured one, unless it is the
+        /// project's relay).
+        #[arg(long)]
+        relay: Option<String>,
+    },
+    /// The invites and their state.
+    List { campaign: PathBuf },
+    /// Revoke an invite (id, id prefix or label): the player is cut off.
+    Revoke { campaign: PathBuf, invite: String },
+    /// A new link for the same player (a new device); the old one stops
+    /// working. Prints the new link.
+    Reissue {
+        campaign: PathBuf,
+        invite: String,
+        #[arg(long, default_value = "never")]
+        expires: String,
+        #[arg(long)]
+        relay: Option<String>,
+    },
+    /// Delete an invite from the list (its player is cut off too).
+    Remove { campaign: PathBuf, invite: String },
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -102,7 +142,11 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
     // Only `run` makes a new key; the others need the GM's existing one.
-    let key = load_key(args.key.as_deref(), matches!(args.cmd, Cmd::Run { .. }))?;
+    let key = load_key(args.key.as_deref(), matches!(args.cmd, Cmd::Run { .. }));
+    let key = match (&args.cmd, key) {
+        (Cmd::Status { .. } | Cmd::Assign { .. } | Cmd::Invite { cmd: InviteCmd::List { .. } }, Err(_)) => SecretKey::generate(),
+        (_, k) => k?,
+    };
     match args.cmd {
         Cmd::Run { campaign, name, relays, ca_files, port, mail_every, write_back_every } => {
             let mut s = OnlineSettings::load();
@@ -117,7 +161,8 @@ async fn main() -> Result<()> {
             }
             run(&campaign, key, &name, &s, Duration::from_secs(mail_every.max(10)), Duration::from_secs(write_back_every.max(10))).await
         }
-        Cmd::Invite { campaign, role, label, relay } => invite(&campaign, &key, role, &label, relay),
+        Cmd::Invite { cmd } => invite(cmd, &key),
+        Cmd::RotateKey { campaign } => rotate_key(&campaign, &key),
         Cmd::Status { campaign, feed } => status(&campaign, feed),
         Cmd::Assign { campaign, member, owner } => assign(&campaign, &member, &owner),
     }
@@ -170,6 +215,7 @@ async fn run(path: &Path, key: SecretKey, name: &str, settings: &OnlineSettings,
     back.tick().await;
     let mut files = tokio::time::interval(Duration::from_secs(5));
     let mut events = h.host.subscribe();
+    let mut last_refused = 0;
     #[cfg(unix)]
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     loop {
@@ -181,14 +227,24 @@ async fn run(path: &Path, key: SecretKey, name: &str, settings: &OnlineSettings,
             _ = tokio::signal::ctrl_c() => break,
             _ = stop => break,
             _ = mail.tick() => match node.sync_mail(&h.host).await {
-                Ok(r) if r.fetched + r.sent > 0 => tracing::info!("mail: {} read, {} applied, {} dropped, {} sent", r.fetched, r.handled, r.dropped, r.sent),
-                Ok(_) => {}
+                Ok(r) => {
+                    let st = r.status.as_ref().map(|s| format!("; mailbox: {} keys, {} waiting, {} refused today", s.keys, s.waiting, s.refused_today)).unwrap_or_default();
+                    let refused_now = r.status.as_ref().map(|s| s.refused_today).unwrap_or(0);
+                    if r.fetched + r.sent + r.refused > 0 || refused_now != last_refused {
+                        tracing::info!("mail: {} read, {} applied, {} dropped, {} joins refused, {} sent{st}", r.fetched, r.handled, r.dropped, r.refused, r.sent);
+                    }
+                    last_refused = refused_now;
+                }
                 Err(e) => tracing::warn!("mailbox: {e}"),
             },
             _ = files.tick() => {
                 let n = h.merge_invites();
                 if n > 0 {
-                    tracing::info!("took in {n} new invite(s)");
+                    tracing::info!("took in {n} invite change(s)");
+                    // The relay learns the new set of keys now.
+                    if let Err(e) = node.register_mail_keys(&h.host).await {
+                        tracing::warn!("mailbox: {e}");
+                    }
                 }
                 // The campaign file changed (`assign`, or the GM edited it).
                 if mtime(path) != seen {
@@ -223,6 +279,13 @@ async fn run(path: &Path, key: SecretKey, name: &str, settings: &OnlineSettings,
                 }
             }
             e = events.recv() => {
+                // A claim gave a character to a player: the file says so too.
+                if h.adopt_owner_changes(&mut campaign) {
+                    match campaign.save(path) {
+                        Ok(()) => seen = mtime(path),
+                        Err(e) => tracing::warn!("{e:#}"),
+                    }
+                }
                 if let Ok(chummer_sync::HostEvent::Membership) = e {
                     let a = h.host.authority();
                     let names: Vec<String> = a.members().iter().filter(|(id, _)| **id != a.gm()).map(|(id, m)| if m.name.is_empty() { id.fmt_short().to_string() } else { m.name.clone() }).collect();
@@ -270,27 +333,205 @@ fn print_summary(a: &Authority, c: &Campaign) {
     }
 }
 
-fn invite(path: &Path, key: &SecretKey, role: RoleArg, label: &str, relay: Option<String>) -> Result<()> {
-    let campaign = load_campaign(path)?;
+/// `7d`, `12h`, `30m`, `90s` or `never` from now, as Unix seconds.
+fn parse_expiry(text: &str) -> Result<Option<u64>> {
+    let t = text.trim().to_ascii_lowercase();
+    if t.is_empty() || t == "never" {
+        return Ok(None);
+    }
+    let (n, unit) = t.split_at(t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len()));
+    let n: u64 = n.parse().with_context(|| format!("not a duration: {text} (try 7d, 12h, 30m or never)"))?;
+    let secs = match unit {
+        "d" => n * 86_400,
+        "h" | "" => n * 3_600,
+        "m" => n * 60,
+        "s" => n,
+        _ => bail!("not a duration: {text} (try 7d, 12h, 30m or never)"),
+    };
+    Ok(Some(now_secs() + secs))
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn when(secs: u64) -> String {
+    chummer_core::chargen::iso_from_unix(secs as i64).replace('T', " ")
+}
+
+/// The GM's sidecar if the campaign was hosted (checked to be this GM's).
+fn sidecar(path: &Path, key: &SecretKey) -> Result<Option<Authority>> {
     let side = hosted::authority_path(path);
-    if side.exists() {
-        let a = Authority::load(&side)?;
-        if a.gm() != key.public() {
-            bail!("{} is hosted with another node key ({}); pass it with --key", path.display(), a.gm().fmt_short());
+    if !side.exists() {
+        return Ok(None);
+    }
+    let a = Authority::load(&side)?;
+    if a.gm() != key.public() {
+        bail!("{} is hosted with another node key ({}); pass it with --key", path.display(), a.gm().fmt_short());
+    }
+    Ok(Some(a))
+}
+
+/// The invites as the next host will see them: the sidecar's, with the
+/// changes still waiting in the invites file applied.
+fn current_invites(path: &Path, key: &SecretKey) -> Result<(Option<Authority>, Vec<Invite>)> {
+    let a = sidecar(path, key)?;
+    let mut list: Vec<Invite> = a.as_ref().map(|a| a.invites().values().cloned().collect()).unwrap_or_default();
+    for op in hosted::pending_invite_ops(&hosted::invites_path(path)) {
+        match op {
+            InviteOp::Create { invite } => {
+                if !list.iter().any(|i| i.id == invite.id) {
+                    list.push(invite);
+                }
+            }
+            InviteOp::Revoke { id } => {
+                if let Some(i) = list.iter_mut().find(|i| i.id == id) {
+                    i.revoked.get_or_insert(now_secs());
+                }
+            }
+            InviteOp::Reissue { id, secret, expires } => {
+                if let Some(i) = list.iter_mut().find(|i| i.id == id) {
+                    if i.secret != secret {
+                        i.reissue(expires, now_secs());
+                        i.secret = secret;
+                    }
+                }
+            }
+            InviteOp::Remove { id } => list.retain(|i| i.id != id),
+            InviteOp::RotateKey { .. } => {}
         }
     }
-    let role = match role {
-        RoleArg::Player => Role::Player,
-        RoleArg::Gm => Role::Gm,
-    };
-    let token = hosted::append_invite(&hosted::invites_path(path), role, label)?;
-    let relay = match relay {
+    list.sort_by_key(|i| i.created);
+    Ok((a, list))
+}
+
+/// The invite `which` names: its id, a prefix of it, or its label.
+fn find_invite<'a>(list: &'a [Invite], which: &str) -> Result<&'a Invite> {
+    let w = which.trim();
+    let by_id: Vec<&Invite> = list.iter().filter(|i| w.len() >= 4 && i.id.to_string().starts_with(&w.to_ascii_lowercase())).collect();
+    let found: Vec<&Invite> = if by_id.is_empty() { list.iter().filter(|i| i.label.eq_ignore_ascii_case(w)).collect() } else { by_id };
+    match found.as_slice() {
+        [i] => Ok(i),
+        [] => bail!("no invite {which} (`invite list` shows them)"),
+        _ => bail!("several invites match {which}; use the id"),
+    }
+}
+
+fn link_relay(relay: Option<String>) -> Result<Option<chummer_net::RelayUrl>> {
+    Ok(match relay {
         Some(r) => Some(r.parse::<RelayEntry>().map_err(|e| anyhow::anyhow!("{r}: {e}"))?.url),
         None => OnlineSettings::load().relays.first().and_then(|r| r.parse::<RelayEntry>().ok()).map(|e| e.url).filter(|u| u.as_str().trim_end_matches('/') != DEFAULT_RELAY_URL.trim_end_matches('/')),
-    };
-    let link = InviteLink { host: key.public(), campaign: hosted::campaign_id(&campaign), invite: Some(token), relay };
-    println!("{link}");
+    })
+}
+
+fn link_for(campaign: &Campaign, key: &SecretKey, generation: u32, invite: &Invite, relay: Option<chummer_net::RelayUrl>) -> InviteLink {
+    let id = hosted::campaign_id(campaign);
+    InviteLink { host: key.public(), campaign: id, member: Some(invite.secret.clone()), gm_key: Some(derive_campaign_key(key, id, generation).public()), relay }
+}
+
+fn invite(cmd: InviteCmd, key: &SecretKey) -> Result<()> {
+    match cmd {
+        InviteCmd::Create { campaign: path, label, assign, expires, role, relay } => {
+            let campaign = load_campaign(&path)?;
+            let (a, _) = current_invites(&path, key)?;
+            if label.trim().is_empty() {
+                bail!("give the invite a --label (who it is for)");
+            }
+            let assign = match assign {
+                Some(m) => Some(hosted::character_id(find_member(&campaign, &path, &m)?)),
+                None => None,
+            };
+            let role = match role {
+                RoleArg::Player => Role::Player,
+                RoleArg::Gm => Role::Gm,
+            };
+            let invite = Invite::new(role, &label, assign, parse_expiry(&expires)?, now_secs());
+            hosted::append_invite_op(&hosted::invites_path(&path), &InviteOp::Create { invite: invite.clone() })?;
+            let gen = a.as_ref().map(Authority::key_generation).unwrap_or(0);
+            println!("{}", link_for(&campaign, key, gen, &invite, link_relay(relay)?));
+            eprintln!("invite {} for {}: send the link to that player only; the first device that joins with it claims it", &invite.id.to_string()[..8], invite.label);
+        }
+        InviteCmd::List { campaign: path } => {
+            let campaign = load_campaign(&path)?;
+            let (a, list) = current_invites(&path, key)?;
+            if list.is_empty() {
+                println!("No invites. Make one with `invite create --label <name>`.");
+            }
+            let now = now_secs();
+            for i in &list {
+                let state = match i.state(now) {
+                    InviteState::Unclaimed { expires: Some(e) } => format!("unclaimed, expires {}", when(e)),
+                    InviteState::Unclaimed { expires: None } => "unclaimed".to_owned(),
+                    InviteState::Expired => format!("expired {}", i.expires.map(when).unwrap_or_default()),
+                    InviteState::Claimed { node, at } => {
+                        let name = a.as_ref().and_then(|a| a.members().get(&node)).map(|m| m.name.clone()).filter(|n| !n.is_empty() && *n != i.label);
+                        format!("claimed by {}{} on {}", node.fmt_short(), name.map(|n| format!(" ({n})")).unwrap_or_default(), when(at))
+                    }
+                    InviteState::Revoked { at } => format!("revoked {}", when(at)),
+                };
+                let seen = match i.state(now) {
+                    InviteState::Claimed { node, .. } => a.as_ref().and_then(|a| a.members().get(&node)).and_then(|m| m.last_seen).map(|t| format!("; last seen {}", when(t))).unwrap_or_default(),
+                    _ => String::new(),
+                };
+                let chars: Vec<String> = match (i.state(now), &a) {
+                    (InviteState::Claimed { node, .. }, Some(a)) => a.characters().filter(|c| a.owner(c) == Some(node)).map(|c| member_name(&campaign, c)).collect(),
+                    _ => i.assign.iter().map(|c| format!("{} (on claim)", member_name(&campaign, c))).collect(),
+                };
+                let chars = if chars.is_empty() { String::new() } else { format!("; plays {}", chars.join(", ")) };
+                println!("{}  {:<16} {state}{seen}{chars}", &i.id.to_string()[..8], i.label);
+            }
+            if !hosted::pending_invite_ops(&hosted::invites_path(&path)).is_empty() {
+                println!("(some changes wait for the host to take them in)");
+            }
+        }
+        InviteCmd::Revoke { campaign: path, invite } => {
+            let (_, list) = current_invites(&path, key)?;
+            let i = find_invite(&list, &invite)?;
+            hosted::append_invite_op(&hosted::invites_path(&path), &InviteOp::Revoke { id: i.id })?;
+            println!("revoked {} ({}): their link and device no longer work", &i.id.to_string()[..8], i.label);
+        }
+        InviteCmd::Reissue { campaign: path, invite, expires, relay } => {
+            let campaign = load_campaign(&path)?;
+            let (a, list) = current_invites(&path, key)?;
+            let mut i = find_invite(&list, &invite)?.clone();
+            let secret = MemberSecret::random();
+            let expires = parse_expiry(&expires)?;
+            hosted::append_invite_op(&hosted::invites_path(&path), &InviteOp::Reissue { id: i.id, secret: secret.clone(), expires })?;
+            i.secret = secret;
+            let gen = a.as_ref().map(Authority::key_generation).unwrap_or(0);
+            println!("{}", link_for(&campaign, key, gen, &i, link_relay(relay)?));
+            eprintln!("new link for {}: the old one and the device that used it no longer work", i.label);
+        }
+        InviteCmd::Remove { campaign: path, invite } => {
+            let (_, list) = current_invites(&path, key)?;
+            let i = find_invite(&list, &invite)?;
+            hosted::append_invite_op(&hosted::invites_path(&path), &InviteOp::Remove { id: i.id })?;
+            println!("removed {} ({})", &i.id.to_string()[..8], i.label);
+        }
+    }
     Ok(())
+}
+
+fn rotate_key(path: &Path, key: &SecretKey) -> Result<()> {
+    let Some(a) = sidecar(path, key)? else { bail!("{} has not been hosted yet; it has no campaign key to rotate", path.display()) };
+    let pending = hosted::pending_invite_ops(&hosted::invites_path(path)).iter().filter_map(|op| if let InviteOp::RotateKey { generation } = op { Some(*generation) } else { None }).max();
+    let generation = pending.unwrap_or(a.key_generation()).max(a.key_generation()) + 1;
+    hosted::append_invite_op(&hosted::invites_path(path), &InviteOp::RotateKey { generation })?;
+    println!("the campaign key moves to generation {generation}; members get it with their next sync");
+    Ok(())
+}
+
+fn member_name(c: &Campaign, id: &chummer_sync::CharacterId) -> String {
+    hosted::member_id(id).and_then(|m| c.member(m)).map(|m| m.name.clone()).unwrap_or_else(|| id.to_string())
+}
+
+fn find_member(campaign: &Campaign, path: &Path, member: &str) -> Result<MemberId> {
+    let matches: Vec<MemberId> = campaign.members.iter().filter(|m| m.id.to_string() == member || m.name.eq_ignore_ascii_case(member)).map(|m| m.id).collect();
+    match matches.as_slice() {
+        [id] => Ok(*id),
+        [] => bail!("no member {member} in {}", path.display()),
+        _ => bail!("several members are called {member}; use the id (`status` lists them)"),
+    }
 }
 
 fn status(path: &Path, feed: usize) -> Result<()> {
@@ -302,7 +543,15 @@ fn status(path: &Path, feed: usize) -> Result<()> {
     }
     let a = Authority::load(&side)?;
     print_summary(&a, &campaign);
-    println!("Invites: {}", a.invites().iter().count());
+    let now = now_secs();
+    let count = |f: fn(&InviteState) -> bool| a.invites().values().filter(|i| f(&i.state(now))).count();
+    println!(
+        "Invites: {} unclaimed, {} claimed, {} revoked, {} expired (`invite list` for details)",
+        count(|s| matches!(s, InviteState::Unclaimed { .. })),
+        count(|s| matches!(s, InviteState::Claimed { .. })),
+        count(|s| matches!(s, InviteState::Revoked { .. })),
+        count(|s| matches!(s, InviteState::Expired))
+    );
     let behind = a.members_behind();
     if !behind.is_empty() {
         println!("Waiting for mail: {}", behind.iter().map(|p| p.fmt_short().to_string()).collect::<Vec<_>>().join(", "));
@@ -317,12 +566,7 @@ fn status(path: &Path, feed: usize) -> Result<()> {
 
 fn assign(path: &Path, member: &str, owner: &str) -> Result<()> {
     let mut campaign = load_campaign(path)?;
-    let matches: Vec<MemberId> = campaign.members.iter().filter(|m| m.id.to_string() == member || m.name.eq_ignore_ascii_case(member)).map(|m| m.id).collect();
-    let id = match matches.as_slice() {
-        [id] => *id,
-        [] => bail!("no member {member} in {}", path.display()),
-        _ => bail!("several members are called {member}; use the id (`status` lists them)"),
-    };
+    let id = find_member(&campaign, path, member)?;
     let owner_text = if owner.eq_ignore_ascii_case(GM_OWNER) {
         GM_OWNER.to_owned()
     } else if let Ok(node) = owner.parse::<chummer_net::EndpointId>() {

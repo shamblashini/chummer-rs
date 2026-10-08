@@ -146,6 +146,8 @@ pub enum InviteOp {
     /// A new link for the invite, with the CLI's new key.
     Reissue { id: InviteId, secret: MemberSecret, expires: Option<u64> },
     Remove { id: InviteId },
+    /// Move the GM's campaign key to `generation` (when it is behind).
+    RotateKey { generation: u32 },
 }
 
 #[cfg(test)]

@@ -439,7 +439,13 @@ impl AuthorityHost {
     pub fn apply_invite_ops(&self, ops: Vec<InviteOp>) -> usize {
         let mut n = 0;
         for op in ops {
-            let (changed, node) = self.shared.lock().apply_invite_op(op, now_secs());
+            let (changed, node) = {
+                let mut a = self.shared.lock();
+                let r = a.apply_invite_op(op, now_secs());
+                let (campaign, gen) = (a.campaign(), a.key_generation());
+                a.set_gm_keys(gm_keys(&self.shared.secret, campaign, gen));
+                r
+            };
             if changed {
                 n += 1;
                 self.after_invites(node);
