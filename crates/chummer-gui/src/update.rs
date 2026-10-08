@@ -607,7 +607,7 @@ pub struct Updater {
     dismissed: bool,
     show_notes: bool,
     /// "Update now" with unsaved changes: asking first.
-    confirm_unsaved: bool,
+    confirm_unsaved: Option<Action>,
 }
 
 impl Updater {
@@ -615,7 +615,7 @@ impl Updater {
     /// user turned it off (or `CHUMMER_NO_UPDATE_CHECK` is set).
     pub fn start(ctx: &egui::Context) -> Updater {
         let (tx, rx) = mpsc::channel();
-        let mut u = Updater { tx, rx, state: State::Idle, dismissed: false, show_notes: false, confirm_unsaved: false };
+        let mut u = Updater { tx, rx, state: State::Idle, dismissed: false, show_notes: false, confirm_unsaved: None };
         if !cfg!(test) && std::env::var_os("CHUMMER_NO_UPDATE_CHECK").is_none() && check_on_start() {
             u.check(ctx, false);
         }
@@ -724,14 +724,8 @@ impl Updater {
             match action {
                 Some(Action::Later) => self.dismissed = true,
                 Some(Action::Notes) => self.show_notes = true,
-                Some(Action::Update) if dirty => self.confirm_unsaved = true,
-                Some(Action::Update) => self.update_now(ctx),
-                Some(Action::Restart(p)) => {
-                    match restart(&p) {
-                        Ok(()) => quit = true,
-                        Err(e) => self.state = State::Failed { error: io_err("cannot start", &p, e), page: None },
-                    }
-                }
+                Some(a @ (Action::Update | Action::Restart(_))) if dirty => self.confirm_unsaved = Some(a),
+                Some(a @ (Action::Update | Action::Restart(_))) => quit = self.run(ctx, a),
                 Some(Action::Page(url)) => {
                     crate::open::open(url).ok();
                 }
@@ -739,29 +733,52 @@ impl Updater {
             }
         }
         self.notes_window(ctx, lang);
-        if self.confirm_unsaved {
+        if let Some(pending) = self.confirm_unsaved.take() {
+            let mut choice = None;
             egui::Modal::new(egui::Id::new("update_unsaved")).show(ctx, |ui| {
                 ui.heading(lang.tr("Unsaved Changes"));
-                ui.label("Some characters have unsaved changes. Updating closes chummer-rs. Save them first, or update anyway and lose the changes?");
+                ui.label(match pending {
+                    Action::Restart(_) => "Some characters have unsaved changes. Save them first, or restart anyway and lose the changes?",
+                    _ if cfg!(windows) => "Some characters have unsaved changes. Updating closes chummer-rs. Save them first, or update anyway and lose the changes?",
+                    _ => "Some characters have unsaved changes. Save them before you restart chummer-rs after the update. Update now?",
+                });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Update anyway").clicked() {
-                        self.confirm_unsaved = false;
-                        self.update_now(ctx);
+                    if ui.button(if matches!(pending, Action::Restart(_)) { "Restart anyway" } else { "Update anyway" }).clicked() {
+                        choice = Some(true);
                     }
                     if ui.button(lang.tr("Cancel")).clicked() {
-                        self.confirm_unsaved = false;
+                        choice = Some(false);
                     }
                 });
             });
+            match choice {
+                Some(true) => quit |= self.run(ctx, pending),
+                Some(false) => {}
+                None => self.confirm_unsaved = Some(pending),
+            }
         }
         quit
     }
 
-    fn update_now(&mut self, ctx: &egui::Context) {
-        if let State::Available(r) = &self.state {
-            let r = r.clone();
-            self.start_update(ctx, r);
+    /// Start the update, or restart into the installed one. True: quit now.
+    fn run(&mut self, ctx: &egui::Context, action: Action) -> bool {
+        match action {
+            Action::Update => {
+                if let State::Available(r) = &self.state {
+                    let r = r.clone();
+                    self.start_update(ctx, r);
+                }
+                false
+            }
+            Action::Restart(p) => match restart(&p) {
+                Ok(()) => true,
+                Err(e) => {
+                    self.state = State::Failed { error: io_err("cannot start", &p, e), page: None };
+                    false
+                }
+            },
+            _ => false,
         }
     }
 
