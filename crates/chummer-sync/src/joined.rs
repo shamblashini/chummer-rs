@@ -86,7 +86,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("chummer-sync-joined-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let host = chummer_net::SecretKey::from_bytes(&[5; 32]).public();
-        let link = InviteLink { host, campaign: chummer_net::invite::CampaignId([1; 16]), invite: Some(chummer_net::invite::InviteToken([2; 16])), relay: None };
+        let link = InviteLink { host, campaign: chummer_net::invite::CampaignId([1; 16]), member: Some(chummer_net::invite::MemberSecret([2; 32])), gm_key: None, relay: None };
         let mut l = JoinedList::default();
         let j = l.add(&link);
         l.campaigns[0].name = "Seattle".into();

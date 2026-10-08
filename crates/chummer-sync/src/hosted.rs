@@ -10,8 +10,11 @@
 //! logs, members, invites, what each member was sent and the mailbox
 //! state. The sidecar is made the first time the campaign is hosted and
 //! found again by name; the GM never opens it directly. `<name>.invites`
-//! ([`invites_path`]) holds invites made by `chummer-authority invite`
-//! while a host is running; the host takes them in.
+//! ([`invites_path`]) holds changes to the invites made by
+//! `chummer-authority invite ...` ([`InviteOp`]s, one JSON object per
+//! line; the file holds member keys, so it is readable by its owner only).
+//! A host takes them in when it opens the campaign and every few seconds
+//! while it runs ([`take_invite_ops`]).
 //!
 //! # Which copy wins
 //!
@@ -38,8 +41,10 @@ use chummer_core::campaign::{Campaign, Member, MemberId};
 use chummer_core::character::Character;
 use chummer_core::command;
 use chummer_core::engine::Engine;
-use chummer_net::invite::{CampaignId, Invite, InviteLink, InviteToken, Role};
+use chummer_net::invite::{CampaignId, InviteId, InviteLink, Role};
 use chummer_net::{EndpointId, SecretKey};
+
+use crate::invites::{Invite, InviteOp};
 
 use crate::authority::Authority;
 use crate::host::AuthorityHost;
@@ -127,9 +132,13 @@ pub struct Reconciled {
 /// that gives none, from the file; existing characters keep the
 /// authority's state. The campaign name follows the file, and so does an
 /// owner the file names ([`explicit_owner`]); a member without one keeps
-/// the authority's owner ([`write_back`] then writes it into the file). A
-/// member's owner who is not a member of the authority yet is added as a
-/// player (so a GM who knows a player's node id needs no invite).
+/// the authority's owner ([`write_back`] then writes it into the file).
+/// The authority's owner also stands when a claim changed it and the
+/// file has not taken that yet ([`adopt_owner_changes`]), and when the
+/// file names a node that was revoked or replaced. A member's owner who
+/// is not a member of the authority yet is added as a player (so a GM
+/// who knows a player's node id needs no invite), unless that node was
+/// revoked or replaced.
 pub fn reconcile(auth: &mut Authority, campaign: &Campaign, base: Option<&Path>, mut current: impl FnMut(MemberId) -> Option<Character>) -> Reconciled {
     let mut out = Reconciled::default();
     auth.set_name(&campaign.name);
@@ -138,10 +147,11 @@ pub fn reconcile(auth: &mut Authority, campaign: &Campaign, base: Option<&Path>,
         let explicit = explicit_owner(m);
         let owner = explicit.flatten();
         if let Some(p) = owner {
-            if auth.role(&p).is_none() {
+            if auth.role(&p).is_none() && !auth.is_retired(&p) {
                 auth.add_member(p, Role::Player, m.player.clone());
             }
         }
+        let stale = auth.has_owner_change(&id) || owner.is_some_and(|p| auth.is_retired(&p));
         if auth.character(&id).is_none() {
             let ch = match current(m.id) {
                 Some(ch) => Ok(ch),
@@ -151,7 +161,7 @@ pub fn reconcile(auth: &mut Authority, campaign: &Campaign, base: Option<&Path>,
                 Ok(_) => out.added.push(m.id),
                 Err(e) => out.failed.push((m.id, e)),
             }
-        } else if explicit.is_some() && auth.owner(&id) != owner {
+        } else if explicit.is_some() && !stale && auth.owner(&id) != owner {
             auth.set_owner(&id, owner);
             out.owners += 1;
         }
@@ -225,40 +235,98 @@ pub fn save_linked(engine: &Engine, linked: Vec<(std::path::PathBuf, Character)>
     Ok(())
 }
 
-/// Takes in the tokens of `invites_path` that `auth` does not know yet.
-/// Lines are `<token> <gm|player> <label>`; others are skipped. Returns
-/// how many were new.
-pub fn merge_invites(auth: &mut Authority, file: &Path) -> usize {
-    let Ok(text) = std::fs::read_to_string(file) else { return 0 };
-    let mut n = 0;
-    for line in text.lines() {
-        let mut parts = line.trim().splitn(3, ' ');
-        let (Some(token), Some(role)) = (parts.next(), parts.next()) else { continue };
-        let Ok(token) = token.parse::<InviteToken>() else { continue };
-        let role = match role {
-            "gm" => Role::Gm,
-            "player" => Role::Player,
-            _ => continue,
-        };
-        let label = parts.next().unwrap_or("").to_owned();
-        let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        if auth.invites_mut().insert(token, Invite { role, label, created }) {
-            n += 1;
+/// Puts the authority's owners into the campaign file for the
+/// characters whose owner a claim changed ([`Authority::take_owner_changes`]).
+/// Returns whether anything changed (the file needs saving).
+pub fn adopt_owner_changes(auth: &mut Authority, campaign: &mut Campaign) -> bool {
+    let changes = auth.take_owner_changes();
+    let mut changed = false;
+    for m in &mut campaign.members {
+        let id = character_id(m.id);
+        if !changes.contains(&id) {
+            continue;
+        }
+        let owner = Some(auth.owner(&id).map(|o| o.to_string()).unwrap_or_else(|| GM_OWNER.to_owned()));
+        if m.owner != owner {
+            m.owner = owner;
+            changed = true;
         }
     }
-    n
+    changed
 }
 
-/// Writes a new invite token to `file` (for a running host to take in).
-pub fn append_invite(file: &Path, role: Role, label: &str) -> std::io::Result<InviteToken> {
-    let token = InviteToken::random();
-    let role = match role {
-        Role::Gm => "gm",
-        Role::Player => "player",
-    };
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file)?;
-    writeln!(f, "{token} {role} {}", label.replace(['\n', '\r'], " "))?;
-    Ok(token)
+/// `<name>.invites.merging`: the ops being applied.
+fn merging_path(file: &Path) -> PathBuf {
+    let mut p = file.as_os_str().to_owned();
+    p.push(".merging");
+    PathBuf::from(p)
+}
+
+fn parse_ops(text: &str) -> Vec<InviteOp> {
+    text.lines().map(str::trim).filter(|l| !l.is_empty()).filter_map(|l| match serde_json::from_str(l) {
+        Ok(op) => Some(op),
+        Err(e) => {
+            tracing::warn!("skipping a line of the invites file: {e}");
+            None
+        }
+    }).collect()
+}
+
+/// Takes the changes `chummer-authority invite ...` wrote to `file`: the
+/// file is moved aside (so lines written meanwhile go to a new one) and
+/// read. Call [`invite_ops_done`] once they are applied and saved; until
+/// then a crash leaves them to be applied again (they are idempotent).
+pub fn take_invite_ops(file: &Path) -> Vec<InviteOp> {
+    let merging = merging_path(file);
+    if file.exists() && !merging.exists() {
+        if let Err(e) = std::fs::rename(file, &merging) {
+            tracing::warn!("could not take {}: {e}", file.display());
+        }
+    } else if file.exists() {
+        // A merge was cut short: add the new lines to it.
+        if let Ok(text) = std::fs::read_to_string(file) {
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&merging) {
+                if f.write_all(text.as_bytes()).is_ok() {
+                    let _ = std::fs::remove_file(file);
+                }
+            }
+        }
+    }
+    std::fs::read_to_string(&merging).map(|t| parse_ops(&t)).unwrap_or_default()
+}
+
+/// The changes from [`take_invite_ops`] are applied and saved.
+pub fn invite_ops_done(file: &Path) {
+    let _ = std::fs::remove_file(merging_path(file));
+}
+
+/// Changes written to `file` that no host has taken yet (for listing).
+pub fn pending_invite_ops(file: &Path) -> Vec<InviteOp> {
+    let mut ops = std::fs::read_to_string(merging_path(file)).map(|t| parse_ops(&t)).unwrap_or_default();
+    ops.extend(std::fs::read_to_string(file).map(|t| parse_ops(&t)).unwrap_or_default());
+    ops
+}
+
+/// Appends a change to `file` for a running host (or the next one) to
+/// apply. The file is readable by its owner only (it holds member keys).
+pub fn append_invite_op(file: &Path, op: &InviteOp) -> std::io::Result<()> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(file)?;
+    let line = serde_json::to_string(op).map_err(std::io::Error::other)?;
+    writeln!(f, "{line}")
+}
+
+/// Applies the pending invite changes of `file` to `auth` (a host being
+/// opened). Returns how many changed something.
+pub fn merge_invites(auth: &mut Authority, file: &Path) -> usize {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    take_invite_ops(file).into_iter().filter(|op| auth.apply_invite_op(op.clone(), now).0).count()
 }
 
 /// The authority for `campaign`: loaded from its sidecar, or new.
@@ -292,11 +360,12 @@ impl HostedCampaign {
     pub fn open(campaign: &Campaign, campaign_path: &Path, engine: Arc<Engine>, secret: SecretKey, gm_name: &str, current: impl FnMut(MemberId) -> Option<Character>) -> Result<(HostedCampaign, Reconciled), HostedError> {
         let mut auth = open_authority(campaign, campaign_path, secret.public(), gm_name)?;
         let base = campaign_path.parent();
-        let rec = reconcile(&mut auth, campaign, base, current);
         merge_invites(&mut auth, &invites_path(campaign_path));
+        let rec = reconcile(&mut auth, campaign, base, current);
         let side = authority_path(campaign_path);
         let host = AuthorityHost::new(auth, engine, secret, Some(side.clone()));
         host.save().map_err(|e| HostedError::Io(side, e))?;
+        invite_ops_done(&invites_path(campaign_path));
         Ok((HostedCampaign { host, campaign_path: campaign_path.to_owned() }, rec))
     }
 
@@ -328,21 +397,66 @@ impl HostedCampaign {
         write_back(&self.host.authority(), campaign, self.campaign_path.parent(), &engine)
     }
 
-    /// Takes in invites written by `chummer-authority invite`.
+    /// Takes in the invite changes written by `chummer-authority invite`.
+    /// Returns how many changed something.
     pub fn merge_invites(&self) -> usize {
-        let n = merge_invites(&mut self.host.authority(), &invites_path(&self.campaign_path));
-        if n > 0 {
-            let _ = self.host.save();
+        let file = invites_path(&self.campaign_path);
+        let ops = take_invite_ops(&file);
+        if ops.is_empty() {
+            return 0;
+        }
+        let n = self.host.apply_invite_ops(ops);
+        if self.host.save().is_ok() {
+            invite_ops_done(&file);
         }
         n
     }
 
-    /// A new invite link. With a node, the link carries its relay when
-    /// that is not the project's default relay.
-    pub fn invite(&self, role: Role, label: &str, node: Option<&Node>) -> InviteLink {
-        let link = self.host.invite(role, label, node.and_then(Node::relay_hint));
+    /// [`adopt_owner_changes`] into `campaign`.
+    pub fn adopt_owner_changes(&self, campaign: &mut Campaign) -> bool {
+        let mut a = self.host.authority();
+        if !a.has_owner_changes() {
+            return false;
+        }
+        adopt_owner_changes(&mut a, campaign)
+    }
+
+    /// A new invite for one player; see [`AuthorityHost::create_invite`].
+    /// With a node, the link carries its relay when that is not the
+    /// project's default relay.
+    pub fn create_invite(&self, label: &str, assign: Option<CharacterId>, expires: Option<u64>, node: Option<&Node>) -> (Invite, InviteLink) {
+        let r = self.host.create_invite(Role::Player, label, assign, expires, node.and_then(Node::relay_hint));
         let _ = self.host.save();
-        link
+        r
+    }
+
+    /// The current link of invite `id`.
+    pub fn invite_link(&self, id: &InviteId, node: Option<&Node>) -> Option<InviteLink> {
+        self.host.invite_link(id, node.and_then(Node::relay_hint))
+    }
+
+    /// A new link for the member of invite `id`.
+    pub fn reissue_invite(&self, id: &InviteId, expires: Option<u64>, node: Option<&Node>) -> Result<InviteLink, String> {
+        let r = self.host.reissue_invite(id, expires, node.and_then(Node::relay_hint));
+        let _ = self.host.save();
+        r
+    }
+
+    pub fn revoke_invite(&self, id: &InviteId) -> Result<(), String> {
+        let r = self.host.revoke_invite(id);
+        let _ = self.host.save();
+        r
+    }
+
+    pub fn remove_invite(&self, id: &InviteId) {
+        self.host.remove_invite(id);
+        let _ = self.host.save();
+    }
+
+    pub fn remove_member(&self, peer: &EndpointId) -> bool {
+        let r = self.host.remove_member(peer);
+        let _ = self.host.save();
+        r
     }
 
     pub fn character(&self, m: MemberId) -> Option<Character> {

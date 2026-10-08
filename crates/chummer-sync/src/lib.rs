@@ -29,6 +29,7 @@ pub mod authority;
 pub mod feed;
 pub mod host;
 pub mod hosted;
+pub mod invites;
 pub mod joined;
 pub mod journal;
 pub mod lockwatch;

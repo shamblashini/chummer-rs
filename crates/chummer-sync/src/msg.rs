@@ -23,12 +23,14 @@
 use std::fmt;
 
 use chummer_core::command::Envelope;
-use chummer_net::invite::Role;
-use chummer_net::EndpointId;
+use chummer_net::campaign::DenyReason;
+use chummer_net::invite::{CampaignId, Role};
+use chummer_net::{EndpointId, PublicKey, SecretKey, Signature};
 use serde::{Deserialize, Serialize};
 
-/// Version of the sync messages.
-pub const SYNC_VERSION: u8 = 1;
+/// Version of the sync messages. 2: member keys (claims by mail,
+/// refusals, the GM's campaign keys in the membership).
+pub const SYNC_VERSION: u8 = 2;
 
 /// A BLAKE3 hash of a character's canonical form ([`chummer_core::command::state_hash`]).
 pub type Hash = [u8; 32];
@@ -212,6 +214,12 @@ pub struct Membership {
     pub campaign_name: String,
     pub you: EndpointId,
     pub role: Role,
+    /// The name the GM gave this member's invite ("Anna"); empty for
+    /// members the GM added by node id.
+    pub label: String,
+    /// The GM's campaign keys (current first): the player's app lets them
+    /// put mail into its relay mailbox. More than one during a rotation.
+    pub gm_keys: Vec<PublicKey>,
     pub members: Vec<MemberInfo>,
     pub characters: Vec<CharacterInfo>,
 }
@@ -246,8 +254,9 @@ impl fmt::Display for FeedEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// First message after chummer-net's welcome. `name` is shown to the
-    /// GM and other members.
-    Join { name: String, have: Vec<Have> },
+    /// GM and other members. By mail, a member who has not joined yet
+    /// sends `claim`: the proof that it holds the invite's member key.
+    Join { name: String, have: Vec<Have>, claim: Option<ClaimProof> },
     Submit(SubmitBatch),
     Resync(ResyncRequest),
 }
@@ -263,6 +272,28 @@ pub enum ServerMessage {
     /// The request could not be handled at all (not a member, not your
     /// character, unknown character).
     Error(String),
+    /// A mailed join was refused (the invite was claimed, revoked, ...).
+    Denied(DenyReason),
+}
+
+/// The proof, in a mailed [`ClientMessage::Join`], that the joining node
+/// holds an invite's member key: its signature over
+/// [`chummer_net::invite::claim_message`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimProof {
+    pub key: PublicKey,
+    pub sig: Signature,
+}
+
+impl ClaimProof {
+    pub fn new(member: &SecretKey, campaign: &CampaignId, host: &EndpointId, node: &EndpointId) -> ClaimProof {
+        ClaimProof { key: member.public(), sig: member.sign(&chummer_net::invite::claim_message(campaign, host, node)) }
+    }
+
+    /// Whether the proof holds for `node` joining `campaign` on `host`.
+    pub fn verify(&self, campaign: &CampaignId, host: &EndpointId, node: &EndpointId) -> bool {
+        self.key.verify(&chummer_net::invite::claim_message(campaign, host, node), &self.sig).is_ok()
+    }
 }
 
 /// A message sent through the relay mailbox.

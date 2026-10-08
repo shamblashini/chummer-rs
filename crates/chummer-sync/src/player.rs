@@ -14,15 +14,15 @@ use std::time::{Duration, Instant};
 
 use chummer_core::command::{Command, Rejected, Report};
 use chummer_core::engine::Engine;
-use chummer_net::campaign::{CampaignClient, Hello, PROTOCOL_VERSION};
+use chummer_net::campaign::{CampaignClient, DenyReason};
 use chummer_net::invite::{InviteLink, Role};
 use chummer_net::mailbox::MailboxClient;
 use chummer_net::node::dial_addr;
-use chummer_net::{Endpoint, EndpointId, NetError, SecretKey};
+use chummer_net::{Endpoint, EndpointId, NetError, PublicKey, SecretKey};
 use tokio::sync::mpsc;
 
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
-use crate::msg::{self, CharacterId, ClientMessage, MailMessage, OpId, ServerMessage};
+use crate::msg::{self, CharacterId, ClaimProof, ClientMessage, MailMessage, OpId, ServerMessage};
 use crate::lockwatch::{self, Guard};
 use crate::replica::{Event, Replica};
 
@@ -88,6 +88,13 @@ struct Inner {
     /// knows; and when we last mailed a join message.
     mailed_at: Mutex<std::collections::HashMap<OpId, Instant>>,
     joined_by_mail: Mutex<Instant>,
+    /// A join was mailed in this run (a first join by mail is sent once,
+    /// then again after `remail_after`).
+    mailed_join: std::sync::atomic::AtomicBool,
+    /// The GM keys last registered with our relay mailbox.
+    registered: tokio::sync::Mutex<Option<Vec<PublicKey>>>,
+    /// The label from the last welcome.
+    label: Mutex<Option<String>>,
     /// The runtime the session was made in: saves asked for by a UI
     /// thread run on its blocking threads.
     rt: Option<tokio::runtime::Handle>,
@@ -149,6 +156,9 @@ impl PlayerSession {
                 closed: std::sync::atomic::AtomicBool::new(false),
                 mailed_at: Mutex::default(),
                 joined_by_mail: Mutex::new(Instant::now()),
+                mailed_join: std::sync::atomic::AtomicBool::new(false),
+                registered: tokio::sync::Mutex::new(None),
+                label: Mutex::new(None),
                 rt: tokio::runtime::Handle::try_current().ok(),
                 save_queued: std::sync::atomic::AtomicBool::new(false),
                 saving: Mutex::new(()),
@@ -294,6 +304,63 @@ impl PlayerSession {
         *self.inner.role.lock().expect("poisoned")
     }
 
+    /// The name the GM gave our invite ("Anna"), once known.
+    pub fn label(&self) -> Option<String> {
+        let from_membership = self.try_replica().and_then(|r| r.membership().map(|m| m.label.clone())).filter(|l| !l.is_empty());
+        from_membership.or_else(|| self.inner.label.lock().expect("poisoned").clone().filter(|l| !l.is_empty()))
+    }
+
+    /// Why the GM's app refused us, if it did (until a join works).
+    pub fn denied(&self) -> Option<DenyReason> {
+        self.try_replica().and_then(|r| r.denied().cloned())
+    }
+
+    /// The key our mailbox puts are signed with: the invite's member key,
+    /// or (for members the GM added by node id) our node key.
+    fn signer(&self) -> SecretKey {
+        self.inner.cfg.link.member.as_ref().map(|m| m.key()).unwrap_or_else(|| self.inner.secret.clone())
+    }
+
+    /// The GM's campaign keys our mailbox should take mail from: the
+    /// membership's (they follow rotations), else the link's.
+    fn gm_keys(&self) -> Vec<PublicKey> {
+        let from_membership = self.replica().membership().map(|m| m.gm_keys.clone()).unwrap_or_default();
+        if !from_membership.is_empty() {
+            return from_membership;
+        }
+        self.inner.cfg.link.gm_key.into_iter().collect()
+    }
+
+    /// A mailed join's proof of the invite's member key.
+    fn claim(&self) -> Option<ClaimProof> {
+        let link = &self.inner.cfg.link;
+        link.member.as_ref().map(|m| ClaimProof::new(&m.key(), &link.campaign, &link.host, &self.inner.endpoint.id()))
+    }
+
+    /// Lets the GM's campaign keys put mail into our relay mailbox
+    /// (scope: the campaign), when that changed since the last time.
+    async fn ensure_registered(&self, mb: &MailboxClient) -> Result<(), NetError> {
+        let keys = self.gm_keys();
+        if keys.is_empty() {
+            return Ok(());
+        }
+        let mut reg = self.inner.registered.lock().await;
+        if reg.as_ref() != Some(&keys) {
+            mb.register(self.inner.cfg.link.campaign.0, keys.clone()).await?;
+            *reg = Some(keys);
+        }
+        Ok(())
+    }
+
+    /// Stops the GM's keys from putting mail into our mailbox (leaving the
+    /// campaign). Best effort.
+    pub async fn unregister(&self) -> Result<(), NetError> {
+        let mb = self.mailbox_client().await?;
+        mb.register(self.inner.cfg.link.campaign.0, Vec::new()).await?;
+        *self.inner.registered.lock().await = None;
+        Ok(())
+    }
+
     /// What happened since the last call: refused commands, updates,
     /// membership changes. Empty while [`PlayerSession::next_event`] waits.
     pub fn events(&self) -> Vec<Event> {
@@ -368,16 +435,32 @@ impl PlayerSession {
 
     // ----- live connection -----
 
-    /// Dials the GM's app and joins. On success the outbox is sent.
+    /// Dials the GM's app and joins. On success the outbox is sent. A
+    /// refusal is kept ([`PlayerSession::denied`]) and reported as an
+    /// [`Event::Denied`].
     pub async fn connect(&self) -> Result<Role, NetError> {
         let link = &self.inner.cfg.link;
-        let hello = Hello { campaign_id: link.campaign, invite_token: link.invite, client_version: PROTOCOL_VERSION };
-        let join = CampaignClient::join(&self.inner.endpoint, dial_addr(link.host, link.relay.as_ref()), hello);
-        let (client, mut pushes) = tokio::time::timeout(self.inner.cfg.connect_timeout, join).await.map_err(|_| NetError::Connect("timed out".into()))??;
+        let member = link.member.as_ref().map(|m| m.key());
+        let join = CampaignClient::join(&self.inner.endpoint, dial_addr(link.host, link.relay.as_ref()), link.campaign, member.as_ref());
+        let joined = tokio::time::timeout(self.inner.cfg.connect_timeout, join).await.map_err(|_| NetError::Connect("timed out".into()))?;
+        let (client, mut pushes) = match joined {
+            Ok(x) => x,
+            Err(NetError::Denied(reason)) => {
+                let changed = self.replica().denied() != Some(&reason);
+                if changed {
+                    self.replica().set_denied(Some(reason.clone()));
+                    self.save_logged();
+                    self.emit(vec![Event::Denied(reason.clone())]);
+                }
+                return Err(NetError::Denied(reason));
+            }
+            Err(e) => return Err(e),
+        };
         let client = Arc::new(client);
         let role = client.welcome().role;
         *self.inner.role.lock().expect("poisoned") = Some(role);
-        let join_msg = self.replica().join_message(&self.inner.cfg.name);
+        *self.inner.label.lock().expect("poisoned") = Some(client.welcome().label.clone());
+        let join_msg = self.replica().join_message(&self.inner.cfg.name, None);
         let reply = match request(&client, &join_msg).await {
             Ok(r) => r,
             Err(e) => {
@@ -488,32 +571,40 @@ impl PlayerSession {
 
     async fn forget_mailbox(&self) {
         *self.inner.mailbox.lock().await = None;
+        // A new connection registers again (the relay may have lost it).
+        *self.inner.registered.lock().await = None;
     }
 
     /// Mails the commands not mailed yet (and resync requests) to the GM.
     /// Returns the number of blobs stored.
     pub async fn send_mail(&self) -> Result<usize, NetError> {
         let mb = self.mailbox_client().await?;
+        self.ensure_registered(&mb).await?;
         let host = self.inner.cfg.link.host;
+        let signer = self.signer();
         let mut sent = 0;
         let stale = self.stale_mail();
         if !stale.is_empty() {
             tracing::info!("{} command(s) mailed long ago are still not answered; mailing them again", stale.len());
             self.replica().mark_unmailed(&stale);
         }
-        let rejoin = !stale.is_empty() || self.inner.joined_by_mail.lock().expect("poisoned").elapsed() >= self.inner.cfg.remail_after;
+        // Never joined (the GM has been offline since we got the link): a
+        // mailed join with the claim goes first, or the GM drops our mail.
+        let first = self.replica().membership().is_none() && !self.inner.mailed_join.load(std::sync::atomic::Ordering::Acquire);
+        let rejoin = first || !stale.is_empty() || self.inner.joined_by_mail.lock().expect("poisoned").elapsed() >= self.inner.cfg.remail_after;
         if rejoin {
-            let join = self.replica().join_message(&self.inner.cfg.name);
+            let join = self.replica().join_message(&self.inner.cfg.name, self.claim());
             let mut limit = *self.inner.blob_limit.lock().expect("poisoned");
-            sent += mail::send(&mb, &self.inner.secret, host, &MailMessage::Client(join), &mut limit).await?;
+            sent += mail::send(&mb, &self.inner.secret, &signer, host, &MailMessage::Client(join), &mut limit).await?;
             *self.inner.joined_by_mail.lock().expect("poisoned") = Instant::now();
+            self.inner.mailed_join.store(true, std::sync::atomic::Ordering::Release);
         }
         let batches = self.replica().unmailed();
         for batch in batches {
             let mut limit = *self.inner.blob_limit.lock().expect("poisoned");
             for part in mail::split_batch(batch.clone(), limit) {
                 let msg = MailMessage::Client(ClientMessage::Submit(part.clone()));
-                let r = mail::send(&mb, &self.inner.secret, host, &msg, &mut limit).await;
+                let r = mail::send(&mb, &self.inner.secret, &signer, host, &msg, &mut limit).await;
                 *self.inner.blob_limit.lock().expect("poisoned") = limit;
                 sent += r?;
                 self.replica().mark_mailed(&part);
@@ -525,7 +616,7 @@ impl PlayerSession {
         let resync = self.replica().resync_requests();
         for r in resync {
             let mut limit = *self.inner.blob_limit.lock().expect("poisoned");
-            sent += mail::send(&mb, &self.inner.secret, host, &MailMessage::Client(ClientMessage::Resync(r)), &mut limit).await?;
+            sent += mail::send(&mb, &self.inner.secret, &signer, host, &MailMessage::Client(ClientMessage::Resync(r)), &mut limit).await?;
         }
         Ok(sent)
     }
@@ -547,6 +638,7 @@ impl PlayerSession {
     /// were read.
     pub async fn fetch_mail(&self) -> Result<usize, NetError> {
         let mb = self.mailbox_client().await?;
+        self.ensure_registered(&mb).await?;
         let host = self.inner.cfg.link.host;
         let mut n = 0;
         loop {
@@ -595,11 +687,37 @@ impl PlayerSession {
             }
         }
         match self.connect().await {
-            Ok(_) => return SyncMode::Online,
+            Ok(_) => {
+                // So the GM can mail us once we are offline again.
+                if self.inner.cfg.mailbox.is_some() {
+                    if let Ok(mb) = self.mailbox_client().await {
+                        if let Err(e) = self.ensure_registered(&mb).await {
+                            tracing::info!("could not register the GM's key with the mailbox: {e}");
+                            self.forget_mailbox().await;
+                        }
+                    }
+                }
+                return SyncMode::Online;
+            }
+            Err(NetError::Denied(reason)) if reason.is_final() => {
+                tracing::info!("the GM's app refused us: {reason}");
+                return SyncMode::Offline;
+            }
             Err(e) => tracing::info!("the GM is not reachable ({e}); using the mailbox"),
         }
         if self.inner.cfg.mailbox.is_none() {
             return SyncMode::Offline;
+        }
+        if self.replica().denied().is_some_and(DenyReason::is_final) {
+            // Refused by mail: only collect (a refusal may be followed by
+            // nothing else); do not mail more.
+            return match self.fetch_mail().await {
+                Ok(_) => SyncMode::Mailbox,
+                Err(_) => {
+                    self.forget_mailbox().await;
+                    SyncMode::Offline
+                }
+            };
         }
         let sent = self.send_mail().await;
         let got = match &sent {

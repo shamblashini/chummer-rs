@@ -77,6 +77,8 @@ pub enum Event {
     Removed(CharacterId),
     /// A message for this member that could not be handled.
     Error(String),
+    /// The GM's app refused to let us join (by mail).
+    Denied(chummer_net::campaign::DenyReason),
 }
 
 struct Copy {
@@ -111,6 +113,8 @@ pub struct Replica {
     /// of edits into one line as the authority does.
     feed_last: BTreeMap<CharacterId, Entry>,
     pub inbox: Inbox,
+    /// Why the GM's app last refused us, until a join works.
+    denied: Option<chummer_net::campaign::DenyReason>,
 }
 
 impl std::fmt::Debug for Replica {
@@ -138,6 +142,7 @@ impl Replica {
             feed: VecDeque::new(),
             feed_last: BTreeMap::new(),
             inbox: Inbox::default(),
+            denied: None,
         }
     }
 
@@ -232,9 +237,18 @@ impl Replica {
     // ----- what to send -----
 
     /// The first message on a live connection.
-    pub fn join_message(&self, name: &str) -> ClientMessage {
+    pub fn join_message(&self, name: &str, claim: Option<crate::msg::ClaimProof>) -> ClientMessage {
         let have = self.copies.iter().map(|(id, c)| Have { character: id.clone(), version: c.version, hash: c.hash }).collect();
-        ClientMessage::Join { name: name.to_owned(), have }
+        ClientMessage::Join { name: name.to_owned(), have, claim }
+    }
+
+    /// Why the GM's app refused us (cleared when a join works).
+    pub fn denied(&self) -> Option<&chummer_net::campaign::DenyReason> {
+        self.denied.as_ref()
+    }
+
+    pub fn set_denied(&mut self, d: Option<chummer_net::campaign::DenyReason>) {
+        self.denied = d;
     }
 
     /// The whole outbox of `id` as one batch (live connections).
@@ -292,6 +306,7 @@ impl Replica {
     pub fn handle(&mut self, engine: &Engine, msg: ServerMessage) -> Vec<Event> {
         match msg {
             ServerMessage::Joined { membership, pushes } => {
+                self.denied = None;
                 let mut ev = self.set_membership(membership);
                 for p in pushes {
                     ev.extend(self.apply_push(engine, p));
@@ -302,6 +317,10 @@ impl Replica {
             ServerMessage::Push(p) => self.apply_push(engine, p),
             ServerMessage::Membership(m) => self.set_membership(m),
             ServerMessage::Error(e) => vec![Event::Error(e)],
+            ServerMessage::Denied(d) => {
+                self.denied = Some(d.clone());
+                vec![Event::Denied(d)]
+            }
         }
     }
 
@@ -499,6 +518,7 @@ impl Replica {
             refused: self.refused.clone(),
             feed: self.feed.iter().cloned().collect(),
             inbox: self.inbox.clone(),
+            denied: self.denied.clone(),
         };
         persist::to_bytes(MAGIC, FORMAT, &file)
     }
@@ -525,6 +545,7 @@ impl Replica {
             feed: f.feed.into(),
             feed_last: BTreeMap::new(),
             inbox: f.inbox,
+            denied: f.denied,
         })
     }
 
@@ -554,7 +575,8 @@ fn rebuild(engine: &Engine, c: &mut Copy) {
 }
 
 const MAGIC: &[u8; 4] = b"CRSR";
-const FORMAT: u16 = 1;
+/// 2: member keys (the membership's label and GM keys, refusals).
+const FORMAT: u16 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct ReplicaFile {
@@ -565,6 +587,7 @@ struct ReplicaFile {
     refused: Vec<Refused>,
     feed: Vec<FeedEntry>,
     inbox: Inbox,
+    denied: Option<chummer_net::campaign::DenyReason>,
 }
 
 #[derive(Serialize, Deserialize)]

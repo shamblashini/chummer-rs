@@ -152,7 +152,7 @@ impl World {
         let peer = self.players[p].id;
         let m = wire(&m);
         let (reply, notify) = match m {
-            ClientMessage::Join { name, have } => match self.auth.join(peer, &name, &have) {
+            ClientMessage::Join { name, have, .. } => match self.auth.join(peer, &name, &have) {
                 Ok((membership, pushes)) => (ServerMessage::Joined { membership, pushes }, vec![]),
                 Err(e) => (ServerMessage::Error(e), vec![]),
             },
@@ -198,7 +198,7 @@ impl World {
     }
 
     fn join(&mut self, p: usize) {
-        let m = self.players[p].replica.join_message(&format!("P{p}"));
+        let m = self.players[p].replica.join_message(&format!("P{p}"), None);
         let reply = self.request(p, m);
         self.deliver_msg(p, reply);
     }
@@ -422,6 +422,7 @@ fn kind(m: &ServerMessage) -> String {
         ServerMessage::Push(p) => format!("push {} v{}->v{}{}", p.character, p.from_version, p.version, if p.is_snapshot() { " (snapshot)" } else { "" }),
         ServerMessage::Membership(_) => "membership".into(),
         ServerMessage::Error(e) => format!("error {e}"),
+        ServerMessage::Denied(d) => format!("denied {d}"),
     }
 }
 

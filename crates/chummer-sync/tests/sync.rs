@@ -69,7 +69,7 @@ fn campaign(karma: i32) -> Campaign {
 }
 
 fn joined(auth: &mut Authority, peer: EndpointId, r: &mut Replica, name: &str) -> Vec<Event> {
-    let ClientMessage::Join { name: _, have } = r.join_message(name) else { unreachable!() };
+    let ClientMessage::Join { have, .. } = r.join_message(name, None) else { unreachable!() };
     let (membership, pushes) = auth.join(peer, name, &have).unwrap();
     r.handle(engine(), ServerMessage::Joined { membership, pushes })
 }
@@ -451,7 +451,7 @@ fn the_log_window_compacts_and_far_behind_clients_get_a_snapshot() {
     let (_, pushes) = k.auth.join(k.p1, "Alice", &have).unwrap();
     assert!(matches!(&pushes[0].body, PushBody::Entries(e) if e.len() as u64 == v - ev));
     // Behind the window: a snapshot, and the replica catches up from it.
-    let ClientMessage::Join { have, .. } = r1.join_message("Alice") else { unreachable!() };
+    let ClientMessage::Join { have, .. } = r1.join_message("Alice", None) else { unreachable!() };
     assert_eq!(have[0].version, 0);
     let (m, pushes) = k.auth.join(k.p1, "Alice", &have).unwrap();
     assert!(pushes[0].is_snapshot());

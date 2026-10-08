@@ -11,7 +11,7 @@ use chummer_core::career::ManualExpense;
 use chummer_core::character::Character;
 use chummer_core::command::Command;
 use chummer_core::engine::Engine;
-use chummer_net::campaign::{CampaignClient, Hello, CAMPAIGN_ALPN, PROTOCOL_VERSION};
+use chummer_net::campaign::{CampaignClient, CAMPAIGN_ALPN};
 use chummer_net::invite::{CampaignId, InviteLink, Role};
 use chummer_net::mailbox::MailboxClient;
 use chummer_net::node::{bind, dial_addr};
@@ -109,7 +109,8 @@ async fn pbp(name: &str, tweak: impl FnOnce(&mut Config, &mut PlayerConfig)) -> 
     let mut relay_cfg = relay_config(name);
     let gm_key = SecretKey::generate();
     let p_key = SecretKey::generate();
-    let link = InviteLink { host: gm_key.public(), campaign: CampaignId([3; 16]), invite: None, relay: None };
+    let gm_pub = chummer_net::invite::derive_campaign_key(&gm_key, CampaignId([3; 16]), 0).public();
+    let link = InviteLink { host: gm_key.public(), campaign: CampaignId([3; 16]), member: None, gm_key: Some(gm_pub), relay: None };
     let mut pcfg = PlayerConfig::new("Alice", link);
     pcfg.connect_timeout = Duration::from_secs(3);
     pcfg.path = Some(tmp(&format!("{name}-p")).join("campaign.replica"));
@@ -229,13 +230,12 @@ async fn a_member_that_stops_reading_does_not_stall_the_others() -> Result<()> {
     auth.add_character(cb.clone(), Some(b_key.public()), munin(10))?;
     let host = AuthorityHost::new(auth, engine.clone(), gm_key, None);
     let router = Router::builder(gm_ep.clone()).accept(CAMPAIGN_ALPN, host.protocol()).spawn();
-    let link = InviteLink { host: gm_ep.id(), campaign: CampaignId([4; 16]), invite: None, relay: None };
+    let link = InviteLink { host: gm_ep.id(), campaign: CampaignId([4; 16]), member: None, gm_key: None, relay: None };
 
     // A joins with a raw client and never reads its pushes.
     let a_ep = endpoint(&relay, a_key, vec![]).await?;
-    let hello = Hello { campaign_id: link.campaign, invite_token: None, client_version: PROTOCOL_VERSION };
-    let (a_client, _a_pushes) = CampaignClient::join(&a_ep, dial_addr(gm_ep.id(), None), hello).await?;
-    a_client.submit(msg::encode(&ClientMessage::Join { name: "Hung".into(), have: Vec::new() })).await?;
+    let (a_client, _a_pushes) = CampaignClient::join(&a_ep, dial_addr(gm_ep.id(), None), link.campaign, None).await?;
+    a_client.submit(msg::encode(&ClientMessage::Join { name: "Hung".into(), have: Vec::new(), claim: None })).await?;
     // B is a normal player.
     let b_ep = endpoint(&relay, b_key.clone(), vec![]).await?;
     let b = PlayerSession::new(b_ep.clone(), b_key, engine.clone(), PlayerConfig::new("Fine", link))?;

@@ -29,15 +29,19 @@ use chummer_core::character::Character;
 use chummer_core::command::{self, Command, Envelope, Rejected};
 use chummer_core::dice::Rng;
 use chummer_core::engine::Engine;
-use chummer_net::invite::{CampaignId, InviteStore, InviteToken, Role};
-use chummer_net::EndpointId;
+use std::collections::BTreeSet;
+
+use chummer_net::campaign::DenyReason;
+use chummer_net::invite::{CampaignId, InviteId, Role};
+use chummer_net::{EndpointId, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::feed;
+use crate::invites::{Claim, Invite, InviteOp};
 use crate::mail::Inbox;
 use crate::msg::{
-    Accepted, Ack, CharacterId, CharacterInfo, Entry, FeedEntry, Hash, Have, MemberInfo, Membership, Op, OpId, Push, PushBody, RejectedOp, ResyncRequest, ServerMessage,
-    SubmitBatch,
+    Accepted, Ack, CharacterId, CharacterInfo, ClaimProof, Entry, FeedEntry, Hash, Have, MemberInfo, Membership, Op, OpId, Push, PushBody, RejectedOp, ResyncRequest,
+    ServerMessage, SubmitBatch,
 };
 use crate::persist::{self, PersistError};
 
@@ -58,11 +62,36 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
 /// A member of the campaign.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     pub role: Role,
     pub name: String,
+    /// The invite this member claimed; `None` for members the GM added by
+    /// node id (they prove themselves by their node key).
+    pub invite: Option<InviteId>,
+    /// Unix seconds: the last time this member connected or mailed.
+    pub last_seen: Option<u64>,
+}
+
+impl Member {
+    pub fn new(role: Role, name: impl Into<String>) -> Member {
+        Member { role, name: name.into(), invite: None, last_seen: None }
+    }
+}
+
+/// What [`Authority::admit`] let in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Admitted {
+    pub role: Role,
+    /// The invite's label (or the member's name).
+    pub label: String,
+    /// This admission claimed an invite (a new member).
+    pub claimed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,7 +300,22 @@ pub struct Authority {
     seeds: Rng,
     clock: fn() -> i64,
     members: BTreeMap<EndpointId, Member>,
-    invites: InviteStore,
+    invites: BTreeMap<InviteId, Invite>,
+    /// Nodes that were members and were revoked, removed or replaced by a
+    /// re-issued link: refused, and not made members again from the
+    /// campaign file's owners.
+    retired: BTreeSet<EndpointId>,
+    /// The generation of the GM's campaign key
+    /// ([`chummer_net::invite::derive_campaign_key`]), and the membership
+    /// revision when it last changed.
+    key_gen: u32,
+    key_rev: u64,
+    /// The public campaign keys (current first), set by the host, which
+    /// has the GM's secret.
+    gm_keys: Vec<PublicKey>,
+    /// Characters whose owner the authority changed (a claim) and the
+    /// campaign file has not taken yet ([`Authority::take_owner_changes`]).
+    owner_changes: BTreeSet<CharacterId>,
     chars: BTreeMap<CharacterId, CharState>,
     /// The version of each character each member has been sent.
     delivered: BTreeMap<(EndpointId, CharacterId), u64>,
@@ -299,7 +343,7 @@ impl Authority {
     /// A new campaign hosted by `gm` (this machine's node id).
     pub fn new(campaign: CampaignId, gm: EndpointId, gm_name: impl Into<String>) -> Authority {
         let mut members = BTreeMap::new();
-        members.insert(gm, Member { role: Role::Gm, name: gm_name.into() });
+        members.insert(gm, Member::new(Role::Gm, gm_name));
         Authority {
             campaign,
             name: String::new(),
@@ -309,7 +353,12 @@ impl Authority {
             seeds: Rng::from_time(),
             clock: now_ms,
             members,
-            invites: InviteStore::default(),
+            invites: BTreeMap::new(),
+            retired: BTreeSet::new(),
+            key_gen: 0,
+            key_rev: 0,
+            gm_keys: Vec::new(),
+            owner_changes: BTreeSet::new(),
             chars: BTreeMap::new(),
             delivered: BTreeMap::new(),
             membership_rev: 0,
@@ -349,14 +398,6 @@ impl Authority {
 
     // ----- members and invites -----
 
-    pub fn invites(&self) -> &InviteStore {
-        &self.invites
-    }
-
-    pub fn invites_mut(&mut self) -> &mut InviteStore {
-        &mut self.invites
-    }
-
     pub fn members(&self) -> &BTreeMap<EndpointId, Member> {
         &self.members
     }
@@ -365,37 +406,305 @@ impl Authority {
         self.members.get(peer).map(|m| m.role)
     }
 
-    /// Adds a member directly (the GM adding a known player).
+    /// Adds a member directly by node id (the GM adding a known player, or
+    /// a campaign file naming them as an owner). They prove themselves by
+    /// their node key. A retired node is let back in (callers that act on
+    /// their own, like [`crate::hosted::reconcile`], check
+    /// [`Authority::is_retired`] first).
     pub fn add_member(&mut self, peer: EndpointId, role: Role, name: impl Into<String>) {
-        self.members.insert(peer, Member { role, name: name.into() });
+        self.retired.remove(&peer);
+        self.members.insert(peer, Member::new(role, name));
         self.membership_rev += 1;
     }
 
+    /// Whether `peer` was a member and was revoked, removed or replaced.
+    pub fn is_retired(&self, peer: &EndpointId) -> bool {
+        self.retired.contains(peer)
+    }
+
+    /// Takes `peer` out of the campaign: refused from now on (until a new
+    /// invite of theirs is claimed). Their characters keep them as owner
+    /// (the GM gives them to someone else). Returns whether they were a
+    /// member.
     pub fn remove_member(&mut self, peer: &EndpointId) -> bool {
         if *peer == self.me {
             return false;
         }
-        let gone = self.members.remove(peer).is_some();
-        if gone {
-            self.delivered.retain(|(p, _), _| p != peer);
-            self.membership_sent.remove(peer);
-            self.membership_rev += 1;
+        let gone = self.members.remove(peer);
+        if let Some(id) = gone.as_ref().and_then(|m| m.invite) {
+            if let Some(i) = self.invites.get_mut(&id) {
+                if i.claimed.as_ref().is_some_and(|c| c.node == *peer) && i.revoked.is_none() {
+                    i.revoked = Some(now_secs());
+                }
+            }
         }
-        gone
+        self.retire(peer);
+        gone.is_some()
     }
 
-    /// Lets `peer` in: a known member, or a holder of a valid invite (who
-    /// becomes a member). Returns the role.
-    pub fn admit(&mut self, peer: EndpointId, campaign: CampaignId, invite: Option<&InviteToken>) -> Result<Role, String> {
+    fn retire(&mut self, peer: &EndpointId) {
+        if *peer == self.me {
+            return;
+        }
+        self.members.remove(peer);
+        self.retired.insert(*peer);
+        self.delivered.retain(|(p, _), _| p != peer);
+        self.membership_sent.remove(peer);
+        self.mail_out.retain(|(p, _)| p != peer);
+        self.membership_rev += 1;
+    }
+
+    pub fn invites(&self) -> &BTreeMap<InviteId, Invite> {
+        &self.invites
+    }
+
+    pub fn invite(&self, id: &InviteId) -> Option<&Invite> {
+        self.invites.get(id)
+    }
+
+    /// The invite `peer` claimed, if any.
+    pub fn invite_of(&self, peer: &EndpointId) -> Option<&Invite> {
+        self.members.get(peer).and_then(|m| m.invite).and_then(|i| self.invites.get(&i))
+    }
+
+    /// A new invite (link) for one player.
+    pub fn create_invite(&mut self, role: Role, label: &str, assign: Option<CharacterId>, expires: Option<u64>, now: u64) -> &Invite {
+        let i = Invite::new(role, label, assign, expires, now);
+        let id = i.id;
+        self.invites.insert(id, i);
+        &self.invites[&id]
+    }
+
+    /// Adds an invite made elsewhere (`chummer-authority invite create`).
+    /// Returns false when its id is known already.
+    pub fn insert_invite(&mut self, invite: Invite) -> bool {
+        if self.invites.contains_key(&invite.id) {
+            return false;
+        }
+        self.invites.insert(invite.id, invite);
+        true
+    }
+
+    /// Revokes an invite: its key no longer joins or mails, and the node
+    /// that claimed it is out (returned, to hang up on).
+    pub fn revoke_invite(&mut self, id: &InviteId, now: u64) -> Result<Option<EndpointId>, String> {
+        let i = self.invites.get_mut(id).ok_or("no such invite")?;
+        if i.revoked.is_none() {
+            i.revoked = Some(now);
+        }
+        let node = i.claimed.as_ref().map(|c| c.node);
+        if let Some(n) = node {
+            self.retire(&n);
+        }
+        Ok(node)
+    }
+
+    /// A new link for the same member (a new device): a new key; the old
+    /// link and the node that claimed it (returned, to hang up on) stop
+    /// working. Whoever claims the new link gets that node's characters.
+    pub fn reissue_invite(&mut self, id: &InviteId, expires: Option<u64>, now: u64) -> Result<Option<EndpointId>, String> {
+        let i = self.invites.get_mut(id).ok_or("no such invite")?;
+        let node = i.reissue(expires, now);
+        if let Some(n) = node {
+            self.retire(&n);
+        }
+        Ok(node)
+    }
+
+    /// As [`Authority::reissue_invite`] with the key made elsewhere.
+    pub fn reissue_invite_with(&mut self, id: &InviteId, secret: chummer_net::invite::MemberSecret, expires: Option<u64>, now: u64) -> Result<Option<EndpointId>, String> {
+        let i = self.invites.get(id).ok_or("no such invite")?;
+        if i.secret == secret {
+            return Ok(None); // applied already
+        }
+        let node = self.reissue_invite(id, expires, now)?;
+        self.invites.get_mut(id).expect("checked").secret = secret;
+        Ok(node)
+    }
+
+    /// Deletes an invite from the list; the node that claimed it is out
+    /// (returned).
+    pub fn remove_invite(&mut self, id: &InviteId) -> Option<EndpointId> {
+        let i = self.invites.remove(id)?;
+        let node = i.claimed.map(|c| c.node);
+        if let Some(n) = node {
+            self.retire(&n);
+        }
+        node
+    }
+
+    /// Applies a change from the invites file. Returns the node to hang
+    /// up on, if any, and whether anything changed.
+    pub fn apply_invite_op(&mut self, op: InviteOp, now: u64) -> (bool, Option<EndpointId>) {
+        match op {
+            InviteOp::Create { invite } => (self.insert_invite(invite), None),
+            InviteOp::Revoke { id } => match self.invites.get(&id) {
+                Some(i) if i.revoked.is_none() => (true, self.revoke_invite(&id, now).ok().flatten()),
+                _ => (false, None),
+            },
+            InviteOp::Reissue { id, secret, expires } => match self.invites.get(&id) {
+                Some(i) if i.secret != secret => (true, self.reissue_invite_with(&id, secret, expires, now).ok().flatten()),
+                _ => (false, None),
+            },
+            InviteOp::Remove { id } => {
+                let had = self.invites.contains_key(&id);
+                (had, self.remove_invite(&id))
+            }
+        }
+    }
+
+    /// Lets `peer` in. `key` is the member key it proved (live: the
+    /// handshake; by mail: [`Authority::admit_by_mail`]). A member is let
+    /// in with its invite's current key (or, added by node id, without
+    /// one); a new node with an active invite's key claims it. Records
+    /// when the member was last seen.
+    pub fn admit(&mut self, peer: EndpointId, campaign: CampaignId, key: Option<PublicKey>, now: u64) -> Result<Admitted, DenyReason> {
         if campaign != self.campaign {
-            return Err("no such campaign".into());
+            return Err(DenyReason::NoSuchCampaign);
         }
         if let Some(m) = self.members.get(&peer) {
-            return Ok(m.role);
+            let (role, mut label, invite) = (m.role, m.name.clone(), m.invite);
+            if let Some(id) = invite {
+                let i = self.invites.get(&id).ok_or(DenyReason::Revoked)?;
+                if i.revoked.is_some() {
+                    return Err(DenyReason::Revoked);
+                }
+                match key {
+                    Some(k) if k == i.key() => {}
+                    Some(k) if i.superseded.contains(&k) => return Err(DenyReason::Superseded),
+                    _ => return Err(DenyReason::BadProof),
+                }
+                label = i.label.clone();
+            }
+            self.members.get_mut(&peer).expect("member").last_seen = Some(now);
+            return Ok(Admitted { role, label, claimed: false });
         }
-        let role = invite.and_then(|t| self.invites.redeem(t)).ok_or("not invited")?;
-        self.add_member(peer, role, String::new());
-        Ok(role)
+        let Some(key) = key else {
+            return Err(if self.retired.contains(&peer) { DenyReason::Revoked } else { DenyReason::NotInvited });
+        };
+        let Some(id) = self.invites.values().find(|i| i.key() == key).map(|i| i.id) else {
+            if self.invites.values().any(|i| i.superseded.contains(&key)) {
+                return Err(DenyReason::Superseded);
+            }
+            return Err(if self.retired.contains(&peer) { DenyReason::Revoked } else { DenyReason::NotInvited });
+        };
+        let i = &self.invites[&id];
+        if let Some(r) = i.refusal(&peer, now) {
+            return Err(r);
+        }
+        if i.claimed.is_some() {
+            // Claimed by this node, which was then taken out.
+            return Err(DenyReason::Revoked);
+        }
+        // Claim it.
+        let i = self.invites.get_mut(&id).expect("found");
+        i.claimed = Some(Claim { node: peer, at: now });
+        let (role, label, previous, assign) = (i.role, i.label.clone(), i.previous.take(), i.assign.take());
+        self.retired.remove(&peer);
+        self.members.insert(peer, Member { role, name: label.clone(), invite: Some(id), last_seen: Some(now) });
+        self.membership_rev += 1;
+        if let Some(old) = previous {
+            let theirs: Vec<CharacterId> = self.chars.iter().filter(|(_, c)| c.owner == Some(old)).map(|(id, _)| id.clone()).collect();
+            for c in theirs {
+                self.set_owner(&c, Some(peer));
+                self.owner_changes.insert(c);
+            }
+        }
+        if let Some(c) = assign.filter(|c| self.chars.contains_key(c)) {
+            self.set_owner(&c, Some(peer));
+            self.owner_changes.insert(c);
+        }
+        Ok(Admitted { role, label, claimed: true })
+    }
+
+    /// [`Authority::admit`] for a mailed join: `proof` (when the sender is
+    /// not a member yet) shows it holds an invite's member key.
+    pub fn admit_by_mail(&mut self, peer: EndpointId, proof: Option<&ClaimProof>, now: u64) -> Result<Admitted, DenyReason> {
+        let key = match proof {
+            Some(p) if p.verify(&self.campaign, &self.me, &peer) => Some(p.key),
+            Some(_) => return Err(DenyReason::BadProof),
+            None => {
+                // Members prove themselves by the sealed mail's signature;
+                // take their invite's key as proven.
+                self.invite_of(&peer).map(Invite::key)
+            }
+        };
+        self.admit(peer, self.campaign, key, now)
+    }
+
+    /// Notes that `peer` was heard from (mail).
+    pub fn seen(&mut self, peer: &EndpointId, now: u64) {
+        if let Some(m) = self.members.get_mut(peer) {
+            m.last_seen = Some(now);
+        }
+    }
+
+    /// The keys that may put mail into the GM's relay mailbox: every
+    /// active invite's key (claimed, or unclaimed and not expired: a
+    /// play-by-post player joins by mail) and the node keys of members
+    /// added by node id. Sorted.
+    pub fn mail_keys(&self, now: u64) -> Vec<PublicKey> {
+        let mut keys: Vec<PublicKey> = self.invites.values().filter(|i| i.active(now)).map(Invite::key).collect();
+        keys.extend(self.members.iter().filter(|(p, m)| **p != self.me && m.invite.is_none()).map(|(p, _)| *p));
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
+    /// Characters whose owner a claim changed since the last call, for
+    /// the campaign file.
+    pub fn take_owner_changes(&mut self) -> BTreeSet<CharacterId> {
+        std::mem::take(&mut self.owner_changes)
+    }
+
+    pub fn has_owner_changes(&self) -> bool {
+        !self.owner_changes.is_empty()
+    }
+
+    /// Whether a claim changed `id`'s owner and the campaign file has not
+    /// taken it yet.
+    pub fn has_owner_change(&self, id: &CharacterId) -> bool {
+        self.owner_changes.contains(id)
+    }
+
+    // ----- the GM's campaign key -----
+
+    /// The generation of the GM's campaign key.
+    pub fn key_generation(&self) -> u32 {
+        self.key_gen
+    }
+
+    /// The public campaign keys (current first) members are told; the host
+    /// sets them from the GM's secret ([`chummer_net::invite::derive_campaign_key`]).
+    pub fn set_gm_keys(&mut self, keys: Vec<PublicKey>) {
+        if self.gm_keys != keys {
+            self.gm_keys = keys;
+            self.membership_rev += 1;
+        }
+    }
+
+    pub fn gm_keys(&self) -> &[PublicKey] {
+        &self.gm_keys
+    }
+
+    /// A new campaign key generation (the host then sets the keys). Members
+    /// get it with the next membership; until a member has it, mail to it
+    /// is signed with the previous key ([`Authority::mail_key_generation`]).
+    pub fn rotate_campaign_key(&mut self) -> u32 {
+        self.key_gen += 1;
+        self.membership_rev += 1;
+        self.key_rev = self.membership_rev;
+        self.key_gen
+    }
+
+    /// Which campaign key generation to sign mail to `peer` with: the
+    /// current one once `peer` was sent a membership naming it.
+    pub fn mail_key_generation(&self, peer: &EndpointId) -> u32 {
+        if self.key_gen == 0 || self.membership_sent.get(peer).is_some_and(|v| *v >= self.key_rev) {
+            self.key_gen
+        } else {
+            self.key_gen - 1
+        }
     }
 
     fn member_infos(&self) -> Vec<MemberInfo> {
@@ -411,7 +720,8 @@ impl Authority {
             .filter(|(_, c)| self.sees(peer, role, c))
             .map(|(id, c)| CharacterInfo { id: id.clone(), name: c.name.clone(), owner: c.owner, version: c.version })
             .collect();
-        Some(Membership { campaign_name: self.name.clone(), you: *peer, role, members: self.member_infos(), characters })
+        let label = self.invite_of(peer).map(|i| i.label.clone()).unwrap_or_default();
+        Some(Membership { campaign_name: self.name.clone(), you: *peer, role, label, gm_keys: self.gm_keys.clone(), members: self.member_infos(), characters })
     }
 
     fn sees(&self, peer: &EndpointId, role: Role, c: &CharState) -> bool {
@@ -843,7 +1153,7 @@ impl Authority {
             ServerMessage::Membership(_) | ServerMessage::Joined { .. } => self.mark_membership_sent(peer),
             ServerMessage::Push(p) => self.mark_delivered(peer, &p.character, p.version),
             ServerMessage::Ack(a) => self.mark_delivered(peer, &a.character, a.update.version),
-            ServerMessage::Error(_) => {}
+            ServerMessage::Error(_) | ServerMessage::Denied(_) => {}
         }
     }
 
@@ -851,7 +1161,7 @@ impl Authority {
     /// Answers go back in the queue; pushes and memberships are made
     /// again next time anyway.
     pub fn requeue(&mut self, peer: EndpointId, msg: ServerMessage) {
-        if matches!(msg, ServerMessage::Ack(_) | ServerMessage::Error(_)) {
+        if matches!(msg, ServerMessage::Ack(_) | ServerMessage::Error(_) | ServerMessage::Denied(_)) {
             self.mail_out.push((peer, msg));
         }
     }
@@ -950,7 +1260,11 @@ impl Authority {
             origin: self.origin,
             next_seq: self.next_seq,
             members: self.members.iter().map(|(k, v)| (*k, v.clone())).collect(),
-            invites: self.invites.clone(),
+            invites: self.invites.values().cloned().collect(),
+            retired: self.retired.iter().copied().collect(),
+            key_gen: self.key_gen,
+            key_rev: self.key_rev,
+            owner_changes: self.owner_changes.iter().cloned().collect(),
             characters: self
                 .chars
                 .iter()
@@ -1016,7 +1330,12 @@ impl Authority {
             seeds: Rng::from_time(),
             clock: now_ms,
             members: f.members.into_iter().collect(),
-            invites: f.invites,
+            invites: f.invites.into_iter().map(|i| (i.id, i)).collect(),
+            retired: f.retired.into_iter().collect(),
+            key_gen: f.key_gen,
+            key_rev: f.key_rev,
+            gm_keys: Vec::new(),
+            owner_changes: f.owner_changes.into_iter().collect(),
             chars,
             delivered: f.delivered.into_iter().map(|(p, c, v)| ((p, c), v)).collect(),
             membership_rev: f.membership_rev,
@@ -1046,7 +1365,9 @@ pub(crate) fn describe_intent(env: &Envelope) -> String {
 
 const MAGIC: &[u8; 4] = b"CRSA";
 /// 2: the log window's base state is stored (for reverts).
-const FORMAT: u16 = 2;
+/// 3: per-player invites with member keys, retired nodes, the campaign
+/// key generation.
+const FORMAT: u16 = 3;
 
 /// The authority file: everything above, characters as snapshots.
 #[derive(Serialize, Deserialize)]
@@ -1057,7 +1378,11 @@ struct AuthorityFile {
     origin: [u8; 16],
     next_seq: u64,
     members: Vec<(EndpointId, Member)>,
-    invites: InviteStore,
+    invites: Vec<Invite>,
+    retired: Vec<EndpointId>,
+    key_gen: u32,
+    key_rev: u64,
+    owner_changes: Vec<CharacterId>,
     characters: Vec<StoredCharacter>,
     delivered: Vec<(EndpointId, CharacterId, u64)>,
     membership_rev: u64,

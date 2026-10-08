@@ -147,15 +147,24 @@ impl Inbox {
     }
 }
 
-/// Seals and stores `msg` for `recipient`, in as many blobs as it takes.
-/// `blob_limit` is lowered when the relay says it allows less, and the
-/// message is sent again in smaller pieces. Returns the number of blobs.
-pub async fn send(client: &MailboxClient, me: &SecretKey, recipient: EndpointId, msg: &MailMessage, blob_limit: &mut usize) -> Result<usize, NetError> {
+/// The message in `payload` when it is complete in one chunk (mail from
+/// someone who is not a member yet: nothing of theirs is kept).
+pub fn single(payload: &[u8]) -> Option<MailMessage> {
+    let chunk: Chunk = msg::decode(payload).ok()?;
+    (chunk.total <= 1).then(|| msg::decode(&chunk.data).ok()).flatten()
+}
+
+/// Seals and stores `msg` for `recipient`, in as many blobs as it takes:
+/// sealed by `me` (this node), each put signed by `signer` (a key the
+/// recipient registered with its mailbox). `blob_limit` is lowered when
+/// the relay says it allows less, and the message is sent again in
+/// smaller pieces. Returns the number of blobs.
+pub async fn send(client: &MailboxClient, me: &SecretKey, signer: &SecretKey, recipient: EndpointId, msg: &MailMessage, blob_limit: &mut usize) -> Result<usize, NetError> {
     'again: loop {
         let parts = split(msg, *blob_limit);
         let n = parts.len();
         for p in parts {
-            match client.put_sealed(me, recipient, &p).await {
+            match client.put_sealed(me, signer, recipient, &p).await {
                 Ok(_) => {}
                 Err(NetError::Mailbox(MailboxError::TooLarge { max, .. })) if (max as usize) < *blob_limit && max as usize >= MIN_BLOB_LIMIT => {
                     *blob_limit = max as usize;

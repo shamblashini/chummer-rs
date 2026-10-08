@@ -45,7 +45,7 @@ fn setup() -> (Authority, EndpointId, CharacterId, Replica) {
 }
 
 fn rejoin(auth: &mut Authority, p: EndpointId, r: &mut Replica) -> Vec<Event> {
-    let ClientMessage::Join { have, .. } = r.join_message("Alice") else { unreachable!() };
+    let ClientMessage::Join { have, .. } = r.join_message("Alice", None) else { unreachable!() };
     let (membership, pushes) = auth.join(p, "Alice", &have).unwrap();
     r.handle(engine(), ServerMessage::Joined { membership, pushes })
 }

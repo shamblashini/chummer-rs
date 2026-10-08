@@ -14,13 +14,14 @@ use std::time::Duration;
 
 use chummer_core::command::{Command, Rejected};
 use chummer_core::engine::Engine;
-use chummer_net::campaign::{CampaignHandler, CampaignHost, Hello, Welcome, PROTOCOL_VERSION};
-use chummer_net::invite::{InviteLink, Role};
-use chummer_net::mailbox::MailboxClient;
-use chummer_net::{EndpointId, NetError, RelayUrl, SecretKey};
+use chummer_net::campaign::{CampaignHandler, CampaignHost, DenyReason, Hello, Welcome, PROTOCOL_VERSION};
+use chummer_net::invite::{derive_campaign_key, InviteId, InviteLink, Role};
+use chummer_net::mailbox::{MailboxClient, MailboxStatus};
+use chummer_net::{EndpointId, NetError, PublicKey, RelayUrl, SecretKey};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::authority::{Authority, LocalApplied, SnapshotJob};
+use crate::invites::{Invite, InviteOp};
 use crate::journal::Journal;
 use crate::lockwatch::{self, Guard};
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
@@ -42,10 +43,28 @@ pub enum HostEvent {
     Membership,
 }
 
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// The public campaign keys of generation `gen` (and the one before, during
+/// a rotation), current first.
+fn gm_keys(secret: &SecretKey, campaign: chummer_net::invite::CampaignId, gen: u32) -> Vec<PublicKey> {
+    let mut keys = vec![derive_campaign_key(secret, campaign, gen).public()];
+    if gen > 0 {
+        keys.push(derive_campaign_key(secret, campaign, gen - 1).public());
+    }
+    keys
+}
+
 struct Shared {
     authority: Mutex<Authority>,
     engine: Arc<Engine>,
     secret: SecretKey,
+    /// The keys last registered with the relay mailbox (to skip the
+    /// round trip when nothing changed) and what the relay said then.
+    registered: Mutex<Option<Vec<PublicKey>>>,
+    mailbox_status: Mutex<Option<MailboxStatus>>,
     path: Option<PathBuf>,
     dirty: AtomicBool,
     blob_limit: Mutex<usize>,
@@ -87,6 +106,10 @@ impl Shared {
 
     fn touch(&self) {
         self.dirty.store(true, Ordering::Release);
+    }
+
+    fn seen(&self, peer: &EndpointId) {
+        self.lock().seen(peer, now_secs());
     }
 
     /// Makes snapshots without holding the lock (they take seconds for a
@@ -157,7 +180,7 @@ impl Shared {
     fn handle(&self, peer: EndpointId, msg: ClientMessage) -> (ServerMessage, Vec<EndpointId>, Option<CharacterId>) {
         let mut a = self.lock();
         let (reply, notify, changed) = match msg {
-            ClientMessage::Join { name, have } => match a.join(peer, &name, &have) {
+            ClientMessage::Join { name, have, .. } => match a.join(peer, &name, &have) {
                 Ok((membership, pushes)) => (ServerMessage::Joined { membership, pushes }, Vec::new(), None),
                 Err(e) => (ServerMessage::Error(e), Vec::new(), None),
             },
@@ -189,18 +212,21 @@ pub struct Handler {
 }
 
 impl CampaignHandler for Handler {
-    async fn hello(&self, peer: EndpointId, hello: &Hello) -> Result<Welcome, String> {
-        let role = {
-            let mut a = self.shared.lock();
-            let known = a.role(&peer).is_some();
-            let role = a.admit(peer, hello.campaign_id, hello.invite_token.as_ref())?;
-            if !known {
-                let _ = self.shared.events.send(HostEvent::Membership);
+    async fn hello(&self, peer: EndpointId, hello: &Hello, member: Option<PublicKey>) -> Result<Welcome, DenyReason> {
+        let admitted = self.shared.lock().admit(peer, hello.campaign_id, member, now_secs());
+        let admitted = match admitted {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::info!("refused {}: {e}", peer.fmt_short());
+                return Err(e);
             }
-            role
         };
+        if admitted.claimed {
+            tracing::info!("{} claimed the invite \"{}\"", peer.fmt_short(), admitted.label);
+            let _ = self.shared.events.send(HostEvent::Membership);
+        }
         self.shared.touch();
-        Ok(Welcome { campaign_id: hello.campaign_id, role, server_version: PROTOCOL_VERSION })
+        Ok(Welcome { campaign_id: hello.campaign_id, role: admitted.role, label: admitted.label, server_version: PROTOCOL_VERSION })
     }
 
     async fn submit(&self, peer: EndpointId, _role: Role, payload: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -238,8 +264,13 @@ pub struct MailReport {
     pub handled: usize,
     /// Mail dropped: not openable, or not from a member.
     pub dropped: usize,
+    /// Mailed joins refused (claimed, revoked or expired invites).
+    pub refused: usize,
     /// Blobs stored for offline members.
     pub sent: usize,
+    /// The GM's mailbox as the relay sees it (after registering the
+    /// members' keys): waiting mail per key, puts refused today.
+    pub status: Option<MailboxStatus>,
 }
 
 impl AuthorityHost {
@@ -265,10 +296,24 @@ impl AuthorityHost {
             // They are journaled already.
             authority.take_applied();
         }
+        authority.set_gm_keys(gm_keys(&secret, authority.campaign(), authority.key_generation()));
+        let me_id = authority.gm();
         let journal = Mutex::new(path.as_deref().map(Journal::new));
-        let shared = Arc::new(Shared { authority: Mutex::new(authority), engine, secret, path, dirty: AtomicBool::new(replayed > 0), blob_limit: Mutex::new(DEFAULT_BLOB_LIMIT), events, journal, saving: Mutex::new(()) });
+        let shared = Arc::new(Shared {
+            authority: Mutex::new(authority),
+            engine,
+            secret,
+            registered: Mutex::new(None),
+            mailbox_status: Mutex::new(None),
+            path,
+            dirty: AtomicBool::new(replayed > 0),
+            blob_limit: Mutex::new(DEFAULT_BLOB_LIMIT),
+            events,
+            journal,
+            saving: Mutex::new(()),
+        });
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<EndpointId>>();
-        let host = CampaignHost::new(Handler { shared: shared.clone(), sweep: tx.clone() });
+        let host = CampaignHost::new(Handler { shared: shared.clone(), sweep: tx.clone() }, me_id);
         let me = AuthorityHost { shared: shared.clone(), host: host.clone(), sweep: tx };
         // Pushes to connected members, in order.
         let pusher = Pusher { shared: shared.clone() };
@@ -339,15 +384,114 @@ impl AuthorityHost {
         let _ = self.sweep.send(peers);
     }
 
-    /// An invite link for a new member.
-    pub fn invite(&self, role: Role, label: &str, relay: Option<RelayUrl>) -> InviteLink {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let mut a = self.shared.lock();
-        let token = a.invites_mut().create(role, label, now);
-        let link = InviteLink { host: a.gm(), campaign: a.campaign(), invite: Some(token), relay };
-        drop(a);
-        self.shared.touch();
-        link
+    /// The link of invite `id` (its current key), with `relay` as hint.
+    pub fn invite_link(&self, id: &InviteId, relay: Option<RelayUrl>) -> Option<InviteLink> {
+        let a = self.shared.lock();
+        let i = a.invite(id)?;
+        Some(InviteLink { host: a.gm(), campaign: a.campaign(), member: Some(i.secret.clone()), gm_key: a.gm_keys().first().copied(), relay })
+    }
+
+    /// A new invite for one player ("Anna"), optionally giving them
+    /// `assign` when they claim it, and expiring unclaimed at `expires`
+    /// (Unix seconds). Returns the invite and its link.
+    pub fn create_invite(&self, role: Role, label: &str, assign: Option<crate::msg::CharacterId>, expires: Option<u64>, relay: Option<RelayUrl>) -> (Invite, InviteLink) {
+        let invite = self.shared.lock().create_invite(role, label, assign, expires, now_secs()).clone();
+        self.after_invites(None);
+        let link = self.invite_link(&invite.id, relay).expect("just made");
+        (invite, link)
+    }
+
+    /// Revokes invite `id`: the member's live connection is closed, its
+    /// key no longer joins, and (with the next registration, which a
+    /// mailbox round does first) no longer puts mail into the GM's
+    /// mailbox.
+    pub fn revoke_invite(&self, id: &InviteId) -> Result<(), String> {
+        let node = self.shared.lock().revoke_invite(id, now_secs())?;
+        self.after_invites(node);
+        Ok(())
+    }
+
+    /// A new link for the member of invite `id` (a new device); the old
+    /// link and the device that used it stop working.
+    pub fn reissue_invite(&self, id: &InviteId, expires: Option<u64>, relay: Option<RelayUrl>) -> Result<InviteLink, String> {
+        let node = self.shared.lock().reissue_invite(id, expires, now_secs())?;
+        self.after_invites(node);
+        Ok(self.invite_link(id, relay).expect("exists"))
+    }
+
+    /// Deletes invite `id` from the list (and takes its member out).
+    pub fn remove_invite(&self, id: &InviteId) {
+        let node = self.shared.lock().remove_invite(id);
+        self.after_invites(node);
+    }
+
+    /// Takes a member out of the campaign (one added by node id, or any).
+    pub fn remove_member(&self, peer: &EndpointId) -> bool {
+        let gone = self.shared.lock().remove_member(peer);
+        if gone {
+            self.after_invites(Some(*peer));
+        }
+        gone
+    }
+
+    /// Applies changes from the invites file. Returns how many changed
+    /// something.
+    pub fn apply_invite_ops(&self, ops: Vec<InviteOp>) -> usize {
+        let mut n = 0;
+        for op in ops {
+            let (changed, node) = self.shared.lock().apply_invite_op(op, now_secs());
+            if changed {
+                n += 1;
+                self.after_invites(node);
+            }
+        }
+        n
+    }
+
+    /// A new GM campaign key generation: members are told with the next
+    /// membership (live or by mail) and their apps register it.
+    pub fn rotate_campaign_key(&self) -> u32 {
+        let gen = {
+            let mut a = self.shared.lock();
+            let gen = a.rotate_campaign_key();
+            let campaign = a.campaign();
+            a.set_gm_keys(gm_keys(&self.shared.secret, campaign, gen));
+            gen
+        };
+        self.changed();
+        gen
+    }
+
+    fn after_invites(&self, hang_up: Option<EndpointId>) {
+        if let Some(p) = hang_up {
+            self.host.disconnect(&p);
+        }
+        self.changed();
+    }
+
+    /// The relay's view of the GM's mailbox at the last mailbox round.
+    pub fn mailbox_status(&self) -> Option<MailboxStatus> {
+        self.shared.mailbox_status.lock().expect("poisoned").clone()
+    }
+
+    /// Registers the keys that may mail the GM ([`Authority::mail_keys`])
+    /// with the relay mailbox, when they changed since the last time (or
+    /// `force`). Revoked and re-issued keys stop working at once.
+    pub async fn register_mail_keys(&self, mailbox: &MailboxClient, force: bool) -> Result<MailboxStatus, NetError> {
+        let (campaign, keys) = {
+            let a = self.shared.lock();
+            (a.campaign(), a.mail_keys(now_secs()))
+        };
+        if !force {
+            let same = self.shared.registered.lock().expect("poisoned").as_ref() == Some(&keys);
+            if let (true, Some(st)) = (same, self.mailbox_status()) {
+                return Ok(st);
+            }
+        }
+        let st = mailbox.register(campaign.0, keys.clone()).await?;
+        *self.shared.registered.lock().expect("poisoned") = Some(keys);
+        *self.shared.mailbox_status.lock().expect("poisoned") = Some(st.clone());
+        Ok(st)
     }
 
     /// The GM edits a character: applied at once, logged with the GM as
@@ -403,6 +547,10 @@ impl AuthorityHost {
     pub async fn sync_mail(&self, mailbox: &MailboxClient) -> Result<MailReport, NetError> {
         let mut report = MailReport::default();
         let mut changed = Vec::new();
+        // Who may mail us: always sent (it is idempotent), so a relay that
+        // lost its database learns it again.
+        self.register_mail_keys(mailbox, true).await?;
+        let mut denials: Vec<(EndpointId, DenyReason)> = Vec::new();
         loop {
             let (items, more) = mail::fetch_page(mailbox, &self.shared.secret).await?;
             let mut ids = Vec::new();
@@ -414,11 +562,35 @@ impl AuthorityHost {
                     continue;
                 };
                 let member = self.shared.lock().role(&o.sender).is_some();
-                if !member {
-                    report.dropped += 1;
-                    continue;
-                }
-                let msg = self.shared.lock().inbox.accept(o.sender, &o.payload);
+                let msg = if member {
+                    self.shared.seen(&o.sender);
+                    self.shared.lock().inbox.accept(o.sender, &o.payload)
+                } else {
+                    // Not a member (yet): only a join that proves an
+                    // invite's key, complete in one blob.
+                    match mail::single(&o.payload) {
+                        Some(MailMessage::Client(ClientMessage::Join { name, have, claim: Some(proof) })) => {
+                            let admitted = self.shared.lock().admit_by_mail(o.sender, Some(&proof), now_secs());
+                            match admitted {
+                                Ok(a) => {
+                                    tracing::info!("{} claimed the invite \"{}\" by mail", o.sender.fmt_short(), a.label);
+                                    let _ = self.shared.events.send(HostEvent::Membership);
+                                    Ok(Some(MailMessage::Client(ClientMessage::Join { name, have, claim: Some(proof) })))
+                                }
+                                Err(e) => {
+                                    tracing::info!("refused a mailed join from {}: {e}", o.sender.fmt_short());
+                                    report.refused += 1;
+                                    denials.push((o.sender, e));
+                                    continue;
+                                }
+                            }
+                        }
+                        _ => {
+                            report.dropped += 1;
+                            continue;
+                        }
+                    }
+                };
                 self.shared.touch();
                 match msg {
                     Ok(Some(MailMessage::Client(cm))) => {
@@ -461,6 +633,18 @@ impl AuthorityHost {
         if !changed.is_empty() {
             let _ = self.sweep.send(changed);
         }
+        // Refused joins are told why (they registered the GM's key from
+        // the link), once per round.
+        denials.sort_by_key(|(p, _)| *p);
+        denials.dedup_by_key(|(p, _)| *p);
+        for (peer, reason) in denials {
+            let signer = self.signer_for(&peer);
+            let mut limit = *self.shared.blob_limit.lock().expect("poisoned");
+            match mail::send(mailbox, &self.shared.secret, &signer, peer, &MailMessage::Server(ServerMessage::Denied(reason)), &mut limit).await {
+                Ok(n) => report.sent += n,
+                Err(e) => tracing::info!("could not tell {} why it was refused: {e}", peer.fmt_short()),
+            }
+        }
         let behind = self.shared.lock().members_behind();
         for peer in behind.into_iter().filter(|p| !online.contains(p)) {
             self.shared.warm_peer(&peer);
@@ -472,7 +656,8 @@ impl AuthorityHost {
                     continue;
                 }
                 let mut limit = *self.shared.blob_limit.lock().expect("poisoned");
-                let r = mail::send(mailbox, &self.shared.secret, peer, &MailMessage::Server(m.clone()), &mut limit).await;
+                let signer = self.signer_for(&peer);
+                let r = mail::send(mailbox, &self.shared.secret, &signer, peer, &MailMessage::Server(m.clone()), &mut limit).await;
                 *self.shared.blob_limit.lock().expect("poisoned") = limit;
                 match r {
                     Ok(n) => {
@@ -498,7 +683,17 @@ impl AuthorityHost {
         if let Err(e) = self.shared.save_if_dirty() {
             tracing::warn!("could not save the campaign: {e}");
         }
+        report.status = self.mailbox_status();
         Ok(report)
+    }
+
+    /// The campaign key that signs mail to `peer`.
+    fn signer_for(&self, peer: &EndpointId) -> SecretKey {
+        let (campaign, gen) = {
+            let a = self.shared.lock();
+            (a.campaign(), a.mail_key_generation(peer))
+        };
+        derive_campaign_key(&self.shared.secret, campaign, gen)
     }
 }
 

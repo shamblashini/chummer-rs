@@ -10,9 +10,10 @@ use chummer_core::career::ManualExpense;
 use chummer_core::character::Character;
 use chummer_core::command::Command;
 use chummer_core::engine::Engine;
-use chummer_net::campaign::CAMPAIGN_ALPN;
+use chummer_net::campaign::{DenyReason, CAMPAIGN_ALPN};
 use chummer_net::invite::{CampaignId, InviteLink, Role};
-use chummer_net::mailbox::MailboxClient;
+use chummer_net::mailbox::{MailboxClient, MailboxError};
+use chummer_net::NetError;
 use chummer_net::node::{bind, dial_addr};
 use chummer_net::{Endpoint, SecretKey};
 use chummer_relay::{CertMode, Config, ManualClock, RelayNode};
@@ -101,7 +102,7 @@ async fn live_campaign_through_a_local_relay() -> Result<()> {
     auth.add_character(npc.clone(), None, munin(5))?;
     let host = AuthorityHost::new(auth, engine.clone(), gm_key, Some(tmp("live-gm").join("campaign.authority")));
     let router = Router::builder(gm_ep.clone()).accept(CAMPAIGN_ALPN, host.protocol()).spawn();
-    let link = host.invite(Role::Player, "group", None);
+    let (_, link) = host.create_invite(Role::Player, "Alice", None, None, None);
     let link: InviteLink = link.to_string().parse()?;
 
     // The player joins with the invite; the GM then gives them a character.
@@ -114,6 +115,7 @@ async fn live_campaign_through_a_local_relay() -> Result<()> {
     let player = PlayerSession::new(p_ep.clone(), p_key, engine.clone(), cfg)?;
     assert_eq!(player.connect().await?, Role::Player);
     assert!(player.is_online());
+    assert_eq!(player.label().as_deref(), Some("Alice"));
     assert_eq!(player.replica().characters().count(), 0, "the GM's NPC is not shown");
     assert_eq!(host.connected(), [(p_ep.id(), Role::Player)]);
 
@@ -142,10 +144,20 @@ async fn live_campaign_through_a_local_relay() -> Result<()> {
     assert_eq!(feed[1], "GM: Gained 100 karma: Good run");
     assert!(feed[0].starts_with("Alice: "));
 
-    // Rejoining without the token (a known member) works, and the session
-    // persisted what it has.
+    // The same link on another device is refused: the invite is claimed.
+    let thief_key = SecretKey::generate();
+    let thief_ep = endpoint(&relay, thief_key.clone(), vec![]).await?;
+    let thief = PlayerSession::new(thief_ep.clone(), thief_key, engine.clone(), PlayerConfig::new("Mallory", link.clone()))?;
+    assert!(matches!(thief.connect().await, Err(NetError::Denied(DenyReason::Claimed))));
+    assert_eq!(thief.denied(), Some(DenyReason::Claimed));
+    assert!(matches!(thief.next_event().await, Some(Event::Denied(DenyReason::Claimed))));
+    assert_eq!(host.connected(), [(p_ep.id(), Role::Player)]);
+    thief_ep.close().await;
+
+    // Rejoining with the link from the same device works, and the
+    // session persisted what it has.
     player.disconnect();
-    let mut again = PlayerConfig::new("Alice", InviteLink { invite: None, ..link });
+    let mut again = PlayerConfig::new("Alice", link);
     again.path = Some(p_file);
     let second = PlayerSession::new(p_ep.clone(), SecretKey::from_bytes(&p_key_bytes), engine.clone(), again)?;
     assert_eq!(second.replica().version(&mine), Some(2), "loaded from disk");
@@ -179,12 +191,17 @@ async fn play_by_post_through_the_mailbox() -> Result<()> {
     let host = AuthorityHost::new(auth, engine.clone(), gm_key.clone(), Some(gm_file.clone()));
     let gm_mail = MailboxClient::connect(&gm_ep, dial_addr(mailbox_id, None)).await?;
 
-    // 1. The GM mails the player their character.
+    // 1. The GM's mailbox takes mail from its members (Alice, added by
+    // node id: her node key). Mail to Alice is refused until her app
+    // registered the GM's key.
     let r = host.sync_mail(&gm_mail).await?;
-    assert!(r.sent > 2, "membership plus a chunked snapshot: {r:?}");
+    assert_eq!(r.sent, 0, "{r:?}");
+    assert_eq!(r.status.as_ref().map(|s| s.keys), Some(1));
 
-    // 2. The player cannot reach the GM, so sync uses the mailbox.
-    let link = InviteLink { host: gm_ep.id(), campaign: host.authority().campaign(), invite: None, relay: None };
+    // 2. The player cannot reach the GM, so sync uses the mailbox: it
+    // registers the GM's key (from the link) and mails a join.
+    let gm_key_pub = host.authority().gm_keys()[0];
+    let link = InviteLink { host: gm_ep.id(), campaign: host.authority().campaign(), member: None, gm_key: Some(gm_key_pub), relay: None };
     let p_file = tmp("mail-p").join("campaign.replica");
     let mut cfg = PlayerConfig::new("Alice", link.clone());
     cfg.mailbox = Some(mailbox_id);
@@ -193,8 +210,25 @@ async fn play_by_post_through_the_mailbox() -> Result<()> {
     let player = PlayerSession::new(p_ep.clone(), p_key.clone(), engine.clone(), cfg.clone())?;
     assert_eq!(player.sync().await, SyncMode::Mailbox);
     assert!(!player.is_online());
+    assert_eq!(player.replica().characters().count(), 0);
+    // The GM answers the join with the membership and a chunked snapshot.
+    let r = host.sync_mail(&gm_mail).await?;
+    assert_eq!(r.handled, 1, "{r:?}");
+    assert!(r.sent > 2, "membership plus a chunked snapshot: {r:?}");
+    assert_eq!(player.sync().await, SyncMode::Mailbox);
     assert_eq!(player.replica().version(&c), Some(0));
     assert_eq!(player.replica().confirmed_hash(&c), host.authority().hash(&c));
+
+    // A stranger's mail to the GM is refused by the relay.
+    let s_key = SecretKey::generate();
+    let s_ep = endpoint(&relay, s_key.clone(), vec![]).await?;
+    let s_mail = MailboxClient::connect(&s_ep, dial_addr(mailbox_id, None)).await?;
+    assert!(matches!(s_mail.put_sealed(&s_key, &s_key, gm_ep.id(), b"\x01junk").await, Err(NetError::Mailbox(MailboxError::NotAllowed))));
+    // Someone holding an unclaimed invite's key gets mail in, but the
+    // authority drops it unless it is a join proving the key.
+    let (_, other_link) = host.create_invite(Role::Player, "Bert", None, None, None);
+    host.sync_mail(&gm_mail).await?;
+    s_mail.put_sealed(&s_key, &other_link.member.as_ref().unwrap().key(), gm_ep.id(), b"\x01junk").await?;
 
     // 3. Offline edits, kept across a restart of the player's app.
     player.edit(&c, gain(5.0, "Side job")).await?;
@@ -206,12 +240,6 @@ async fn play_by_post_through_the_mailbox() -> Result<()> {
     assert!(player.replica().outbox(&c).iter().all(|p| p.mailed));
     // Mailing again sends nothing new.
     assert_eq!(player.send_mail().await?, 0);
-
-    // A stranger's mail to the GM is dropped.
-    let s_key = SecretKey::generate();
-    let s_ep = endpoint(&relay, s_key.clone(), vec![]).await?;
-    let s_mail = MailboxClient::connect(&s_ep, dial_addr(mailbox_id, None)).await?;
-    s_mail.put_sealed(&s_key, gm_ep.id(), b"\x01junk").await?;
 
     // Meanwhile the GM edits the character too.
     host.gm_edit(&c, gain(100.0, "Bonus"))?;
@@ -293,7 +321,10 @@ async fn hosted_campaign_file_with_offline_player_edits() -> Result<()> {
     gm.serve(&h.host);
     assert!(gm.serving());
     gm.sync_mail(&h.host).await?;
-    let link: InviteLink = h.invite(Role::Player, "group", Some(&gm)).to_string().parse()?;
+    let (_, link) = h.create_invite("Alice", None, None, Some(&gm));
+    let link: InviteLink = link.to_string().parse()?;
+    // The new invite's key may mail the GM.
+    gm.sync_mail(&h.host).await?;
 
     // The player joins and is given the player character.
     let p_key = SecretKey::generate();
