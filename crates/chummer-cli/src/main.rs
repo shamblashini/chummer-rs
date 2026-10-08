@@ -1,5 +1,5 @@
-//! chummer-cli: inspect and check `.chum5` / `.chum5lz` characters from a
-//! terminal.
+//! chummer-cli: inspect, check and convert `.chumrs` / `.chum5` /
+//! `.chum5lz` characters from a terminal.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -18,7 +18,9 @@ const USAGE: &str = "\
 chummer-cli — Shadowrun 5e character tools (chummer-rs)
 
 USAGE:
-    Character files are .chum5 or compressed .chum5lz (by extension).
+    Character files are chummer-rs's .chumrs, or Chummer5a's .chum5 or
+    compressed .chum5lz. Reading tells them apart by content; writing
+    uses the format the output file's extension names.
 
     chummer-cli info <file.chum5>          Show a character sheet summary
     chummer-cli skills <file.chum5>        List skills with dice pools
@@ -34,6 +36,10 @@ USAGE:
                                            what each did; without -o nothing
                                            is written
     chummer-cli commands                   Print an example of every command as JSON
+    chummer-cli convert <in> <out>         Convert between .chumrs, .chum5 and .chum5lz
+                                           (by the output's extension); a
+                                           .chumrs's history and guide state
+                                           carry over to a .chumrs
 
     chummer-cli export <file.chum5> <XML|JSON|stylesheet> -o <out>   Export a character
     chummer-cli campaign new <out.chummercampaign> <name>   Create a campaign
@@ -125,6 +131,7 @@ fn run(args: &[String]) -> Result<()> {
         "new" => new_cmd(&Engine::load()?, rest),
         "export" => export_cmd(&Engine::load()?, rest),
         "campaign" => campaign_cmd(rest),
+        "convert" => convert_cmd(rest),
         "hash" => {
             let ch = load(one_file(rest)?)?;
             println!("{}", command::hex(&command::state_hash(&ch)));
@@ -270,10 +277,29 @@ fn campaign_cmd(rest: &[String]) -> Result<()> {
     }
 }
 
+/// `convert <in> <out>`: a character in another format. The export
+/// totals Chummer reads (essence, attribute totals) are recomputed when the
+/// game data is there.
+fn convert_cmd(rest: &[String]) -> Result<()> {
+    let [input, output] = rest else { bail!("usage: chummer-cli convert <in.chumrs|in.chum5|in.chum5lz> <out.chumrs|out.chum5|out.chum5lz>") };
+    let (input, output) = (Path::new(input), Path::new(output));
+    if !chummer_core::chum5lz::is_character_file(output) {
+        bail!("{}: the output must end in .chumrs, .chum5 or .chum5lz", output.display());
+    }
+    let (mut ch, extras) = chummer_core::chumrs::load_any(input).with_context(|| format!("loading {}", input.display()))?;
+    match Engine::load() {
+        Ok(engine) => engine.save_with(&mut ch, output, &extras),
+        Err(_) => ch.save_with(output, &extras),
+    }
+    .with_context(|| format!("writing {}", output.display()))?;
+    println!("{} -> {}", input.display(), output.display());
+    Ok(())
+}
+
 fn one_file(rest: &[String]) -> Result<&Path> {
     match rest {
         [f] => Ok(Path::new(f)),
-        _ => bail!("expected one .chum5 or .chum5lz file"),
+        _ => bail!("expected one .chumrs, .chum5 or .chum5lz file"),
     }
 }
 
@@ -403,7 +429,7 @@ fn check(engine: &Engine, targets: &[String]) -> Result<()> {
         }
     }
     if files.is_empty() {
-        bail!("no .chum5 or .chum5lz files given");
+        bail!("no .chumrs, .chum5 or .chum5lz files given");
     }
     files.sort();
     let mut problems = 0;
@@ -633,7 +659,7 @@ fn new_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
 /// `sheet`: render a character with an XSLT sheet (Chummer's
 /// CharacterSheetViewer, as a command).
 fn sheet_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
-    let Some(file) = rest.first() else { bail!("expected a .chum5 or .chum5lz file") };
+    let Some(file) = rest.first() else { bail!("expected a .chumrs, .chum5 or .chum5lz file") };
     let opt = |k: &str| rest.iter().position(|a| a == k).and_then(|i| rest.get(i + 1)).cloned();
     let flag = |k: &str| rest.iter().any(|a| a == k);
     let lang_code = opt("--lang").unwrap_or_else(|| "en-us".into());

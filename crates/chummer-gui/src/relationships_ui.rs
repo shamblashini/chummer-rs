@@ -1,7 +1,8 @@
 //! The Relationships tab: Contacts, Enemies and Pets & Cohorts sub-tabs
 //! (Chummer's `tabPeople` with `ContactControl` and `PetControl` rows).
 //!
-//! Any entry can be linked to another `.chum5` ("Attach Character"); the
+//! Any entry can be linked to another character file (`.chumrs`, `.chum5`
+//! or `.chum5lz`, "Attach Character"); the
 //! linked character's name, metatype, gender, age and mugshot are shown in
 //! place of the entry's own, and "Open Character" asks the main window to
 //! open it in a tab (see [`take_open_request`]).
@@ -217,7 +218,7 @@ impl RelationshipsPanel {
     fn start_attach(&mut self, ctx: &egui::Context, ch: &Doc, guid: &str) {
         let dir = ch.file.as_deref().and_then(Path::parent).map(Path::to_owned);
         let open = crate::bg::dialog(ctx, ATTACH, move || {
-            let mut dlg = rfd::FileDialog::new().add_filter("Chummer character", &["chum5", "chum5lz"]).add_filter("All files", &["*"]);
+            let mut dlg = rfd::FileDialog::new().add_filter("Character", &["chumrs", "chum5", "chum5lz"]).add_filter("All files", &["*"]);
             if let Some(dir) = dir {
                 dlg = dlg.set_directory(dir);
             }

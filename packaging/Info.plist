@@ -15,9 +15,46 @@
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
+      <key>CFBundleTypeName</key><string>chummer-rs character</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key><array><string>io.github.shamblashini.chummer-rs.character</string></array>
+      <key>CFBundleTypeExtensions</key><array><string>chumrs</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>chummer-rs campaign</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key><array><string>io.github.shamblashini.chummer-rs.campaign</string></array>
+      <key>CFBundleTypeExtensions</key><array><string>chummercampaign</string></array>
+    </dict>
+    <dict>
       <key>CFBundleTypeName</key><string>Chummer character</string>
       <key>CFBundleTypeRole</key><string>Editor</string>
       <key>CFBundleTypeExtensions</key><array><string>chum5</string><string>chum5lz</string></array>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>io.github.shamblashini.chummer-rs.character</string>
+      <key>UTTypeDescription</key><string>chummer-rs character</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string><string>public.content</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>chumrs</string></array>
+        <key>public.mime-type</key><array><string>application/x-chummer-rs-character</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>io.github.shamblashini.chummer-rs.campaign</string>
+      <key>UTTypeDescription</key><string>chummer-rs campaign</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string><string>public.content</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>chummercampaign</string></array>
+        <key>public.mime-type</key><array><string>application/x-chummer-rs-campaign</string></array>
+      </dict>
     </dict>
   </array>
 </dict>

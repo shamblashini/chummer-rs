@@ -13,10 +13,13 @@ Windows and macOS: no Wine, no .NET, no Internet Explorer.
 > program and its data goes to the Chummer5a authors. chummer-rs is not
 > affiliated with or endorsed by the Chummer5a project.
 
-chummer-rs reads and writes the same `.chum5` (and compressed `.chum5lz`)
-files and uses Chummer5a's own game data, custom data and character
-sheets. Characters move between the two programs: files created by chummer-rs load in Chummer5a 5.226 without
-warnings (see [docs/interop.md](docs/interop.md)).
+chummer-rs uses Chummer5a's own game data, custom data and character
+sheets. It saves characters in its own `.chumrs` file (smaller, checked
+for damage, with the change history; see
+[docs/file-format.md](docs/file-format.md)), and it opens and writes
+Chummer5a's `.chum5` (and compressed `.chum5lz`) files. Characters move
+between the two programs: files exported by chummer-rs load in
+Chummer5a 5.226 without warnings (see [docs/interop.md](docs/interop.md)).
 
 ## Download
 
@@ -48,7 +51,8 @@ This installs to `~/.local`:
 - `chummer-rs`: the desktop application.
 - `chummer-cli`: the command-line tool.
 - The game data, in `~/.local/share/chummer-rs`.
-- A desktop entry, so `.chum5` files open with chummer-rs.
+- A desktop entry, so `.chumrs`, `.chummercampaign` and `.chum5` files
+  open with chummer-rs.
 
 The GUI is called `chummer-rs` so that it never replaces a `chummer`
 launcher you may have for Chummer5a under Wine.
@@ -139,8 +143,9 @@ The steps follow the build method:
 | Point Buy | Concept & metatype → qualities (magic and resonance are qualities here) → attributes → special attributes → skills → … as above |
 | Life Modules | Concept & metatype → life modules → qualities → attributes → … as above |
 
-The current step and the steps visited are remembered per file in
-`~/.config/chummer-rs/guide.ini`, not in the .chum5.
+The current step and the steps visited are saved in the `.chumrs`; for a
+Chummer5a file they are remembered in `~/.config/chummer-rs/guide.ini`,
+not in the .chum5.
 
 | | Start | Mid-way | Review |
 |---|---|---|---|
@@ -237,7 +242,7 @@ preferred payment, hobbies/vice) with `contacts.xml`'s lists; pets have a
 name and a `critters.xml` metatype. Those fields take free text, with the
 list behind a chevron inside the field; typing filters the list. Contacts can also be added from a
 Chummer contacts XML file (Add from File). Any entry can be linked to
-another `.chum5` or `.chum5lz` (Attach Character): its name, metatype,
+another `.chumrs`, `.chum5` or `.chum5lz` (Attach Character): its name, metatype,
 gender, age and mugshot then come from that file, on screen and on
 printed sheets, and Open Character opens it in a new tab. The link is
 saved as Chummer saves it (`<file>` as picked, `<relative>` from the
@@ -254,10 +259,29 @@ Chummer saves it (`ColorTranslator.ToHtml`: a colour name such as
 themes it is shown the way Chummer's dark mode shows it. A contact's
 `<colour>` tints its row, as Chummer paints the contact control with it.
 
+**Character files.** Characters are saved as `.chumrs`: a ZIP container
+with a manifest (format version, checksums of every entry), the
+character's XML, its mugshots as image files instead of base64 (a
+character with a big mugshot is about half the size of its `.chum5`),
+the change history (the History panel lists earlier sessions' changes)
+and where guided creation was. Saving writes a temporary file and
+renames it, so a crash never leaves half a file. A damaged file or one
+from a newer chummer-rs fails to open with a message saying so. The
+format is specified in [docs/file-format.md](docs/file-format.md).
+
+`.chum5` and `.chum5lz` files open as before. The first Save of one asks:
+Save as .chumrs (the default, through Save As; the Chummer5a file is left
+untouched) or Keep saving as Chummer5a. File → Export to Chummer5a
+(.chum5) writes a `.chum5` or `.chum5lz` copy at any time without
+changing which file the character is; `chummer-cli convert` converts
+either way. `.chumrs` files show in the roster and recent lists, open by
+drag and drop and from the command line, and work as linked contacts and
+in every `chummer-cli` command.
+
 **Compressed saves.** `.chum5lz` files (Chummer's LZMA-compressed saves)
 open, save, show in the roster and recent lists, and work as linked
-contacts and in every `chummer-cli` command. Save As keeps the format of
-the open file and offers both. The file is the `.chum5` XML in the
+contacts and in every `chummer-cli` command. Save As offers `.chumrs`,
+`.chum5` and `.chum5lz`. The file is the `.chum5` XML in the
 `.lzma` format with Chummer's default "Balanced" settings (16 MiB
 dictionary, lc 3, lp 0, pb 2, end marker). Files saved with any of
 Chummer's compression levels open. Files written by Chummer
@@ -303,13 +327,13 @@ Chummer 5.225.
 - **GM screen** (File → New Campaign / Open Campaign…): a campaign opens
   as its own tab next to the character tabs.
   ![GM screen](docs/screenshots/gm-screen-graphite.png)
-  - **Roster** (left): players, NPCs, enemies, critters, spirits and drones, grouped by kind, with player, group or faction, notes and each member's damage. Add characters from files: copied into the campaign, or linked so they stay in their own `.chum5`/`.chum5lz`. Add critters with the critter builder, NPCs from a PACKS kit (a karma-build character of the chosen metatype with the kit applied, one or several), or an open character tab. Duplicate makes "Halloweener Ganger 1…4": copies with new GUIDs and numbered names.
+  - **Roster** (left): players, NPCs, enemies, critters, spirits and drones, grouped by kind, with player, group or faction, notes and each member's damage. Add characters from files: copied into the campaign, or linked so they stay in their own `.chumrs`, `.chum5` or `.chum5lz`. Add critters with the critter builder, NPCs from a PACKS kit (a karma-build character of the chosen metatype with the kit applied, one or several), or an open character tab. Duplicate makes "Halloweener Ganger 1…4": copies with new GUIDs and numbered names.
   - **Open** a member as a full character tab. The tab edits the same character, with the same undo history; closing it hands it back to the GM screen. Saving the campaign (Ctrl+S on the GM screen or on a member's tab) stores copied characters in the campaign file and saves linked ones to their own files.
   - **Encounters** (middle): initiative order from each sheet's initiative (or a score you type), Roll initiative starts the next combat round, Next pass takes 10 from everyone, Next marks the current combatant as acted. Acted, delay, Seize the Initiative and Blitz (5d6) per combatant (Seize and Blitz spend the character's Edge), −5/−10 for interrupts, and quick combatants without a sheet (name, initiative, dice, their own damage tracks). Ties go to Edge, then Reaction, then Intuition.
   - **Combatant card:** physical (with overflow), stun, matrix and vehicle condition monitors, wound modifier, armor, Edge boxes, and dice pools (defense, damage resistance, composure, judge intentions, the best skills, weapons): click a pool to roll it. Quick damage: "8P AP-2" with an optional soak roll; Physical below the modified armor becomes Stun, extra Stun carries over into Physical, and the boxes are set through commands.
   - **GM awards and overrides:** give or take karma or nuyen with a note (a career ledger entry, shown as "GM gave Ghost 100 karma: great run"), and Add Improvement for a custom improvement the GM allows.
   - **Activity** (right): the campaign's feed of every change to its characters (from the command logs, with undos), awards, damage and dice rolls, and the GM's notes.
-  - The format is chummer-rs's own: one `.chummercampaign` file, an LZMA-compressed JSON document (see [docs/online-design.md](docs/online-design.md#campaigns)). `chummer-cli campaign new|add|list` makes and reads them.
+  - The format is chummer-rs's own: one `.chummercampaign` file, the same container as a `.chumrs` (a JSON document, each copied character as its own XML entry with its mugshots as images; see [docs/file-format.md](docs/file-format.md#chummercampaign-a-campaign)). Older LZMA-compressed campaign files still open. `chummer-cli campaign new|add|list` makes and reads them.
 - **GM tools:**
   - File → New Critter… builds a critter or NPC from `critters.xml`, as Chummer does. Spirits, sprites and other Force creatures are built at a chosen Force: attributes, skills and powers follow from it. Spirits get their optional powers and Materialization (or Possession or Inhabitation). Critters open in career mode with rules ignored.
   - Special → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, attributes, skills, skill groups, knowledge skills, adept powers, martial arts, complex forms, A.I. programs, spells, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen. Attribute and skill levels use creation points first, then karma, within the creation maximums. Chummer 5.226 applies no attributes, skills or powers from a kit.
@@ -569,6 +593,9 @@ was.
 
 ### Command line
 
+Every command reads `.chumrs`, `.chum5` and `.chum5lz` characters, and
+writes the format the output file's extension names.
+
 ```bash
 chummer-cli info character.chum5          # sheet summary
 chummer-cli skills character.chum5        # skills with dice pools
@@ -584,6 +611,7 @@ chummer-cli sources import-wine | scan <dir> | detect | open SR5 143
 chummer-cli hash character.chum5          # state hash (BLAKE3 of the saved XML)
 chummer-cli commands                      # every command as JSON, for scripts
 chummer-cli apply character.chum5 log.json -o out.chum5   # run commands
+chummer-cli convert ghost.chum5 ghost.chumrs   # or .chumrs -> .chum5 / .chum5lz
 chummer-cli campaign new seattle.chummercampaign "Seattle Nights"
 chummer-cli campaign add seattle.chummercampaign ghost.chum5 --player Anna [--link]
 chummer-cli campaign add seattle.chummercampaign ganger.chum5 --kind Enemy --copies 4 --group Halloweeners
@@ -796,7 +824,7 @@ the same budgets ([docs/interop.md](docs/interop.md)).
 cargo test --workspace
 ```
 
-Beyond the oracles: fuzzed and mutated character, `.chum5lz`, campaign
+Beyond the oracles: fuzzed and mutated character, `.chum5lz`, `.chumrs`, campaign
 and settings files; random command sequences (determinism, round trips,
 undo/redo); a headless run of the GUI over every fixture, layout and
 page; randomised sync with a lossy, reordering network and crashes; and
@@ -806,6 +834,10 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
 
 ## Not done yet
 
+- The `.chumrs` and `.chummercampaign` formats may still change before
+  1.0 (no upgrade steps exist yet; the upgrade mechanism is in place).
+  A `.chumrs` does not hold an online character's campaign link: saving
+  one writes an offline copy.
 - Still on the UI thread, though short: opening a campaign file
   (~0.4 s for four big characters), a joined campaign's local copies at
   start (~0.2 s per big character), the first frame of the Play page
