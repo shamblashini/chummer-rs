@@ -340,8 +340,9 @@ impl CharacterView {
                 }
             }
             if compact && !added.is_empty() {
-                let r = widgets::button(ui, Some(icons::ARROW_COUNTER_CLOCKWISE), &lang.tr("Undo all"), Look::Ghost, 24.0);
-                if r.on_hover_text(lang.tr("Take back everything bought on this page")).clicked() {
+                let online = self.doc.is_online();
+                let r = ui.add_enabled_ui(!online, |ui| widgets::button(ui, Some(icons::ARROW_COUNTER_CLOCKWISE), &lang.tr("Undo all"), Look::Ghost, 24.0)).inner;
+                if r.on_hover_text(lang.tr("Take back everything bought on this page")).on_disabled_hover_text(lang.tr(crate::doc::ONLINE_UNDO)).clicked() {
                     undo_all = true;
                 }
                 ui.label(RichText::new(lang.tr_fmt("{0} added on this page", &[&added.len()])).size(11.5).color(ws.stun));
@@ -364,14 +365,14 @@ impl CharacterView {
         let kinds = page_kinds(sec.container);
         let empty = EmptyCard {
             title: lang.tr_fmt("No {0} yet", &[&kind_noun(lang, sec.label)]),
-            sub: if kinds.is_empty() { String::new() } else { lang.tr("Buy from the catalog; it opens next to this list.") },
-            button: lang.tr("Buy…"),
+            sub: if kinds.is_empty() { lang.tr("Build one from its components.") } else { lang.tr("Buy from the catalog; it opens next to this list.") },
+            button: if kinds.is_empty() { lang.tr("Build custom drug…") } else { lang.tr("Buy…") },
         };
         let focused = !catalog_open || !self.ws_gear.focus_catalog;
         {
             let states = self.ws_inventory_states(lang, &added);
             let t = table::Table::new(ws_inventory::table_salt(page), &cols).height(table_rect.height()).footer(footer).focused(focused);
-            let t = if kinds.is_empty() { t } else { t.empty(empty) };
+            let t = t.empty(empty);
             events = t.show(&mut tu, &rows, &states, lang, |_, _| {});
         }
         self.ws_gear.scroll_to = None;
@@ -430,7 +431,9 @@ impl CharacterView {
             widgets::count_pill(ui, &added.len().to_string(), ws.ground, ws.stun);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let label = if added.len() == 2 { lang.tr("Undo both") } else { lang.tr("Undo all") };
-                if widgets::button(ui, Some(icons::ARROW_COUNTER_CLOCKWISE), &label, Look::Ghost, 22.0).clicked() {
+                let online = self.doc.is_online();
+                let r = ui.add_enabled_ui(!online, |ui| widgets::button(ui, Some(icons::ARROW_COUNTER_CLOCKWISE), &label, Look::Ghost, 22.0)).inner;
+                if r.on_disabled_hover_text(lang.tr(crate::doc::ONLINE_UNDO)).clicked() {
                     all = true;
                 }
             });
@@ -476,7 +479,8 @@ impl CharacterView {
                 } else {
                     lang.tr("Remove it (other changes came after it, so this is not an undo)")
                 };
-                let r = widgets::icon_button(ui, icons::ARROW_COUNTER_CLOCKWISE, 22.0).on_hover_text(tip);
+                let r = ui.add_enabled_ui(!self.doc.is_online(), |ui| widgets::icon_button(ui, icons::ARROW_COUNTER_CLOCKWISE, 22.0)).inner;
+                let r = r.on_hover_text(&tip).on_disabled_hover_text(&tip);
                 if r.clicked() {
                     one = Some(a.guid.clone());
                 }

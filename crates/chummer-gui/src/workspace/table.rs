@@ -1236,7 +1236,7 @@ pub fn teal_wash(ws: &WsPalette) -> Color32 {
     Color32::from_rgb(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()))
 }
 
-/// Paint text in a cell, aligned and clipped.
+/// Paint text in a cell, aligned; too long, it ends in "…".
 fn paint_text(ui: &Ui, inner: Rect, align: Align, text: &str, mono: bool, color: Color32, bold: bool) {
     let font = if mono {
         FontId::monospace(12.0)
@@ -1245,12 +1245,18 @@ fn paint_text(ui: &Ui, inner: Rect, align: Align, text: &str, mono: bool, color:
     } else {
         FontId::proportional(12.5)
     };
-    let (pos, anchor) = match align {
-        Align::Left => (egui::pos2(inner.left(), inner.center().y), Align2::LEFT_CENTER),
-        Align::Right => (egui::pos2(inner.right(), inner.center().y), Align2::RIGHT_CENTER),
-        Align::Center => (inner.center(), Align2::CENTER_CENTER),
+    let p = ui.painter();
+    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(font, color));
+    job.wrap = egui::text::TextWrapping { max_width: (inner.width() + 2.0 * PAD - 2.0).max(8.0), max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
+    let g = p.layout_job(job);
+    let size = g.size();
+    let x = match align {
+        Align::Left => inner.left(),
+        Align::Right => inner.right() - size.x,
+        Align::Center => inner.center().x - size.x / 2.0,
     };
-    ui.painter().with_clip_rect(inner.expand2(egui::vec2(PAD, 0.0)).intersect(ui.clip_rect())).text(pos, anchor, text, font, color);
+    let x = x.max(inner.left() - PAD);
+    p.with_clip_rect(inner.expand2(egui::vec2(PAD, 0.0)).intersect(ui.clip_rect())).galley(egui::pos2(x, inner.center().y - size.y / 2.0), g, color);
 }
 
 /// A tag after the name; returns its width.

@@ -645,8 +645,13 @@ impl CharacterView {
             hu.label(RichText::new(t).size(11.0).color(ws.muted));
             hu.add_space(6.0);
         }
-        if let Some(keep) = add {
-            changed |= self.ws_catalog_add(engine, lang, status, keep);
+        if let Some(to_inventory) = add {
+            let added = self.ws_catalog_add(engine, lang, status, to_inventory);
+            if added && to_inventory {
+                // The keys go to the inventory, where the new row is.
+                ui.memory_mut(|m| m.surrender_focus(search_id));
+            }
+            changed |= added;
         }
         if close {
             self.ws_gear.catalog = None;
@@ -1056,7 +1061,12 @@ impl CharacterView {
     /// hold a kind the catalog sells (switching to that kind); else add
     /// at the top level again.
     pub(crate) fn ws_catalog_target(&mut self, page: Page, guid: &str) {
-        let kinds: Vec<&'static str> = edit::child_kinds(&self.doc, guid).iter().map(|k| k.tag).collect();
+        let mut kinds: Vec<&'static str> = edit::child_kinds(&self.doc, guid).iter().map(|k| k.tag).collect();
+        // Any gear takes plugins; only containers become the target by a
+        // click (Change picks any).
+        if edit::find(&self.doc, guid).is_some_and(|e| e.name == "gear") && !gear_container(&self.doc, &self.store, guid) {
+            kinds.retain(|k| *k != "gear");
+        }
         let Some(c) = self.ws_gear.catalog.as_mut().filter(|c| c.page == page) else { return };
         c.selected = None;
         c.location = None;
@@ -1098,6 +1108,12 @@ impl CharacterView {
             c.purchase.parent = None;
             c.parent_locked = false;
         }
+    }
+
+    /// The catalog's target container (tests).
+    #[cfg(test)]
+    pub(crate) fn ws_catalog_target_guid(&self) -> Option<String> {
+        self.ws_gear.catalog.as_ref().and_then(|c| c.target().map(str::to_owned))
     }
 
     /// The selected record's preview after the purchase: (essence after,
@@ -1822,6 +1838,16 @@ fn chip_x(ui: &mut egui::Ui, text: &str, ws: &theme::WsPalette) -> bool {
     p.galley(egui::pos2(rect.left() + 7.0, rect.center().y - galley.size().y / 2.0), galley, ws.accent);
     icons::paint(p, egui::Rect::from_min_size(egui::pos2(rect.right() - 16.0, rect.top() + 2.0), egui::vec2(12.0, 14.0)), icons::X, 10.0, ws.accent);
     resp.on_hover_text(text).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// Whether a gear item is a container: it has children, room
+/// (capacity), a list of what goes in, or is a Matrix device.
+fn gear_container(ch: &Character, store: &chummer_core::data::DataStore, guid: &str) -> bool {
+    let Some(e) = edit::find(ch, guid) else { return false };
+    e.child("children").is_some_and(|c| c.children_named("gear").next().is_some())
+        || edit::capacity(ch, guid).is_some()
+        || !edit::addon_categories(ch, store, guid).is_empty()
+        || e.get("devicerating").trim().parse::<i32>().is_ok_and(|d| d > 0)
 }
 
 /// The top-level item an item is in (itself at the top).

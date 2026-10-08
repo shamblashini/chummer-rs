@@ -41,7 +41,7 @@ pub type RowsKey = (&'static str, String, Option<(String, bool)>, bool);
 /// The inventory's columns for a section's container.
 pub fn columns(container: &str, career: bool, lang: &Language) -> Vec<Col> {
     let t = |s: &str| lang.tr(s);
-    let actions = Col::actions(if career { 98.0 } else { 74.0 });
+    let actions = Col::actions(74.0);
     let rating = Col::new("rating", t("Rating")).px(64.0).center().mono().prio(70).fold();
     let avail = Col::new("avail", t("Avail")).px(42.0).num().prio(30);
     let cost = Col::new("cost", t("Cost")).px(80.0).num().prio(90).sum();
@@ -73,16 +73,16 @@ pub fn columns(container: &str, career: bool, lang: &Language) -> Vec<Col> {
         ]),
         "weapons" => v.extend([
             Col::new("pool", t("Pool")).px(40.0).num().prio(85),
-            Col::new("dv", t("DV")).px(56.0).num().prio(75),
-            Col::new("ap", t("AP")).px(32.0).num().prio(65),
+            Col::new("dv", t("DV")).px(52.0).num().prio(75),
+            Col::new("ap", t("AP")).px(30.0).num().prio(65),
             Col::new("acc", t("Acc")).px(44.0).num().prio(60),
-            Col::new("mode", t("Mode")).px(64.0).prio(35),
-            Col::new("rc", t("RC")).px(30.0).num().prio(33),
-            Col::new("ammo", t("Ammo")).px(if career { 116.0 } else { 64.0 }).mono().prio(31).unsorted(),
+            Col::new("mode", t("Mode")).px(60.0).prio(35),
+            Col::new("rc", t("RC")).px(28.0).num().prio(33),
+            Col::new("ammo", t("Ammo")).px(if career { 110.0 } else { 60.0 }).mono().prio(31).unsorted(),
             equipped,
             wireless,
-            avail.prio(25),
-            cost.px(72.0),
+            cost.px(64.0),
+            Col::new("ranges", t("Ranges")).px(130.0).mono().prio(8).unsorted(),
         ]),
         "vehicles" => v.extend([
             Col::new("handling", t("Handling")).px(64.0).num().prio(60),
@@ -92,6 +92,7 @@ pub fn columns(container: &str, career: bool, lang: &Language) -> Vec<Col> {
             Col::new("armor", t("Armor")).px(44.0).num().prio(47),
             Col::new("pilot", t("Pilot")).px(40.0).num().prio(42),
             Col::new("sensor", t("Sensor")).px(48.0).num().prio(40),
+            Col::new("seats", t("Seats")).px(40.0).num().prio(36),
             Col::new("cap", t("Slots")).px(50.0).num().prio(38),
             avail,
             cost,
@@ -150,6 +151,10 @@ struct Ctx<'a> {
     lang: &'a Language,
     marks: std::collections::HashMap<String, (String, bool)>,
     career: bool,
+    /// What each piece of a top-level ware adds to its cost
+    /// (`cyberware::cost_shares`): children are priced at the ware's
+    /// grade and limb, so their own totals do not add up.
+    shares: std::cell::RefCell<std::collections::HashMap<String, f64>>,
 }
 
 impl CharacterView {
@@ -159,7 +164,7 @@ impl CharacterView {
         let key: RowsKey = (sec.container, lang.code.clone(), sort.clone(), self.doc.created);
         self.ws_gear.rows.get(self.doc.revision(), key, || {
             let _s = crate::trace::span("inventory rows");
-            let cx = Ctx { v: self, sec, cols, lang, marks: self.item_marks(lang), career: self.doc.created };
+            let cx = Ctx { v: self, sec, cols, lang, marks: self.item_marks(lang), career: self.doc.created, shares: Default::default() };
             let mut rows = if sec.container == "drugs" {
                 self.doc.items("drugs", "drug").iter().map(|d| cx.item(d, d.get("guid"), true, &[])).collect()
             } else {
@@ -220,6 +225,9 @@ impl Ctx<'_> {
                 row
             }
             Entry::Item { el, top } => {
+                if *top && el.name == "cyberware" {
+                    self.shares.borrow_mut().extend(chummer_core::items::cyberware::cost_shares(&self.v.doc, &self.v.store, el));
+                }
                 let kids: Vec<Row> = n.children.iter().map(|c| self.node(c)).collect();
                 self.item(el, n.key.clone(), *top, &kids).with_children(kids)
             }
@@ -238,9 +246,13 @@ impl Ctx<'_> {
         let rating = el.get_i32("rating").unwrap_or(0);
         let range = if guid.is_empty() { None } else { edit::rating_range(ch, &v.store, &guid) };
         let total = if guid.is_empty() { super::cell(el, "cost").parse::<f64>().unwrap_or(0.0) } else { edit::total_cost(ch, &v.store, &guid) };
-        // Own cost: the total less what the children's totals hold.
-        let kids_total: f64 = item_children(kids).iter().map(|k| row_total(k, self)).sum();
-        let own = (total - kids_total).max(0.0);
+        // Own cost: ware from its shares, else the total less what the
+        // children's totals hold.
+        let share = if el.name == "cyberware" { self.shares.borrow().get(&guid).copied() } else { None };
+        let own = match share {
+            Some(v) => v,
+            None => (total - item_children(kids).iter().map(|k| row_total(k, self)).sum::<f64>()).max(0.0),
+        };
         let weapon = (el.name == "weapon").then(|| v.weapon_stats(el, true));
         let vstats = (el.name == "vehicle").then(|| chummer_core::items::vehicle::stats(el));
         let mut cells = Vec::with_capacity(self.cols.len());
@@ -266,8 +278,11 @@ impl Ctx<'_> {
                         Cell::text(s).tone(if g == "Standard" { Tone::Muted } else { Tone::Accent }).tip(g)
                     }
                 }
+                // Ware inside ware counts only when it adds to its parent's
+                // essence, and the parent's value already holds it.
                 "ess" => match (el.name == "cyberware").then(|| edit::essence(ch, &v.store, &v.rules, &guid)).flatten() {
-                    Some(e) if e.abs() > 1e-9 || top => Cell::num(format::essence(e, v.rules.essence_decimals), Some(e)),
+                    Some(e) if top => Cell::num(format::essence(e, v.rules.essence_decimals), Some(e)),
+                    Some(e) if e.abs() > 1e-9 && el.get_bool("addtoparentess").unwrap_or(false) => Cell::text(format::essence(e, v.rules.essence_decimals)).tone(Tone::Muted).tip(lang.tr("Included in its parent's essence")),
                     _ => Cell::text("—").tone(Tone::Muted),
                 },
                 "cap" => match edit::capacity(ch, &guid) {
@@ -286,7 +301,7 @@ impl Ctx<'_> {
                         }
                     }
                 },
-                "wireless" => match el.child("wirelesson") {
+                "wireless" => match el.child("wirelesson").filter(|_| has_wireless(el, top)) {
                     Some(_) => {
                         let on = el.get_bool("wirelesson").unwrap_or(false);
                         let tip = if on { lang.tr("Wireless on (click to turn off)") } else { lang.tr("Wireless off (click to turn on)") };
@@ -345,7 +360,17 @@ impl Ctx<'_> {
                 "dv" => weapon.as_ref().map_or_else(Cell::default, |s| Cell::num(s.damage.clone(), num_of(&s.damage))),
                 "ap" => weapon.as_ref().map_or_else(Cell::default, |s| Cell::num(s.ap.replace('-', "−"), num_of(&s.ap))),
                 "acc" => weapon.as_ref().map_or_else(Cell::default, |s| Cell::num(s.accuracy.to_string(), Some(s.accuracy as f64))),
-                "mode" => Cell::text(if weapon.is_some() { el.get("mode") } else { String::new() }),
+                "mode" => {
+                    let m = el.get("mode");
+                    let melee = el.get("type").eq_ignore_ascii_case("Melee");
+                    Cell::text(if weapon.is_none() || m.trim() == "0" && !melee {
+                        String::new()
+                    } else if melee && (m.trim().is_empty() || m.trim() == "0") {
+                        lang.tr("Melee")
+                    } else {
+                        m
+                    })
+                }
                 "rc" => match &weapon {
                     Some(s) => Cell::num(s.rc.clone(), num_of(&s.rc)),
                     None => {
@@ -373,6 +398,14 @@ impl Ctx<'_> {
                 "body" => vstats.as_ref().map_or_else(Cell::default, |s| Cell::num(s.body.to_string(), Some(s.body as f64))),
                 "pilot" => vstats.as_ref().map_or_else(Cell::default, |s| Cell::num(s.pilot.to_string(), Some(s.pilot as f64))),
                 "sensor" => vstats.as_ref().map_or_else(Cell::default, |s| Cell::num(s.sensor.to_string(), Some(s.sensor as f64))),
+                "ranges" => match &weapon {
+                    Some(st) => {
+                        let r = &st.ranges;
+                        Cell::text([&r.short, &r.medium, &r.long, &r.extreme].into_iter().map(String::as_str).filter(|b| !b.is_empty()).collect::<Vec<_>>().join(" / ")).tone(Tone::Muted)
+                    }
+                    None => Cell::default(),
+                },
+                "seats" => vstats.as_ref().map_or_else(Cell::default, |s| Cell::num(s.seats.to_string(), Some(s.seats as f64))),
                 "lifestyle" => Cell::text(el.get("baselifestyle")),
                 "months" => {
                     let m = el.get("months");
@@ -409,15 +442,19 @@ impl Ctx<'_> {
         } else {
             lang.tr_fmt("{0} mods", &[&n_kids])
         };
-        let selectable = edit::is_item(el) || el.name == "drug";
+        let selectable = edit::is_item(el);
         let mut actions = Vec::new();
         if selectable && el.name != "drug" {
             actions.push(Action::new("edit", icons::PENCIL_SIMPLE, lang.tr("Edit")));
         }
-        if !guid.is_empty() && edit::has_location(ch, &guid) {
-            let mut menu = vec![(String::new(), lang.tr("None"))];
-            menu.extend(edit::locations(ch, &guid));
-            actions.push(Action::new("move", icons::ARROWS_OUT_CARDINAL, lang.tr("Move…")).menu(menu));
+        // "Move to …" entries (a button in creation, in More in career).
+        let moves: Vec<(String, String)> = if !guid.is_empty() && edit::has_location(ch, &guid) {
+            std::iter::once((String::new(), lang.tr("No location"))).chain(edit::locations(ch, &guid)).map(|(g, n)| (format!("move:{g}"), lang.tr_fmt("Move to {0}", &[&n]))).collect()
+        } else {
+            Vec::new()
+        };
+        if !self.career && !moves.is_empty() {
+            actions.push(Action::new("more", icons::ARROWS_OUT_CARDINAL, lang.tr("Move…")).menu(moves.clone()));
         }
         if !included && !guid.is_empty() {
             if self.career && tag != "lifestyle" && el.name != "drug" {
@@ -426,7 +463,10 @@ impl Ctx<'_> {
                     .map(|p| (p.to_string(), lang.tr_fmt("Sell at {0} % ({1})", &[&p, &format::nuyen(total * p as f64 / 100.0)])))
                     .collect();
                 actions.push(Action::new("sell", icons::COINS, lang.tr("Sell…")).menu(menu));
-                actions.push(Action::new("more", icons::DOTS_THREE, lang.tr("More")).menu(vec![("delete".into(), lang.tr("Remove without refund")), ("source".into(), lang.tr("Open the sourcebook at this page"))]));
+                let mut more = moves;
+                more.push(("delete".into(), lang.tr("Remove without refund")));
+                more.push(("source".into(), lang.tr("Open the sourcebook at this page")));
+                actions.push(Action::new("more", icons::DOTS_THREE, lang.tr("More")).menu(more));
             } else {
                 actions.push(Action::new("remove", icons::TRASH, lang.tr("Remove (also removes its improvements)")));
             }
@@ -470,6 +510,13 @@ impl Ctx<'_> {
     fn col(&self, key: &str) -> Option<usize> {
         self.cols.iter().position(|c| c.key == key)
     }
+}
+
+/// Whether the wireless toggle shows: the item has a wireless bonus, or
+/// is a Matrix device of its own (a top-level item with a device rating).
+fn has_wireless(el: &Element, top: bool) -> bool {
+    ["wirelessbonus", "wirelesspairbonus", "wirelessweaponbonus"].iter().any(|c| el.child(c).is_some_and(|b| !b.children.is_empty() || !b.text().trim().is_empty()))
+        || (top && el.get("devicerating").trim().parse::<i32>().is_ok_and(|d| d > 0))
 }
 
 /// The item rows directly below a node's children (through groups: a
@@ -567,8 +614,13 @@ impl CharacterView {
                 Event::Delete(k) => self.ws_ask_remove(sec, &k, lang),
                 Event::Action(k, id, choice) => match (id, choice) {
                     ("edit", _) => self.ws_select_item(page, &k),
+                    // Drugs go at once, as before (no refund).
+                    ("remove", _) if sec.container == "drugs" => out.changed |= self.doc.set(Command::RemoveItem { container: "drugs".into(), guid: k }),
                     ("remove", _) => self.ws_ask_remove(sec, &k, lang),
-                    ("move", Some(loc)) => out.changed |= self.doc.set(Command::SetItemText { guid: k, field: "location".into(), value: loc }),
+                    ("more", Some(c)) if c.starts_with("move:") => {
+                        let loc = c.trim_start_matches("move:").to_owned();
+                        out.changed |= self.doc.set(Command::SetItemText { guid: k, field: "location".into(), value: loc });
+                    }
                     ("sell", Some(p)) => {
                         let fraction = p.parse::<f64>().unwrap_or(50.0) / 100.0;
                         if let Some(r) = self.doc.run(Command::SellItem { guid: k, fraction }, status) {
@@ -587,6 +639,7 @@ impl CharacterView {
                     }
                     _ => {}
                 },
+                Event::AddInto(_) if sec.container == "drugs" => self.drug_builder.open = true,
                 Event::AddInto(k) => {
                     let kinds = super::ws_items::page_kinds(sec.container);
                     let k = k.strip_suffix("/empty").unwrap_or(&k).to_owned();
@@ -637,13 +690,13 @@ impl CharacterView {
 
     /// Whether the add of `guid` is still the character's latest change
     /// (so Undo takes it back exactly).
-    pub(super) fn ws_added_is_latest(&self, guid: &str) -> bool {
+    pub(crate) fn ws_added_is_latest(&self, guid: &str) -> bool {
         let Some(s) = self.doc.session() else { return false };
         s.can_undo() && self.ws_gear.visit.as_ref().is_some_and(|v| v.adds.iter().rev().find(|a| a.guid == guid).is_some_and(|a| a.log_len == s.log().len()))
     }
 
     /// The item added last this visit, while it is still there.
-    pub(super) fn ws_last_added(&self) -> Option<&str> {
+    pub(crate) fn ws_last_added(&self) -> Option<&str> {
         let v = self.ws_gear.visit.as_ref()?;
         v.adds.iter().rev().map(|a| a.guid.as_str()).find(|g| edit::find(&self.doc, g).is_some())
     }

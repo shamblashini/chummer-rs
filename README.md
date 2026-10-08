@@ -566,36 +566,82 @@ was.
   online campaign), the GM award and the GM's notes. The encounter, the
   card, the feed and the inspector sections pop out.
 - **Item pages** (Cyberware & Bioware, Gear, Clothing & Armor, Weapons,
-  Drugs, Lifestyles, Vehicles & Drones): "Add …" buttons, a summary card
-  (essence, combat stats, vehicle stats, the lifestyle editor) and the
-  item tree in a card, with the same columns, locations, nesting, issue
-  marks, source links and remove buttons as Classic; the tree has faint
-  guides and Phosphor carets.
-- **Inline catalog**: "Add …" opens the game data inside the page instead
-  of the selection dialog (Classic keeps the dialog). Filters on the
-  left: kind (cyberware and bioware together), category with counts,
-  grade, the rating the table shows, what fits the build (availability
-  within the creation limit, essence, affordable, requirements met),
-  legality and books. In the middle: the search (word matching as in the
-  drop-down lists), sorting (best match, name, cost, availability,
-  essence), and the results with rating, the kind's own columns,
-  essence, availability, cost and the source page; a reason shows under
-  a record that cannot be added. Arrow keys move, Enter adds and goes
-  back to the list, Shift+Enter adds and stays, Esc goes back. The
-  inspector shows the selected record: rating, grade, quantity, where to
-  install it, and a preview made by applying the purchase to a copy of
-  the character: essence before and after (with a bar), cost,
-  availability against the limit, nuyen (left) after, and initiative,
-  attributes, armor, limits and condition monitor where they change;
-  the dice pools it changes ("Pistols 5 → 7": Defense, Damage
-  Resistance, Composure, Judge Intentions, Memory, Lift/Carry, astral
-  and Matrix initiative, the active skills with their specialization
-  pool, and each weapon's dice pool, DV, AP and accuracy; a new weapon
-  shows its values); the
-  checks (requirements, availability, money); "Add", which runs the same
-  command as the dialog (career mode pays for it), with the same
-  question for bonus selections; and a comparison of up to three
-  records (essence, initiative, cost).
+  Drugs, Lifestyles, Vehicles & Drones): one item table for every page.
+  Each page has its columns (ware: rating, grade, essence, capacity,
+  wireless, availability, cost, source; gear: rating, quantity; armor:
+  armor value, capacity, equipped; weapons: dice pool, DV, AP, accuracy,
+  mode, RC, the ammunition left as a bar in career, equipped and
+  wireless, ranges; vehicles: handling, speed, acceleration, body, armor,
+  pilot, sensor, seats, slots; lifestyles: base lifestyle, months, roommates). The
+  Name column holds the tree (16 px steps, guide lines, a chevron; ← and
+  → fold, a folded container says "3 mods"). Groups (locations, types)
+  show their count and the sums of essence and cost and a "+" that buys
+  into them; an empty location shows a card with Buy…. Numbers are
+  right-aligned monospace. A header click sorts (stable, among siblings
+  only, groups stay; again for the other way, a third time off); the
+  header and the totals line (count, essence left, sums, the purchase
+  value) stay put while the rows scroll. Columns that do not fit a
+  narrow page go lowest priority first (source, then wireless and
+  equipped, availability, capacity, grade, quantity, rating; rating and
+  grade then go into the name: "Wired Reflexes 1 Alpha"); the Columns
+  button turns any of them on or off. A hovered or selected row shows
+  its actions (Edit, Move to a location, Remove, or in career Sell at a
+  percentage and More); ratings and quantities get steppers on that row
+  during creation, wireless and equipped are toggle buttons, F2 renames,
+  Space toggles wireless, + and − change the rating, Del asks before
+  removing. Issue marks sit before the name. Every change runs the same
+  command as the inspector. The rows are built once per change of the
+  character.
+
+  ![Cyberware with the catalog beside it: two items added this visit, a record previewed](docs/screenshots/workspace-inventory-dark.png)
+  ![A narrow window: the catalog above the inventory, the selected record's details under its row](docs/screenshots/workspace-inventory-stacked-dark.png)
+  ![Adding into a container: the Target, what does not fit dimmed](docs/screenshots/workspace-inventory-target-dark.png)
+  ![The item table in career: a selected container, a hovered mod's actions](docs/screenshots/workspace-inventory-table-dark.png)
+  ![Weapons: dice pool, damage, ammunition and the equipped toggles](docs/screenshots/workspace-inventory-weapons-dark.png)
+  ![The same as the first, light](docs/screenshots/workspace-inventory-light.png)
+- **Catalog beside the inventory**: "Add …" opens the game data next to
+  the inventory (Classic keeps the selection dialog), and the inventory
+  stays in view: side by side, or on a narrow page stacked above it
+  with a handle to drag (the page's switch closes it again, as does Esc).
+  The catalog has the search with the kind (All, Cyber, Bio), the active
+  filters as chips with × and every filter behind Filters (category with
+  counts, grade, the rating the table shows, what fits the build:
+  availability within the creation limit, essence, affordable,
+  requirements met; legality, books), and the results in the same table
+  (the header sorts): rating, the kind's own columns as room allows,
+  essence, availability, cost. A record the character has says
+  "Installed R2"; one that cannot be added is dimmed with the reason in
+  amber. ↑ ↓ move, Enter adds and hands the keys to the inventory (where
+  the new row is), Shift+Enter adds and stays, Tab switches between the
+  catalog and the inventory. The budget strip shows essence and nuyen
+  before → after for the selected record, and the inspector the record:
+  rating, grade, quantity, where to install it, and a preview made by
+  applying the purchase to a copy of the character: essence before and
+  after (with a bar), cost, availability against the limit, nuyen (left)
+  after, and initiative, attributes, armor, limits and condition monitor
+  where they change; the dice pools it changes ("Pistols 5 → 7": Defense,
+  Damage Resistance, Composure, Judge Intentions, Memory, Lift/Carry,
+  astral and Matrix initiative, the active skills with their
+  specialization pool, and each weapon's dice pool, DV, AP and accuracy;
+  a new weapon shows its values); the checks (requirements,
+  availability, money); "Add" (or "Add to Hermes Ikon"), which runs the
+  same command as the dialog (career mode pays for it), with the same
+  question for bonus selections; and a comparison of up to three records
+  (essence, initiative, cost). Below 1180 px of window the inspector
+  folds into a strip under the selected row (rating, grade, essence,
+  nuyen after, availability, the source, Add).
+  What was bought shows in the inventory at once: the latest with a teal
+  bar, an "Added" chip and an inline Undo (the normal undo while it is
+  the latest change, else a Remove of that item, as its tooltip says;
+  online characters keep Undo off and Remove works), earlier ones this
+  visit with the bar, and all of them in "Added since you opened this
+  page" with Undo each and Undo all.
+  Selecting a container in the inventory makes it the catalog's target:
+  an accent outline and a "Target" chip on its row, an "Adding into
+  Glasses" bar over the results with Change and ×, and what does not go
+  in (gear outside the container's `addoncategory` list, as Chummer's
+  selection dialog filters it) listed last, dimmed, "Not for Glasses".
+  A location group's "+" adds into that location.
 - **Inspector**: creation issues with Finish creation, the selected
   item in the Workspace style (rating, quantity, equipped and wireless,
   custom name, location, cost, availability, essence, capacity,
@@ -641,7 +687,7 @@ was.
 ![At the table, light](docs/screenshots/workspace-play-light.png)
 ![The recent rolls in their own window](docs/screenshots/workspace-play-popout.png)
 ![A confirmation inside a popped-out Weapons page](docs/screenshots/workspace-popout-dialog.png)
-![The catalog's preview with the dice pools a Muscle Toner changes](docs/screenshots/workspace-catalog-pools.png)
+![The catalog's preview with the dice pools a Muscle Toner changes, beside the inventory](docs/screenshots/workspace-catalog-pools.png)
 ![The GM screen with an encounter, dark](docs/screenshots/workspace-gm-dark.png)
 ![The GM screen, light](docs/screenshots/workspace-gm-light.png)
 ![Workspace, light, Skills during creation](docs/screenshots/workspace-light-creation.png)
@@ -651,10 +697,6 @@ was.
 ![Workspace, career, knowledge skills and other advances](docs/screenshots/workspace-career-advances.png)
 ![Workspace, light, career attributes, Agility in the inspector](docs/screenshots/workspace-career-light.png)
 ![Workspace, the palette offering advances](docs/screenshots/workspace-career-palette.png)
-![Inline catalog, dark: adding cyberware in career mode, with the preview and a comparison](docs/screenshots/workspace-gear-catalog-dark.png)
-![Inline catalog, light: adding cyberware during creation](docs/screenshots/workspace-gear-catalog-light.png)
-![Weapons with a weapon in the item inspector, dark](docs/screenshots/workspace-gear-inspector-dark.png)
-![Cyberware with an item in the inspector, light](docs/screenshots/workspace-gear-inspector-light.png)
 ![Home, dark](docs/screenshots/workspace-home-dark.png)
 ![Steppers at 1, 12 and 128, dark](docs/screenshots/workspace-stepper-dark.png)
 ![Steppers at 1, 12 and 128, light](docs/screenshots/workspace-stepper-light.png)
@@ -1090,7 +1132,15 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
 - Workspace layout: the design's
   training time and "Saving for" goals are not there. The catalog's
   table shows essence, cost and availability from the data at the chosen
-  rating and grade (the inspector's preview is exact). Home's recent
+  rating and grade (the inspector's preview is exact). Item pages: the
+  weapon ranges and vehicle seats are columns that a narrow page hides
+  first (turn them on with Columns), and the table has no "group by" choice (the
+  groups are Chummer's: types, locations, mod categories) and no drag
+  and drop to reorder or move (Move… picks a location). What fits a
+  target container checks the kind and gear's `addoncategory` list, not
+  its free capacity (an over-full container shows as a creation issue).
+  A group's "+ add into" a location is two changes (the add and the
+  location); the inline Undo takes both back. Home's recent
   activity lists joined campaigns only (the GM's own feed is on the GM
   screen). Pop-outs: on Wayland the system places the windows (only
   their size is kept); with an item page popped out, the catalog's

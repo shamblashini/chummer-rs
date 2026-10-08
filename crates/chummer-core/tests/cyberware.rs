@@ -167,3 +167,27 @@ fn availability_includes_grade() {
     // (2 × 5)R + 8 for deltaware.
     assert_eq!(cyberware::availability(&ch, &store, find(&ch, &g)).to_string(), "18R");
 }
+
+#[test]
+fn cost_shares_add_up_to_the_total() {
+    // Ghile Mear's cyberlegs: customizations priced from the limb's
+    // minimum rating, plus spurs and skimmers.
+    let store = DataStore::discover().unwrap();
+    let ch = Character::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Ghile Mear.chum5")).unwrap();
+    let mut legs = 0;
+    for w in ch.doc.child("cyberwares").unwrap().children_named("cyberware") {
+        let shares = cyberware::cost_shares(&ch, &store, w);
+        let total = cyberware::cost(&ch, &store, w);
+        let sum: f64 = shares.iter().map(|(_, v)| v).sum();
+        assert!((sum - total).abs() < 0.01, "{}: shares {shares:?} sum {sum} vs total {total}", w.get("name"));
+        assert!(shares.iter().all(|(_, v)| *v >= 0.0), "{shares:?}");
+        assert_eq!(shares.last().map(|(g, _)| g.clone()), Some(w.get("guid")), "the ware's own share comes last");
+        if w.get("name") == "Obvious Full Leg" {
+            legs += 1;
+            let own = shares.last().unwrap().1;
+            assert!((own - 15000.0).abs() < 0.01, "the leg itself costs 15,000¥, got {own}");
+            assert_eq!(shares.len(), 5, "the leg and its four mods");
+        }
+    }
+    assert_eq!(legs, 2);
+}

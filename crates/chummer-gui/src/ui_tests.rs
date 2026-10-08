@@ -955,6 +955,188 @@ fn workspace_catalog_add_then_undo_redo() {
     }
 }
 
+/// A window tall enough for Munin's whole gear list.
+const TALL: Vec2 = Vec2::new(1600.0, 1500.0);
+
+/// The guid of a top-level gear item by name.
+fn gear_guid(h: &Harness, name: &str) -> String {
+    h.app.views[h.app.active].ch().items("gears", "gear").iter().find(|g| g.get("name") == name).map(|g| g.get("guid")).unwrap_or_else(|| panic!("no gear {name}"))
+}
+
+/// Whether the inline catalog shows (its panel title).
+fn catalog_shown(h: &Harness) -> bool {
+    h.find_text(&h.app.lang.tr("Catalog")).is_some()
+}
+
+/// Type `search` into the catalog's search field (replacing what is
+/// there) and select the first match.
+fn catalog_search(h: &mut Harness, i: usize, search: &str) {
+    h.ctx.memory_mut(|m| m.request_focus(egui::Id::new("ws_catalog_search")));
+    h.frames(1);
+    h.key(Key::A, Modifiers::COMMAND);
+    h.key(Key::Backspace, Modifiers::NONE);
+    h.type_text(search);
+    h.frames(2);
+    h.key(Key::ArrowDown, Modifiers::NONE);
+    h.frames(2);
+    assert!(h.app.views[i].ws_catalog_has_selection(), "ArrowDown selects the first match for {search:?}; shown: {:?}", h.on_screen());
+}
+
+/// Opens the gear page's catalog with `search` typed and the first
+/// match selected.
+fn gear_catalog_pick(h: &mut Harness, i: usize, search: &str) {
+    h.app.views[i].ws_go(Section::Gear(0));
+    h.frames(2);
+    if !catalog_shown(h) {
+        let add = h.app.lang.tr_fmt("Add {0}", &[&crate::view::kind_noun(&h.app.lang, "Gear")]);
+        h.click_text(&add);
+        h.frames(2);
+    }
+    assert!(catalog_shown(h), "Add gear opens the catalog next to the inventory: {:?}", h.on_screen());
+    catalog_search(h, i, search);
+}
+
+/// Click the inline Undo of the row showing the "Added" chip: left of
+/// Remove, at the right end of the actions column (where the footer's
+/// note ends).
+fn click_inline_undo(h: &mut Harness) {
+    let chip = h.find_text(&h.app.lang.tr("Added")).expect("the new row has the Added chip");
+    let tail = h.find_text(&h.app.lang.tr("purchase value")).expect("the inventory's footer");
+    h.click_at(Pos2::new(tail.right() - 22.0 - 2.0 - 11.0, chip.center().y));
+    h.frames(2);
+}
+
+/// Workspace inventory: the catalog opens beside the inventory (no view
+/// swap); Enter adds, the item shows highlighted ("Added", in the tray)
+/// with an inline Undo, and that Undo takes it back. When other changes
+/// came after, the inline Undo removes the item and keeps them.
+#[test]
+fn workspace_inventory_add_then_inline_undo() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin.chum5"));
+    let before = gear_count(&h);
+    gear_catalog_pick(&mut h, i, "Flashlight");
+    assert!(h.find_text(&h.app.lang.tr("Your gear")).is_some(), "the inventory shows with the catalog: {:?}", h.on_screen());
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(3);
+    assert_eq!(gear_count(&h), before + 1, "Enter adds ({:?})", h.app.status);
+    let added = h.app.views[i].ws_last_added().map(str::to_owned).expect("the add is recorded");
+    assert!(h.app.views[i].ws_added_is_latest(&added), "the add is the latest change");
+    assert!(catalog_shown(&h), "the catalog stays open");
+    assert!(h.find_text(&h.app.lang.tr("Added since you opened this page")).is_some(), "the tray lists it");
+    click_inline_undo(&mut h);
+    assert_eq!(gear_count(&h), before, "the inline Undo removes it");
+    assert!(h.app.views[i].doc().can_redo(), "it was an undo");
+    assert!(h.app.views[i].ws_last_added().is_none());
+    // Not the latest change any more: the inline Undo removes it instead.
+    catalog_search(&mut h, i, "Flashlight");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    let added = h.app.views[i].ws_last_added().map(str::to_owned).expect("added again");
+    let glasses = gear_guid(&h, "Glasses");
+    assert!(h.app.views[i].doc_mut().set(chummer_core::command::Command::SetItemText { guid: glasses, field: "notes".into(), value: "later".into() }));
+    h.frames(2);
+    assert!(!h.app.views[i].ws_added_is_latest(&added));
+    click_inline_undo(&mut h);
+    assert_eq!(gear_count(&h), before, "the inline Undo removed it");
+    let notes = h.app.views[i].ch().items("gears", "gear").iter().find(|g| g.get("name") == "Glasses").map(|g| g.get("notes"));
+    assert_eq!(notes.as_deref(), Some("later"), "the later change stays");
+}
+
+/// Workspace inventory: a narrow page stacks the catalog above the
+/// inventory, with the inspector folded into the details strip; a wide
+/// one puts them side by side.
+#[test]
+fn workspace_inventory_narrow_stacks() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    let i = h.open(&fixture("Munin.chum5"));
+    gear_catalog_pick(&mut h, i, "Flashlight");
+    let (cat, inv) = (h.app.lang.tr("Catalog"), h.app.lang.tr("Your gear"));
+    let c = h.find_text(&cat).unwrap();
+    let v = h.find_text(&inv).unwrap();
+    assert!(c.right() < v.left() && (c.center().y - v.center().y).abs() < 4.0, "side by side at {:?}: {c:?} {v:?}", h.size);
+    assert!(h.find_text(&h.app.lang.tr("Issues")).is_some() || h.find_text(&h.app.lang.tr("Item")).is_some(), "the inspector shows when wide");
+    h.size = Vec2::new(1000.0, 900.0);
+    h.frames(3);
+    let c = h.find_text(&cat).unwrap();
+    let v = h.find_text(&inv).unwrap();
+    assert!(c.bottom() < v.top(), "stacked at {:?}: {c:?} {v:?}", h.size);
+    // Below 1180 the inspector folds into the details strip under the
+    // selected row.
+    let strip = h.app.lang.tr("Nuyen after").to_uppercase();
+    assert!(h.find_text(&strip).is_some(), "details strip: {:?}", h.on_screen());
+    assert!(h.find_text(&h.app.lang.tr("Item")).is_none(), "the inspector is folded");
+    h.size = NARROW;
+    h.frames(3);
+    assert!(h.find_text(&cat).unwrap().bottom() < h.find_text(&inv).unwrap().top());
+}
+
+/// Workspace inventory: selecting a container makes it the catalog's
+/// target ("Adding into", the Target chip); what does not fit it is
+/// dimmed with a reason; Add puts the item inside; × adds at the top
+/// level again.
+#[test]
+fn workspace_inventory_adds_into_the_target() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin.chum5"));
+    gear_catalog_pick(&mut h, i, "Flashlight");
+    let glasses = gear_guid(&h, "Glasses");
+    // The inventory's "Glasses" (right of the catalog's).
+    let row = h.texts.iter().filter(|(t, _)| t == "Glasses").map(|(_, r)| *r).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap_or_else(|| panic!("Glasses in the inventory: {:?}", h.on_screen()));
+    h.click_at(row.center());
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_target_guid().as_deref(), Some(glasses.as_str()), "the selected container is the target");
+    assert!(h.find_text(&h.app.lang.tr("Adding into")).is_some() && h.find_where(|t| t.contains(&h.app.lang.tr("Target"))).is_some(), "{:?}", h.on_screen());
+    // Glasses take vision enhancements only: a flashlight is dimmed.
+    let reason = h.app.lang.tr_fmt("Not for {0}", &[&"Glasses"]);
+    assert!(h.find_where(|t| t.contains(&reason)).is_some(), "a flashlight does not fit glasses: {:?}", h.on_screen());
+    let kids = |h: &Harness| chummer_core::items::edit::children(h.app.views[i].ch(), &glasses).len();
+    let before = kids(&h);
+    catalog_search(&mut h, i, "Vision Magnification");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    assert_eq!(kids(&h), before + 1, "Add puts it into the glasses ({:?})", h.app.status);
+    // × (add at the top level instead).
+    let bar = h.find_text(&h.app.lang.tr("Adding into")).expect("the target bar");
+    let change = h.find_text(&h.app.lang.tr("Change")).expect("Change");
+    h.click_at(Pos2::new(change.right() + 4.0 + 13.0 + 8.0, bar.center().y));
+    h.frames(2);
+    assert!(h.app.views[i].ws_catalog_target_guid().is_none(), "× clears the target: {:?}", h.on_screen());
+}
+
+/// Workspace inventory: a header click sorts (high to low first for
+/// numbers), again the other way, a third time back to the file's order.
+#[test]
+fn workspace_inventory_sorts_by_column() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    let i = h.open(&fixture("Apex Predator.chum5"));
+    h.app.views[i].ws_go(Section::Gear(0));
+    h.frames(3);
+    let id = crate::view::ws_inventory::table_id((Tab::StreetGear, 0));
+    let cost = h.app.lang.tr("Cost").to_uppercase();
+    let costs = |h: &Harness| -> Vec<String> {
+        let mut v: Vec<(f32, String)> = h.texts.iter().filter(|(t, _)| t.ends_with('¥')).map(|(t, r)| (r.top(), t.clone())).collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        v.into_iter().map(|(_, t)| t).collect()
+    };
+    let unsorted = costs(&h);
+    h.click_text(&cost);
+    h.frames(2);
+    assert_eq!(crate::workspace::table::sort_of(&h.ctx, id), Some(("cost".into(), false)), "first click: high to low");
+    let down = costs(&h);
+    assert_ne!(down, unsorted, "the order changed");
+    h.click_text(&cost);
+    h.frames(2);
+    assert_eq!(crate::workspace::table::sort_of(&h.ctx, id), Some(("cost".into(), true)));
+    assert_ne!(costs(&h), down);
+    h.click_text(&cost);
+    h.frames(2);
+    assert_eq!(crate::workspace::table::sort_of(&h.ctx, id), None, "third click: the file's order");
+    assert_eq!(costs(&h), unsorted);
+}
+
 /// Workspace: the dialogs the magic page opens are Workspace dialogs
 /// (their own header, Workspace rows and buttons): "Add Spell…", pick a
 /// spell, its options, Add. Escape closes a dialog.

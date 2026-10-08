@@ -954,6 +954,45 @@ impl CostCtx<'_> {
         total + gear_children_cost(e)
     }
 
+    /// [`CostCtx::without_modifiers`], recording what each piece adds:
+    /// (guid, share) for the ware, its children and its gear.
+    fn shares(&self, e: &Element, grade: &str, parent_cost: f64, limb: Option<&Element>, out: &mut Vec<(String, f64)>) -> f64 {
+        let base = self.own_pre(e, grade, parent_cost, limb);
+        let mut own = base * grade_cost(self.store, is_bioware(e), grade);
+        if e.get_bool("discountedcost").unwrap_or(false) {
+            own *= 0.9;
+        }
+        if e.get_bool("isgeneware").unwrap_or(false) {
+            own *= self.ch.improvements.of_kind("GenetechCostMultiplier").fold(1.0, |m, i| m - (1.0 - i.val / 100.0));
+        }
+        let mut total = own;
+        for k in children(e) {
+            if k.get("capacity") == "[*]" {
+                out.push((k.get("guid"), 0.0));
+                continue;
+            }
+            match k.get("cost").strip_prefix('*') {
+                Some(factor) => {
+                    let f = cost_expression(k, factor, CostTokens { parent: base, ..CostTokens::default() }, &self.sheet);
+                    let mut plugin = base * (f - 1.0);
+                    if k.get_bool("discountedcost").unwrap_or(false) {
+                        plugin *= 0.9;
+                    }
+                    out.push((k.get("guid"), plugin));
+                    total += plugin;
+                }
+                None => total += self.shares(k, grade, base, Some(e), out),
+            }
+        }
+        for g in gear_children(e) {
+            let c = super::gear::cost_in(g, e);
+            out.push((g.get("guid"), c));
+            total += c;
+        }
+        out.push((e.get("guid"), own));
+        total
+    }
+
     /// `CalculatedTotalCost`: the suite discount on top.
     fn total(&self, e: &Element, grade: &str, parent_cost: f64, limb: Option<&Element>) -> f64 {
         let t = self.without_modifiers(e, grade, parent_cost, limb);
@@ -971,6 +1010,22 @@ impl CostCtx<'_> {
 /// suite discount.
 pub fn cost(ch: &Character, store: &DataStore, e: &Element) -> f64 {
     cost_with(ch, store, e, None)
+}
+
+/// What each piece of saved ware adds to its [`cost`]: (guid, nuyen) for
+/// the ware, the ware inside it (priced at its grade, as `TotalCost` does)
+/// and its gear (with what that holds). The shares add up to [`cost`].
+pub fn cost_shares(ch: &Character, store: &DataStore, e: &Element) -> Vec<(String, f64)> {
+    let attrs = sheet_attributes(ch, store);
+    let ctx = CostCtx { ch, store, sheet: SheetAttributes(&attrs), vehicle: None };
+    let mut out = Vec::new();
+    ctx.shares(e, &e.get("grade"), 0.0, None, &mut out);
+    if e.get_bool("suite").unwrap_or(false) {
+        for (_, v) in &mut out {
+            *v *= 0.9;
+        }
+    }
+    out
 }
 
 /// [`cost`] for ware installed in a vehicle mod (a drone arm or leg),
