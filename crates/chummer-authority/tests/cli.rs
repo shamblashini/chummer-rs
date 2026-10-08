@@ -48,7 +48,7 @@ fn invite_assign_status() {
     let bert: InviteLink = run(&["invite", "create", "--label", "Bert"]).trim().parse().unwrap();
     assert_ne!(bert.member, link.member, "one key per invite");
     let list = run(&["invite", "list"]);
-    assert!(list.contains("Anna") && list.contains("unclaimed, expires") && list.contains("Ghost (on claim)"), "{list}");
+    assert!(list.contains("Anna") && list.contains("unclaimed, expires") && list.contains("gets Ghost on joining"), "{list}");
     assert!(list.contains("Bert"), "{list}");
     run(&["invite", "revoke", "bert"]);
     assert!(run(&["invite", "list"]).contains("revoked"));

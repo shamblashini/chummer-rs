@@ -1355,7 +1355,7 @@ impl Authority {
     }
 
     pub fn save(&mut self, path: &Path) -> std::io::Result<()> {
-        persist::write_atomic(path, &self.to_bytes())
+        persist::write_atomic_private(path, &self.to_bytes())
     }
 
     pub fn load(path: &Path) -> Result<Authority, PersistError> {

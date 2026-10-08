@@ -625,11 +625,7 @@ impl GmScreen {
                     (RowState::Revoked { .. } | RowState::Expired, _) => error,
                     _ => muted,
                 };
-                if ws {
-                    crate::workspace::widgets::dot(ui, dot, 7.0);
-                } else {
-                    ui.label(RichText::new("●").color(dot));
-                }
+                crate::workspace::widgets::dot(ui, dot, 7.0);
                 let name = ui.label(RichText::new(&row.label).strong().color(text));
                 if let Some(n) = &row.node {
                     name.on_hover_text(n);
@@ -684,7 +680,8 @@ impl GmScreen {
                     }
                     RowKey::Member(_) => {}
                 }
-                if button(ui, crate::workspace::icons::TRASH, &lang.tr("Remove")).on_hover_text(lang.tr("Take this player out of the campaign and the list")).clicked() {
+                let remove = if ws { crate::workspace::widgets::icon_button(ui, crate::workspace::icons::TRASH, 22.0) } else { ui.small_button(lang.tr("Remove")) };
+                if remove.on_hover_text(lang.tr("Remove: take this player out of the campaign and the list")).clicked() {
                     todo = Some(InviteDo::Ask(Confirm::Remove(row.key)));
                 }
             });
@@ -701,6 +698,13 @@ impl GmScreen {
                 ui.label(small(q, error));
                 ui.horizontal(|ui| {
                     let go = if ws { crate::workspace::widgets::button(ui, None, &yes, crate::workspace::widgets::Look::Primary, 22.0) } else { ui.button(RichText::new(&yes).color(error)) };
+                    // Asked just now: bring the question into view (the
+                    // Classic list scrolls).
+                    let id = egui::Id::new("gm_invite_confirm_shown");
+                    if ui.ctx().data(|d| d.get_temp::<Confirm>(id)) != Some(c) {
+                        ui.ctx().data_mut(|d| d.insert_temp(id, c));
+                        go.scroll_to_me(Some(egui::Align::Center));
+                    }
                     if go.clicked() {
                         todo = Some(InviteDo::Do(c));
                     }
@@ -835,7 +839,10 @@ impl GmScreen {
             };
         }
         egui::CollapsingHeader::new(RichText::new(lang.tr("Players & invites")).strong()).id_salt("gm_players_invites").default_open(true).show(ui, |ui| {
-            self.invites_ui(ui, net, lang, status, false);
+            // Its own scroll area: the activity feed below keeps its room.
+            egui::ScrollArea::vertical().id_salt("gm_players_invites_scroll").max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
+                self.invites_ui(ui, net, lang, status, false);
+            });
         });
         ui.separator();
     }

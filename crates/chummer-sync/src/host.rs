@@ -169,7 +169,7 @@ impl Shared {
             }
             bytes
         };
-        crate::persist::write_atomic(p, &bytes)?;
+        crate::persist::write_atomic_private(p, &bytes)?;
         if let Some(j) = self.journal.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             j.saved()?;
         }

@@ -554,7 +554,9 @@ sc_revoked-player() {
     SKIP=P3 converge strict || return 1
     sleep 10
     inspect
-    python3 - "$D/authority-at-revoke.json" "$D/authority.json" "$D/status/p3.json" <<'PY' || return 1
+    local out
+    out=$(python3 - "$D/authority-at-revoke.json" "$D/authority.json" "$D/status/p3.json" <<'PY'
+
 import json, sys
 before, after, p3 = (json.load(open(f)) for f in sys.argv[1:4])
 cid = p3["copies"][0]["id"]
@@ -565,9 +567,10 @@ inv = [i for i in after["invites"] if i["label"] == "P3"][0]
 assert inv["state"].startswith("Revoked"), inv
 assert p3["denied"] == "Revoked" and not p3["online"], p3
 assert p3["progress"]["made"] > 0 and p3["copies"][0]["outbox"] > 0, "P3 kept editing, nothing got through"
-print(f"P3's character stayed at v{k(after)['version']}; {p3['copies'][0]['outbox']} edits of P3 refused")
+print(f"P3's character stayed at v{k(after)['version']}; {p3['copies'][0]['outbox']} later edits of P3 never got in")
 PY
-    NOTE="P3 cut off at v$(python3 -c "import json; a=json.load(open('$D/authority-at-revoke.json')); print(max(c['version'] for c in a['characters']))")"
+    ) || { log "$out"; return 1; }
+    NOTE="$out"
 }
 
 # P2 joins with its own invite. Its link then leaks: another device tries
@@ -588,7 +591,7 @@ sc_leaked-link() {
     gm_away_after_join
     log "a third device tries it by mail; a flood with the leaked key"
     intruder_up 2 "$link"
-    sleep 8
+    wait_for "X2 mailed its join" 60 status_is "$D/status-x/x2.json" "s['mode'] == 'Mailbox'"
     local gm; gm=$("$TP" keygen "$D/gm/gm.key")
     abuse flood "$gm" --key /x/node.key --signer-link "$link" --count 200 || { log "flood failed"; return 1; }
     grep -q 'too many messages from this key' "$D/abuse-flood.json" || { log "the per-key cap did not stop the leaked key"; return 1; }
@@ -602,8 +605,8 @@ sc_leaked-link() {
     converge strict || return 1
     inspect
     python3 -c "import json,sys; a=json.load(open('$D/authority.json')); sys.exit(0 if len(a['members']) == 3 else 1)" || { log "an intruder became a member"; return 1; }
-    docker logs "$P-gm" 2>&1 | grep -q "refused a mailed join" && NOTE="X2 refused by mail" || NOTE="X2 refused live"
-    NOTE="$NOTE; $stored leaked-key puts stored before the cap"
+    docker logs "$P-gm" 2>&1 | grep -q "refused a mailed join" || { log "the GM did not refuse X2's mailed join"; return 1; }
+    NOTE="X2 refused by mail; $stored leaked-key puts stored before the cap"
 }
 
 # ----- main -----

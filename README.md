@@ -635,6 +635,10 @@ for play-by-post. Each installation's identity is its node key
    link and Remove ask first. Select a character in the roster and set
    **Played by** to give it to a player. NPCs, critters and other
    characters you keep are never sent to players.
+
+   ![Players & invites, Workspace dark: a new link for Carla, Anna online, Bert offline, a revoked and an expired invite](docs/screenshots/workspace-gm-invites-dark.png)
+   ![Players & invites, Workspace light: revoking Bert asks first](docs/screenshots/workspace-gm-invites-light.png)
+   ![Players & invites in the Classic layout](docs/screenshots/classic-gm-invites.png)
 5. Edit characters as usual. Your changes reach the player at once ("GM
    gave you 100 karma: Good run" in their History). Their changes show in
    the Activity feed with their name.

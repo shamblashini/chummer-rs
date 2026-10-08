@@ -44,6 +44,16 @@ pub(crate) fn from_bytes<T: DeserializeOwned>(magic: &[u8; 4], what: &'static st
 /// at once do not clash (the last rename wins; callers that care about
 /// order hold a lock across taking the state and writing it).
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_as(path, bytes, false)
+}
+
+/// As [`write_atomic`], readable by the owner only on Unix (files that
+/// hold invite member keys: the authority sidecar, the joined list).
+pub fn write_atomic_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic_as(path, bytes, true)
+}
+
+fn write_atomic_as(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
     if let Some(dir) = path.parent() {
@@ -56,7 +66,16 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = std::path::PathBuf::from(tmp);
     let written = (|| {
         use std::io::Write;
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        #[cfg(not(unix))]
+        let _ = private;
+        let mut f = opts.open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
         std::fs::rename(&tmp, path)

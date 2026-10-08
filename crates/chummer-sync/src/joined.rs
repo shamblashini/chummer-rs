@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 /// One joined campaign.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Joined {
-    /// The invite link it was joined with (it keeps working for members).
+    /// The invite link it was joined with (it keeps working for this
+    /// device; it holds the member key, so the file is private).
     pub link: String,
     /// The campaign's name, once the GM sent it.
     #[serde(default)]
@@ -56,7 +57,7 @@ impl JoinedList {
 
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
         let text = serde_json::to_string_pretty(self).expect("serialises");
-        crate::persist::write_atomic(&Self::path(dir), text.as_bytes())
+        crate::persist::write_atomic_private(&Self::path(dir), text.as_bytes())
     }
 
     /// Adds `link` (a campaign joined again replaces its old entry, keeping
@@ -95,6 +96,12 @@ mod tests {
         assert_eq!(l.campaigns[0].name, "Seattle", "joining again keeps the name");
         l.save(&dir).unwrap();
         assert_eq!(JoinedList::load(&dir), l);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(JoinedList::path(&dir)).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "the links hold member keys");
+        }
         assert!(JoinedList::replica_path(&dir, &j).ends_with(format!("{}.replica", "01".repeat(16))));
         assert!(l.remove(&j.key()).is_some());
         std::fs::remove_dir_all(&dir).unwrap();

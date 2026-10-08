@@ -475,9 +475,13 @@ fn invite(cmd: InviteCmd, key: &SecretKey) -> Result<()> {
                 };
                 let chars: Vec<String> = match (i.state(now), &a) {
                     (InviteState::Claimed { node, .. }, Some(a)) => a.characters().filter(|c| a.owner(c) == Some(node)).map(|c| member_name(&campaign, c)).collect(),
-                    _ => i.assign.iter().map(|c| format!("{} (on claim)", member_name(&campaign, c))).collect(),
+                    _ => Vec::new(),
                 };
-                let chars = if chars.is_empty() { String::new() } else { format!("; plays {}", chars.join(", ")) };
+                let chars = match (chars.is_empty(), &i.assign) {
+                    (false, _) => format!("; plays {}", chars.join(", ")),
+                    (true, Some(c)) if matches!(i.state(now), InviteState::Unclaimed { .. }) => format!("; gets {} on joining", member_name(&campaign, c)),
+                    _ => String::new(),
+                };
                 println!("{}  {:<16} {state}{seen}{chars}", &i.id.to_string()[..8], i.label);
             }
             if !hosted::pending_invite_ops(&hosted::invites_path(&path)).is_empty() {

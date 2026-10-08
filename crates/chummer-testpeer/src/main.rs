@@ -83,6 +83,11 @@ enum Cmd {
         gm_key: PathBuf,
         #[arg(long, default_value_t = 50)]
         karma: i32,
+        /// Names for the characters, in order (default `PC 0`, `PC 1`, ...).
+        #[arg(long, value_delimiter = ',')]
+        names: Vec<String>,
+        #[arg(long, default_value = "e2e campaign")]
+        campaign_name: String,
     },
     /// A scripted player.
     Player {
@@ -157,7 +162,7 @@ enum Abuse {
     Forged,
     /// Sealed by this (member) key but not a sync message.
     MemberGarbage,
-    /// Many puts, until the relay refuses.
+    /// Many puts, until a limit stops them (refused keys go on).
     Flood,
     /// A put without a signature.
     Unsigned,
@@ -190,7 +195,7 @@ async fn main() -> Result<()> {
             println!("{}", load_key(&key)?.public());
             Ok(())
         }
-        Cmd::MakeCampaign { out, character, owners, gm_key, karma } => make_campaign(&out, &character, &owners, &gm_key, karma),
+        Cmd::MakeCampaign { out, character, owners, gm_key, karma, names, campaign_name } => make_campaign(&out, &character, &owners, &gm_key, karma, &names, &campaign_name),
         Cmd::Player { key, link, net, state, status, name, edits, every_ms, sync_secs, remail_secs, big } => {
             let script = Script { edits, every: Duration::from_millis(every_ms), sync: Duration::from_secs(sync_secs.max(1)), remail: remail_secs.map(Duration::from_secs), big };
             player(&key, &link, &net, &state, &status, &name, script).await
@@ -215,16 +220,20 @@ async fn main() -> Result<()> {
     }
 }
 
-fn make_campaign(out: &Path, character: &Path, owners: &[String], gm_key: &Path, karma: i32) -> Result<()> {
+fn make_campaign(out: &Path, character: &Path, owners: &[String], gm_key: &Path, karma: i32, names: &[String], campaign_name: &str) -> Result<()> {
     let gm_secret = load_key(gm_key)?;
     let gm = gm_secret.public();
     let mut ch = Character::load(character).with_context(|| format!("loading {}", character.display()))?;
     ch.karma = karma;
-    let mut c = Campaign::new("e2e campaign");
+    let mut c = Campaign::new(campaign_name);
     let mut members = Vec::new();
     for (i, o) in owners.iter().enumerate() {
+        let mut ch = ch.clone();
+        if let Some(n) = names.get(i) {
+            ch.set_field("alias", n.clone());
+        }
         let mut m = Member::embedded(MemberKind::Player, &ch);
-        m.name = format!("PC {i}");
+        m.name = names.get(i).cloned().unwrap_or_else(|| format!("PC {i}"));
         m.player = format!("P{i}");
         if o != "invite" {
             let owner: EndpointId = o.parse().with_context(|| format!("owner {o}"))?;
@@ -454,9 +463,15 @@ async fn abuse(key: &Path, net: &NetArgs, target: &str, mode: Abuse, count: u32,
         }
         Abuse::MemberGarbage => results.push(res(mb.put_sealed(&secret, &signer, target, b"\x01garbage that is not a chunk").await)),
         Abuse::Flood => {
+            // Until a limit stops it; refusals of the key (a stranger's)
+            // do not stop it: every one is tried.
             for _ in 0..count {
                 let r = mb.put_sealed(&secret, &signer, target, &[0u8; 1024]).await;
-                let stop = r.is_err();
+                let stop = match &r {
+                    Ok(_) => false,
+                    Err(chummer_net::NetError::Mailbox(e)) => !e.is_refusal(),
+                    Err(_) => true,
+                };
                 results.push(res(r));
                 if stop {
                     break;

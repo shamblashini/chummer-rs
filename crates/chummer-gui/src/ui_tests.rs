@@ -737,14 +737,14 @@ fn players_and_invites_panel() {
         let key = |h: &Harness| h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().invite(&invites[0].1).unwrap().key();
         let before = key(&h);
         h.click_text("New link");
-        h.frames(1);
+        h.frames(3);
         assert!(h.find_where(|t| t.starts_with("Give Anna a new link?")).is_some(), "{:?}", h.on_screen());
         h.click_text("New link");
         h.frames(2);
         assert_ne!(key(&h), before);
         // Revoke, confirmed.
         h.click_text("Revoke");
-        h.frames(1);
+        h.frames(3);
         assert!(h.find_where(|t| t.starts_with("Revoke Anna?")).is_some(), "{:?}", h.on_screen());
         h.click_text("Revoke");
         h.frames(2);
