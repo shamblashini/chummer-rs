@@ -35,10 +35,13 @@
 //!   condition monitor, Edge boxes, `clip_to`), icons in [`icons`],
 //!   colours in `crate::theme::ws`.
 //! * Rebuilt pages so far: Play (`character.rs`); the item pages
-//!   (`items.rs`), the inline catalog that replaces the selection dialog
-//!   (`catalog.rs`) and the Workspace item inspector (`inspector.rs`),
-//!   all three child modules of `view` like `character.rs`; and Home
+//!   (`items.rs`: the inventory beside the inline catalog that replaces
+//!   the selection dialog, `catalog.rs`; their rows and events are
+//!   `inventory.rs`) and the Workspace item inspector (`inspector.rs`),
+//!   all child modules of `view` like `character.rs`; and Home
 //!   (`home.rs`, `App::ws_home_page`).
+//! * Item lists use the item [`table`] (columns with priorities, a tree
+//!   with groups and subtotals, sorting, row states and actions).
 
 pub mod dialog;
 mod home;
