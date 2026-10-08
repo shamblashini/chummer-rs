@@ -204,3 +204,38 @@ fn life_modules_build() {
     let q = ch.items("qualities", "quality").into_iter().find(|q| q.get("qualitytype") == "LifeModule").unwrap();
     assert_eq!(q.get("stage"), "Nationality");
 }
+
+/// Every creation preset gets starting priorities that are valid for it
+/// (the wizard's fixed D E A B C was invalid for Street Scum, High Life
+/// and Sum-to-Ten Improved, so Create stayed disabled), and a character
+/// can be made with them.
+#[test]
+fn default_priorities_fit_every_preset() {
+    let engine = chummer_core::engine::Engine::load().unwrap();
+    for p in chummer_core::chargen::creation_presets(&engine) {
+        let prios = chummer_core::chargen::Priorities::default_for(p);
+        if matches!(p.build_method().as_str(), "Karma" | "LifeModule") {
+            continue;
+        }
+        assert_eq!(prios.validate(p), Ok(()), "{}: {:?}", p.name(), prios.0);
+        // As the wizard does: the first talent the priority offers (High
+        // Life has nothing below C, where there is no Mundane).
+        let talents = chummer_core::chargen::talent_options(&engine.store, p, prios.get("Talent"));
+        let t = talents.iter().find(|t| t.value == "Mundane").or(talents.first()).expect("a talent");
+        let options = chummer_core::chargen::talent_skill_options(&engine.store, t);
+        let skills: Vec<String> = options.into_iter().take(t.skill_qty().max(0) as usize).collect();
+        let spec = chummer_core::chargen::NewCharacter {
+            settings_id: p.key(),
+            metatype: "Human".into(),
+            metavariant: None,
+            priorities: prios,
+            talent: t.value.clone(),
+            talent_skills: skills,
+            name: "Test".into(),
+        };
+        let r = chummer_core::chargen::create(&engine, &spec);
+        assert!(r.is_ok(), "{}: {:?}", p.name(), r.err());
+    }
+    let std = chummer_core::chargen::creation_presets(&engine).into_iter().find(|p| p.name() == "Standard").unwrap();
+    assert_eq!(chummer_core::chargen::Priorities::default_for(std).0, ['D', 'E', 'A', 'B', 'C']);
+}

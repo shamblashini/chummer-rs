@@ -29,7 +29,30 @@ None open: every recommended fix is done (see "Already fixed").
 
 ## Ask
 
-None open: the user chose to fix every entry (see "Already fixed").
+Two open items, found by the fuzz tests (not Chummer bugs: chummer-rs's
+own). Both have an ignored test that shows them (`cargo test -p
+chummer-core -- --ignored`).
+
+- **LB-44 (c), ask: integer overflow on extreme values.** A file or a
+  command with values near `i32::MAX` (`<base>2147483647</base>`, a
+  number like `1e308` read as `i32::MAX`, `SetGroupKarma { value:
+  i32::MAX }`, `AddCustomSpell` with `effects = i32::MAX`) overflows the
+  rules math: `calc.rs` (lines 332, 338, 348, 782, 872),
+  `calc/karma_cost.rs:183`, `gm/custom_spell.rs:267`. Debug builds
+  panic; release builds wrap and show nonsense. Chummer uses `int` too
+  (and would throw an `OverflowException` only in checked contexts).
+  Options: clamp values when loading and in commands to a sane range
+  (e.g. ±1,000,000), or saturating arithmetic throughout the calc and
+  cost code. Tests: `tests/fuzz_load.rs`
+  `bug_extreme_numbers_overflow_rules_math`, `tests/prop_commands.rs`
+  `bug_extreme_command_values_overflow`.
+- **LB-45 (c), ask: NaN or infinite numbers in commands.** A command
+  such as `SetNuyen { value: NaN }` applies, but `serde_json` writes the
+  value as `null` and cannot read it back, so a command log with it
+  cannot be replayed from JSON (postcard keeps it). Options: refuse
+  non-finite numbers in `command::apply` (they are never valid game
+  values), or encode floats as strings in the JSON form. Test:
+  `tests/prop_commands.rs` `bug_non_finite_numbers_do_not_survive_json`.
 
 ## Already fixed in chummer-rs
 

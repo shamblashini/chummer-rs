@@ -1008,9 +1008,11 @@ fn new_character_from_each_preset() {
     let presets: Vec<(String, String)> = chummer_core::chargen::creation_presets(&h.app.engine).iter().map(|p| (p.name(), format!("{} ({})", p.name(), p.build_method()))).collect();
     assert!(!presets.is_empty());
     let mut failures = Vec::new();
-    for (k, (_, item)) in presets.iter().enumerate() {
-        if !full() && k > 3 {
-            break;
+    for (k, (name, item)) in presets.iter().enumerate() {
+        // By default: the first few and those with unusual priorities.
+        let unusual = ["Street Scum", "High Life", "Improved"].iter().any(|u| name.contains(u));
+        if !full() && k > 3 && !unusual {
+            continue;
         }
         for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark] {
             let r = guarded(|| {
@@ -1031,15 +1033,8 @@ fn new_character_from_each_preset() {
                 assert!(h.find_text(&presets[k].0).is_some(), "picked {item}; shown: {:?}", h.on_screen());
                 h.click_text(&h.app.lang.tr("Create character"));
                 h.frames(2);
-                if h.app.wizard.is_some() {
-                    // The wizard's default priorities do not fit every
-                    // preset (e.g. Street Scum's BCDEE); Create stays off.
-                    let why = h.find_where(|t| t.contains("priority letter")).map_or("still open", |_| "invalid default priorities");
-                    eprintln!("preset {item}: not created ({why})");
-                    h.app.wizard = None;
-                    h.frames(1);
-                    return;
-                }
+                // Every preset's default priorities are valid: Create works.
+                assert!(h.app.wizard.is_none(), "preset {item}: Create did nothing; shown: {:?}", h.on_screen());
                 let i = h.app.active;
                 let passes: &'static [(Vec2, ThemeKind)] = if kind == ThemeKind::Graphite { &[(WIDE, ThemeKind::Graphite)] } else { &[(WIDE, ThemeKind::WorkspaceDark)] };
                 for s in pages(&h, i) {
@@ -1080,6 +1075,27 @@ fn frame_times() {
             h.frames(3);
             eprintln!("{f} [Workspace] Limits with the palette open: {:?} per frame", t.elapsed() / 3);
         }
+    }
+    // Every page of the career characters, slowest first.
+    let mut all = Vec::new();
+    for f in ["Munin_Career.chum5", "Soma (Career).chum5", "Apex Predator.chum5"] {
+        let mut h = Harness::new(ThemeKind::WorkspaceDark);
+        let i = h.open(&fixture(f));
+        let secs: Vec<Section> = h.app.views[i].ws_nav(&h.app.lang).into_iter().flat_map(|g| g.items.into_iter().map(|it| it.section)).collect();
+        for s in secs {
+            if !matches!(s, Section::Page(_) | Section::Gear(_)) {
+                continue;
+            }
+            h.app.views[i].ws_go(s);
+            h.frames(2);
+            let t = std::time::Instant::now();
+            h.frames(3);
+            all.push((t.elapsed() / 3, format!("{f} {}", s.label())));
+        }
+    }
+    all.sort_by_key(|a| std::cmp::Reverse(a.0));
+    for (d, what) in all.iter().take(8) {
+        eprintln!("slowest: {what}: {d:?} per frame");
     }
 }
 

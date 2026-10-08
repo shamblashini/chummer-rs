@@ -12,6 +12,10 @@ use eframe::egui;
 pub struct Wizard {
     preset: usize,
     priorities: [char; 5],
+    /// The preset `priorities` were made for: a new preset gets its own
+    /// defaults (Street Scum, High Life and Sum-to-Ten Improved use other
+    /// letters or totals).
+    priorities_for: Option<usize>,
     metatype: String,
     metavariant: String,
     talent: String,
@@ -34,6 +38,7 @@ impl Wizard {
             preset: 0,
             // Heritage, Talent, Attributes, Skills, Resources
             priorities: ['D', 'E', 'A', 'B', 'C'],
+            priorities_for: None,
             metatype: "Human".into(),
             metavariant: String::new(),
             talent: "Mundane".into(),
@@ -51,6 +56,10 @@ impl Wizard {
         }
         self.preset = self.preset.min(presets.len() - 1);
         let settings: CharacterSettings = presets[self.preset].clone();
+        if self.priorities_for != Some(self.preset) {
+            self.priorities = Priorities::default_for(&settings).0;
+            self.priorities_for = Some(self.preset);
+        }
         let sum_to_ten = settings.build_method() == "SumtoTen";
         let karma_build = matches!(settings.build_method().as_str(), "Karma" | "LifeModule");
         let mut result = WizardResult::Open;
@@ -168,7 +177,10 @@ impl Wizard {
                 let talents: Vec<TalentOption> = chargen::talent_options(&engine.store, &settings, prios.get("Talent"));
                 let allowed: Vec<&TalentOption> = talents.iter().filter(|t| talent_allowed(t, &self.metatype)).collect();
                 if !allowed.iter().any(|t| t.value == self.talent) {
-                    if let Some(t) = allowed.first() {
+                    // Mundane when offered, else a talent that needs no
+                    // skill choices, so Create works straight away.
+                    let pick = allowed.iter().find(|t| t.value == "Mundane").or_else(|| allowed.iter().find(|t| t.skill_qty() <= 0)).or(allowed.first());
+                    if let Some(t) = pick {
                         self.talent = t.value.clone();
                         self.talent_skills.clear();
                     }

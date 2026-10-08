@@ -258,3 +258,33 @@ fn concurrent_saves_of_one_file_do_not_clash() {
     assert!(leftovers.is_empty(), "temporary files left: {leftovers:?}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Journal records are written after the authority's lock is released,
+/// so two answers can land in either order; replay reads them in version
+/// order.
+#[test]
+fn journal_records_written_out_of_order_replay_in_order() {
+    let dir = std::env::temp_dir().join(format!("chummer-sync-journal-order-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let side = dir.join("c.authority");
+    let (mut auth, p, c, mut r) = setup();
+    let saved = auth.to_bytes();
+    for amount in [1.0, 2.0] {
+        r.edit(engine(), &c, gain(amount)).unwrap();
+        let s = auth.submit(engine(), p, r.batch(&c).unwrap()).unwrap();
+        r.handle(engine(), ServerMessage::Ack(s.ack));
+    }
+    let mut applied = auth.take_applied();
+    assert_eq!(applied.len(), 2);
+    applied.reverse();
+    let mut j = chummer_sync::journal::Journal::new(&side);
+    for rec in applied {
+        j.append(&[rec]).unwrap();
+    }
+    let mut back = Authority::from_bytes(&saved).unwrap();
+    for (id, e) in chummer_sync::journal::Journal::read(&side) {
+        assert_eq!(back.replay(engine(), &id, &e), Ok(true));
+    }
+    assert_eq!(back.hash(&c), auth.hash(&c));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -52,6 +52,48 @@ impl Priorities {
         self.0.iter().map(|l| Self::sum_to_ten_value(*l)).sum()
     }
 
+    /// Sensible starting priorities for `settings` that pass
+    /// [`Priorities::validate`]: Attributes highest, then Skills,
+    /// Resources, Heritage and Talent (D E A B C for the standard array).
+    /// Uses the setting's `priorityarray` (Street Scum's B C D E E, High
+    /// Life's A A B C C) or, for Sum-to-Ten, values adding up to its total
+    /// (14 for Sum-to-Ten Improved).
+    pub fn default_for(settings: &CharacterSettings) -> Priorities {
+        // Category indexes (CATEGORIES order) from the highest priority down.
+        const RANK: [usize; 5] = [2, 3, 4, 0, 1];
+        let mut out = ['E'; 5];
+        if settings.build_method() == "SumtoTen" {
+            let want = settings.int("sumtoten", 10).clamp(0, 20);
+            let mut v = [4, 3, 2, 1, 0];
+            let mut sum: i32 = v.iter().sum();
+            // Raise the lowest-ranked that can go up, or lower the
+            // lowest-ranked that can go down, one step at a time.
+            while sum < want {
+                let Some(i) = (0..5).rev().find(|&i| v[i] < 4 && (i == 0 || v[i] < v[i - 1])).or_else(|| (0..5).find(|&i| v[i] < 4)) else { break };
+                v[i] += 1;
+                sum += 1;
+            }
+            while sum > want {
+                let Some(i) = (0..5).rev().find(|&i| v[i] > 0) else { break };
+                v[i] -= 1;
+                sum -= 1;
+            }
+            for (rank, cat) in RANK.iter().enumerate() {
+                out[*cat] = LETTERS.iter().copied().find(|l| Self::sum_to_ten_value(*l) == v[rank]).unwrap_or('E');
+            }
+        } else {
+            let mut letters: Vec<char> = settings.text("priorityarray", "ABCDE").chars().filter(|c| LETTERS.contains(c)).collect();
+            if letters.len() != 5 {
+                letters = LETTERS.to_vec();
+            }
+            letters.sort();
+            for (rank, cat) in RANK.iter().enumerate() {
+                out[*cat] = letters[rank];
+            }
+        }
+        Priorities(out)
+    }
+
     /// Priority builds use each letter once; Sum-to-Ten needs the values
     /// to add up to the setting's total.
     pub fn validate(&self, settings: &CharacterSettings) -> Result<(), String> {
