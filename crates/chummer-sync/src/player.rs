@@ -24,7 +24,7 @@ use tokio::sync::mpsc;
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
 use crate::msg::{self, CharacterId, ClaimProof, ClientMessage, MailMessage, OpId, ServerMessage};
 use crate::lockwatch::{self, Guard};
-use crate::replica::{Event, Replica};
+use crate::replica::{Event, Pending, Replica};
 
 /// How a player reaches their campaign.
 #[derive(Debug, Clone)]
@@ -95,6 +95,8 @@ struct Inner {
     registered: tokio::sync::Mutex<Option<Vec<PublicKey>>>,
     /// The label from the last welcome.
     label: Mutex<Option<String>>,
+    /// The membership's label, as last read (see [`PlayerSession::label`]).
+    membership_label: Mutex<Option<String>>,
     /// The runtime the session was made in: saves asked for by a UI
     /// thread run on its blocking threads.
     rt: Option<tokio::runtime::Handle>,
@@ -103,6 +105,46 @@ struct Inner {
     /// One save at a time (they write the same file), so an older state
     /// never overwrites a newer one.
     saving: Mutex<()>,
+    /// The outbox journal (see [`PlayerSession::edit_now`]).
+    outbox_log: Mutex<OutboxLog>,
+}
+
+/// `<replica>.outbox`: every command made, appended as it is made, until
+/// a save has it. Saves run in the background, so without it an app that
+/// crashed right after an edit lost the edit (found by the e2e
+/// `player-crash` scenario). Each record is a 4-byte big-endian length and
+/// the postcard form of `(CharacterId, Pending)`; a torn last record is
+/// ignored. Written without fsync: it covers the app crashing, and the
+/// save that follows within moments syncs to disk.
+#[derive(Debug, Default)]
+struct OutboxLog {
+    file: Option<std::fs::File>,
+    /// The highest sequence number appended since the log was emptied.
+    max_seq: u64,
+}
+
+fn outbox_log_path(replica: &std::path::Path) -> PathBuf {
+    let mut p = replica.as_os_str().to_owned();
+    p.push(".outbox");
+    PathBuf::from(p)
+}
+
+fn read_outbox_log(path: &std::path::Path) -> Vec<(CharacterId, Pending)> {
+    let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut rest = &bytes[..];
+    while rest.len() >= 4 {
+        let len = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+        if rest.len() < 4 + len {
+            break;
+        }
+        match postcard::from_bytes(&rest[4..4 + len]) {
+            Ok(r) => out.push(r),
+            Err(_) => break,
+        }
+        rest = &rest[4 + len..];
+    }
+    out
 }
 
 /// A player's session. Cheap to clone.
@@ -124,7 +166,21 @@ impl PlayerSession {
     /// one is made.
     pub fn new(endpoint: Endpoint, secret: SecretKey, engine: Arc<Engine>, cfg: PlayerConfig) -> Result<PlayerSession, crate::persist::PersistError> {
         let replica = match &cfg.path {
-            Some(p) if p.exists() => Replica::load(&engine, p)?,
+            Some(p) if p.exists() => {
+                let mut r = Replica::load(&engine, p)?;
+                // Commands made after the last save (the app crashed).
+                let log = outbox_log_path(p);
+                let made = read_outbox_log(&log);
+                if !made.is_empty() {
+                    let n = r.recover_outbox(&engine, made);
+                    if n > 0 {
+                        tracing::info!("took back {n} change(s) made after the last save");
+                    }
+                    r.save(p)?;
+                }
+                let _ = std::fs::remove_file(&log);
+                r
+            }
             _ => Replica::new(),
         };
         Ok(PlayerSession::with_replica(endpoint, secret, engine, cfg, replica))
@@ -159,9 +215,11 @@ impl PlayerSession {
                 mailed_join: std::sync::atomic::AtomicBool::new(false),
                 registered: tokio::sync::Mutex::new(None),
                 label: Mutex::new(None),
+                membership_label: Mutex::new(None),
                 rt: tokio::runtime::Handle::try_current().ok(),
                 save_queued: std::sync::atomic::AtomicBool::new(false),
                 saving: Mutex::new(()),
+                outbox_log: Mutex::default(),
             }),
             events: Arc::new(tokio::sync::Mutex::new(rx)),
         }
@@ -246,12 +304,59 @@ impl PlayerSession {
     /// when online, else kept for the next [`PlayerSession::sync`]. Must be
     /// called after the session was made inside a tokio runtime.
     pub fn edit_now(&self, id: &CharacterId, cmd: Command) -> Result<Report, Rejected> {
-        let report = self.replica().edit(&self.inner.engine, id, cmd)?;
+        let report = self.edit_logged(id, cmd)?;
         self.save_soon();
         if report.changed {
             self.inner.flush.notify_one();
         }
         Ok(report)
+    }
+
+    /// Applies `cmd` to the replica and appends the queued command to the
+    /// outbox journal before anything else can happen to it.
+    fn edit_logged(&self, id: &CharacterId, cmd: Command) -> Result<Report, Rejected> {
+        let (report, made) = {
+            let mut r = self.replica();
+            let report = r.edit(&self.inner.engine, id, cmd)?;
+            let made = if report.changed { r.outbox(id).last().cloned() } else { None };
+            (report, made)
+        };
+        if let (Some(p), Some(path)) = (made, &self.inner.cfg.path) {
+            if let Err(e) = self.append_outbox_log(path, id, &p) {
+                tracing::warn!("could not write the outbox journal (a crash before the next save would lose this change): {e}");
+            }
+        }
+        Ok(report)
+    }
+
+    fn append_outbox_log(&self, replica: &std::path::Path, id: &CharacterId, p: &Pending) -> std::io::Result<()> {
+        use std::io::Write;
+        let bytes = postcard::to_stdvec(&(id, p)).map_err(std::io::Error::other)?;
+        let mut rec = (bytes.len() as u32).to_be_bytes().to_vec();
+        rec.extend(bytes);
+        let mut log = self.inner.outbox_log.lock().unwrap_or_else(|e| e.into_inner());
+        if log.file.is_none() {
+            log.file = Some(std::fs::OpenOptions::new().create(true).append(true).open(outbox_log_path(replica))?);
+        }
+        log.file.as_mut().expect("opened").write_all(&rec)?;
+        log.max_seq = log.max_seq.max(p.op.id.seq);
+        Ok(())
+    }
+
+    /// A save with commands up to `seq` is on disk: empty the journal
+    /// when it holds nothing newer.
+    fn trim_outbox_log(&self, replica: &std::path::Path, seq: u64) {
+        let mut log = self.inner.outbox_log.lock().unwrap_or_else(|e| e.into_inner());
+        if log.max_seq > seq || (log.file.is_none() && log.max_seq == 0) {
+            return;
+        }
+        log.file = None;
+        log.max_seq = 0;
+        if let Err(e) = std::fs::remove_file(outbox_log_path(replica)) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("could not empty the outbox journal: {e}");
+            }
+        }
     }
 
     /// Takes the refused commands out of the list (the player saw them).
@@ -306,8 +411,22 @@ impl PlayerSession {
 
     /// The name the GM gave our invite ("Anna"), once known.
     pub fn label(&self) -> Option<String> {
-        let from_membership = self.try_replica().and_then(|r| r.membership().map(|m| m.label.clone())).filter(|l| !l.is_empty());
-        from_membership.or_else(|| self.inner.label.lock().expect("poisoned").clone().filter(|l| !l.is_empty()))
+        // Once joined, the membership says (and keeps saying, as the GM
+        // renames or re-labels): empty for members the GM added by node
+        // id. The Welcome's label is only a first answer; for those
+        // members it is their member name, which went stale when the join
+        // renamed them.
+        // While the replica is busy (a background save), the last answer.
+        let mut seen = self.inner.membership_label.lock().expect("poisoned");
+        if let Some(r) = self.try_replica() {
+            if let Some(m) = r.membership() {
+                *seen = Some(m.label.clone());
+            }
+        }
+        match &*seen {
+            Some(l) => Some(l.clone()).filter(|l| !l.is_empty()),
+            None => self.inner.label.lock().expect("poisoned").clone().filter(|l| !l.is_empty()),
+        }
     }
 
     /// Why the GM's app refused us, if it did (until a join works).
@@ -396,8 +515,13 @@ impl PlayerSession {
                     let made = work.into_iter().map(|(id, at, ch)| (id, at, chummer_core::command::snapshot(&ch))).collect();
                     self.replica().put_snapshots(made);
                 }
-                let bytes = self.replica().to_bytes();
-                crate::persist::write_atomic(p, &bytes)
+                let (bytes, seq) = {
+                    let r = self.replica();
+                    (r.to_bytes(), r.last_seq())
+                };
+                crate::persist::write_atomic(p, &bytes)?;
+                self.trim_outbox_log(p, seq);
+                Ok(())
             }
             None => Ok(()),
         }
@@ -543,7 +667,7 @@ impl PlayerSession {
     /// sent at once. Network trouble does not fail the edit: it stays in
     /// the outbox for the next [`PlayerSession::sync`].
     pub async fn edit(&self, id: &CharacterId, cmd: Command) -> Result<Report, Rejected> {
-        let report = self.replica().edit(&self.inner.engine, id, cmd)?;
+        let report = self.edit_logged(id, cmd)?;
         self.save_logged();
         if let Some(c) = self.client() {
             if let Err(e) = self.flush_live(&c).await {
@@ -764,4 +888,90 @@ impl PlayerSession {
 async fn request(client: &CampaignClient, msg: &ClientMessage) -> Result<ServerMessage, NetError> {
     let bytes = client.submit(msg::encode(msg)).await?;
     msg::decode(&bytes).map_err(|e| NetError::Protocol(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authority::Authority;
+    use chummer_core::career::ManualExpense;
+    use chummer_net::invite::CampaignId;
+
+    fn gain(amount: f64) -> Command {
+        Command::ManualExpense { karma: true, gain: true, expense: ManualExpense { amount, reason: "test".into(), ..Default::default() } }
+    }
+
+    /// An edit made just before the app is killed, while its save had not
+    /// run yet (saves run in the background), used to be lost: the
+    /// e2e `player-crash` scenario saw a player end one edit short. The
+    /// outbox journal brings it back on the next start.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_edit_survives_a_crash_before_its_save() {
+        let engine = Arc::new(Engine::load().unwrap());
+        let dir = std::env::temp_dir().join(format!("chummer-sync-outbox-log-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let crash = dir.join("crash");
+        std::fs::create_dir_all(&crash).unwrap();
+        let path = dir.join("campaign.replica");
+
+        // A replica with one character, saved.
+        let key = SecretKey::from_bytes(&[2; 32]);
+        let p = key.public();
+        let mut auth = Authority::new(CampaignId([1; 16]), SecretKey::from_bytes(&[1; 32]).public(), "GM");
+        auth.add_member(p, Role::Player, "Alice");
+        let c = CharacterId::new("c");
+        let ch = chummer_core::character::Character::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../chummer-core/tests/fixtures/Munin_Career.chum5")).unwrap();
+        auth.add_character(c.clone(), Some(p), ch).unwrap();
+        let mut r = Replica::new();
+        let ClientMessage::Join { have, .. } = r.join_message("Alice", None) else { unreachable!() };
+        let (membership, pushes) = auth.join(p, "Alice", &have).unwrap();
+        r.handle(&engine, ServerMessage::Joined { membership, pushes });
+        r.save(&path).unwrap();
+
+        let ep = chummer_net::node::bind(key.clone(), &chummer_net::config::NetConfig::with_relays([]), vec![]).await.unwrap();
+        let link = InviteLink { host: auth.gm(), campaign: auth.campaign(), member: None, gm_key: None, relay: None };
+        let mut cfg = PlayerConfig::new("Alice", link);
+        cfg.path = Some(path.clone());
+        let s = PlayerSession::new(ep.clone(), key.clone(), engine.clone(), cfg.clone()).unwrap();
+        {
+            // The background save has not run when the app is killed.
+            let _hold = s.inner.saving.lock().unwrap();
+            s.edit_now(&c, gain(3.0)).unwrap();
+            for f in std::fs::read_dir(&dir).unwrap().flatten().filter(|f| f.path().is_file()) {
+                std::fs::copy(f.path(), crash.join(f.file_name())).unwrap();
+            }
+        }
+        let karma = s.replica().character(&c).unwrap().karma;
+        s.close();
+
+        // The next start takes the edit back, queued to be sent.
+        let mut cfg2 = cfg.clone();
+        cfg2.path = Some(crash.join("campaign.replica"));
+        let back = PlayerSession::new(ep.clone(), key.clone(), engine.clone(), cfg2.clone()).unwrap();
+        assert_eq!(back.replica().outbox(&c).len(), 1, "the edit is back in the outbox");
+        assert_eq!(back.replica().character(&c).unwrap().karma, karma);
+        // It was saved; the journal is empty, and a further restart does
+        // not add it twice.
+        assert!(!outbox_log_path(&crash.join("campaign.replica")).exists());
+        back.close();
+        let again = PlayerSession::new(ep.clone(), key, engine, cfg2).unwrap();
+        assert_eq!(again.replica().outbox(&c).len(), 1);
+        // New commands go on from there (no sequence number reused).
+        again.edit_now(&c, gain(1.0)).unwrap();
+        let seqs: Vec<u64> = again.replica().outbox(&c).iter().map(|p| p.op.id.seq).collect();
+        assert!(seqs[1] > seqs[0], "{seqs:?}");
+        // The label: the welcome's (here a stale member name, as when a
+        // join renamed the member) counts only until the membership says;
+        // members added by node id have none.
+        *again.inner.label.lock().unwrap() = Some("P2".into());
+        // (The replica may be busy with a background save for a moment.)
+        let end = Instant::now() + Duration::from_secs(5);
+        while again.label().is_some() && Instant::now() < end {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(again.label(), None, "membership label is empty for a member added by node id");
+        again.close();
+        ep.close().await;
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

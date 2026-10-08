@@ -234,6 +234,31 @@ impl Replica {
         Ok(report)
     }
 
+    /// The sequence number of the last command made here (commands made
+    /// later have higher ones).
+    pub fn last_seq(&self) -> u64 {
+        self.next_seq
+    }
+
+    /// Puts back commands made after this replica was saved (from the
+    /// session's outbox journal, after a crash): those of this replica
+    /// newer than [`Replica::last_seq`], in order. Returns how many.
+    pub fn recover_outbox(&mut self, engine: &Engine, mut made: Vec<(CharacterId, Pending)>) -> usize {
+        made.sort_by_key(|(_, p)| p.op.id.seq);
+        let mut n = 0;
+        for (id, p) in made {
+            if p.op.id.origin != self.origin || p.op.id.seq <= self.next_seq {
+                continue;
+            }
+            let Some(c) = self.copies.get_mut(&id) else { continue };
+            self.next_seq = p.op.id.seq;
+            c.outbox.push(p);
+            rebuild(engine, c);
+            n += 1;
+        }
+        n
+    }
+
     // ----- what to send -----
 
     /// The first message on a live connection.

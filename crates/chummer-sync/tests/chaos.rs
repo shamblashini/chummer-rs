@@ -64,6 +64,11 @@ struct Player {
     /// Messages on their way to this player.
     inbox: Vec<ServerMessage>,
     refused: BTreeSet<OpId>,
+    /// The player's last save (saves run in the background, so a crash
+    /// goes back to it) and the outbox journal written at every edit
+    /// since (`PlayerSession`'s `<replica>.outbox`).
+    saved: Option<Vec<u8>>,
+    journal: Vec<(CharacterId, chummer_sync::replica::Pending)>,
 }
 
 struct World {
@@ -102,7 +107,7 @@ impl World {
             auth.add_character(c.clone(), Some(id), munin().clone()).unwrap();
             karma.insert(c.clone(), START_KARMA as i64);
             chars.push(c);
-            ps.push(Player { id, replica: Replica::new(), inbox: Vec::new(), refused: BTreeSet::new() });
+            ps.push(Player { id, replica: Replica::new(), inbox: Vec::new(), refused: BTreeSet::new(), saved: None, journal: Vec::new() });
         }
         let auth_saved = auth.to_bytes();
         let mut w = World {
@@ -224,6 +229,13 @@ impl World {
     fn step(&mut self) {
         let p = self.pick(self.players.len());
         let c = self.chars[p].clone();
+        // The player's background save runs now and then.
+        if self.chance(30) {
+            let pl = &mut self.players[p];
+            pl.saved = Some(pl.replica.to_bytes());
+            let seq = pl.replica.last_seq();
+            pl.journal.retain(|(_, x)| x.op.id.seq > seq);
+        }
         match self.pick(100) {
             // A player edits offline.
             0..=24 => {
@@ -235,7 +247,9 @@ impl World {
                 if self.players[p].replica.edit(engine(), &c, cmd).is_ok() {
                     let outbox = self.players[p].replica.outbox(&c);
                     if outbox.len() > before {
-                        let op = outbox.last().unwrap().op.id;
+                        let pending = outbox.last().unwrap().clone();
+                        let op = pending.op.id;
+                        self.players[p].journal.push((c.clone(), pending));
                         self.made.insert(op, d);
                         self.note(format!("P{p} edit {d:+} ({op:?})"));
                     }
@@ -303,10 +317,17 @@ impl World {
             // A player's app restarts (it saves after every change, as
             // `PlayerSession` does): only what was in flight is lost.
             88..=92 => {
-                let bytes = self.players[p].replica.to_bytes();
-                self.players[p].replica = Replica::from_bytes(engine(), &bytes).unwrap_or_else(|e| panic!("replica reload: {e}; {}", self.ctx()));
+                let crash = self.chance(60) && self.players[p].saved.is_some();
+                let bytes = if crash { self.players[p].saved.clone().unwrap() } else { self.players[p].replica.to_bytes() };
+                let mut r = Replica::from_bytes(engine(), &bytes).unwrap_or_else(|e| panic!("replica reload: {e}; {}", self.ctx()));
+                // Commands made after the save come back from the journal.
+                let n = r.recover_outbox(engine(), std::mem::take(&mut self.players[p].journal));
+                self.players[p].replica = r;
+                self.players[p].saved = Some(self.players[p].replica.to_bytes());
                 self.players[p].inbox.clear();
-                self.note(format!("P{p} restarts"));
+                // Refusals not saved are reported again.
+                self.players[p].refused = self.players[p].replica.refused().iter().map(|r| r.op).collect();
+                self.note(format!("P{p} {} ({n} edit(s) from the journal)", if crash { "crashes back to its last save" } else { "restarts" }));
             }
             // The authority saves and restarts cleanly.
             93..=96 => {

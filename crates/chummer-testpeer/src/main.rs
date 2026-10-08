@@ -234,7 +234,8 @@ fn make_campaign(out: &Path, character: &Path, owners: &[String], gm_key: &Path,
         }
         let mut m = Member::embedded(MemberKind::Player, &ch);
         m.name = names.get(i).cloned().unwrap_or_else(|| format!("PC {i}"));
-        m.player = format!("P{i}");
+        // The players are called P1, P2, … (`run.sh`).
+        m.player = format!("P{}", i + 1);
         if o != "invite" {
             let owner: EndpointId = o.parse().with_context(|| format!("owner {o}"))?;
             m.owner = Some(owner.to_string());
