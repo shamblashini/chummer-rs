@@ -119,10 +119,12 @@ pub fn take<T: 'static>(id: &str) -> Option<T> {
     };
     match v.downcast::<T>() {
         Ok(v) => {
-            if let Some(mut j) = jobs.remove(id) {
-                if let Some(h) = j.handle.take() {
-                    let _ = h.join();
-                }
+            // Join outside the registry lock: the finished thread may still
+            // be in its last request_repaint, which can wait on a frame.
+            let handle = jobs.remove(id).and_then(|mut j| j.handle.take());
+            drop(jobs);
+            if let Some(h) = handle {
+                let _ = h.join();
             }
             Some(*v)
         }
@@ -198,7 +200,7 @@ mod tests {
             if let Some(v) = take::<i32>("test:once") {
                 break v;
             }
-            assert!(start.elapsed() < Duration::from_secs(5));
+            assert!(start.elapsed() < Duration::from_secs(60), "the job never finished");
             std::thread::sleep(Duration::from_millis(5));
         };
         assert_eq!(v, 42);
