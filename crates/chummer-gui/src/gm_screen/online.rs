@@ -382,7 +382,7 @@ impl GmScreen {
         let node = net.node()?;
         node.serve(&o.hosted.host);
         // A mailbox round now and every few minutes.
-        let (host, mail) = (o.hosted.host.clone(), o.mail.clone());
+        let (host, mail) = (o.hosted.clone(), o.mail.clone());
         let task = net.spawn(async move {
             loop {
                 mail_round(&node, &host, &mail).await;
@@ -404,7 +404,7 @@ impl GmScreen {
                 return;
             }
         };
-        let (host, mail) = (o.hosted.host.clone(), o.mail.clone());
+        let (host, mail) = (o.hosted.clone(), o.mail.clone());
         net.spawn(async move { mail_round(&node, &host, &mail).await });
     }
 
@@ -931,9 +931,13 @@ impl GmScreen {
     }
 }
 
-async fn mail_round(node: &chummer_sync::Node, host: &chummer_sync::AuthorityHost, mail: &Mutex<MailState>) {
+async fn mail_round(node: &chummer_sync::Node, hosted: &HostedCampaign, mail: &Mutex<MailState>) {
     mail.lock().expect("poisoned").busy = true;
-    let r = node.sync_mail(host).await.map_err(|e| e.to_string());
+    // Invite changes made with `chummer-authority invite ...` meanwhile
+    // (reading and saving files: off the async threads).
+    let h = hosted.clone();
+    let _ = tokio::task::spawn_blocking(move || h.merge_invites()).await;
+    let r = node.sync_mail(&hosted.host).await.map_err(|e| e.to_string());
     let mut m = mail.lock().expect("poisoned");
     m.busy = false;
     m.last = Some((chummer_core::campaign::now_ms(), r));

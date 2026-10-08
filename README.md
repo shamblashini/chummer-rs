@@ -698,8 +698,9 @@ chummer-authority --key node.key status Seattle.chummercampaign   # members, own
 
 Copy the campaign file, its `.authority` file and the GM's `node.key`
 to the server (the key is the campaign's address). `invite ...` and
-`assign` work while it runs (it takes the changes in within seconds; an
-invite names its player by label or id). `rotate-key` makes a new GM
+`assign` work while it runs (it takes the changes in within seconds; the
+app, when it hosts the campaign, at its next mail check; an invite names
+its player by label or id). `rotate-key` makes a new GM
 campaign key, which players get with their next sync. It writes the characters back into the
 campaign file every few minutes and when it stops, so the GM can later
 open the file in the app again. Every change it accepts is journaled
