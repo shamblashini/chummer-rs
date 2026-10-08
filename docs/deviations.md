@@ -85,6 +85,7 @@ Each table has these columns:
 | Chummer5a | chummer-rs | Why | File |
 |---|---|---|---|
 | Dragging a contact only moves it on screen; the saved order does not change. | Drag (☰ handle) or ⏶/⏷ reorders the contacts, and the order is saved as the order of the `<contact>` elements, which Chummer loads in that order. | Keep the order the user chose. | yes (element order) |
+| "Swap Ordering" switches the contact panel between left-to-right and top-to-bottom flow; it changes no data. | No Swap Ordering. **Sort** sorts the contacts, enemies or pets once by name, connection, loyalty or role (a command: one undo step); the order is saved as the element order. | A sort helps with long lists; the flow is fixed by the layout. | yes (element order) |
 | `Contact.Load` never reads `<relative>`, so a linked file is found by `<file>` only, and a re-save writes `<relative>` empty. | Reads `<relative>`, and also looks for the linked file next to the owner's save (a link made on Windows works on Linux). (LB-22) | Links survive a move between machines. | yes (`<relative>` kept) |
 
 ## GM tools
@@ -150,8 +151,7 @@ yet"):
 - PACKS kits: "Select Martial Art" entries without a fixed art are
   skipped (Chummer asks for one); Create PACKS Kit does not write skills
   (Chummer 5.226 does not either).
-- Relationships: no "Swap Ordering" (in Chummer it only changes the panel
-  flow, no data); no notes colour editor for locations and items.
+- Relationships: no notes colour editor for locations and items.
   Contact `<colour>` is shown but cannot be edited (Chummer has no editor
   either).
 - About 290 UI labels have no Chummer translation string and stay English.

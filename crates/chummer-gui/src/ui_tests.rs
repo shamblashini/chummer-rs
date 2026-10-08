@@ -1483,6 +1483,39 @@ fn workspace_relationships_short_window() {
     h.frames(3);
 }
 
+/// Relationships: Sort → By Name (Workspace) and By Connection (Classic)
+/// reorder the contacts with one undoable command.
+#[test]
+fn relationships_sort() {
+    for kind in [ThemeKind::WorkspaceDark, ThemeKind::Graphite] {
+        let mut h = Harness::new(kind);
+        let i = h.open(&fixture("Munin.chum5"));
+        h.app.views[i].ws_go(Section::Page(Tab::Relationships));
+        h.size = WIDE;
+        h.frames(3);
+        let names = |h: &Harness| h.app.views[i].doc().items("contacts", "contact").iter().filter(|c| c.get("type") != "Enemy" && c.get("type") != "Pet").map(|c| (c.get("name").to_lowercase(), c.get_i32("connection").unwrap_or(0))).collect::<Vec<_>>();
+        let before = names(&h);
+        h.click_text("Sort");
+        h.frames(2);
+        let by = if kind == ThemeKind::Graphite { "By Connection" } else { "By Name" };
+        h.click_text(by);
+        h.frames(2);
+        let after = names(&h);
+        let mut want = before.clone();
+        if kind == ThemeKind::Graphite {
+            want.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+        } else {
+            want.sort_by(|a, b| (a.0.is_empty(), &a.0).cmp(&(b.0.is_empty(), &b.0)));
+        }
+        assert_eq!(after, want, "{:?}", h.app.status);
+        if after != before {
+            h.key(Key::Z, Modifiers::COMMAND);
+            h.frames(2);
+            assert_eq!(names(&h), before, "one undo step");
+        }
+    }
+}
+
 /// The command line: `--tab`, `--layout` and `--theme` names, and
 /// starting with files on a tab.
 #[test]

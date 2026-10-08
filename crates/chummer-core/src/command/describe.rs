@@ -215,6 +215,14 @@ fn what(cmd: &Command, b: &Character, a: &Character, engine: &Engine) -> String 
         SetContactField { contact, key, value } => format!("Set {key} of {} to {}", contact_name(b, contact), excerpt(value)),
         SetContactNotes { contact, .. } => format!("Changed notes of {}", contact_name(b, contact)),
         MoveContact { contact, .. } | MoveContactStep { contact, .. } => format!("Moved {}", contact_name(b, contact)),
+        SortContacts { kind, by } => {
+            let what = match kind {
+                crate::contacts::ContactType::Contact => "contacts",
+                crate::contacts::ContactType::Enemy => "enemies",
+                crate::contacts::ContactType::Pet => "pets",
+            };
+            format!("Sorted {what} by {}", by.label().to_lowercase())
+        }
         RemoveContact { contact } => format!("Removed {}", contact_name(b, contact)),
         LinkContact { contact, file, .. } => format!("Linked {} to {file}", contact_name(b, contact)),
         UnlinkContact { contact } => format!("Unlinked {}", contact_name(b, contact)),

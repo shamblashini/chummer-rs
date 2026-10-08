@@ -425,6 +425,7 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
         }
         MoveContact { contact, target, after } => flag(contacts::move_contact(ch, contact, target, *after)),
         MoveContactStep { contact, up } => flag(contacts::move_step(ch, contact, *up)),
+        SortContacts { kind, by } => flag(contacts::sort(ch, *kind, *by)),
         RemoveContact { contact } => flag(contacts::remove(ch, contact)),
         LinkContact { contact, file, startup } => flag(contacts::link(ch, contact, std::path::Path::new(file), std::path::Path::new(startup))),
         UnlinkContact { contact } => flag(contacts::unlink(ch, contact)),

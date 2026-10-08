@@ -236,7 +236,10 @@ an expandable stat block (type, metatype, gender, age, personal life,
 preferred payment, hobbies/vice) with `contacts.xml`'s lists; pets have a
 name and a `critters.xml` metatype. Those fields take free text, with the
 list behind a chevron inside the field; typing filters the list. Contacts can also be added from a
-Chummer contacts XML file (Add from File). Any entry can be linked to
+Chummer contacts XML file (Add from File). **Sort** (in place of
+Chummer's "Swap Ordering", which only switched the panel between
+left-to-right and top-to-bottom flow) sorts the list once by name,
+connection, loyalty or role; the order is saved, and Undo takes it back. Any entry can be linked to
 another `.chum5` or `.chum5lz` (Attach Character): its name, metatype,
 gender, age and mugshot then come from that file, on screen and on
 printed sheets, and Open Character opens it in a new tab. The link is
@@ -867,8 +870,6 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   category (Chummer's default; the option to turn it off is not read);
   Chummer's "Initiate Grade" nodes are plain "Grade N" groups.
 - Relationships:
-  - No "Swap Ordering". In Chummer it only switches the contact panel
-    between left-to-right and top-to-bottom flow; it changes no data.
   - Chummer has no editor for a contact's `<colour>`; chummer-rs shows
     it but cannot change it either.
   - Locations and items have no notes colour editor.

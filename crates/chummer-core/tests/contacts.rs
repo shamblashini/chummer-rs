@@ -285,3 +285,44 @@ fn printed_contact_uses_the_linked_character() {
     assert!(p.child("mainmugshotbase64").is_none());
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// Sort Contacts: one type is reordered, ties keep their order, the other
+/// types keep their places, and the command is one undoable step.
+#[test]
+fn sorting_contacts_reorders_one_type() {
+    use chummer_core::command::{self, Command, Envelope, Session};
+    use chummer_core::contacts::ContactSort;
+    let mut ch = Character::load(&fixture("Barrett.chum5")).unwrap();
+    ch.items_mut("contacts").children.clear();
+    let mut add = |kind, name: &str, conn: i32, loy: i32| {
+        let c = contacts::new_element(kind, name, "", conn, loy);
+        ch.items_mut("contacts").push(c);
+    };
+    add(ContactType::Contact, "Zed", 2, 4);
+    add(ContactType::Enemy, "Rival", 5, 1);
+    add(ContactType::Contact, "", 6, 1);
+    add(ContactType::Contact, "anna", 2, 6);
+    add(ContactType::Contact, "Bob", 4, 2);
+    let names = |ch: &Character| ch.items("contacts", "contact").iter().map(|c| c.get("name")).collect::<Vec<_>>();
+    assert!(contacts::sort(&mut ch, ContactType::Contact, ContactSort::Name));
+    assert_eq!(names(&ch), ["anna", "Rival", "Bob", "Zed", ""], "unnamed last; the enemy keeps its place");
+    assert!(!contacts::sort(&mut ch, ContactType::Contact, ContactSort::Name), "already sorted");
+    assert!(contacts::sort(&mut ch, ContactType::Contact, ContactSort::Connection));
+    assert_eq!(names(&ch), ["", "Rival", "Bob", "anna", "Zed"], "highest first, ties in their order");
+    assert!(contacts::sort(&mut ch, ContactType::Contact, ContactSort::Loyalty));
+    assert_eq!(names(&ch)[0], "anna");
+    assert!(!contacts::sort(&mut ch, ContactType::Pet, ContactSort::Name), "no pets");
+    // Saved order survives a reload.
+    let back = Character::from_str(&ch.to_xml_string()).unwrap();
+    assert_eq!(names(&back), names(&ch));
+    // Through a session: one step, undone at once.
+    let engine = chummer_core::engine::Engine::load().unwrap();
+    let mut s = Session::with_seed(ch.clone(), 1);
+    let before = command::state_hash(&ch);
+    let r = s.apply(&engine, Command::SortContacts { kind: ContactType::Contact, by: ContactSort::Name }).unwrap();
+    assert_eq!(r.description, "Sorted contacts by name");
+    assert_ne!(s.state_hash(), before);
+    s.undo().unwrap();
+    assert_eq!(s.state_hash(), before);
+    let _ = Envelope::new(Command::SortContacts { kind: ContactType::Enemy, by: ContactSort::Role }, 1, 0, "").to_json();
+}

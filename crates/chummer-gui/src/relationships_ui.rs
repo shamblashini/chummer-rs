@@ -161,6 +161,7 @@ impl RelationshipsPanel {
                     }
                 }
             }
+            ui.menu_button(lang.tr("Sort"), |ui| changed |= sort_menu(ui, ch, kind, lang)).response.on_hover_text(lang.tr("Sort the list once; the order is saved"));
             if ui.small_button(crate::theme::glyph("⟳")).on_hover_text(lang.tr("Reload")).clicked() {
                 self.linked.clear();
             }
@@ -280,6 +281,8 @@ impl RelationshipsPanel {
                     }
                 }
             }
+            let sort = widgets::button(ui, Some(icons::SORT_ASCENDING), &lang.tr("Sort"), Look::Ghost, 26.0).on_hover_text(lang.tr("Sort the list once; the order is saved"));
+            egui::Popup::menu(&sort).show(|ui| changed |= sort_menu(ui, ch, kind, lang));
             if widgets::icon_button(ui, icons::ARROWS_CLOCKWISE, 26.0).on_hover_text(lang.tr("Reload")).clicked() {
                 self.linked.clear();
             }
@@ -799,6 +802,21 @@ fn flag_field(ui: &mut egui::Ui, ch: &mut Doc, guid: &str, c: &Element, key: &st
     let mut v = c.get_bool(key).unwrap_or(false);
     let changed = if ws_layout(ui) { ui.add_enabled_ui(enabled, |ui| widgets::check(ui, &mut v, label)).inner.changed() } else { ui.add_enabled(enabled, egui::Checkbox::new(&mut v, label)).changed() };
     changed && set_field(ch, guid, key, if v { "True" } else { "False" }.to_owned())
+}
+
+/// The Sort menu: sorts the entries of `kind` once (a command, so it is
+/// one undo step and is saved). Chummer's "Swap Ordering" only switched
+/// the panel's flow; a sort changes the order Chummer shows too.
+fn sort_menu(ui: &mut egui::Ui, ch: &mut Doc, kind: ContactType, lang: &Language) -> bool {
+    let mut changed = false;
+    for by in contacts::ContactSort::ALL {
+        let label = lang.tr_fmt("By {0}", &[&lang.tr(by.label())]);
+        if ui.button(label).clicked() {
+            changed |= ch.set(Command::SortContacts { kind, by });
+            ui.close();
+        }
+    }
+    changed
 }
 
 /// Whether the Workspace layout is active (its widgets replace Classic's).

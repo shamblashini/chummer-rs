@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::career::{InitiationOptions, ManualExpense};
 use crate::character::{Character, LoadError};
-use crate::contacts::ContactType;
+use crate::contacts::{ContactSort, ContactType};
 use crate::custom_improvement::Form;
 use crate::engine::Engine;
 use crate::gm::custom_spell::SpellDesign;
@@ -188,6 +188,8 @@ pub enum Command {
     SetContactNotes { contact: String, notes: Option<String>, color: [u8; 3] },
     MoveContact { contact: String, target: String, after: bool },
     MoveContactStep { contact: String, up: bool },
+    /// Sort the contacts, enemies or pets once (saved as their order).
+    SortContacts { kind: ContactType, by: ContactSort },
     RemoveContact { contact: String },
     /// Link to a save file; `startup` is the directory relative links are
     /// resolved against.
@@ -269,7 +271,7 @@ impl Command {
             SetField { key, .. } => !crate::character::INFO_FIELDS.iter().chain(crate::character::TEXT_FIELDS).any(|(k, _)| k == key) || matches!(key.as_str(), "metatype" | "metavariant"),
             SetItemText { field, .. } => field == "location",
             // A revert restores a state the rules already produced.
-            SetContactField { .. } | SetContactNotes { .. } | SetWeekNotes { .. } | SetImprovementNotes { .. } | Revert { .. } => false,
+            SetContactField { .. } | SetContactNotes { .. } | SortContacts { .. } | SetWeekNotes { .. } | SetImprovementNotes { .. } | Revert { .. } => false,
             _ => true,
         }
     }
@@ -360,6 +362,7 @@ impl Command {
             SetContactNotes { contact: g.clone(), notes: Some(s("owes me")), color: [10, 20, 30] },
             MoveContact { contact: g.clone(), target: g.clone(), after: true },
             MoveContactStep { contact: g.clone(), up: false },
+            SortContacts { kind: ContactType::Contact, by: ContactSort::Connection },
             RemoveContact { contact: g.clone() },
             LinkContact { contact: g.clone(), file: s("/home/x/fixer.chum5"), startup: s("/opt/chummer") },
             UnlinkContact { contact: g.clone() },
