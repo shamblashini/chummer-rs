@@ -29,6 +29,7 @@ mod select;
 mod settings_ui;
 mod theme;
 mod trace;
+mod frame_cap;
 mod tree_table;
 mod view;
 mod wizard;
@@ -939,6 +940,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        frame_cap::wait();
         trace::begin_frame(frame.info().cpu_usage);
         self.frame(ctx);
         trace::end_frame();
@@ -1226,6 +1228,11 @@ fn main() -> anyhow::Result<()> {
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([800.0, 500.0])
             .with_drag_and_drop(true),
+        // No vsync: on Wayland a hidden window (another workspace) gets no
+        // frame callbacks, so a vsync'd buffer swap blocks the event loop
+        // until it is shown again and the compositor reports the app as
+        // not responding. `frame_cap` paces frames instead.
+        vsync: frame_cap::vsync(),
         ..Default::default()
     };
     if let Some(icon) = workspace::app_icon() {

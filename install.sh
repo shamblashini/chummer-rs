@@ -8,10 +8,11 @@ set -euo pipefail
 PREFIX="${PREFIX:-$HOME/.local}"
 cd "$(dirname "$0")"
 
-cargo build --release -p chummer-gui -p chummer-cli
+cargo build --release -p chummer-gui -p chummer-cli -p chummer-authority
 
 install -Dm755 target/release/chummer-rs "$PREFIX/bin/chummer-rs"
 install -Dm755 target/release/chummer-cli "$PREFIX/bin/chummer-cli"
+install -Dm755 target/release/chummer-authority "$PREFIX/bin/chummer-authority"
 
 share="$PREFIX/share/chummer-rs"
 rm -rf "$share"
@@ -26,5 +27,7 @@ install -Dm644 packaging/chummer-rs-mime.xml "$PREFIX/share/mime/packages/chumme
 install -Dm644 packaging/chummer-rs.svg "$PREFIX/share/icons/hicolor/scalable/apps/chummer-rs.svg"
 command -v update-mime-database >/dev/null && update-mime-database "$PREFIX/share/mime" || true
 command -v update-desktop-database >/dev/null && update-desktop-database "$PREFIX/share/applications" || true
+# Open invite links (chummer-rs://join/...) with chummer-rs.
+command -v xdg-mime >/dev/null && xdg-mime default chummer-rs.desktop x-scheme-handler/chummer-rs || true
 
-echo "Installed chummer-rs and chummer-cli to $PREFIX/bin"
+echo "Installed chummer-rs, chummer-cli and chummer-authority to $PREFIX/bin"

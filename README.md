@@ -730,8 +730,14 @@ The desktop shows this when the window does not answer for a few
 seconds. Saving, opening, printing, file dialogs, going online, mailbox
 rounds and campaign saves run on their own threads (the status bar shows
 a spinner and what is running), and the online sync no longer
-compresses characters while it holds the campaign's state. If the window
-still stalls, start chummer-rs from a terminal with frame timing on:
+compresses characters while it holds the campaign's state.
+
+On Wayland (Hyprland and others) a window on a workspace you are not
+looking at gets no frame callbacks from the compositor; with vsync on, a
+repaint there blocked the app until the window was shown again, and the
+compositor offered to terminate it. chummer-rs therefore runs without
+vsync and paces its own frames at about 60 per second (`CHUMMER_VSYNC=1`
+turns vsync back on). If the window still stalls, start chummer-rs from a terminal with frame timing on:
 
 ```bash
 CHUMMER_TRACE_FRAMES=1 chummer-rs 2>trace.log
