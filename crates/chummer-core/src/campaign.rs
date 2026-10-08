@@ -489,7 +489,7 @@ impl Campaign {
             }
         }
         a.put(CAMPAIGN_ENTRY, serde_json::to_vec_pretty(&doc).expect("campaigns serialise"));
-        a.manifest.created = self.created.clone();
+        a.manifest.created = if self.created.is_empty() || self.created.ends_with('Z') { self.created.clone() } else { format!("{}Z", self.created) };
         a.manifest.extra.insert("summary".into(), serde_json::json!({ "name": self.name, "members": self.members.len() }));
         crate::container::encode(&KIND, &a)
     }

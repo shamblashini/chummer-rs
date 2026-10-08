@@ -2,9 +2,9 @@
 //! characters they can be linked to.
 //!
 //! All three live in `<contacts>/<contact>` and differ by `<type>`
-//! (`Contact.EntityType`). Any of them can be linked to another `.chum5`
-//! or `.chum5lz`
-//! (`Contact.FileName` / `RelativeFileName`); while the linked file loads,
+//! (`Contact.EntityType`). Any of them can be linked to another character
+//! file, `.chumrs`, `.chum5` or `.chum5lz` (`Contact.FileName` /
+//! `RelativeFileName`); while the linked file loads,
 //! Chummer shows its name, metatype, gender, age and mugshots in place of
 //! the contact's own, but still saves the contact's own fields.
 

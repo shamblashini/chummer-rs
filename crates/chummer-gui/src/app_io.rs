@@ -237,7 +237,7 @@ impl App {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     let b = ui.button(self.lang.tr("Save as .chumrs…"));
-                    if b.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if b.clicked() {
                         choice = Some(1);
                     }
                     if ui.button(self.lang.tr("Keep saving as Chummer5a")).clicked() {

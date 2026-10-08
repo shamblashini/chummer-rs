@@ -41,8 +41,9 @@ $ unzip -l Barrett.chumrs
   both methods for every entry.
 - `manifest.json` is the first entry. Readers must not depend on the
   order.
-- Entry timestamps are always 1980-01-01 00:00, so saving the same state
-  twice gives the same bytes. The real times are in the manifest.
+- Entry timestamps are always 1980-01-01 00:00, so two saves of the same
+  state differ only in the manifest's `modified`. The real times are in
+  the manifest.
 - Entry names use `/` and are relative. They are keys, never paths on
   disk.
 
@@ -70,7 +71,7 @@ UTF-8 JSON:
 | `format` | What the file is: `"chummer-rs character"` or `"chummer-rs campaign"`. A reader refuses any other value ("this is a chummer-rs campaign file, not a chummer-rs character file"). |
 | `schema_version` | The format version of the file's contents (an integer, from 1). See [Versions](#versions). |
 | `app_version` | The chummer-rs version that wrote the file. Informational, and named in the error when the file is too new. |
-| `created` | When the file was first written, UTC, `YYYY-MM-DDTHH:MM:SSZ`. Kept across saves. |
+| `created` | When the file was first written, UTC, `YYYY-MM-DDTHH:MM:SSZ`. Kept across saves. (A campaign's is the campaign's own `created`.) |
 | `modified` | When it was last written, UTC. |
 | `entries` | Every other entry in the archive: its uncompressed `size` in bytes and the **BLAKE3** hash of its uncompressed bytes (64 lower-case hex digits). |
 | other fields | Format-specific (see `summary` below). Readers ignore fields they do not know, and chummer-rs keeps them. |
