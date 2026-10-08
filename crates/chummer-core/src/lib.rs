@@ -1,7 +1,7 @@
 //! Core engine for chummer-rs, a Rust rewrite of Chummer5a.
 //!
 //! This crate has no UI dependencies. It loads Chummer's XML game data,
-//! reads and writes `.chum5` characters, and computes the rules math.
+//! reads and writes `.chum5` characters and its own `.chumrs`, and computes the rules math.
 
 pub mod xml;
 pub mod data;
@@ -17,6 +17,8 @@ pub mod tree;
 pub mod attributes;
 pub mod character;
 pub mod chum5lz;
+pub mod container;
+pub mod chumrs;
 pub mod html_color;
 pub mod contacts;
 pub mod skills;

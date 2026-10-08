@@ -531,6 +531,11 @@ fn refresh_derived(ch: &mut Character, engine: &Engine, essence_before: (f64, Op
 /// `<totalvalue>`). So a saved and reloaded character, or the same
 /// character on another chummer-rs version, has the same form.
 pub fn canonical(ch: &Character) -> String {
+    canonical_document(ch).to_xml_string()
+}
+
+/// [`canonical`] as a document.
+pub fn canonical_document(ch: &Character) -> crate::xml::Element {
     let mut doc = ch.to_document();
     doc.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.name == "chummerrsversion" || e.name == "totaless"));
     if let Some(attrs) = doc.child_mut("attributes") {
@@ -538,7 +543,7 @@ pub fn canonical(ch: &Character) -> String {
             a.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.name == "totalvalue"));
         }
     }
-    doc.to_xml_string()
+    doc
 }
 
 /// BLAKE3 of the canonical form. Equal hashes mean equal characters
