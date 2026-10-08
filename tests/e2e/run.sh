@@ -448,9 +448,11 @@ sc_disk-full() {
     wait_for "relay up" 30 docker exec "$P-relay" test -s /data/self-signed-cert.pem
     docker exec "$P-relay" cat /data/self-signed-cert.pem > "$D/relay/self-signed-cert.pem"
     wait_for "relay mailbox online" 60 logs_have "$P-relay" "mailbox node connected"
+    # The GM registers its members' keys while there is room.
+    gm_up
+    wait_for "the GM registered its mailbox" 60 logs_have "$P-gm" "mailbox:"
     log "filling the disk"
     docker exec "$P-relay" sh -c 'dd if=/dev/zero of=/data/fill bs=1k count=100000 2>/dev/null; df -k /data | tail -1'
-    gm_up
     EVERY_MS=1000 players_up 10 --big 30000
     gm_away_after_join
     players_done 90

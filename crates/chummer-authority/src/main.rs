@@ -216,6 +216,7 @@ async fn run(path: &Path, key: SecretKey, name: &str, settings: &OnlineSettings,
     let mut files = tokio::time::interval(Duration::from_secs(5));
     let mut events = h.host.subscribe();
     let mut last_refused = 0;
+    let mut first_round = true;
     #[cfg(unix)]
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     loop {
@@ -230,10 +231,12 @@ async fn run(path: &Path, key: SecretKey, name: &str, settings: &OnlineSettings,
                 Ok(r) => {
                     let st = r.status.as_ref().map(|s| format!("; mailbox: {} keys, {} waiting, {} refused today", s.keys, s.waiting, s.refused_today)).unwrap_or_default();
                     let refused_now = r.status.as_ref().map(|s| s.refused_today).unwrap_or(0);
-                    if r.fetched + r.sent + r.refused > 0 || refused_now != last_refused {
+                    // The first round always: it says the mailbox took the keys.
+                    if first_round || r.fetched + r.sent + r.refused > 0 || refused_now != last_refused {
                         tracing::info!("mail: {} read, {} applied, {} dropped, {} joins refused, {} sent{st}", r.fetched, r.handled, r.dropped, r.refused, r.sent);
                     }
                     last_refused = refused_now;
+                    first_round = false;
                 }
                 Err(e) => tracing::warn!("mailbox: {e}"),
             },

@@ -120,7 +120,7 @@ After each scenario the script also checks:
 | long-pbp | 3 players make 80 edits each by mail, with large notes. The blob limit is 16 KiB, so mail travels in many chunks. | strict |
 | mail-expiry | Mail expires 20 s after it is stored, and the GM comes online after that. Players must mail their commands again. | strict |
 | abuse | Hostile mail: an oversized blob, unsealed bytes, a sealed message from a stranger, an unsigned put, malformed frames, a stranger's flood, a member's flood until the quota stops it, and a member's garbage. Then normal play. | the relay refuses a stranger's puts (none stored) and limits the member's; strict |
-| disk-full | The relay's data is on a nearly full 3 MiB tmpfs while players mail. Then the disk is freed and the GM comes online. | the relay stays up; the mailbox stores mail again without a restart; strict |
+| disk-full | The GM registers its mailbox, then the relay's data is on a nearly full 3 MiB tmpfs while players mail. Then the disk is freed and the GM comes online. | the relay stays up; the mailbox stores mail again without a restart; strict |
 | db-damage | `mailbox.redb` is damaged, and then made unreadable, between relay restarts. Mail in the damaged file is lost; players mail it again. | the relay starts again on the damaged file (it moves it aside); it refuses the unreadable one with an error; strict |
 | stranger-flood | A node no player gave a key floods the GM's mailbox (1500 puts) and a player's (500), and sends an unsigned put, while the GM is away and players play by mail. | no stranger put is stored; the GM's mailbox counts the refusals; strict |
 | revoked-player | P3 joins with its own invite (its character assigned on claim). Mid-game the GM runs `chummer-authority invite revoke`. P3 keeps editing. | P3 is told "revoked" and goes offline; its character does not change after the revoke; P3 is no longer a member; P1 and P2 strict |
@@ -130,3 +130,10 @@ After each scenario the script also checks:
 
 See the report of the run that added these tests (in the commit history)
 for the results at that time. Run the script for the current state.
+
+The run that added per-player invites (2026-10-08) passed baseline, pbp,
+gm-crash, relay-kill, abuse, disk-full, db-damage, mail-expiry,
+stranger-flood (1501 refused puts counted, none stored), revoked-player
+and leaked-link (the intruder refused live and by mail; 38 leaked-key
+puts stored before the cap of 40, the player's own mail counting
+towards it).
