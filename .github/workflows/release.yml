@@ -292,6 +292,10 @@ jobs:
             type=raw,value=${{ needs.version.outputs.version }}
             type=raw,value=latest
       - uses: docker/build-push-action@v6
+        env:
+          # No build-record artifact: the release job downloads every
+          # artifact of the run, and it cannot unpack that one.
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           file: packaging/relay/Dockerfile
@@ -312,6 +316,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: "{linux-x86_64,windows-x86_64,macos-universal}"
           merge-multiple: true
       - name: Relay files and checksums
         run: |
