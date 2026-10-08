@@ -77,7 +77,7 @@ jobs:
         with:
           msystem: UCRT64
           update: false
-          install: mingw-w64-ucrt-x86_64-libxslt curl
+          install: mingw-w64-ucrt-x86_64-libxslt
       - name: Bundle xsltproc
         if: runner.os == 'Windows'
         shell: msys2 {0}
@@ -110,11 +110,10 @@ jobs:
               { pacman -Qlq "$p" | grep -iE '/[^/]*(copying|licen[cs]e|copyright)[^/]*$' || true; } | copy_licences "$p"
             fi
           done
-          # libxslt's package has carried no licence file: take it from
-          # the upstream release it was built from.
+          # MSYS2's libxslt package carries no licence file: use upstream's
+          # (packaging/windows/licenses, from libxslt's source).
           if [ -z "$(ls -A "$out/licenses/mingw-w64-ucrt-x86_64-libxslt")" ]; then
-            v=$(pacman -Q mingw-w64-ucrt-x86_64-libxslt | awk '{print $2}' | sed 's/-[0-9]*$//')
-            curl -fsSL "https://gitlab.gnome.org/GNOME/libxslt/-/raw/v$v/Copyright" -o "$out/licenses/mingw-w64-ucrt-x86_64-libxslt/Copyright"
+            cp packaging/windows/licenses/libxslt-Copyright "$out/licenses/mingw-w64-ucrt-x86_64-libxslt/Copyright"
           fi
           ls -la "$out" "$out/licenses"/*
           for p in $(pacman -Qoq $files | sort -u); do
