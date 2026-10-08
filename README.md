@@ -76,6 +76,18 @@ The wizard covers:
 - Metatype and metavariant.
 - Magic or resonance talent, with its free skills.
 
+During creation, **Change Priority Selection…** (Point Buy and Life
+Modules: **Change Metatype…**), next to the metatype on the Common tab
+or the Attributes page, opens the same choices again on the character,
+as Chummer's menu item does: a new metatype replaces the racial
+qualities and attribute limits (points and karma already spent stay, cut
+to the new maximums), new priorities move their budgets, and a new
+talent replaces its qualities and free skills. In the Workspace, click
+two priority cards on the Attributes page to swap their letters; when
+the metatype or talent is not offered at its new letter, the dialog
+opens with the swap and says why. Each change is one command (Undo,
+History).
+
 A Creation panel shows what is left of each budget:
 - Karma.
 - Attribute and special attribute points.
@@ -412,8 +424,8 @@ was.
   creation (points and karma), rating pips, pools you can click to roll,
   issue marks on the rows, and in career a "+1 · cost" button on every
   attribute, skill, skill group and knowledge skill, greyed when the
-  karma is not there. Attributes & Qualities adds the priorities (read
-  only), the derived values as cards and the qualities; Skills ends with
+  karma is not there. Attributes & Qualities adds the priorities (click
+  two cards to swap them during creation), the derived values as cards and the qualities; Skills ends with
   "Other advances" in career (the cheapest attribute raises, initiation,
   new qualities and martial arts). Magic, resonance, critter, A.I. and
   martial arts pages show their summary (tradition and drain, power
@@ -426,7 +438,12 @@ was.
   tables), Relationships (a segmented switch for Contacts, Enemies and
   Pets, icon buttons for link, notes and delete) and Karma & Nuyen (with
   the whole ledger) are restyled the same way, and so is the warning for
-  a missing settings file.
+  a missing settings file. The dialogs these pages open (the spell,
+  metamagic and mentor pickers, Spell Options, Create Spell, Create
+  Improvement, contact notes, Change Priority Selection, the New
+  Character wizard and the confirmations) are Workspace cards with their
+  own header and close button (Esc closes them), a search field, list
+  rows and Workspace buttons.
 - **Number steppers**: a small − and + inside the border and a value
   field as wide as the range needs (up to four digits; a longer value
   widens it), so nothing spills out at any value. Drag the value, or
@@ -886,11 +903,10 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   grades whose requirements are not met, and Friends in High Places
   contact limits. A missing technomancer stream is only a warning,
   because there is no stream picker yet.
-- Workspace layout: in the build pages the priorities cannot be swapped
-  (pick them in the New Character wizard), there is no "Change
-  metatype", and the dialogs these pages open (the spell, mentor and
-  metamagic pickers, Create Improvement, contact notes) are Classic
-  windows with Workspace buttons. The design's
+- Change Priority Selection keeps the build method (Chummer can also
+  switch from karma to priorities there), and does not re-create a
+  critter metatype's powers, natural weapons and skills.
+- Workspace layout: the design's
   training time and "Saving for" goals are not there. The catalog's
   table shows essence, cost and availability from the data at the chosen
   rating and grade (the inspector's preview is exact). Home's recent

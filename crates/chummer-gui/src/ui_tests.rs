@@ -1483,6 +1483,55 @@ fn workspace_relationships_short_window() {
     h.frames(3);
 }
 
+/// Creation, priority build: click two priority cards to swap them
+/// (Workspace), undo it; "Change Priority Selection…" opens the dialog
+/// in both layouts, and a new metatype there is applied.
+#[test]
+fn priority_swap_and_change_metatype() {
+    for kind in [ThemeKind::WorkspaceLight, ThemeKind::Graphite] {
+        let mut h = Harness::new(kind);
+        let i = h.open(&fixture("Miko.chum5"));
+        h.app.views[i].ws_go(Section::Page(Tab::Common));
+        h.size = WIDE;
+        h.frames(3);
+        let letters = |h: &Harness| {
+            let d = h.app.views[i].doc();
+            (d.field("priorityattributes").chars().next(), d.field("priorityskills").chars().next())
+        };
+        if kind == ThemeKind::WorkspaceLight {
+            assert_eq!(letters(&h), (Some('B'), Some('C')));
+            // The cards' second lines: "20 points", "28 / 2 groups".
+            h.click_where("the Attributes card", |t| t.ends_with(" points") && t.chars().next().is_some_and(|c| c.is_ascii_digit()));
+            h.frames(2);
+            assert!(h.find_text("click another to swap them (Esc: cancel)").is_some(), "{:?}", h.on_screen());
+            h.click_where("the Skills card", |t| t.contains(" / ") && t.ends_with(" groups"));
+            h.frames(3);
+            assert_eq!(letters(&h), (Some('C'), Some('B')), "{:?}", h.app.status);
+            h.key(Key::Z, Modifiers::COMMAND);
+            h.frames(2);
+            assert_eq!(letters(&h), (Some('B'), Some('C')), "one undo step");
+        }
+        let label = crate::metatype_ui::change_label(&h.app.lang, "Priority");
+        h.click_text(&label);
+        h.frames(3);
+        let title = label.trim_end_matches('…').to_owned();
+        assert!(h.find_text(&title).is_some(), "{title}: {:?}", h.on_screen());
+        sizes(&mut h, 2);
+        h.size = WIDE;
+        h.frames(2);
+        // Human instead of Elf (both at Heritage D), then OK.
+        h.click_where("Human", |t| t == "Human" || t.starts_with("Human "));
+        h.frames(2);
+        h.click_text(&h.app.lang.tr("OK"));
+        h.frames(3);
+        assert_eq!(h.app.views[i].doc().field("metatype"), "Human", "{:?}; {:?}", h.app.status, h.on_screen());
+        assert!(h.find_text(&title).is_none(), "the dialog closed");
+        h.key(Key::Z, Modifiers::COMMAND);
+        h.frames(2);
+        assert_eq!(h.app.views[i].doc().field("metatype"), "Elf");
+    }
+}
+
 /// Relationships: Sort → By Name (Workspace) and By Connection (Classic)
 /// reorder the contacts with one undoable command.
 #[test]

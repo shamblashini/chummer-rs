@@ -191,3 +191,26 @@ fn undo_restores_everything() {
     let back = Character::from_str(&s.ch().to_xml_string()).unwrap();
     assert_eq!(back.field("metatype"), "Elf");
 }
+
+/// A Chummer save (Miko: an elf magician, priorities saved as "D,1"):
+/// swapping Attributes and Skills keeps everything else as it was.
+#[test]
+fn swapping_priorities_on_a_chummer_save() {
+    let mut ch = Character::load(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Miko.chum5")).unwrap();
+    let before = budget(&ch);
+    let quals = |c: &Character| c.items("qualities", "quality").iter().map(|q| q.get("guid")).collect::<Vec<_>>();
+    let (q0, imps0) = (quals(&ch), ch.improvements.list.len());
+    let mut choice = Choice::of(&ch);
+    assert_eq!(choice.priorities, Some(Priorities(['D', 'A', 'B', 'C', 'E'])));
+    assert_eq!(choice.talent, "Magician");
+    choice.priorities = Some(Priorities(['D', 'A', 'C', 'B', 'E']));
+    change(&mut ch, choice).unwrap();
+    let after = budget(&ch);
+    assert_eq!((after.attribute_points.0, after.skill_points.0), (16, 36), "{:?} -> {:?}", before.attribute_points, after.attribute_points);
+    assert_eq!(after.special_points.0, before.special_points.0);
+    assert_eq!(after.nuyen.0, before.nuyen.0);
+    assert_eq!((ch.field("prioritymetatype"), ch.field("priorityattributes"), ch.field("priorityskills")), ("D,1".into(), "C".into(), "B".into()));
+    assert_eq!(quals(&ch), q0, "the same qualities, untouched");
+    assert_eq!(ch.improvements.list.len(), imps0);
+    assert_eq!(Choice::of(&ch).talent_skills, ["Counterspelling", "Spellcasting"]);
+}

@@ -192,9 +192,13 @@ pub fn apply(ch: &mut Character, engine: &Engine, choice: &Choice) -> Result<(),
     let talent = talent.expect("checked");
 
     // ----- the priorities -----
-    let old_special = (ch.field("priorityspecial"), ch.field("prioritytalent"), Choice::of(ch).talent_skills);
+    let old_special = (ch.field("priorityspecial").chars().next(), ch.field("prioritytalent"), Choice::of(ch).talent_skills);
     for (k, cat) in [("prioritymetatype", "Heritage"), ("priorityattributes", "Attributes"), ("priorityspecial", "Talent"), ("priorityskills", "Skills"), ("priorityresources", "Resources")] {
-        ch.set_field(k, prios.get(cat).to_string());
+        // Older saves write "D,1" (letter, Sum-to-Ten value); 5.226 writes
+        // the letter. A letter that did not change keeps its form.
+        if !ch.field(k).starts_with(prios.get(cat)) {
+            ch.set_field(k, prios.get(cat).to_string());
+        }
     }
     ch.set_field("prioritytalent", talent.value.clone());
     let skills: Vec<String> = choice.talent_skills.iter().filter(|s| !s.trim().is_empty()).cloned().collect();
@@ -217,7 +221,7 @@ pub fn apply(ch: &mut Character, engine: &Engine, choice: &Choice) -> Result<(),
     ch.set_field("startingnuyen", crate::improvement::fmt_num(nuyen));
 
     // ----- the talent (when it, its priority or its skills changed) -----
-    let talent_changed = old_special != (prios.get("Talent").to_string(), talent.value.clone(), skills.clone());
+    let talent_changed = old_special != (Some(prios.get("Talent")), talent.value.clone(), skills.clone());
     // chummer-rs deviates from Chummer (LB-46): Chummer applies the
     // talent's magic/resonance limits only when the talent changed, but a
     // new metatype has just reset them to the metatype's (MAG 1 for a

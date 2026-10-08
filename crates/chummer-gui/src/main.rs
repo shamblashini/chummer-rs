@@ -19,6 +19,7 @@ mod initiative;
 mod lifestyle_ui;
 mod magic_ui;
 mod memo;
+mod metatype_ui;
 mod item_editor;
 mod online;
 mod pdf_ui;

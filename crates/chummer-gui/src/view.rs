@@ -160,6 +160,8 @@ pub struct CharacterView {
     // GM tools (gm_ui): PACKS kits and the custom spell designer.
     packs: crate::gm_ui::PacksWindow,
     spell_designer: crate::gm_ui::SpellDesigner,
+    /// "Change Priority Selection" / "Change Metatype", while open.
+    change_metatype: Option<crate::metatype_ui::ChangeDialog>,
     /// Item detail pane: (selected item guid, editor).
     item_editor: Option<(String, crate::item_editor::ItemEditor)>,
     side_tab: SideTab,
@@ -296,6 +298,7 @@ impl CharacterView {
             custom_improvements: Default::default(),
             packs: Default::default(),
             spell_designer: Default::default(),
+            change_metatype: None,
             item_editor: None,
             side_tab: SideTab::Summary,
             counterspelling: 0,
@@ -561,6 +564,7 @@ impl CharacterView {
         changed |= self.custom_improvements.window(ctx, &mut self.doc, &self.store, self.settings.as_ref(), lang);
         changed |= self.packs.window(ctx, &mut self.doc, &self.store, self.settings.as_ref(), &self.sheet, lang, status);
         changed |= self.spell_designer.window(ctx, &mut self.doc, engine, &self.store, lang, status);
+        changed |= self.change_metatype_dialog(ctx, engine, lang, status);
         changed |= self.finish_dialog(ctx, lang);
         changed
     }
@@ -827,6 +831,9 @@ impl CharacterView {
             ui.label(lang.tr("Metatype:"));
             let meta: Vec<String> = ["metatype", "metavariant"].iter().map(|k| self.doc.field(k)).filter(|v| !v.is_empty()).collect();
             ui.strong(meta.join(" · "));
+            if !self.doc.created && ui.small_button(crate::metatype_ui::change_label(lang, &self.doc.field("buildmethod"))).clicked() {
+                self.open_change_metatype(None, None);
+            }
             ui.separator();
             ui.weak(format!(
                 "{} · {}",
