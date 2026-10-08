@@ -79,6 +79,9 @@ pub enum Command {
     SetNuyen { value: f64 },
     /// "Change Settings File": use another settings preset.
     SwitchSettings { key: String },
+    /// "Change Priorities" / "Change Metatype" during creation: metatype,
+    /// priorities and talent chosen again ([`crate::chargen::rebuild`]).
+    ChangeMetatype { choice: crate::chargen::rebuild::Choice },
 
     // ----- creation: attributes, skills, build -----
     SetAttributeBase { attribute: String, value: i32 },
@@ -288,6 +291,15 @@ impl Command {
             SetKarma { value: 25 },
             SetNuyen { value: 1234.5 },
             SwitchSettings { key: s("Standard.xml") },
+            ChangeMetatype {
+                choice: crate::chargen::rebuild::Choice {
+                    metatype: s("Elf"),
+                    metavariant: None,
+                    priorities: Some(crate::chargen::Priorities(['C', 'E', 'A', 'B', 'D'])),
+                    talent: s("Magician"),
+                    talent_skills: vec![s("Spellcasting")],
+                },
+            },
             SetAttributeBase { attribute: s("BOD"), value: 3 },
             SetAttributeKarma { attribute: s("AGI"), value: 1 },
             SetSkillBase { skill: g.clone(), value: 4 },

@@ -103,6 +103,11 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
             ch.nuyen = *value;
             changed()
         }
+        ChangeMetatype { choice } => {
+            let before = super::canonical(ch);
+            chargen::rebuild::apply(ch, engine, choice).map_err(Rejected::new)?;
+            flag(super::canonical(ch) != before)
+        }
         SwitchSettings { key } => {
             let preset = engine.settings.find(key).cloned().ok_or_else(|| Rejected::new(format!("no settings preset {key}")))?;
             crate::settings::switch_character(ch, &preset).map_err(Rejected::new)?;

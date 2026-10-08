@@ -104,6 +104,16 @@ fn what(cmd: &Command, b: &Character, a: &Character, engine: &Engine) -> String 
         SetField { key, value } => format!("Set {} to {}", field_label(key), excerpt(value)),
         SetKarma { value } => format!("Set karma to {value}"),
         SetNuyen { value } => format!("Set nuyen to {}", format::nuyen(*value)),
+        ChangeMetatype { choice } => {
+            let mt = match &choice.metavariant {
+                Some(v) if !v.is_empty() => format!("{} ({v})", choice.metatype),
+                _ => choice.metatype.clone(),
+            };
+            match choice.priorities {
+                Some(p) => format!("Changed priorities ({}) and metatype {mt}", p.0.iter().collect::<String>()),
+                None => format!("Changed metatype to {mt}"),
+            }
+        }
         SwitchSettings { key } => format!("Switched settings to {}", engine.settings.find(key).map_or_else(|| key.clone(), |s| s.name())),
         SetAttributeBase { attribute, value } => format!("Set {attribute} points to {value}"),
         SetAttributeKarma { attribute, value } => format!("Set {attribute} karma to {value}"),

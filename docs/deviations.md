@@ -54,6 +54,8 @@ Each table has these columns:
 |---|---|---|---|
 | The creation form has no Improvements tab. | The Improvements tab is shown in creation mode when the character has custom improvements, so they can still be edited. | Nothing becomes unreachable. | no |
 | Creation problems show only as a popup when you click Finish. | Problems are listed all the time: a ⚠ badge with a count on each tab, a panel on the open tab, marks on the rows concerned, and the full list in Karma Summary. An optional guide walks through creation one step at a time. | Community request: don't dump everything at once, and say what's wrong before Finish. | no |
+| Change Priorities after a new metatype with the same talent leaves MAG/RES/DEP at the metatype's minimum. | The talent's limits are applied again. (LB-46) | SR5 p. 65. | yes (attribute limits) |
+| Change Priorities / Change Metatype can also switch build methods (karma-bought attributes become points, priority-only qualities go). | The same build method only (the dialog offers its own choices); critter metatypes' powers, natural weapons and skills are not re-created. | chummer-rs switches settings only within one build method. | no |
 | A technomancer without a stream is an error. | It is a warning and does not block Finish. | chummer-rs has no stream picker yet, so it must not block finishing. | no |
 
 ## Items & costs
