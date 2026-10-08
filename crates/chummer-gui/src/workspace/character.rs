@@ -309,6 +309,11 @@ impl CharacterView {
     #[allow(clippy::too_many_arguments)]
     pub fn ws_page(&mut self, ui: &mut egui::Ui, section: Section, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status, roll: &mut Option<u32>, pops: &mut PopOuts) -> bool {
         let mut changed = false;
+        // Leaving the item pages ends the visit ("Added since you opened
+        // this page").
+        if !matches!(section, Section::Gear(_) | Section::Page(Tab::Cyberware | Tab::Vehicles | Tab::StreetGear)) {
+            self.ws_gear.visit = None;
+        }
         match section {
             Section::Play => changed |= self.ws_play(ui, lang, status, pops),
             Section::History => {
