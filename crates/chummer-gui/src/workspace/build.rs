@@ -147,7 +147,7 @@ impl CharacterView {
                 changed |= self.life_module_picker(ui, engine, lang, status);
             });
         }
-        self.ws_priorities(ui, lang);
+        changed |= self.ws_priorities(ui, lang, status);
         changed |= self.ws_attribute_table(ui, engine, lang);
         ui.add_space(4.0);
         self.ws_derived(ui, lang);
@@ -192,6 +192,11 @@ impl CharacterView {
             if !variant.is_empty() {
                 widgets::tag(ui, &variant, ws.text, ws.divider);
             }
+            // (Priority builds have the button with the priorities.)
+            let priority = chummer_core::character::uses_priority_tables(&self.doc.field("buildmethod"));
+            if !self.doc.created && !priority && widgets::button(ui, Some(icons::USER_SWITCH), &crate::metatype_ui::change_label(lang, &self.doc.field("buildmethod")), Look::Ghost, 24.0).clicked() {
+                self.open_change_metatype(None, None);
+            }
             let build = match self.doc.field("buildmethod").as_str() {
                 "SumtoTen" => lang.tr("Sum-to-Ten"),
                 "" => lang.tr("Priority"),
@@ -213,47 +218,172 @@ impl CharacterView {
         changed
     }
 
-    /// Priority builds in creation: the five letters as cards (chosen in
-    /// the New Character wizard; read only here).
-    fn ws_priorities(&self, ui: &mut egui::Ui, lang: &Language) {
-        let Some(b) = &self.budget else { return };
+    /// Priority builds in creation: the five letters as cards. Click one,
+    /// then another, to swap their letters (a `ChangeMetatype` command
+    /// with the same metatype and talent); when the swap does not work
+    /// (the metatype or talent is not offered at the new letter) the
+    /// Change Priority Selection dialog opens with the swap and the reason.
+    fn ws_priorities(&mut self, ui: &mut egui::Ui, lang: &Language, status: &mut Status) -> bool {
+        let Some(b) = &self.budget else { return false };
         if !chummer_core::character::uses_priority_tables(&self.doc.field("buildmethod")) {
-            return;
+            return false;
         }
         let ws = theme::ws(ui);
         let talent = self.doc.field("prioritytalent");
-        let rows: [(&str, &str, String); 5] = [
-            ("priorityresources", "Resources", format::nuyen(b.nuyen.0)),
-            ("priorityattributes", "Attributes", lang.tr_fmt("{0} points", &[&b.attribute_points.0])),
-            ("prioritymetatype", "Metatype", format!("{} · {}", self.doc.field("metatype"), lang.tr_fmt("{0} special", &[&b.special_points.0]))),
-            ("priorityskills", "Skills", format!("{} / {}", b.skill_points.0, lang.tr_fmt("{0} groups", &[&b.skill_group_points.0]))),
-            ("priorityspecial", "Magic or Resonance", if talent.is_empty() { lang.tr("Mundane") } else { lang.tr(&talent) }),
+        // (field, category in `chargen::CATEGORIES`, label, value)
+        let rows: [(&str, &str, &str, String); 5] = [
+            ("priorityresources", "Resources", "Resources", format::nuyen(b.nuyen.0)),
+            ("priorityattributes", "Attributes", "Attributes", lang.tr_fmt("{0} points", &[&b.attribute_points.0])),
+            ("prioritymetatype", "Heritage", "Metatype", format!("{} · {}", self.doc.field("metatype"), lang.tr_fmt("{0} special", &[&b.special_points.0]))),
+            ("priorityskills", "Skills", "Skills", format!("{} / {}", b.skill_points.0, lang.tr_fmt("{0} groups", &[&b.skill_group_points.0]))),
+            ("priorityspecial", "Talent", "Magic or Resonance", if talent.is_empty() { lang.tr("Mundane") } else { lang.tr(&talent) }),
         ];
-        let mut rows: Vec<(String, String, String)> = rows.into_iter().map(|(key, l, v)| (self.doc.field(key), lang.tr(l), v)).filter(|(letter, _, _)| letter.len() == 1).collect();
+        // Older saves write "D,1" (letter, Sum-to-Ten value).
+        let mut rows: Vec<(String, &str, String, String)> = rows.into_iter().filter_map(|(key, cat, l, v)| self.doc.field(key).chars().next().filter(char::is_ascii_uppercase).map(|c| (c.to_string(), cat, lang.tr(l), v))).collect();
         if rows.is_empty() {
-            return;
+            return false;
         }
         rows.sort_by(|a, b| a.0.cmp(&b.0));
-        widgets::heading(ui, &lang.tr("Priorities"), &lang.tr("chosen when the character was created"), 13.0, |_| {});
+        let editable = !self.doc.created;
+        // The first card clicked, waiting for the second.
+        let pick_id = egui::Id::new(("ws_priority_swap", self.ws_id));
+        let mut picked: Option<&'static str> = ui.ctx().data(|d| d.get_temp::<&'static str>(pick_id));
+        let note = if !editable {
+            String::new()
+        } else if picked.is_some() {
+            lang.tr("click another to swap them (Esc: cancel)")
+        } else {
+            lang.tr("click two to swap them")
+        };
+        let mut open_dialog = false;
+        widgets::heading(ui, &lang.tr("Priorities"), &note, 13.0, |ui| {
+            if editable {
+                open_dialog = widgets::button(ui, Some(icons::PENCIL_SIMPLE), &crate::metatype_ui::change_label(lang, &self.doc.field("buildmethod")), Look::Ghost, 24.0).clicked();
+            }
+        });
         let gap = 6.0;
         let w = ((ui.available_width() - gap * (rows.len() - 1) as f32) / rows.len() as f32).max(110.0);
+        let mut clicked: Option<&'static str> = None;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
-            for (letter, label, value) in rows {
-                egui::Frame::new().fill(ws.raised).stroke(egui::Stroke::new(1.0_f32, ws.divider)).corner_radius(5).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
+            for (letter, cat, label, value) in &rows {
+                let cat: &'static str = chummer_core::chargen::CATEGORIES.iter().copied().find(|c| c == cat).unwrap_or("Heritage");
+                let selected = picked == Some(cat);
+                let stroke = if selected { egui::Stroke::new(1.5_f32, ws.primary) } else { egui::Stroke::new(1.0_f32, ws.divider) };
+                let resp = egui::Frame::new().fill(if selected { ws.selection } else { ws.raised }).stroke(stroke).corner_radius(5).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
                     ui.set_width((w - 18.0).max(0.0));
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         ui.label(RichText::new(letter).size(14.0).color(ws.accent));
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
-                            ui.add(egui::Label::new(RichText::new(label).size(12.5).color(ws.text)).truncate());
-                            ui.add(egui::Label::new(RichText::new(value).size(11.5).color(ws.muted)).truncate());
+                            ui.add(egui::Label::new(RichText::new(label).size(12.5).color(ws.text)).truncate().selectable(false));
+                            ui.add(egui::Label::new(RichText::new(value).size(11.5).color(ws.muted)).truncate().selectable(false));
                         });
                     });
                 });
+                if editable {
+                    let r = ui.interact(resp.response.rect, egui::Id::new(("ws_priority_card", cat)), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let r = if selected { r } else { r.on_hover_text(lang.tr_fmt("Swap {0} with another priority", &[label])) };
+                    if r.clicked() {
+                        clicked = Some(cat);
+                    }
+                }
             }
         });
+        let mut changed = false;
+        if editable && picked.is_some() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            picked = None;
+        }
+        if let Some(c) = clicked {
+            match picked {
+                Some(p) if p == c => picked = None,
+                Some(p) => {
+                    picked = None;
+                    changed |= self.swap_priorities(p, c, status);
+                }
+                None => picked = Some(c),
+            }
+        }
+        ui.ctx().data_mut(|d| match picked {
+            Some(p) => d.insert_temp(pick_id, p),
+            None => {
+                d.remove_temp::<&'static str>(pick_id);
+            }
+        });
+        if open_dialog {
+            self.open_change_metatype(None, None);
+        }
+        changed
+    }
+
+    /// Swap the letters of two priority categories, keeping the metatype,
+    /// talent and talent skills. If that choice is refused (the metatype or
+    /// talent is not offered at its new letter), the dialog opens with the
+    /// swapped letters and the reason.
+    fn swap_priorities(&mut self, a: &str, b: &str, status: &mut Status) -> bool {
+        let mut choice = chummer_core::chargen::rebuild::Choice::of(&self.doc);
+        let Some(mut p) = choice.priorities else { return false };
+        let idx = |c: &str| chummer_core::chargen::CATEGORIES.iter().position(|x| *x == c);
+        let (Some(i), Some(j)) = (idx(a), idx(b)) else { return false };
+        p.0.swap(i, j);
+        choice.priorities = Some(p);
+        match self.doc.apply(Command::ChangeMetatype { choice: choice.clone() }) {
+            Ok(r) => {
+                if r.changed {
+                    *status = Some((r.description, false));
+                }
+                r.changed
+            }
+            Err(e) => {
+                self.open_change_metatype(Some(choice), Some(e.reason));
+                false
+            }
+        }
+    }
+
+    /// Open "Change Priority Selection" / "Change Metatype", starting
+    /// from `start` (default: the character's current choice).
+    pub(crate) fn open_change_metatype(&mut self, start: Option<chummer_core::chargen::rebuild::Choice>, error: Option<String>) {
+        if self.doc.created {
+            return;
+        }
+        let start = start.unwrap_or_else(|| chummer_core::chargen::rebuild::Choice::of(&self.doc));
+        self.change_metatype = Some(crate::metatype_ui::ChangeDialog::new(&start, error));
+    }
+
+    /// The Change dialog while open; OK sends `ChangeMetatype` (a refusal
+    /// keeps the dialog open with the reason). Returns true if the
+    /// character changed.
+    pub(crate) fn change_metatype_dialog(&mut self, ctx: &egui::Context, engine: &Engine, lang: &Language, status: &mut Status) -> bool {
+        let Some(d) = self.change_metatype.as_mut() else { return false };
+        let Some(settings) = self.settings.clone() else {
+            self.change_metatype = None;
+            return false;
+        };
+        let bm = self.doc.field("buildmethod");
+        match d.show(ctx, engine, &settings, &bm, lang) {
+            crate::metatype_ui::ChangeOutcome::None => false,
+            crate::metatype_ui::ChangeOutcome::Cancel => {
+                self.change_metatype = None;
+                false
+            }
+            crate::metatype_ui::ChangeOutcome::Apply(choice) => match self.doc.apply(Command::ChangeMetatype { choice }) {
+                Ok(r) => {
+                    self.change_metatype = None;
+                    if r.changed {
+                        *status = Some((r.description, false));
+                    }
+                    r.changed
+                }
+                Err(e) => {
+                    if let Some(d) = self.change_metatype.as_mut() {
+                        d.error = Some(lang.tr(&e.reason));
+                    }
+                    false
+                }
+            },
+        }
     }
 
     /// Improvements that change an attribute's value, as "+1 Wired

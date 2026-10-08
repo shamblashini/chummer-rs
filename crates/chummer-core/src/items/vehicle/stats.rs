@@ -166,7 +166,7 @@ pub(crate) fn split_pair(e: &Element, key: &str, offroad_key: &str) -> (i32, i32
 }
 
 fn int(s: &str) -> i32 {
-    s.trim().parse().unwrap_or(0)
+    crate::xml::parse_int(s).unwrap_or(0)
 }
 
 /// One mod of the vehicle, with what the totals need.
@@ -594,8 +594,8 @@ impl<'a> Veh<'a> {
             .mods
             .iter()
             .map(|m| {
-                let a = m.bonus("devicerating").and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(0);
-                let b = m.wireless_only("devicerating").and_then(|s| s.trim().parse::<i32>().ok()).unwrap_or(0);
+                let a = m.bonus("devicerating").and_then(|s| crate::xml::parse_int(&s)).unwrap_or(0);
+                let b = m.wireless_only("devicerating").and_then(|s| crate::xml::parse_int(&s)).unwrap_or(0);
                 a + b
             })
             .sum();

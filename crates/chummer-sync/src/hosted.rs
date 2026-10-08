@@ -453,6 +453,14 @@ impl HostedCampaign {
         let _ = self.host.save();
     }
 
+    /// A new GM campaign key ([`AuthorityHost::rotate_campaign_key`]),
+    /// saved at once. Returns the new generation.
+    pub fn rotate_campaign_key(&self) -> u32 {
+        let gen = self.host.rotate_campaign_key();
+        let _ = self.host.save();
+        gen
+    }
+
     pub fn remove_member(&self, peer: &EndpointId) -> bool {
         let r = self.host.remove_member(peer);
         let _ = self.host.save();

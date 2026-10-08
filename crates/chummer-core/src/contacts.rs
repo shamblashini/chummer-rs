@@ -179,6 +179,72 @@ pub fn move_step(ch: &mut Character, guid: &str, up: bool) -> bool {
     }
 }
 
+/// What [`sort`] orders a list by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ContactSort {
+    /// A to Z (unnamed entries last).
+    Name,
+    /// Highest Connection first.
+    Connection,
+    /// Highest Loyalty first.
+    Loyalty,
+    /// By role (archetype), A to Z.
+    Role,
+}
+
+impl ContactSort {
+    pub const ALL: [ContactSort; 4] = [ContactSort::Name, ContactSort::Connection, ContactSort::Loyalty, ContactSort::Role];
+
+    /// The English label ("Name", "Connection").
+    pub fn label(self) -> &'static str {
+        match self {
+            ContactSort::Name => "Name",
+            ContactSort::Connection => "Connection",
+            ContactSort::Loyalty => "Loyalty",
+            ContactSort::Role => "Role",
+        }
+    }
+}
+
+/// Sort the entries of one type (contacts, enemies or pets) once, by
+/// `by`; ties keep their order, and the other types keep their places in
+/// `<contacts>`. Chummer has no sort (its "Swap Ordering" only changes the
+/// panel's flow); the new order is saved as the element order, which
+/// Chummer shows as it is. Returns whether anything moved.
+pub fn sort(ch: &mut Character, kind: ContactType, by: ContactSort) -> bool {
+    let Some(list) = ch.doc.child("contacts").map(|c| &c.children) else { return false };
+    let is_kind = |n: &crate::xml::Node| matches!(n, crate::xml::Node::Element(e) if e.name == "contact" && ContactType::of(e) == kind);
+    let slots: Vec<usize> = list.iter().enumerate().filter(|(_, n)| is_kind(n)).map(|(i, _)| i).collect();
+    let mut entries: Vec<crate::xml::Node> = slots.iter().map(|&i| list[i].clone()).collect();
+    let el = |n: &crate::xml::Node| match n {
+        crate::xml::Node::Element(e) => e.clone(),
+        _ => unreachable!("only contacts were taken"),
+    };
+    let text_key = |e: &Element, k: &str| {
+        let v = e.get(k).trim().to_lowercase();
+        (v.is_empty(), v)
+    };
+    let num = |e: &Element, k: &str| std::cmp::Reverse(e.get_i32(k).unwrap_or(0));
+    entries.sort_by(|a, b| {
+        let (a, b) = (el(a), el(b));
+        match by {
+            ContactSort::Name => text_key(&a, "name").cmp(&text_key(&b, "name")),
+            ContactSort::Connection => num(&a, "connection").cmp(&num(&b, "connection")),
+            ContactSort::Loyalty => num(&a, "loyalty").cmp(&num(&b, "loyalty")),
+            ContactSort::Role => text_key(&a, "role").cmp(&text_key(&b, "role")),
+        }
+    });
+    let unchanged = slots.iter().zip(&entries).all(|(&i, n)| el(&list[i]).get("guid") == el(n).get("guid"));
+    if unchanged {
+        return false;
+    }
+    let target = &mut ch.items_mut("contacts").children;
+    for (i, n) in slots.into_iter().zip(entries) {
+        target[i] = n;
+    }
+    true
+}
+
 /// Remove a contact (and improvements it was the source of).
 pub fn remove(ch: &mut Character, guid: &str) -> bool {
     ch.remove_item("contacts", guid)

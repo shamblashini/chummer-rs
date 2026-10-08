@@ -16,7 +16,7 @@ use chummer_core::command::{Command, Rejected};
 use chummer_core::engine::Engine;
 use chummer_net::campaign::{CampaignHandler, CampaignHost, DenyReason, Hello, Welcome, PROTOCOL_VERSION};
 use chummer_net::invite::{derive_campaign_key, InviteId, InviteLink, Role};
-use chummer_net::mailbox::{MailboxClient, MailboxStatus};
+use chummer_net::mailbox::{MailboxClient, MailboxStatus, Registration};
 use chummer_net::{EndpointId, NetError, PublicKey, RelayUrl, SecretKey};
 use tokio::sync::{broadcast, mpsc};
 
@@ -63,7 +63,10 @@ struct Shared {
     secret: SecretKey,
     /// The keys last registered with the relay mailbox (to skip the
     /// round trip when nothing changed) and what the relay said then.
-    registered: Mutex<Option<Vec<PublicKey>>>,
+    registered: Mutex<Option<Vec<Registration>>>,
+    /// Woken when the keys to register changed outside a mailbox round
+    /// (a live claim binds the invite's key to the claiming device).
+    keys_changed: tokio::sync::Notify,
     mailbox_status: Mutex<Option<MailboxStatus>>,
     path: Option<PathBuf>,
     dirty: AtomicBool,
@@ -224,6 +227,8 @@ impl CampaignHandler for Handler {
         if admitted.claimed {
             tracing::info!("{} claimed the invite \"{}\"", peer.fmt_short(), admitted.label);
             let _ = self.shared.events.send(HostEvent::Membership);
+            // The relay binds the key to this device now, not at the next round.
+            self.shared.keys_changed.notify_one();
         }
         self.shared.touch();
         Ok(Welcome { campaign_id: hello.campaign_id, role: admitted.role, label: admitted.label, server_version: PROTOCOL_VERSION })
@@ -304,6 +309,7 @@ impl AuthorityHost {
             engine,
             secret,
             registered: Mutex::new(None),
+            keys_changed: tokio::sync::Notify::new(),
             mailbox_status: Mutex::new(None),
             path,
             dirty: AtomicBool::new(replayed > 0),
@@ -475,6 +481,13 @@ impl AuthorityHost {
         self.changed();
     }
 
+    /// Resolves when the keys to register with the relay changed outside
+    /// a mailbox round (a live claim): the caller then calls
+    /// [`AuthorityHost::register_mail_keys`] (or [`crate::Node::register_mail_keys`]).
+    pub async fn mail_keys_changed(&self) {
+        self.shared.keys_changed.notified().await;
+    }
+
     /// The relay's view of the GM's mailbox at the last mailbox round.
     pub fn mailbox_status(&self) -> Option<MailboxStatus> {
         self.shared.mailbox_status.lock().expect("poisoned").clone()
@@ -486,7 +499,7 @@ impl AuthorityHost {
     pub async fn register_mail_keys(&self, mailbox: &MailboxClient, force: bool) -> Result<MailboxStatus, NetError> {
         let (campaign, keys) = {
             let a = self.shared.lock();
-            (a.campaign(), a.mail_keys(now_secs()))
+            (a.campaign(), a.mail_registrations(now_secs()))
         };
         if !force {
             let same = self.shared.registered.lock().expect("poisoned").as_ref() == Some(&keys);
@@ -693,6 +706,12 @@ impl AuthorityHost {
         }
         if let Err(e) = self.shared.save_if_dirty() {
             tracing::warn!("could not save the campaign: {e}");
+        }
+        // Claims made by mail in this round bind their keys now.
+        match self.register_mail_keys(mailbox, false).await {
+            Ok(_) => {}
+            Err(NetError::Mailbox(e)) => tracing::warn!("could not register the members' keys with the mailbox: {e}"),
+            Err(e) => return Err(e),
         }
         report.status = self.mailbox_status();
         Ok(report)

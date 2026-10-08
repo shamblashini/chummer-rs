@@ -1,4 +1,4 @@
-//! The relay mailbox protocol, ALPN `chummer-rs/mailbox/2`, and its client.
+//! The relay mailbox protocol, ALPN `chummer-rs/mailbox/3`, and its client.
 //!
 //! The mailbox holds sealed blobs ([`crate::seal`]) for peers that are
 //! offline. Each request is one bi-directional stream: one
@@ -22,6 +22,15 @@
 //! recipient and the uploader stops a put from being replayed into
 //! another mailbox or by another node; the relay also refuses a nonce
 //! that is still waiting in the recipient's mailbox.
+//!
+//! A key can be registered for one uploading node ([`Registration::bound`]):
+//! puts signed with it from any other node are refused
+//! ([`MailboxError::WrongDevice`]). The sync layer binds a claimed
+//! invite's key to the device that claimed it, so a leaked link is useless
+//! for mail, and the GM's campaign keys to the GM's node. A key without a
+//! node (an invite not claimed yet, which a play-by-post player claims by
+//! mail) may have only a few messages waiting
+//! (`max_messages_per_unbound_key` on the relay).
 
 use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointAddr, EndpointId, PublicKey, SecretKey, Signature};
@@ -32,7 +41,7 @@ use crate::seal::{self, Opened, SealError};
 use crate::NetError;
 
 /// ALPN of the mailbox protocol.
-pub const MAILBOX_ALPN: &[u8] = b"chummer-rs/mailbox/2";
+pub const MAILBOX_ALPN: &[u8] = b"chummer-rs/mailbox/3";
 
 /// Largest frame on mailbox streams.
 pub const MAX_MAILBOX_FRAME: usize = 4 * MAX_FRAME;
@@ -52,6 +61,45 @@ const PUT_DOMAIN: &[u8] = b"chummer-rs/mailbox-put/2\0";
 /// A registration scope: which list of allowed keys a [`MailboxRequest::Register`]
 /// replaces (the sync layer uses the campaign id).
 pub type Scope = [u8; 16];
+
+/// A key that may put mail into a mailbox, and from which uploading node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct Registration {
+    pub key: PublicKey,
+    /// Only puts uploaded by this node are taken; `None`: any node (with
+    /// the relay's small cap for unbound keys).
+    pub uploader: Option<EndpointId>,
+}
+
+impl Registration {
+    /// `key`, from any node.
+    pub fn any(key: PublicKey) -> Registration {
+        Registration { key, uploader: None }
+    }
+
+    /// `key`, only when `uploader` uploads the put.
+    pub fn bound(key: PublicKey, uploader: EndpointId) -> Registration {
+        Registration { key, uploader: Some(uploader) }
+    }
+}
+
+impl From<PublicKey> for Registration {
+    fn from(key: PublicKey) -> Registration {
+        Registration::any(key)
+    }
+}
+
+impl From<&PublicKey> for Registration {
+    fn from(key: &PublicKey) -> Registration {
+        Registration::any(*key)
+    }
+}
+
+impl From<&Registration> for Registration {
+    fn from(r: &Registration) -> Registration {
+        *r
+    }
+}
 
 /// The proof that a put is allowed: signed by a key the recipient
 /// registered.
@@ -101,10 +149,12 @@ pub enum MailboxRequest {
     Fetch { limit: u32 },
     /// Delete these messages of mine (after processing them).
     Ack { ids: Vec<u64> },
-    /// The keys that may put mail into my mailbox, for `scope`: replaces
-    /// what that scope had (idempotent; an empty list removes the scope).
-    /// Answered with [`MailboxResponse::Registered`].
-    Register { scope: Scope, keys: Vec<PublicKey> },
+    /// The keys that may put mail into my mailbox, for `scope`, each
+    /// maybe bound to one uploading node: replaces what that scope had
+    /// (idempotent; an empty list removes the scope). A key in several
+    /// scopes is unbound if any of them leaves it unbound. Answered with
+    /// [`MailboxResponse::Registered`].
+    Register { scope: Scope, keys: Vec<Registration> },
 }
 
 /// A stored message as delivered to its recipient.
@@ -161,6 +211,8 @@ pub enum MailboxError {
     BadSignature,
     #[error("the recipient does not take mail signed by this key")]
     NotAllowed,
+    #[error("this key may only put mail from another device (the invite was claimed there)")]
+    WrongDevice,
     #[error("this put was already stored (replayed)")]
     Replayed,
     #[error("too many keys or scopes ({what})")]
@@ -175,7 +227,7 @@ impl MailboxError {
     /// The put was refused for its key (not for space or quotas): sending
     /// it again does not help until the recipient registers the key.
     pub fn is_refusal(&self) -> bool {
-        matches!(self, MailboxError::Unsigned | MailboxError::BadSignature | MailboxError::NotAllowed | MailboxError::Replayed)
+        matches!(self, MailboxError::Unsigned | MailboxError::BadSignature | MailboxError::NotAllowed | MailboxError::WrongDevice | MailboxError::Replayed)
     }
 }
 
@@ -234,8 +286,10 @@ impl MailboxClient {
     }
 
     /// Replaces the keys that may put mail into my mailbox for `scope`
-    /// (an empty list removes the scope). Returns my mailbox's state.
-    pub async fn register(&self, scope: Scope, keys: Vec<PublicKey>) -> Result<MailboxStatus, NetError> {
+    /// (an empty list removes the scope): plain keys (any uploader) or
+    /// [`Registration`]s. Returns my mailbox's state.
+    pub async fn register<R: Into<Registration>>(&self, scope: Scope, keys: impl IntoIterator<Item = R>) -> Result<MailboxStatus, NetError> {
+        let keys = keys.into_iter().map(Into::into).collect();
         match self.request(&MailboxRequest::Register { scope, keys }).await? {
             MailboxResponse::Registered(s) => Ok(s),
             other => Err(unexpected(other)),

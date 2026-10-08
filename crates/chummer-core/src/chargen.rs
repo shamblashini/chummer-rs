@@ -17,6 +17,7 @@ use crate::xml::Element;
 
 mod karma;
 pub mod guide;
+pub mod rebuild;
 pub mod issues;
 pub use karma::{connection_maximum, karma_breakdown};
 
@@ -29,7 +30,7 @@ pub const CATEGORIES: [&str; 5] = ["Heritage", "Talent", "Attributes", "Skills",
 pub const LETTERS: [char; 5] = ['A', 'B', 'C', 'D', 'E'];
 
 /// A priority letter for each category, in [`CATEGORIES`] order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Priorities(pub [char; 5]);
 
 impl Priorities {
@@ -516,23 +517,9 @@ pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String>
     let mut ch = Character::from_document(doc).map_err(|e| e.to_string())?;
 
     // Metatype bonus and racial qualities.
-    let src = BonusSource { kind: "Metatype".into(), guid: mt.id(), name: mt.name(), rating: 1 };
-    if let Some(b) = node.child("bonus").filter(|b| b.elements().next().is_some()) {
-        let out = bonus::apply(&ch, store, b, &src, None);
-        finish_outcome(&mut ch, store, out);
-    }
-    let qdoc = store.doc("qualities.xml").map_err(|e| e.to_string())?;
-    if let Some(qs) = node.child("qualities") {
-        for kind in ["positive", "negative"] {
-            for q in qs.child(kind).into_iter().flat_map(|k| k.children_named("quality")) {
-                if let Some(rec) = data::find(&qdoc, "qualities", "quality", &q.text()) {
-                    let source = if q.attr("removable").is_some_and(|v| v.eq_ignore_ascii_case("true")) { "MetatypeRemovable" } else { "Metatype" };
-                    add_quality_with_source(&mut ch, store, rec, q.attr("select"), source, false);
-                }
-            }
-        }
-    }
+    apply_metatype_extras(&mut ch, store, mt, node)?;
     // Talent qualities (Magician, Adept, Technomancer, ...).
+    let qdoc = store.doc("qualities.xml").map_err(|e| e.to_string())?;
     if let Some(qs) = talent.node.child("qualities") {
         for q in qs.children_named("quality") {
             if let Some(rec) = data::find(&qdoc, "qualities", "quality", &q.text()) {
@@ -567,6 +554,28 @@ pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String>
     }
     ch.dirty = true;
     Ok(ch)
+}
+
+/// The metatype's (or metavariant's, `node`) bonus and racial qualities
+/// (`Character.Create`).
+fn apply_metatype_extras(ch: &mut Character, store: &DataStore, mt: Record<'_>, node: &Element) -> Result<(), String> {
+    let src = BonusSource { kind: "Metatype".into(), guid: mt.id(), name: mt.name(), rating: 1 };
+    if let Some(b) = node.child("bonus").filter(|b| b.elements().next().is_some()) {
+        let out = bonus::apply(ch, store, b, &src, None);
+        finish_outcome(ch, store, out);
+    }
+    let qdoc = store.doc("qualities.xml").map_err(|e| e.to_string())?;
+    if let Some(qs) = node.child("qualities") {
+        for kind in ["positive", "negative"] {
+            for q in qs.child(kind).into_iter().flat_map(|k| k.children_named("quality")) {
+                if let Some(rec) = data::find(&qdoc, "qualities", "quality", &q.text()) {
+                    let source = if q.attr("removable").is_some_and(|v| v.eq_ignore_ascii_case("true")) { "MetatypeRemovable" } else { "Metatype" };
+                    add_quality_with_source(ch, store, rec, q.attr("select"), source, false);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn finish_outcome(ch: &mut Character, store: &DataStore, out: bonus::Outcome) {
@@ -732,7 +741,7 @@ pub fn budget_with(ch: &Character, sheet: &Sheet, rules: &Rules, settings: &Char
     let nuyen_bp = ch.doc.get_i32("nuyenbp").unwrap_or(0);
     // Files from before 5.214 store the starting karma themselves.
     let start = ch.doc.get_i32("buildkarma").unwrap_or_else(|| settings.int("buildpoints", 25));
-    let spent = karma_breakdown(ch, sheet, rules, settings, store).iter().map(|(_, v)| v).sum();
+    let spent = crate::expr::clamp_int(karma_breakdown(ch, sheet, rules, settings, store).iter().map(|(_, v)| i64::from(*v)).sum());
     b.karma = (start, spent);
 
     let starting = ch.doc.get_f64("startingnuyen").unwrap_or(0.0) + f64::from(nuyen_bp) * f64::from(settings.int("nuyenperbpwftm", 2000));

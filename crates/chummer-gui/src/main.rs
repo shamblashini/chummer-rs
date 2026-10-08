@@ -20,6 +20,7 @@ mod initiative;
 mod lifestyle_ui;
 mod magic_ui;
 mod memo;
+mod metatype_ui;
 mod item_editor;
 mod lang_notice;
 mod online;

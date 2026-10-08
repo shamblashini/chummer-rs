@@ -1086,7 +1086,7 @@ fn eval_min(d: &str) -> String {
     let Some(start) = d.find("min(") else { return d.to_owned() };
     let Some(end) = d[start..].find(')').map(|e| e + start) else { return d.to_owned() };
     let inner = &d[start + 4..end];
-    let m = inner.split(',').filter_map(|v| v.trim().parse::<i32>().ok()).min().unwrap_or(i32::MAX);
+    let m = inner.split(',').filter_map(crate::xml::parse_int).min().unwrap_or(i32::MAX);
     format!("{}{}{}", &d[..start], m, &d[end + 1..])
 }
 
@@ -1355,10 +1355,10 @@ fn rc(c: &W<'_>) -> String {
         Some(p) => (raw[..p].to_owned(), raw[p..].to_owned()),
         None => (raw.clone(), raw.clone()),
     };
-    let parse = |s: &str| s.trim().trim_start_matches('+').parse::<i32>().unwrap_or(0);
+    let parse = |s: &str| crate::xml::parse_int(s).unwrap_or(0);
     let mut base = parse(&base_s);
     let mut full = parse(full_s.trim_matches(|ch| ch == '(' || ch == ')'));
-    let rc_of = |b: &Element| b.child_text("rc").and_then(|s| s.trim().parse::<i32>().ok());
+    let rc_of = |b: &Element| b.child_text("rc").and_then(|s| crate::xml::parse_int(&s));
     if let Some(v) = c.wireless_bonus().and_then(rc_of) {
         base += v;
         full += v;
@@ -1372,12 +1372,15 @@ fn rc(c: &W<'_>) -> String {
             if c.rules.restrict_recoil && group != 0 {
                 let v = super::armor::rating_value(&a_rc, a.get_i32("rating").unwrap_or(0));
                 let list = if deployable { &mut deploy } else { &mut groups };
-                if list.len() < group as usize {
-                    list.resize(group as usize, 0.0);
+                // Real groups are 1 and 2; a damaged file's must not
+                // allocate the world (LB-44).
+                let group = group.clamp(1, 64) as usize;
+                if list.len() < group {
+                    list.resize(group, 0.0);
                 }
-                let slot = &mut list[group as usize - 1];
+                let slot = &mut list[group - 1];
                 *slot = slot.max(v);
-            } else if let Ok(v) = a_rc.trim().parse::<i32>() {
+            } else if let Some(v) = crate::xml::parse_int(&a_rc) {
                 full += v;
                 if !deployable {
                     base += v;

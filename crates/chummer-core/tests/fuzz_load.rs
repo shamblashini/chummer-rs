@@ -273,20 +273,11 @@ fn exercise(bytes: &[u8], deep: bool) -> String {
     "loaded".into()
 }
 
-/// Arithmetic overflow in the rules math on absurd numbers: a known bug
-/// class (see `bug_extreme_numbers_overflow_rules_math`). Debug builds
-/// panic; release builds (no overflow checks) compute garbage instead.
-fn is_known_overflow(panic: &str) -> bool {
-    panic.contains("with overflow")
-}
-
-/// Split panics into the known overflow class and everything else.
-fn report(what: &str, panics: Vec<String>, strict: bool) {
-    let (known, other): (Vec<String>, Vec<String>) = panics.into_iter().partition(|p| !strict && is_known_overflow(p));
-    if !known.is_empty() {
-        eprintln!("{what}: {} known overflow panics (ignored here):\n{}", known.len(), known.join("\n"));
-    }
-    assert!(other.is_empty(), "{what}: {} panics:\n{}", other.len(), other.join("\n"));
+/// Any panic is a failure. Absurd numbers used to overflow the `i32`
+/// rules math (LB-44); file integers are clamped now and the cost
+/// formulas work in `i64`.
+fn report(what: &str, panics: Vec<String>) {
+    assert!(panics.is_empty(), "{what}: {} panics:\n{}", panics.len(), panics.join("\n"));
 }
 
 #[test]
@@ -320,50 +311,77 @@ fn mutated_fixtures_never_panic() {
         }
     }
     eprintln!("mutated loads: {outcomes:?} in {:?}", started.elapsed());
-    report("mutated fixtures", panics, false);
+    report("mutated fixtures", panics);
 }
 
 /// Extreme values in the numeric fields of a small career fixture: each
 /// of the worst values in every field at once, and a sample of single
 /// fields with every value.
 fn extreme_number_panics() -> Vec<String> {
+    let worst = ["2147483647", "-2147483648", "NaN", "1e308", "-1e308", "9223372036854775807", "inf"];
+    let mut groups: Vec<(String, String)> = Vec::new();
+    // Every field at once on a few more characters: creation, magic,
+    // technomancer, vehicles.
+    // Long runs (CHUMMER_FUZZ_ITERS) take every small fixture.
+    let mut paths: Vec<std::path::PathBuf> = ["Davis Jones", "Draught", "Soma (Career)", "Skink", "Apex Predator"].iter().map(|n| common::fixtures_dir().join(format!("{n}.chum5"))).collect();
+    if std::env::var_os("CHUMMER_FUZZ_ITERS").is_some() {
+        paths = common::small_fixtures(200_000);
+    }
+    for path in &paths {
+        let name = fixture_name(path);
+        let other = std::fs::read_to_string(path).unwrap();
+        let leaves = numeric_leaves(&other);
+        for v in worst {
+            let mut out = other.clone();
+            for r in leaves.iter().rev() {
+                out.replace_range(r.clone(), v);
+            }
+            groups.push((format!("{name}: all numeric fields = {v}"), out));
+        }
+    }
     let path = common::fixtures_dir().join("Munin_Career.chum5");
     let src = std::fs::read_to_string(&path).unwrap();
     let leaves = numeric_leaves(&src);
     assert!(leaves.len() > 50, "{}", leaves.len());
-    let worst = ["2147483647", "-2147483648", "NaN", "1e308", "-1e308", "9223372036854775807"];
     let mut rng = Prng::new(common::base_seed());
-    let mut groups: Vec<(String, String)> = Vec::new();
     for v in worst {
         let mut out = src.clone();
         for r in leaves.iter().rev() {
             out.replace_range(r.clone(), v);
         }
-        groups.push((format!("all numeric fields = {v}"), out));
+        groups.push((format!("Munin_Career: all numeric fields = {v}"), out));
     }
     for _ in 0..iters(20) {
         let r = rng.pick(&leaves).clone();
         let v = *rng.pick(NUMBERS);
         let name_at = src[..r.start].rfind('<').unwrap();
-        groups.push((format!("<{}>@{} = {v:?}", tag_name_at(&src, name_at), r.start), [&src[..r.start], v, &src[r.end..]].concat()));
+        groups.push((format!("Munin_Career <{}>@{} = {v:?}", tag_name_at(&src, name_at), r.start), [&src[..r.start], v, &src[r.end..]].concat()));
     }
-    groups.into_iter().filter_map(|(desc, text)| no_panic(|| exercise(text.as_bytes(), true)).err().map(|p| format!("Munin_Career [{desc}] -> {p}"))).collect()
+    groups.into_iter().filter_map(|(desc, text)| no_panic(|| exercise(text.as_bytes(), true)).err().map(|p| format!("[{desc}] -> {p}"))).collect()
 }
 
+/// `<base>2147483647</base>`, `1e308` and the like in every numeric field
+/// load, compute, print and save without overflowing (LB-44, fixed).
 #[test]
 fn extreme_numbers_in_numeric_fields() {
-    report("extreme numbers", extreme_number_panics(), false);
+    report("extreme numbers", extreme_number_panics());
 }
 
-/// The rules math (`calc`, costs, limits) adds and multiplies `i32`s read
-/// straight from the file, so a field like `<base>2147483647</base>` or
-/// `1e308` (saturated to `i32::MAX`) overflows. Fixing it means clamping
-/// or saturating throughout `calc.rs` and the item cost code, a design
-/// decision rather than a local fix.
+/// The values are clamped where they are read: the save is sane.
 #[test]
-#[ignore = "BUG: i32 overflow in calc.rs on absurd numbers in a .chum5 (debug builds panic, release wraps)"]
-fn bug_extreme_numbers_overflow_rules_math() {
-    report("extreme numbers (strict)", extreme_number_panics(), true);
+fn extreme_numbers_are_clamped_on_load() {
+    let src = std::fs::read_to_string(common::fixtures_dir().join("Munin_Career.chum5")).unwrap();
+    let base = Character::from_str(&src).unwrap();
+    let doc = src.replacen(&format!("<karma>{}</karma>", base.karma), "<karma>2147483647</karma>", 1);
+    assert_eq!(Character::from_str(&doc).unwrap().karma, chummer_core::xml::NUM_LIMIT);
+    let doc = src.replace("<base>", "<base>-92233720368547758").replace("<karma>", "<karma>9");
+    let ch = Character::from_str(&doc).unwrap();
+    assert!(ch.attributes.iter().all(|a| a.base.abs() <= chummer_core::xml::NUM_LIMIT && a.karma.abs() <= chummer_core::xml::NUM_LIMIT));
+    assert_eq!(chummer_core::xml::parse_int(" +99999999999 "), Some(chummer_core::xml::NUM_LIMIT));
+    assert_eq!(chummer_core::xml::parse_f64("NaN"), None);
+    assert_eq!(chummer_core::xml::parse_f64("-inf"), None);
+    assert_eq!(chummer_core::expr::standard_round(1e308), chummer_core::xml::NUM_LIMIT);
+    assert_eq!(chummer_core::expr::standard_round(f64::NAN), 0);
 }
 
 /// Hand-made odd documents.

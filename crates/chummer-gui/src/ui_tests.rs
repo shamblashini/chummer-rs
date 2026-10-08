@@ -695,7 +695,8 @@ fn workspace_home_and_campaign() {
 
 /// The GM's Players & invites panel, in both layouts: an online campaign
 /// (not served), a new invite with a character to give, its row, a new
-/// link and a revoke, each through the panel's own buttons.
+/// link, a revoke and a new campaign key, each through the panel's own
+/// buttons.
 #[test]
 fn players_and_invites_panel() {
     for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark, ThemeKind::WorkspaceLight] {
@@ -743,20 +744,29 @@ fn players_and_invites_panel() {
         let key = |h: &Harness| h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().invite(&invites[0].1).unwrap().key();
         let before = key(&h);
         h.click_text("New link");
-        h.frames(3);
+        // (The question scrolls into view: let the scrolling finish.)
+        h.frames(30);
         assert!(h.find_where(|t| t.starts_with("Give Anna a new link?")).is_some(), "{:?}", h.on_screen());
         h.click_text("New link");
         h.frames(2);
         assert_ne!(key(&h), before);
         // Revoke, confirmed.
         h.click_text("Revoke");
-        h.frames(3);
+        h.frames(30);
         assert!(h.find_where(|t| t.starts_with("Revoke Anna?")).is_some(), "{:?}", h.on_screen());
         h.click_text("Revoke");
         h.frames(2);
         let state = h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().invite(&invites[0].1).unwrap().state(0);
         assert!(matches!(state, chummer_sync::invites::InviteState::Revoked { .. }), "{state:?}");
         assert!(h.find_text("revoked").is_some(), "{:?}", h.on_screen());
+        // A new campaign key, after the explanation.
+        h.click_text("New campaign key…");
+        h.frames(3);
+        assert!(h.find_where(|t| t.starts_with("Make a new campaign key (now generation 0)?")).is_some(), "{:?}", h.on_screen());
+        h.click_text("New campaign key");
+        h.frames(2);
+        assert_eq!(h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().key_generation(), 1);
+        assert!(h.find_where(|t| t.starts_with("The campaign key is now generation 1")).is_some() || h.app.status.as_ref().is_some_and(|(m, _)| m.starts_with("The campaign key is now generation 1")), "{:?}", h.app.status);
         sizes(&mut h, FRAMES);
         assert!(h.app.close_campaign(true));
         h.frames(1);
@@ -943,6 +953,44 @@ fn workspace_catalog_add_then_undo_redo() {
         h.key(Key::ArrowDown, Modifiers::NONE);
         h.frames(2);
     }
+}
+
+/// Workspace: the dialogs the magic page opens are Workspace dialogs
+/// (their own header, Workspace rows and buttons): "Add Spell…", pick a
+/// spell, its options, Add. Escape closes a dialog.
+#[test]
+fn workspace_spell_dialogs() {
+    let mut h = Harness::new(ThemeKind::WorkspaceLight);
+    let i = h.open(&fixture("Harmony.chum5"));
+    h.app.views[i].ws_go(Section::Page(Tab::Magician));
+    h.size = WIDE;
+    h.frames(2);
+    let spells = |h: &Harness| h.app.views[i].doc().items("spells", "spell").len();
+    let before = spells(&h);
+    h.click_text("Add Spell…");
+    h.frames(2);
+    let title = h.app.lang.tr_fmt("Add {0}", &[&crate::view::kind_noun(&h.app.lang, "Spell")]);
+    assert!(h.find_text(&title).is_some(), "{title}; shown: {:?}", h.on_screen());
+    // Escape closes it.
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert!(h.find_text(&title).is_none(), "{:?}", h.on_screen());
+    h.click_text("Add Spell…");
+    h.frames(2);
+    h.click_text(&h.app.lang.tr("Search"));
+    h.type_text("Stunbolt");
+    h.frames(2);
+    h.click_text("Stunbolt");
+    h.frames(2);
+    h.click_text(&h.app.lang.tr("Add"));
+    h.frames(2);
+    assert!(h.find_text(&h.app.lang.tr("Spell Options")).is_some(), "{:?}", h.on_screen());
+    sizes(&mut h, 2);
+    h.size = WIDE;
+    h.frames(2);
+    h.click_text(&h.app.lang.tr("Add"));
+    h.frames(2);
+    assert_eq!(spells(&h), before + 1, "{:?}", h.app.status);
 }
 
 /// Classic: the "Add Gear…" button opens the selection dialog; search,
@@ -1506,6 +1554,88 @@ fn workspace_relationships_short_window() {
     h.app.views[i].ws_go(Section::Page(Tab::Relationships));
     h.size = Vec2::new(1600.0, 300.0);
     h.frames(3);
+}
+
+/// Creation, priority build: click two priority cards to swap them
+/// (Workspace), undo it; "Change Priority Selection…" opens the dialog
+/// in both layouts, and a new metatype there is applied.
+#[test]
+fn priority_swap_and_change_metatype() {
+    for kind in [ThemeKind::WorkspaceLight, ThemeKind::Graphite] {
+        let mut h = Harness::new(kind);
+        let i = h.open(&fixture("Miko.chum5"));
+        h.app.views[i].ws_go(Section::Page(Tab::Common));
+        h.size = WIDE;
+        h.frames(3);
+        let letters = |h: &Harness| {
+            let d = h.app.views[i].doc();
+            (d.field("priorityattributes").chars().next(), d.field("priorityskills").chars().next())
+        };
+        if kind == ThemeKind::WorkspaceLight {
+            assert_eq!(letters(&h), (Some('B'), Some('C')));
+            // The cards' second lines: "20 points", "28 / 2 groups".
+            h.click_where("the Attributes card", |t| t.ends_with(" points") && t.chars().next().is_some_and(|c| c.is_ascii_digit()));
+            h.frames(2);
+            assert!(h.find_text("click another to swap them (Esc: cancel)").is_some(), "{:?}", h.on_screen());
+            h.click_where("the Skills card", |t| t.contains(" / ") && t.ends_with(" groups"));
+            h.frames(3);
+            assert_eq!(letters(&h), (Some('C'), Some('B')), "{:?}", h.app.status);
+            h.key(Key::Z, Modifiers::COMMAND);
+            h.frames(2);
+            assert_eq!(letters(&h), (Some('B'), Some('C')), "one undo step");
+        }
+        let label = crate::metatype_ui::change_label(&h.app.lang, "Priority");
+        h.click_text(&label);
+        h.frames(3);
+        let title = label.trim_end_matches('…').to_owned();
+        assert!(h.find_text(&title).is_some(), "{title}: {:?}", h.on_screen());
+        sizes(&mut h, 2);
+        h.size = WIDE;
+        h.frames(2);
+        // Human instead of Elf (both at Heritage D), then OK.
+        h.click_where("Human", |t| t == "Human" || t.starts_with("Human "));
+        h.frames(2);
+        h.click_text(&h.app.lang.tr("OK"));
+        h.frames(3);
+        assert_eq!(h.app.views[i].doc().field("metatype"), "Human", "{:?}; {:?}", h.app.status, h.on_screen());
+        assert!(h.find_text(&title).is_none(), "the dialog closed");
+        h.key(Key::Z, Modifiers::COMMAND);
+        h.frames(2);
+        assert_eq!(h.app.views[i].doc().field("metatype"), "Elf");
+    }
+}
+
+/// Relationships: Sort → By Name (Workspace) and By Connection (Classic)
+/// reorder the contacts with one undoable command.
+#[test]
+fn relationships_sort() {
+    for kind in [ThemeKind::WorkspaceDark, ThemeKind::Graphite] {
+        let mut h = Harness::new(kind);
+        let i = h.open(&fixture("Munin.chum5"));
+        h.app.views[i].ws_go(Section::Page(Tab::Relationships));
+        h.size = WIDE;
+        h.frames(3);
+        let names = |h: &Harness| h.app.views[i].doc().items("contacts", "contact").iter().filter(|c| c.get("type") != "Enemy" && c.get("type") != "Pet").map(|c| (c.get("name").to_lowercase(), c.get_i32("connection").unwrap_or(0))).collect::<Vec<_>>();
+        let before = names(&h);
+        h.click_text("Sort");
+        h.frames(2);
+        let by = if kind == ThemeKind::Graphite { "By Connection" } else { "By Name" };
+        h.click_text(by);
+        h.frames(2);
+        let after = names(&h);
+        let mut want = before.clone();
+        if kind == ThemeKind::Graphite {
+            want.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+        } else {
+            want.sort_by(|a, b| (a.0.is_empty(), &a.0).cmp(&(b.0.is_empty(), &b.0)));
+        }
+        assert_eq!(after, want, "{:?}", h.app.status);
+        if after != before {
+            h.key(Key::Z, Modifiers::COMMAND);
+            h.frames(2);
+            assert_eq!(names(&h), before, "one undo step");
+        }
+    }
 }
 
 /// The command line: `--tab`, `--layout` and `--theme` names, and

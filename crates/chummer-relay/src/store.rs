@@ -5,10 +5,11 @@
 //! - `inbox`: (recipient, id) -> (received time, signing key, nonce), for
 //!   per-recipient listing, the per-key cap and replay checks
 //! - `quota`: (sender, day) -> (messages, bytes), for daily sender limits
-//! - `registrations`: (owner, scope) -> postcard list of keys that may put
-//!   mail into the owner's mailbox
-//! - `allowed`: (owner, key) -> in how many of the owner's scopes the key
-//!   is (the lookup each put does)
+//! - `registrations`: (owner, scope) -> postcard list of (key, uploader)
+//!   that may put mail into the owner's mailbox
+//! - `allow`: (owner, key) -> postcard list of the nodes that may upload
+//!   with the key, empty for any node (the lookup each put does; rebuilt
+//!   from all of the owner's scopes when a registration changes)
 //! - `meta`: "next_id" -> next message id; "format" -> [`FORMAT`]
 //!
 //! Refused puts are counted in memory only (per owner and day), so a
@@ -19,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chummer_net::mailbox::{MailItem, MailboxError, MailboxStatus, Scope, MAX_FETCH_BYTES, MAX_KEYS_PER_SCOPE, MAX_SCOPES};
+use chummer_net::mailbox::{MailItem, MailboxError, MailboxStatus, Registration, Scope, MAX_FETCH_BYTES, MAX_KEYS_PER_SCOPE, MAX_SCOPES};
 use iroh::{EndpointId, PublicKey};
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::{Deserialize, Serialize};
@@ -30,13 +31,16 @@ type InboxEntry = (u64, [u8; 32], [u8; 16]);
 const INBOX: TableDefinition<([u8; 32], u64), InboxEntry> = TableDefinition::new("inbox");
 const QUOTA: TableDefinition<([u8; 32], u64), (u64, u64)> = TableDefinition::new("quota");
 const REGISTRATIONS: TableDefinition<([u8; 32], [u8; 16]), &[u8]> = TableDefinition::new("registrations");
-const ALLOWED: TableDefinition<([u8; 32], [u8; 32]), u32> = TableDefinition::new("allowed");
+const ALLOW: TableDefinition<([u8; 32], [u8; 32]), &[u8]> = TableDefinition::new("allow");
+
+/// A registration as stored: key and maybe the one uploading node.
+type RegEntry = ([u8; 32], Option<[u8; 32]>);
 const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 
 /// The database layout. A database of another layout (the first mailbox
 /// protocol) is emptied when opened: it only held mail in transit, and
 /// clients mail again what was not answered.
-pub const FORMAT: u64 = 2;
+pub const FORMAT: u64 = 3;
 
 const DAY: u64 = 24 * 60 * 60;
 
@@ -53,9 +57,12 @@ pub struct Limits {
     /// Most bytes one sender may upload per UTC day.
     pub max_bytes_per_sender_per_day: u64,
     /// Most messages signed by one key waiting in one mailbox (a second
-    /// net behind the sender quotas: a leaked member key cannot fill a
-    /// mailbox).
+    /// net behind the sender quotas).
     pub max_messages_per_key: u64,
+    /// The same for a key registered without an uploading node (an invite
+    /// nobody claimed yet: its link may have leaked). Keys bound to a node
+    /// are refused from any other node instead.
+    pub max_messages_per_unbound_key: u64,
     /// Messages not collected within this many seconds are deleted.
     pub expiry_secs: u64,
 }
@@ -68,6 +75,7 @@ impl Default for Limits {
             max_messages_per_sender_per_day: 2000,
             max_bytes_per_sender_per_day: 64 * 1024 * 1024,
             max_messages_per_key: 200,
+            max_messages_per_unbound_key: 10,
             expiry_secs: 30 * DAY,
         }
     }
@@ -169,7 +177,7 @@ impl Store {
         };
         if format != Some(FORMAT) {
             let old = txn.list_tables()?.count();
-            for name in ["messages", "inbox", "quota", "registrations", "allowed", "refused", "meta"] {
+            for name in ["messages", "inbox", "quota", "registrations", "allowed", "allow", "refused", "meta"] {
                 txn.delete_table(redb::TableDefinition::<&str, &[u8]>::new(name)).ok();
             }
             if old > 0 {
@@ -181,7 +189,7 @@ impl Store {
         txn.open_table(INBOX)?;
         txn.open_table(QUOTA)?;
         txn.open_table(REGISTRATIONS)?;
-        txn.open_table(ALLOWED)?;
+        txn.open_table(ALLOW)?;
         txn.open_table(META)?;
         txn.commit()?;
         Ok(db)
@@ -221,7 +229,8 @@ impl Store {
 
     /// Stores `blob` from `sender` (the uploading node) for `recipient`,
     /// signed by `key` with `nonce` (the signature is checked by the
-    /// caller). Refused unless `recipient` registered `key`.
+    /// caller). Refused unless `recipient` registered `key`, for `sender`
+    /// when it bound the key to a node.
     pub fn put(
         &self,
         sender: EndpointId,
@@ -256,10 +265,15 @@ impl Store {
         let txn = db.begin_write().map_err(db_err)?;
         let id;
         {
-            let allowed = txn.open_table(ALLOWED).map_err(db_err)?;
-            if allowed.get((rcpt, key)).map_err(db_err)?.is_none() {
-                return Err(MailboxError::NotAllowed);
+            let allow = txn.open_table(ALLOW).map_err(db_err)?;
+            let uploaders: Vec<[u8; 32]> = match allow.get((rcpt, key)).map_err(db_err)? {
+                Some(g) => postcard::from_bytes(g.value()).map_err(db_err)?,
+                None => return Err(MailboxError::NotAllowed),
+            };
+            if !uploaders.is_empty() && !uploaders.contains(&snd) {
+                return Err(MailboxError::WrongDevice);
             }
+            let key_cap = if uploaders.is_empty() { l.max_messages_per_key.min(l.max_messages_per_unbound_key) } else { l.max_messages_per_key };
             let mut inbox = txn.open_table(INBOX).map_err(db_err)?;
             let (mut waiting, mut by_key) = (0u64, 0u64);
             for entry in inbox.range((rcpt, 0)..=(rcpt, u64::MAX)).map_err(db_err)? {
@@ -279,8 +293,8 @@ impl Store {
                     max: l.max_messages_per_recipient,
                 });
             }
-            if by_key >= l.max_messages_per_key {
-                return Err(MailboxError::KeyFull { max: l.max_messages_per_key });
+            if by_key >= key_cap {
+                return Err(MailboxError::KeyFull { max: key_cap });
             }
             let mut quota = txn.open_table(QUOTA).map_err(db_err)?;
             let day = now / DAY;
@@ -346,13 +360,14 @@ impl Store {
     }
 
     /// Replaces the keys that may put mail into `owner`'s mailbox for
-    /// `scope` (an empty list removes the scope). Returns the mailbox's
-    /// state.
-    pub fn register(&self, owner: EndpointId, scope: Scope, keys: &[PublicKey], now: u64) -> Result<MailboxStatus, MailboxError> {
-        if keys.len() > MAX_KEYS_PER_SCOPE {
+    /// `scope` (an empty list removes the scope), each maybe bound to one
+    /// uploading node. Returns the mailbox's state.
+    pub fn register<R: Into<Registration>>(&self, owner: EndpointId, scope: Scope, keys: impl IntoIterator<Item = R>, now: u64) -> Result<MailboxStatus, MailboxError> {
+        let regs: Vec<Registration> = keys.into_iter().map(Into::into).collect();
+        if regs.len() > MAX_KEYS_PER_SCOPE {
             return Err(MailboxError::TooManyKeys { what: format!("{} keys per scope", MAX_KEYS_PER_SCOPE) });
         }
-        let mut new: Vec<[u8; 32]> = keys.iter().map(|k| *k.as_bytes()).collect();
+        let mut new: Vec<RegEntry> = regs.iter().map(|r| (*r.key.as_bytes(), r.uploader.map(|u| *u.as_bytes()))).collect();
         new.sort_unstable();
         new.dedup();
         let own = *owner.as_bytes();
@@ -360,7 +375,7 @@ impl Store {
             let txn = db.begin_write().map_err(db_err)?;
             {
                 let mut regs = txn.open_table(REGISTRATIONS).map_err(db_err)?;
-                let old: Vec<[u8; 32]> = match regs.get((own, scope)).map_err(db_err)? {
+                let old: Vec<RegEntry> = match regs.get((own, scope)).map_err(db_err)? {
                     Some(g) => postcard::from_bytes(g.value()).map_err(db_err)?,
                     None => {
                         let scopes = regs.range((own, [0u8; 16])..=(own, [0xffu8; 16])).map_err(db_err)?.count();
@@ -376,26 +391,36 @@ impl Store {
                     drop(regs);
                     txn.abort().map_err(db_err)?;
                     return self.status_in(db, owner, now);
+                }
+                if new.is_empty() {
+                    regs.remove((own, scope)).map_err(db_err)?;
                 } else {
-                    let mut allowed = txn.open_table(ALLOWED).map_err(db_err)?;
-                    for k in old.iter().filter(|k| !new.contains(k)) {
-                        let n = allowed.get((own, *k)).map_err(db_err)?.map(|g| g.value()).unwrap_or(0);
-                        if n <= 1 {
-                            allowed.remove((own, *k)).map_err(db_err)?;
-                        } else {
-                            allowed.insert((own, *k), n - 1).map_err(db_err)?;
-                        }
+                    let bytes = postcard::to_stdvec(&new).map_err(db_err)?;
+                    regs.insert((own, scope), bytes.as_slice()).map_err(db_err)?;
+                }
+                // Rebuild the lookup of every key this changed, from all of
+                // the owner's scopes: unbound in any scope means any node.
+                let mut touched: Vec<[u8; 32]> = old.iter().chain(&new).map(|(k, _)| *k).collect();
+                touched.sort_unstable();
+                touched.dedup();
+                let mut all: Vec<RegEntry> = Vec::new();
+                for entry in regs.range((own, [0u8; 16])..=(own, [0xffu8; 16])).map_err(db_err)? {
+                    let (_, v) = entry.map_err(db_err)?;
+                    let list: Vec<RegEntry> = postcard::from_bytes(v.value()).map_err(db_err)?;
+                    all.extend(list.into_iter().filter(|(k, _)| touched.binary_search(k).is_ok()));
+                }
+                let mut allow = txn.open_table(ALLOW).map_err(db_err)?;
+                for k in touched {
+                    let bindings: Vec<Option<[u8; 32]>> = all.iter().filter(|(key, _)| *key == k).map(|(_, u)| *u).collect();
+                    if bindings.is_empty() {
+                        allow.remove((own, k)).map_err(db_err)?;
+                        continue;
                     }
-                    for k in new.iter().filter(|k| !old.contains(k)) {
-                        let n = allowed.get((own, *k)).map_err(db_err)?.map(|g| g.value()).unwrap_or(0);
-                        allowed.insert((own, *k), n + 1).map_err(db_err)?;
-                    }
-                    if new.is_empty() {
-                        regs.remove((own, scope)).map_err(db_err)?;
-                    } else {
-                        let bytes = postcard::to_stdvec(&new).map_err(db_err)?;
-                        regs.insert((own, scope), bytes.as_slice()).map_err(db_err)?;
-                    }
+                    let mut uploaders: Vec<[u8; 32]> = if bindings.contains(&None) { Vec::new() } else { bindings.into_iter().flatten().collect() };
+                    uploaders.sort_unstable();
+                    uploaders.dedup();
+                    let bytes = postcard::to_stdvec(&uploaders).map_err(db_err)?;
+                    allow.insert((own, k), bytes.as_slice()).map_err(db_err)?;
                 }
             }
             txn.commit().map_err(db_err)?;
@@ -412,8 +437,8 @@ impl Store {
     fn status_in(&self, db: &Database, owner: EndpointId, now: u64) -> Result<MailboxStatus, MailboxError> {
         let own = *owner.as_bytes();
         let txn = db.begin_read().map_err(db_err)?;
-        let allowed = txn.open_table(ALLOWED).map_err(db_err)?;
-        let keys = allowed.range((own, [0u8; 32])..=(own, [0xffu8; 32])).map_err(db_err)?.count() as u32;
+        let allow = txn.open_table(ALLOW).map_err(db_err)?;
+        let keys = allow.range((own, [0u8; 32])..=(own, [0xffu8; 32])).map_err(db_err)?.count() as u32;
         let inbox = txn.open_table(INBOX).map_err(db_err)?;
         let mut by_key: std::collections::BTreeMap<[u8; 32], u64> = Default::default();
         let mut waiting = 0;
@@ -434,12 +459,20 @@ impl Store {
         })
     }
 
-    /// Whether `owner` may receive mail signed by `key`.
+    /// Whether `owner` may receive mail signed by `key` (from some node).
     pub fn allows(&self, owner: EndpointId, key: &PublicKey) -> Result<bool, MailboxError> {
+        Ok(self.allowed_uploaders(owner, key)?.is_some())
+    }
+
+    /// The nodes that may upload mail to `owner` signed by `key`: `None`
+    /// when the key is not registered, an empty list for any node.
+    pub fn allowed_uploaders(&self, owner: EndpointId, key: &PublicKey) -> Result<Option<Vec<EndpointId>>, MailboxError> {
         self.with_db(|db| {
             let txn = db.begin_read().map_err(db_err)?;
-            let allowed = txn.open_table(ALLOWED).map_err(db_err)?;
-            Ok(allowed.get((*owner.as_bytes(), *key.as_bytes())).map_err(db_err)?.is_some())
+            let allow = txn.open_table(ALLOW).map_err(db_err)?;
+            let Some(g) = allow.get((*owner.as_bytes(), *key.as_bytes())).map_err(db_err)? else { return Ok(None) };
+            let list: Vec<[u8; 32]> = postcard::from_bytes(g.value()).map_err(db_err)?;
+            Ok(Some(list.iter().filter_map(|b| EndpointId::from_bytes(b).ok()).collect()))
         })
     }
 
@@ -652,16 +685,16 @@ mod tests {
         let (a, b, c) = (id(), id(), id());
         let owner = id();
         let (one, two) = ([1u8; 16], [2u8; 16]);
-        assert_eq!(s.register(owner, one, &[a, b], T0).unwrap().keys, 2);
-        assert_eq!(s.register(owner, one, &[b, a, a], T0).unwrap().keys, 2, "the same set again");
+        assert_eq!(s.register(owner, one, [a, b], T0).unwrap().keys, 2);
+        assert_eq!(s.register(owner, one, [b, a, a], T0).unwrap().keys, 2, "the same set again");
         // Another scope (another campaign) may name the same key.
-        assert_eq!(s.register(owner, two, &[b, c], T0).unwrap().keys, 3);
+        assert_eq!(s.register(owner, two, [b, c], T0).unwrap().keys, 3);
         // Replacing scope one drops a; b stays through scope two.
-        s.register(owner, one, &[], T0).unwrap();
+        s.register(owner, one, &[] as &[PublicKey], T0).unwrap();
         assert!(!s.allows(owner, &a).unwrap());
         assert!(s.allows(owner, &b).unwrap());
         assert!(s.allows(owner, &c).unwrap());
-        s.register(owner, two, &[c], T0).unwrap();
+        s.register(owner, two, [c], T0).unwrap();
         assert!(!s.allows(owner, &b).unwrap());
         assert_eq!(put(&s, b, owner, vec![1], T0), Err(MailboxError::NotAllowed));
         // Limits.
@@ -669,9 +702,50 @@ mod tests {
         assert!(matches!(s.register(owner, one, &many, T0), Err(MailboxError::TooManyKeys { .. })));
         let other = id();
         for i in 0..MAX_SCOPES {
-            s.register(other, [i as u8; 16], &[a], T0).unwrap();
+            s.register(other, [i as u8; 16], [a], T0).unwrap();
         }
-        assert!(matches!(s.register(other, [0xee; 16], &[a], T0), Err(MailboxError::TooManyKeys { .. })));
+        assert!(matches!(s.register(other, [0xee; 16], [a], T0), Err(MailboxError::TooManyKeys { .. })));
+    }
+
+    #[test]
+    fn bound_keys_take_mail_only_from_their_node() {
+        let limits = Limits { max_messages_per_key: 5, max_messages_per_unbound_key: 2, ..Limits::default() };
+        let (s, _t) = store("bound", limits);
+        let (owner, player, thief) = (id(), id(), id());
+        let (claimed, open) = (id(), id());
+        let st = s.register(owner, SCOPE, [Registration::bound(claimed, player), Registration::any(open)], T0).unwrap();
+        assert_eq!(st.keys, 2);
+        assert_eq!(s.allowed_uploaders(owner, &claimed).unwrap(), Some(vec![player]));
+        assert_eq!(s.allowed_uploaders(owner, &open).unwrap(), Some(vec![]));
+        // The claimed key from another device: refused outright, counted.
+        assert_eq!(s.put(thief, owner, claimed, nonce(), vec![1], T0), Err(MailboxError::WrongDevice));
+        assert!(MailboxError::WrongDevice.is_refusal());
+        // Its own device: up to the full per-key cap.
+        for _ in 0..5 {
+            s.put(player, owner, claimed, nonce(), vec![1], T0).unwrap();
+        }
+        assert_eq!(s.put(player, owner, claimed, nonce(), vec![1], T0), Err(MailboxError::KeyFull { max: 5 }));
+        // An unclaimed invite's key: any node, the small cap.
+        s.put(thief, owner, open, nonce(), vec![1], T0).unwrap();
+        s.put(player, owner, open, nonce(), vec![1], T0).unwrap();
+        assert_eq!(s.put(player, owner, open, nonce(), vec![1], T0), Err(MailboxError::KeyFull { max: 2 }));
+        assert_eq!(s.status(owner, T0).unwrap().refused_today, 3);
+        // Claimed now: bound, and the thief is out.
+        s.register(owner, SCOPE, [Registration::bound(claimed, player), Registration::bound(open, player)], T0).unwrap();
+        assert_eq!(s.put(thief, owner, open, nonce(), vec![1], T0), Err(MailboxError::WrongDevice));
+        // Unbound in any scope wins; bound in two scopes to two nodes allows both.
+        s.register(owner, [8; 16], [Registration::any(claimed), Registration::bound(open, thief)], T0).unwrap();
+        assert_eq!(s.allowed_uploaders(owner, &claimed).unwrap(), Some(vec![]));
+        let mut both = vec![player, thief];
+        both.sort();
+        assert_eq!(s.allowed_uploaders(owner, &open).unwrap(), Some(both));
+        // Dropping the other scope binds again.
+        s.register(owner, [8; 16], &[] as &[PublicKey], T0).unwrap();
+        assert_eq!(s.allowed_uploaders(owner, &claimed).unwrap(), Some(vec![player]));
+        assert_eq!(s.allowed_uploaders(owner, &open).unwrap(), Some(vec![player]));
+        s.register(owner, SCOPE, &[] as &[PublicKey], T0).unwrap();
+        assert_eq!(s.allowed_uploaders(owner, &open).unwrap(), None);
+        assert_eq!(s.status(owner, T0).unwrap().keys, 0);
     }
 
     #[test]

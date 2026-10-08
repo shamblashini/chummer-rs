@@ -40,6 +40,7 @@
 //!   all three child modules of `view` like `character.rs`; and Home
 //!   (`home.rs`, `App::ws_home_page`).
 
+pub mod dialog;
 mod home;
 pub mod icons;
 pub mod palette;

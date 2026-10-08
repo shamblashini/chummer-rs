@@ -717,7 +717,7 @@ fn from_node_in(doc: &Element, attrs: &dyn AttributeSource, node: &Element, pare
     let key = node.child_text("id").or_else(|| node.child_text("name")).unwrap_or_else(|| node.text());
     let rec = crate::data::find(doc, "gears", "gear", &key)?;
     let attr = |k: &str| node.attr(k).unwrap_or("");
-    let rating = expr::parse_plain(attr("rating")).or_else(|| node.get_f64("rating")).unwrap_or(0.0) as i32;
+    let rating = expr::trunc_int(expr::parse_plain(attr("rating")).or_else(|| node.get_f64("rating")).unwrap_or(0.0));
     let spec = Spec { rating, qty: Some(expr::parse_plain(attr("qty")).unwrap_or(1.0)), forced: attr("select").to_owned(), answer: None, parent: Some(parent), create_children: true };
     let mut g = build(doc, attrs, rec, &spec, &new_guid());
     if let Some(c) = node.child_text("capacity") {

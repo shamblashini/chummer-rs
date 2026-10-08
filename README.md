@@ -125,6 +125,21 @@ The wizard covers:
 - Metatype and metavariant.
 - Magic or resonance talent, with its free skills.
 
+During creation, **Change Priority Selection…** (Point Buy and Life
+Modules: **Change Metatype…**), next to the metatype on the Common tab
+or the Attributes page, opens the same choices again on the character,
+as Chummer's menu item does: a new metatype replaces the racial
+qualities and attribute limits (points and karma already spent stay, cut
+to the new maximums), new priorities move their budgets, and a new
+talent replaces its qualities and free skills. In the Workspace, click
+two priority cards on the Attributes page to swap their letters; when
+the metatype or talent is not offered at its new letter, the dialog
+opens with the swap and says why. Each change is one command (Undo,
+History).
+
+![Priorities on the Attributes page: Attributes picked, click another to swap](docs/screenshots/workspace-priority-swap-dark.png)
+![Change Priority Selection, Workspace dark](docs/screenshots/workspace-change-priorities-dark.png)
+
 A Creation panel shows what is left of each budget:
 - Karma.
 - Attribute and special attribute points.
@@ -286,7 +301,10 @@ an expandable stat block (type, metatype, gender, age, personal life,
 preferred payment, hobbies/vice) with `contacts.xml`'s lists; pets have a
 name and a `critters.xml` metatype. Those fields take free text, with the
 list behind a chevron inside the field; typing filters the list. Contacts can also be added from a
-Chummer contacts XML file (Add from File). Any entry can be linked to
+Chummer contacts XML file (Add from File). **Sort** (in place of
+Chummer's "Swap Ordering", which only switched the panel between
+left-to-right and top-to-bottom flow) sorts the list once by name,
+connection, loyalty or role; the order is saved, and Undo takes it back. Any entry can be linked to
 another `.chumrs`, `.chum5` or `.chum5lz` (Attach Character): its name, metatype,
 gender, age and mugshot then come from that file, on screen and on
 printed sheets, and Open Character opens it in a new tab. The link is
@@ -481,8 +499,8 @@ was.
   creation (points and karma), rating pips, pools you can click to roll,
   issue marks on the rows, and in career a "+1 · cost" button on every
   attribute, skill, skill group and knowledge skill, greyed when the
-  karma is not there. Attributes & Qualities adds the priorities (read
-  only), the derived values as cards and the qualities; Skills ends with
+  karma is not there. Attributes & Qualities adds the priorities (click
+  two cards to swap them during creation), the derived values as cards and the qualities; Skills ends with
   "Other advances" in career (the cheapest attribute raises, initiation,
   new qualities and martial arts). Magic, resonance, critter, A.I. and
   martial arts pages show their summary (tradition and drain, power
@@ -495,7 +513,18 @@ was.
   tables), Relationships (a segmented switch for Contacts, Enemies and
   Pets, icon buttons for link, notes and delete) and Karma & Nuyen (with
   the whole ledger) are restyled the same way, and so is the warning for
-  a missing settings file.
+  a missing settings file. The dialogs these pages open (the spell,
+  metamagic and mentor pickers, Spell Options, Create Spell, Create
+  Improvement, contact notes, Change Priority Selection, the New
+  Character wizard and the confirmations) are Workspace cards with their
+  own header and close button (Esc closes them), a search field, list
+  rows and Workspace buttons.
+
+  ![Add spell, Workspace dark](docs/screenshots/workspace-dialog-spell-dark.png)
+  ![Spell Options](docs/screenshots/workspace-dialog-spell-options-dark.png)
+  ![Edit Improvement, Workspace light](docs/screenshots/workspace-dialog-improvement-light.png)
+  ![Contact notes](docs/screenshots/workspace-contact-notes-dark.png)
+  ![Relationships: Sort](docs/screenshots/workspace-relationships-sort-dark.png)
 - **Number steppers**: a small − and + inside the border and a value
   field as wide as the range needs (up to four digits; a longer value
   widens it), so nothing spills out at any value. Drag the value, or
@@ -770,7 +799,8 @@ for play-by-post. Each installation's identity is its node key
    they join, and how long an unused link works. **Create link** makes
    a link (`chummer-rs://join/…`) for that one player: copy it and send
    it to them only. The first device that joins with it claims it; the
-   same link then works for nobody else.
+   same link then works for nobody else, live or by mail (the relay
+   takes mail signed with its key only from the claiming device).
 4. The list shows every invite: not used yet (and when it expires),
    joined from which device and when, last seen, online, the characters
    the player has, and mail from them waiting in your mailbox. Per row:
@@ -780,7 +810,13 @@ for play-by-post. Each installation's identity is its node key
    connection, their joins and their mail) and **Remove**. Revoke, New
    link and Remove ask first. Select a character in the roster and set
    **Played by** to give it to a player. NPCs, critters and other
-   characters you keep are never sent to players.
+   characters you keep are never sent to players. **New campaign key…**
+   (next to New invite…) makes a new key for your mail to the players,
+   after a confirmation that explains it; it is only needed if the old
+   one may be known to someone it should not. Players get the new key
+   with their next sync (`chummer-authority rotate-key` does the same).
+
+   ![New campaign key: the confirmation](docs/screenshots/workspace-gm-campaign-key-dark.png)
 
    ![Players & invites, Workspace dark: a new link for Carla, Anna online, Bert offline, a revoked and an expired invite](docs/screenshots/workspace-gm-invites-dark.png)
    ![Players & invites, Workspace light: revoking Bert asks first](docs/screenshots/workspace-gm-invites-light.png)
@@ -1009,11 +1045,11 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   - The authority file keeps a compressed copy of each character plus
     the state 256 changes back, so characters with large mugshots make
     it large.
-  - A player whose invite key leaks (with the link, before or after it
-    was claimed) can still put up to 200 messages into the GM's mailbox
-    (the per-key cap) until the GM revokes or re-issues the invite; the
-    GM's app drops them. Invites are for players only (the role GM is
-    accepted but there is no co-GM support).
+  - Until an invite is claimed, its link works for whoever uses it
+    first, and up to 10 messages signed with its key may wait in the
+    GM's mailbox (enough for a join by mail). Once claimed, the relay
+    takes the key only from the claiming device. Invites are for players
+    only (the role GM is accepted but there is no co-GM support).
 - Some career-mode details:
   - Enchantments, rituals and enhancements learned at a grade.
   - Binding stacked foci (undo of a stacked focus binding works).
@@ -1032,8 +1068,6 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   category (Chummer's default; the option to turn it off is not read);
   Chummer's "Initiate Grade" nodes are plain "Grade N" groups.
 - Relationships:
-  - No "Swap Ordering". In Chummer it only switches the contact panel
-    between left-to-right and top-to-bottom flow; it changes no data.
   - Chummer has no editor for a contact's `<colour>`; chummer-rs shows
     it but cannot change it either.
   - Locations and items have no notes colour editor.
@@ -1050,11 +1084,10 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   grades whose requirements are not met, and Friends in High Places
   contact limits. A missing technomancer stream is only a warning,
   because there is no stream picker yet.
-- Workspace layout: in the build pages the priorities cannot be swapped
-  (pick them in the New Character wizard), there is no "Change
-  metatype", and the dialogs these pages open (the spell, mentor and
-  metamagic pickers, Create Improvement, contact notes) are Classic
-  windows with Workspace buttons. The design's
+- Change Priority Selection keeps the build method (Chummer can also
+  switch from karma to priorities there), and does not re-create a
+  critter metatype's powers, natural weapons and skills.
+- Workspace layout: the design's
   training time and "Saving for" goals are not there. The catalog's
   table shows essence, cost and availability from the data at the chosen
   rating and grade (the inspector's preview is exact). Home's recent

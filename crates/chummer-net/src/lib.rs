@@ -13,7 +13,7 @@
 //! - [`campaign`]: the `chummer-rs/campaign/2` protocol between a player's
 //!   app and the GM's app (hello, submit/ack, server push, ping).
 //! - [`invite`]: campaign ids, member keys and `chummer-rs://join/...` links.
-//! - [`mailbox`]: the `chummer-rs/mailbox/2` protocol to the relay's
+//! - [`mailbox`]: the `chummer-rs/mailbox/3` protocol to the relay's
 //!   store-and-forward mailbox, and its client.
 //! - [`seal`]: end-to-end sealing of mailbox blobs to a recipient's
 //!   [`EndpointId`], signed by the sender.

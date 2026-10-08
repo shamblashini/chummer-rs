@@ -269,7 +269,7 @@ pub fn reload_counts(ch: &Character, w: &Element) -> Vec<String> {
 
 /// The largest load: the first count that is a number.
 pub fn capacity(ch: &Character, w: &Element) -> i32 {
-    reload_counts(ch, w).iter().find_map(|c| c.trim().parse::<i32>().ok()).unwrap_or(0)
+    reload_counts(ch, w).iter().find_map(|c| crate::xml::parse_int(c)).unwrap_or(0)
 }
 
 fn replace_ci(s: &str, from: &str, to: &str) -> String {

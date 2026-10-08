@@ -54,6 +54,8 @@ Each table has these columns:
 |---|---|---|---|
 | The creation form has no Improvements tab. | The Improvements tab is shown in creation mode when the character has custom improvements, so they can still be edited. | Nothing becomes unreachable. | no |
 | Creation problems show only as a popup when you click Finish. | Problems are listed all the time: a ⚠ badge with a count on each tab, a panel on the open tab, marks on the rows concerned, and the full list in Karma Summary. An optional guide walks through creation one step at a time. | Community request: don't dump everything at once, and say what's wrong before Finish. | no |
+| Change Priorities after a new metatype with the same talent leaves MAG/RES/DEP at the metatype's minimum. | The talent's limits are applied again. (LB-46) | SR5 p. 65. | yes (attribute limits) |
+| Change Priorities / Change Metatype can also switch build methods (karma-bought attributes become points, priority-only qualities go). | The same build method only (the dialog offers its own choices); critter metatypes' powers, natural weapons and skills are not re-created. | chummer-rs switches settings only within one build method. | no |
 | A technomancer without a stream is an error. | It is a warning and does not block Finish. | chummer-rs has no stream picker yet, so it must not block finishing. | no |
 
 ## Items & costs
@@ -85,6 +87,7 @@ Each table has these columns:
 | Chummer5a | chummer-rs | Why | File |
 |---|---|---|---|
 | Dragging a contact only moves it on screen; the saved order does not change. | Drag (☰ handle) or ⏶/⏷ reorders the contacts, and the order is saved as the order of the `<contact>` elements, which Chummer loads in that order. | Keep the order the user chose. | yes (element order) |
+| "Swap Ordering" switches the contact panel between left-to-right and top-to-bottom flow; it changes no data. | No Swap Ordering. **Sort** sorts the contacts, enemies or pets once by name, connection, loyalty or role (a command: one undo step); the order is saved as the element order. | A sort helps with long lists; the flow is fixed by the layout. | yes (element order) |
 | `Contact.Load` never reads `<relative>`, so a linked file is found by `<file>` only, and a re-save writes `<relative>` empty. | Reads `<relative>`, and also looks for the linked file next to the owner's save (a link made on Windows works on Linux). (LB-22) | Links survive a move between machines. | yes (`<relative>` kept) |
 
 ## GM tools
@@ -117,6 +120,7 @@ file differences.
 | Writes its own version as `<appversion>`. | Keeps `<appversion>` as loaded (new characters: 5.226.0) and writes `<chummerrsversion>`. Chummer drops `<chummerrsversion>` when it re-saves. | Chummer picks its load fix-ups by `<appversion>`. | yes |
 | Re-saving rewrites the whole file in the current layout. | Writes back only what changed; other elements stay as loaded (lossless round trip). Old files keep old forms, for example `<sex>` instead of `<gender>`. | Nothing in the file is lost. | yes |
 | Writes its calculated values (totals and similar) on save. | Does not write all of them. Chummer computes them again on load. | They are derived. | yes |
+| Reads any `int` and does the rules math with it (an absurd value overflows). | Integers in a file are clamped to ±1,000,000 on load, and NaN or infinite decimals read as absent; a re-save writes the clamped value. Commands with numbers out of that range, NaN or an infinity are refused. (LB-44, LB-45) | Robustness against damaged files and hostile commands; real values are far below the limit. | only for absurd values |
 | Saves only the clips that hold rounds; on load they are put into the slots in order. | Writes every slot up to the last loaded one, empty slots with the empty guid (Chummer loads them as empty clips). A loaded second magazine stays the second one. | Keep the slot the user loaded. | yes |
 
 ## GUI and layout
@@ -152,8 +156,7 @@ yet"):
 - PACKS kits: "Select Martial Art" entries without a fixed art are
   skipped (Chummer asks for one); Create PACKS Kit does not write skills
   (Chummer 5.226 does not either).
-- Relationships: no "Swap Ordering" (in Chummer it only changes the panel
-  flow, no data); no notes colour editor for locations and items.
+- Relationships: no notes colour editor for locations and items.
   Contact `<colour>` is shown but cannot be edited (Chummer has no editor
   either).
 - About 290 UI labels have no Chummer translation string and stay English.

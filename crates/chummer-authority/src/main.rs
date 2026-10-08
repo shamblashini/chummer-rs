@@ -240,6 +240,12 @@ async fn run(path: &Path, key: SecretKey, name: &str, settings: &OnlineSettings,
                 }
                 Err(e) => tracing::warn!("mailbox: {e}"),
             },
+            // A live claim: the relay binds the invite's key to the device now.
+            _ = h.host.mail_keys_changed() => {
+                if let Err(e) = node.register_mail_keys(&h.host).await {
+                    tracing::warn!("mailbox: {e}");
+                }
+            }
             _ = files.tick() => {
                 let n = h.merge_invites();
                 if n > 0 {

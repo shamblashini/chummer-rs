@@ -437,7 +437,7 @@ impl SpellDesigner {
         let d = self.design.get_or_insert_with(SpellDesign::default);
         let mut add = false;
         let mut open = true;
-        egui::Window::new(lang.tr("Create Spell")).id(egui::Id::new("create_spell")).open(&mut open).default_width(560.0).collapsible(false).show(ctx, |ui| {
+        crate::workspace::dialog::window(ctx, "create_spell", &lang.tr("Create Spell"), &mut open, egui::vec2(560.0, 0.0), false, |ui| {
             egui::Grid::new("spell_design").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                 ui.label(lang.tr("Name"));
                 ui.text_edit_singleline(&mut d.name);

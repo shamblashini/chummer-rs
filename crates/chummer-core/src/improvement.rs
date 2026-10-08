@@ -38,7 +38,7 @@ pub struct Improvement {
 impl Improvement {
     pub fn from_xml(e: &Element) -> Self {
         let f = |k: &str| e.get_f64(k).unwrap_or(0.0);
-        Improvement {
+        let mut i = Improvement {
             target: e.get("target"),
             improved_name: e.get("improvedname"),
             source_name: e.get("sourcename"),
@@ -62,6 +62,20 @@ impl Improvement {
             order: e.get_i32("order").unwrap_or(0),
             notes: e.get("notes"),
             unique_name: e.get("unique"),
+        };
+        i.clamp_values();
+        i
+    }
+
+    /// Clamp the values to ±[`crate::xml::NUM_LIMIT`], as file integers
+    /// are, so `as i32` and the sums stay in range (LB-44). Loading does
+    /// it, and so does every command ([`crate::command::apply`]), so an
+    /// improvement made at an absurd rating is the same before and after a
+    /// save.
+    pub fn clamp_values(&mut self) {
+        let lim = f64::from(crate::xml::NUM_LIMIT);
+        for v in [&mut self.val, &mut self.min, &mut self.max, &mut self.aug, &mut self.aug_max] {
+            *v = if v.is_finite() { v.clamp(-lim, lim) } else { 0.0 };
         }
     }
 

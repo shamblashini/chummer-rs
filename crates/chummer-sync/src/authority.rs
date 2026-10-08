@@ -33,6 +33,7 @@ use std::collections::BTreeSet;
 
 use chummer_net::campaign::DenyReason;
 use chummer_net::invite::{CampaignId, InviteId, Role};
+use chummer_net::mailbox::Registration;
 use chummer_net::{EndpointId, PublicKey};
 use serde::{Deserialize, Serialize};
 
@@ -651,11 +652,30 @@ impl Authority {
     /// play-by-post player joins by mail) and the node keys of members
     /// added by node id. Sorted.
     pub fn mail_keys(&self, now: u64) -> Vec<PublicKey> {
-        let mut keys: Vec<PublicKey> = self.invites.values().filter(|i| i.active(now)).map(Invite::key).collect();
-        keys.extend(self.members.iter().filter(|(p, m)| **p != self.me && m.invite.is_none()).map(|(p, _)| *p));
-        keys.sort();
+        let mut keys: Vec<PublicKey> = self.mail_registrations(now).into_iter().map(|r| r.key).collect();
         keys.dedup();
         keys
+    }
+
+    /// [`Authority::mail_keys`] as the relay registers them: a claimed
+    /// invite's key only from the node that claimed it (a leaked link
+    /// cannot put mail from another device), a member added by node id
+    /// only from that node, and an unclaimed invite's key from any node
+    /// (the relay keeps few of those waiting). Sorted.
+    pub fn mail_registrations(&self, now: u64) -> Vec<Registration> {
+        let mut regs: Vec<Registration> = self
+            .invites
+            .values()
+            .filter(|i| i.active(now))
+            .map(|i| match &i.claimed {
+                Some(c) => Registration::bound(i.key(), c.node),
+                None => Registration::any(i.key()),
+            })
+            .collect();
+        regs.extend(self.members.iter().filter(|(p, m)| **p != self.me && m.invite.is_none()).map(|(p, _)| Registration::bound(*p, *p)));
+        regs.sort();
+        regs.dedup();
+        regs
     }
 
     /// Characters whose owner a claim changed since the last call, for

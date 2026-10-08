@@ -147,7 +147,7 @@ impl Element {
     }
 
     pub fn get_f64(&self, name: &str) -> Option<f64> {
-        self.child_text(name).and_then(|t| t.trim().parse().ok())
+        self.child_text(name).and_then(|t| parse_f64(&t))
     }
 
     pub fn get_bool(&self, name: &str) -> Option<bool> {
@@ -282,12 +282,32 @@ pub fn is_name(s: &str) -> bool {
     chars.next().is_some_and(|c| c.is_alphabetic() || c == '_') && chars.all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
+/// The largest magnitude an integer read from a file, or one the rules
+/// math rounds out of a decimal, may have. Such integers are ratings,
+/// levels, karma and counts (the largest in the data is 1,000,000,
+/// Chummer's "no limit" rating); prices stay decimals. A file with
+/// `<base>2147483647</base>` is clamped here, so the rules math, which
+/// adds these values as `i32`, cannot overflow (LB-44). Commands are held
+/// to the same range ([`crate::command::Command::check_numbers`]).
+pub const NUM_LIMIT: i32 = 1_000_000;
+
 /// Parse an integer the way .NET's lenient invariant parsing would accept it:
-/// surrounding whitespace and a leading `+` are fine.
+/// surrounding whitespace and a leading `+` are fine. Values are clamped
+/// to ±[`NUM_LIMIT`].
 pub fn parse_int(s: &str) -> Option<i32> {
     let t = s.trim();
     let t = t.strip_prefix('+').unwrap_or(t);
-    t.parse().ok()
+    let v: i64 = t.parse().ok()?;
+    Some(v.clamp(-i64::from(NUM_LIMIT), i64::from(NUM_LIMIT)) as i32)
+}
+
+/// A float from a file: NaN and the infinities are not numbers any rule
+/// can use, so they read as absent (LB-45). The magnitude is kept
+/// (Chummer writes `decimal.MinValue` as a "not set" marker); integers
+/// derived from floats are clamped where they are rounded (LB-44).
+pub fn parse_f64(s: &str) -> Option<f64> {
+    let v: f64 = s.trim().parse().ok()?;
+    v.is_finite().then_some(v)
 }
 
 pub fn parse_bool(s: &str) -> bool {

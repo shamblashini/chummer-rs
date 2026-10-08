@@ -274,7 +274,7 @@ fn attributes(ch: &mut Character, a: &mut Applier<'_>, rules: &crate::calc::Rule
         "DEP" => ch.dep_enabled(),
         _ => true,
     };
-    let wanted: Vec<(String, i32)> = node.elements().filter_map(|e| Some((name_of(&e.name), e.text().trim().parse::<i32>().ok()?))).collect();
+    let wanted: Vec<(String, i32)> = node.elements().filter_map(|e| Some((name_of(&e.name), crate::xml::parse_int(&e.text())?))).collect();
     for (n, _) in &wanted {
         if let Some(at) = ch.attribute_mut(n) {
             at.base = 0;

@@ -59,6 +59,8 @@ pub(crate) struct OnlineView {
     pub invites: Vec<InviteRow>,
     /// The GM's relay mailbox: (messages waiting, puts refused today).
     pub mailbox: Option<(u64, u64)>,
+    /// The campaign key's generation (0 until it is first changed).
+    pub key_generation: u32,
 }
 
 /// How long an unclaimed invite works.
@@ -148,6 +150,8 @@ pub(crate) enum Confirm {
     Revoke(InviteId),
     Reissue(InviteId),
     Remove(RowKey),
+    /// A new GM campaign key.
+    RotateKey,
 }
 
 /// What the Players & invites list asked for (done after drawing).
@@ -386,7 +390,16 @@ impl GmScreen {
         let task = net.spawn(async move {
             loop {
                 mail_round(&node, &host, &mail).await;
-                tokio::time::sleep(GM_MAIL_EVERY).await;
+                let next = tokio::time::Instant::now() + GM_MAIL_EVERY;
+                loop {
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(next) => break,
+                        // A live claim: the relay binds the invite's key to the device now.
+                        _ = host.host.mail_keys_changed() => {
+                            let _ = node.register_mail_keys(&host.host).await;
+                        }
+                    }
+                }
             }
         });
         if let Some(old) = o.mail_loop.replace(task.abort_handle()) {
@@ -436,7 +449,7 @@ impl GmScreen {
         let status = o.hosted.host.mailbox_status();
         let waiting = |k: &chummer_net::PublicKey| status.as_ref().and_then(|s| s.by_key.iter().find(|(x, _)| x == k)).map(|(_, n)| *n).unwrap_or(0);
         let now = now_secs();
-        let (players, invites) = {
+        let (players, invites, key_generation) = {
             let a = o.hosted.host.authority();
             let char_name = |c: &chummer_sync::CharacterId| hosted::member_id(c).and_then(|m| self.campaign.member(m)).map(|m| m.name.clone()).unwrap_or_else(|| c.to_string());
             let plays = |node: &EndpointId| a.characters().filter(|c| a.owner(c) == Some(*node)).map(char_name).collect::<Vec<_>>();
@@ -489,12 +502,12 @@ impl GmScreen {
                 assign: None,
                 waiting: waiting(id),
             }));
-            (players, rows)
+            (players, rows, a.key_generation())
         };
         let m = o.mail.lock().expect("poisoned");
         let mail = m.last.as_ref().map(|(at, r)| (crate::history_ui::short_time(*at), r.as_ref().map(|r| (r.fetched, r.handled, r.sent)).map_err(Clone::clone)));
         let mailbox = status.map(|s| (s.waiting, s.refused_today));
-        OnlineView { serving, online: true, relay, players, mail_busy: m.busy, mail, invites, mailbox }
+        OnlineView { serving, online: true, relay, players, mail_busy: m.busy, mail, invites, mailbox, key_generation }
     }
 
     /// Opens the New invite form (the Invite buttons).
@@ -540,8 +553,37 @@ impl GmScreen {
         let mut form = form;
 
         ui.label(small(lang.tr("Each player gets their own link. The first device that opens it joins as that player; the link then works for nobody else."), muted));
-        if form.is_none() && button(ui, crate::workspace::icons::USER_PLUS, &lang.tr("New invite…")).on_hover_text(lang.tr("A link for one player")).clicked() {
-            todo = Some(InviteDo::OpenForm);
+        // New invite, and the campaign key (what the GM's mail to players
+        // is signed with) on the same line.
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if form.is_none() && button(ui, crate::workspace::icons::USER_PLUS, &lang.tr("New invite…")).on_hover_text(lang.tr("A link for one player")).clicked() {
+                todo = Some(InviteDo::OpenForm);
+            }
+            if confirm != Some(Confirm::RotateKey)
+                && button(ui, crate::workspace::icons::KEY, &lang.tr("New campaign key…"))
+                    .on_hover_text(lang.tr_fmt("Campaign key: generation {0}. Only needed if the campaign key may be known to someone it should not.", &[&v.key_generation]))
+                    .clicked()
+            {
+                todo = Some(InviteDo::Ask(Confirm::RotateKey));
+            }
+        });
+        if confirm == Some(Confirm::RotateKey) {
+            ui.label(small(lang.tr_fmt("Make a new campaign key (now generation {0})?", &[&v.key_generation]), error));
+            ui.label(small(
+                lang.tr("Your mail to the players is signed with it. Make a new one only if the current one may be known to someone it should not. Players get the new key with their next sync, live or by mail; until then your mail to them is signed with the old one. Links not used yet keep working; after two new keys in a row, an unused older link only joins live (give that player a New link)."),
+                muted,
+            ));
+            ui.horizontal(|ui| {
+                let yes = lang.tr("New campaign key");
+                let go = if ws { crate::workspace::widgets::button(ui, None, &yes, crate::workspace::widgets::Look::Primary, 22.0) } else { ui.button(RichText::new(&yes).color(error)) };
+                if go.clicked() {
+                    todo = Some(InviteDo::Do(Confirm::RotateKey));
+                }
+                if button(ui, crate::workspace::icons::X, &lang.tr("Cancel")).clicked() {
+                    todo = Some(InviteDo::Cancel);
+                }
+            });
         }
         if let Some(f) = form.as_mut() {
             let frame = if ws { crate::workspace::widgets::card_frame(&pal) } else { egui::Frame::group(ui.style()) };
@@ -693,7 +735,7 @@ impl GmScreen {
                 let (q, yes) = match c {
                     Confirm::Revoke(_) => (lang.tr_fmt("Revoke {0}? Their device is cut off at once and the link stops working.", &[&row.label]), lang.tr("Revoke")),
                     Confirm::Reissue(_) => (lang.tr_fmt("Give {0} a new link? The old link and the device that used it stop working; the new device gets their characters.", &[&row.label]), lang.tr("New link")),
-                    Confirm::Remove(_) => (lang.tr_fmt("Remove {0} from the campaign? Their characters stay; give them to someone else.", &[&row.label]), lang.tr("Remove")),
+                    Confirm::Remove(_) | Confirm::RotateKey => (lang.tr_fmt("Remove {0} from the campaign? Their characters stay; give them to someone else.", &[&row.label]), lang.tr("Remove")),
                 };
                 ui.label(small(q, error));
                 ui.horizontal(|ui| {
@@ -722,7 +764,6 @@ impl GmScreen {
             }
             ui.label(small(t, muted));
         }
-
         // Do it.
         let node = net.node_if_started();
         let Some(o) = self.online.as_mut() else { return };
@@ -768,6 +809,10 @@ impl GmScreen {
                     Confirm::Remove(RowKey::Member(p)) => {
                         o.hosted.remove_member(&p);
                         Ok(lang.tr("Removed the player."))
+                    }
+                    Confirm::RotateKey => {
+                        let gen = o.hosted.rotate_campaign_key();
+                        Ok(lang.tr_fmt("The campaign key is now generation {0}; players get it with their next sync.", &[&gen]))
                     }
                 };
                 *status = Some(match r {

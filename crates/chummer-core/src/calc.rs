@@ -279,7 +279,7 @@ fn process_cyberlimbs<'a>(
             let slot = w.get("limbslot");
             let n = match w.get("limbslotcount").trim() {
                 s if s.eq_ignore_ascii_case("all") => limb_count(ch, rules, &slot),
-                s => s.parse().unwrap_or(1),
+                s => crate::xml::parse_int(s).unwrap_or(1),
             };
             count += n;
             total += limb_attribute_total(ch, w, abbrev, max, aug_max, store) * n;
@@ -307,11 +307,11 @@ pub fn attribute_values_with(ch: &Character, name: &str, rules: &Rules, store: O
     let list_x = imps.winners(Query::named("Attribute", name), Field::Val);
     let list_base = imps.winners(Query::named("Attribute", &base_key), Field::Val);
     let rated = |i: &&Improvement, f: fn(&Improvement) -> f64| f(i) * f64::from(i.rating);
-    let sum = |l: &[&Improvement], f: fn(&Improvement) -> f64| -> i32 { l.iter().map(|i| rated(i, f)).sum::<f64>() as i32 };
+    let sum = |l: &[&Improvement], f: fn(&Improvement) -> f64| -> i32 { expr::trunc_int(l.iter().map(|i| rated(i, f)).sum::<f64>()) };
 
     // ReplaceAttribute: the last enabled one with a nonzero field wins.
     let replace = |f: fn(&Improvement) -> f64| -> Option<i32> {
-        imps.of_kind("ReplaceAttribute").filter(|i| i.improved_name == name && f(i) != 0.0).last().map(|i| f(i) as i32)
+        imps.of_kind("ReplaceAttribute").filter(|i| i.improved_name == name && f(i) != 0.0).last().map(|i| expr::trunc_int(f(i)))
     };
     let shapeshifter = a.category == "Shapeshifter";
     let metatype_min = if shapeshifter { a.metatype_min } else { replace(|i| i.min).unwrap_or(a.metatype_min) };
@@ -400,8 +400,8 @@ pub fn attribute_karma_cost(v: &AttributeValues, rules: &Rules) -> i32 {
     if v.karma <= 0 {
         return 0;
     }
-    let tb = v.total_base;
-    (2 * tb + v.karma + 1) * v.karma / 2 * rules.karma_attribute
+    let (tb, k) = (i64::from(v.total_base), i64::from(v.karma));
+    expr::clamp_int((2 * tb + k + 1) * k / 2 * i64::from(rules.karma_attribute))
 }
 
 /// Karma to raise an attribute by one (`UpgradeKarmaCost`), `None` at max.
@@ -863,13 +863,14 @@ fn armor_rating(ch: &Character, strength: i32) -> f64 {
     let piece_value = |a: &Element| -> (bool, i32) {
         let raw = a.child_text("armoroverride").filter(|s| !s.trim().is_empty() && s.trim() != "0").unwrap_or_else(|| a.get("armor"));
         let stacking = raw.trim().starts_with('+');
-        let mut v = expr::parse_plain(raw.trim().trim_start_matches('+')).unwrap_or(0.0) as i32;
-        v -= a.get_i32("damage").unwrap_or(0);
+        // i64: absurd values in a file must not overflow (LB-44).
+        let mut v = i64::from(expr::trunc_int(expr::parse_plain(raw.trim().trim_start_matches('+')).unwrap_or(0.0)));
+        v -= i64::from(a.get_i32("damage").unwrap_or(0));
         if let Some(mods) = a.child("armormods") {
             for m in mods.children_named("armormod") {
                 if m.get_bool("equipped").unwrap_or(true) {
                     let r = m.get_i32("rating").unwrap_or(0);
-                    v += expr::value_to_int(&m.get("armor"), r, &expr::NoAttributes);
+                    v += i64::from(expr::value_to_int(&m.get("armor"), r, &expr::NoAttributes));
                 }
             }
         }
@@ -878,20 +879,20 @@ fn armor_rating(ch: &Character, strength: i32) -> f64 {
             .filter(|i| i.source_name.eq_ignore_ascii_case(&a.get("guid")))
             .map(|i| i.val)
             .sum();
-        (stacking, v + standard_round(own))
+        (stacking, expr::clamp_int(v + i64::from(standard_round(own))))
     };
     let mut best: Option<i32> = None;
     let mut stack = 0;
     for a in &equipped {
         let (stacking, v) = piece_value(a);
         if stacking {
-            stack += v;
+            stack = expr::clamp_int(i64::from(stack) + i64::from(v));
         } else {
             best = Some(best.map_or(v, |b| b.max(v)));
         }
     }
     let stack = stack.min(strength);
-    f64::from(best.unwrap_or(0) + stack) + general
+    f64::from(best.unwrap_or(0)) + f64::from(stack) + general
 }
 
 /// Plain sum of improvement values relevant to an active skill's pool.
