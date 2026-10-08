@@ -47,6 +47,7 @@ pub mod palette;
 pub mod pool_diff;
 pub mod popout;
 mod shell;
+pub mod table;
 pub mod widgets;
 
 use std::collections::HashMap;

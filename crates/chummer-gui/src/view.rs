@@ -44,6 +44,8 @@ pub(crate) mod play;
 pub(crate) mod ws_items;
 #[path = "workspace/catalog.rs"]
 pub(crate) mod ws_catalog;
+#[path = "workspace/inventory.rs"]
+pub(crate) mod ws_inventory;
 #[path = "workspace/inspector.rs"]
 pub(crate) mod ws_inspector;
 
@@ -1529,7 +1531,8 @@ impl CharacterView {
                     self.action = Some(CareerAction::RemoveQuality(guid));
                     return false;
                 }
-                yes && self.doc.set(Command::RemoveItem { container, guid })
+                // No container: an item inside another (the Workspace inventory).
+                yes && self.doc.set(if container.is_empty() { Command::DeleteItem { guid } } else { Command::RemoveItem { container, guid } })
             }
             None => false,
         }

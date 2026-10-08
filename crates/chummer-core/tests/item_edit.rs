@@ -177,3 +177,18 @@ fn capacity_strings() {
     assert_eq!(edit::parse_capacity("[*]", 0), (0.0, 0.0));
     assert_eq!(edit::custom_name_field("gear"), Some("gearname"));
 }
+
+#[test]
+fn addon_categories_come_from_the_data_record() {
+    let store = DataStore::discover().unwrap();
+    let doc = store.doc("gear.xml").unwrap();
+    let mut ch = fixture("Barrett.chum5");
+    let glasses = data::find(&doc, "gears", "gear", "Glasses").unwrap();
+    let g = items::add("gear", &mut ch, &store, glasses, &Purchase { rating: 2, ..Default::default() }).unwrap();
+    assert_eq!(edit::addon_categories(&ch, &store, &g), ["Vision Enhancements", "Sensors", "Custom"]);
+    // A commlink takes any gear (no list).
+    let link = data::find(&doc, "gears", "gear", "Meta Link").unwrap();
+    let l = items::add("gear", &mut ch, &store, link, &Purchase::default()).unwrap();
+    assert!(edit::addon_categories(&ch, &store, &l).is_empty());
+    assert!(edit::addon_categories(&ch, &store, "no such item").is_empty());
+}

@@ -697,6 +697,17 @@ pub fn child_kinds(ch: &Character, guid: &str) -> Vec<ChildKind> {
     v
 }
 
+/// Gear categories that may go into an item: the `addoncategory` list of
+/// its data record (`SelectGear`'s allowed categories when adding into
+/// gear or armor). Empty when any category may.
+pub fn addon_categories(ch: &Character, store: &DataStore, guid: &str) -> Vec<String> {
+    let Some(e) = find(ch, guid) else { return Vec::new() };
+    if !matches!(tag_of(e), "gear" | "armor" | "armormod") {
+        return Vec::new();
+    }
+    with_record(store, e, |r| r.el().children_named("addoncategory").map(Element::text).filter(|c| !c.is_empty()).collect()).unwrap_or_default()
+}
+
 /// The items directly inside an item: `(guid, tag, name)`.
 pub fn children(ch: &Character, guid: &str) -> Vec<(String, String, String)> {
     let Some(e) = find(ch, guid) else { return Vec::new() };

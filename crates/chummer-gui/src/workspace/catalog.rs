@@ -26,7 +26,7 @@ use chummer_core::data::{self, Record};
 use chummer_core::engine::Engine;
 use chummer_core::expr::{self, Availability, Legality};
 use chummer_core::format;
-use chummer_core::items::{self, Kind, Purchase};
+use chummer_core::items::{self, edit, Kind, Purchase};
 use chummer_core::lang::Language;
 use chummer_core::requirements::Check;
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
@@ -34,15 +34,16 @@ use chummer_core::xml::Element;
 use eframe::egui::{self, Color32, CornerRadius, FontId, RichText, Sense};
 
 use super::ws_items::{page_kinds, Page};
+use super::ws_inventory::kind_icon;
 use super::{kind_noun, CharacterView};
 use crate::pdf_ui::{self, Status};
 use crate::select;
 use crate::theme;
 use crate::workspace::{icons, pool_diff};
+use crate::workspace::table::{self, Action, Cell, Col, Event, Kind as RowKind, RowData, States, Tag, Tone};
 use crate::workspace::widgets::{self, Look};
 
 const FILTERS_WIDTH: f32 = 196.0;
-const ROW_HEIGHT: f32 = 38.0;
 /// Records kept for comparison.
 const COMPARE_MAX: usize = 3;
 
@@ -62,28 +63,6 @@ struct Grade {
     ess: f64,
     cost: f64,
     avail: i32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-enum Sort {
-    #[default]
-    Match,
-    Name,
-    Cost,
-    Avail,
-    Essence,
-}
-
-impl Sort {
-    fn label(self) -> &'static str {
-        match self {
-            Sort::Match => "Best match",
-            Sort::Name => "Name",
-            Sort::Cost => "Cost, low first",
-            Sort::Avail => "Availability, low first",
-            Sort::Essence => "Essence, low first",
-        }
-    }
 }
 
 /// One result row, with its values at the rating the table shows.
@@ -107,6 +86,10 @@ struct Row {
     over: bool,
     /// Search rank: 0 name starts with the text, 1 contains it, 2 other.
     rank: u8,
+    /// "Installed R2 · Alphaware" when the character has it.
+    owned: Option<String>,
+    /// Goes into the target container (always, without one).
+    fits: bool,
 }
 
 /// The rows for the current filters.
@@ -151,7 +134,6 @@ pub struct Catalog {
     pub(super) page: Page,
     slots: Vec<Slot>,
     search: String,
-    sort: Sort,
     /// Categories shown; empty = all.
     categories: BTreeSet<String>,
     books_off: BTreeSet<String>,
@@ -176,6 +158,12 @@ pub struct Catalog {
     focus_search: bool,
     /// Scroll the selected row into view (moved with the arrow keys).
     scroll: bool,
+    /// The location a group's "+" adds into: (guid, name).
+    location: Option<(String, String)>,
+    /// The filters are shown.
+    show_filters: bool,
+    /// The results as table rows, for the rows' key and the sort.
+    table: Option<(u64, Vec<table::Row>)>,
 }
 
 impl Catalog {
@@ -194,7 +182,6 @@ impl Catalog {
             page,
             slots,
             search: String::new(),
-            sort: Sort::Match,
             categories: BTreeSet::new(),
             books_off: BTreeSet::new(),
             legality: [true; 3],
@@ -212,7 +199,32 @@ impl Catalog {
             rows: None,
             focus_search: true,
             scroll: false,
+            location: None,
+            show_filters: false,
+            table: None,
         })
+    }
+
+    /// How many filters are on (the Filters button's count).
+    fn active_filters(&self) -> usize {
+        usize::from(self.fit_essence && self.ware())
+            + usize::from(self.fit_avail)
+            + usize::from(self.affordable)
+            + usize::from(self.requirements_met)
+            + usize::from(self.legality != [true; 3])
+            + usize::from(self.rating > 0)
+            + self.books_off.len().min(1)
+            + self.categories.len()
+    }
+
+    /// The container it adds into.
+    pub(super) fn target(&self) -> Option<&str> {
+        self.purchase.parent.as_deref()
+    }
+
+    /// Whether it sells kind `tag`.
+    pub(super) fn sells(&self, tag: &str) -> bool {
+        self.slots.iter().any(|s| s.kind.tag == tag)
     }
 
     fn ware(&self) -> bool {
@@ -335,18 +347,36 @@ fn rating_for(r: Record<'_>, want: i32) -> i32 {
     }
 }
 
-fn kind_icon(tag: &str) -> &'static str {
-    match tag {
-        "cyberware" => icons::CPU,
-        "bioware" => icons::DNA,
-        "armor" => icons::T_SHIRT,
-        "armormod" | "accessory" | "mod" => icons::WRENCH,
-        "weapon" => icons::CROSSHAIR,
-        "vehicle" => icons::CAR,
-        "lifestyle" => icons::HOUSE_LINE,
-        "drug" => icons::PILL,
-        _ => icons::PACKAGE,
+/// What the character has, by record id (or name), lowercase: (rating,
+/// grade) of each.
+fn owned_items(ch: &Character, sec: &chummer_core::sections::Section) -> std::collections::HashMap<String, Vec<(i32, String)>> {
+    let mut out: std::collections::HashMap<String, Vec<(i32, String)>> = std::collections::HashMap::new();
+    fn walk(nodes: &[chummer_core::tree::ItemNode], out: &mut std::collections::HashMap<String, Vec<(i32, String)>>) {
+        for n in nodes {
+            if let chummer_core::tree::Entry::Item { el, .. } = &n.value {
+                let id = el.get("sourceid");
+                let key = if id.is_empty() { el.get("name") } else { id };
+                out.entry(key.to_lowercase()).or_default().push((el.get_i32("rating").unwrap_or(0), el.get("grade")));
+            }
+            walk(&n.children, out);
+        }
     }
+    walk(&chummer_core::tree::section_tree(&ch.doc, sec), &mut out);
+    out
+}
+
+/// "Installed R2 · Alphaware", "Installed ×2".
+fn owned_line(list: Option<&Vec<(i32, String)>>, lang: &Language) -> Option<String> {
+    let list = list.filter(|l| !l.is_empty())?;
+    if list.len() > 1 {
+        return Some(lang.tr_fmt("Installed ×{0}", &[&list.len()]));
+    }
+    let (r, g) = &list[0];
+    let mut s = if *r > 0 { lang.tr_fmt("Installed R{0}", &[r]) } else { lang.tr("Installed") };
+    if !g.is_empty() && g != "Standard" && g != "None" {
+        s = format!("{s} · {g}");
+    }
+    Some(s)
 }
 
 fn hash_of(v: impl Hash) -> u64 {
@@ -363,6 +393,7 @@ impl CharacterView {
         let kinds = page_kinds(container);
         let tags: Vec<&str> = if parent.is_some() || !kinds.contains(&tag) { vec![tag] } else { kinds.to_vec() };
         self.ws_gear.catalog = Catalog::new(page, &tags, tag, &self.store, parent);
+        self.ws_gear.focus_catalog = true;
     }
 
     /// The catalog has a record selected and is on the page shown.
@@ -391,7 +422,6 @@ impl CharacterView {
         let Some(c) = self.ws_gear.catalog.as_ref() else { return };
         let key = hash_of((
             &c.search,
-            c.sort,
             &c.categories,
             &c.books_off,
             c.legality,
@@ -399,6 +429,7 @@ impl CharacterView {
             c.rating,
             c.slots.iter().map(|s| s.on).collect::<Vec<_>>(),
             &c.purchase.grade,
+            &c.purchase.parent,
             self.doc.revision(),
             &lang.code,
         ));
@@ -412,6 +443,9 @@ impl CharacterView {
         let check = Check { ch: &self.doc, sheet: &self.sheet, ignore_quality: None };
         let several = c.slots.iter().filter(|s| s.on).count() > 1;
         let needle = c.search.trim().to_lowercase();
+        let owned = owned_items(&self.doc, &super::ws_items::section_of(c.page));
+        let allowed: Vec<String> = c.purchase.parent.as_ref().map(|g| edit::addon_categories(&self.doc, &self.store, g)).unwrap_or_default();
+        let target_name = c.purchase.parent.as_ref().and_then(|g| edit::find(&self.doc, g)).map(|e| e.get("name")).unwrap_or_default();
         let mut out = Rows { kinds: vec![0; c.slots.len()], ..Default::default() };
         for (si, slot) in c.slots.iter().enumerate() {
             let grade = c.grade(slot);
@@ -474,36 +508,46 @@ impl CharacterView {
                 if let Some(o) = over {
                     why.push(o);
                 }
+                let fits = allowed.is_empty() || slot.kind.tag != "gear" || allowed.iter().any(|a| a.eq_ignore_ascii_case(&category));
+                if !fits {
+                    why.insert(0, lang.tr_fmt("Not for {0}", &[&target_name]));
+                }
+                let owned = owned_line(owned.get(&r.id().to_lowercase()).or_else(|| owned.get(&r.name().to_lowercase())), lang);
                 let sub = if several { [kind_label.clone(), shown_category].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ") } else { shown_category };
                 let extra = cols.iter().map(|f| r.get(f)).collect();
-                out.list.push(Row { slot: si, index: i, name, sub, rating, ess, avail, cost, extra, source: SourceRef::of(r.el()), why, over: is_over, rank });
+                out.list.push(Row { slot: si, index: i, name, sub, rating, ess, avail, cost, extra, source: SourceRef::of(r.el()), why, over: is_over, rank, owned, fits });
             }
         }
-        let key_f = |v: Option<f64>| v.unwrap_or(f64::MAX);
-        match c.sort {
-            Sort::Match => out.list.sort_by_key(|r| r.rank),
-            Sort::Name => out.list.sort_by_key(|a| a.name.to_lowercase()),
-            Sort::Cost => out.list.sort_by(|a, b| key_f(a.cost).total_cmp(&key_f(b.cost))),
-            Sort::Avail => out.list.sort_by_key(|r| r.avail.as_ref().map_or(i32::MAX, |a| a.value)),
-            Sort::Essence => out.list.sort_by(|a, b| key_f(a.ess).total_cmp(&key_f(b.ess))),
-        }
+        out.list.sort_by_key(|r| r.rank);
+        // What fits the target first.
+        out.list.sort_by_key(|r| !r.fits);
         if let Some(c) = self.ws_gear.catalog.as_mut() {
             c.rows = Some((key, out));
         }
     }
 
-    /// The catalog page: filters, the search and the results. Returns
-    /// true if the character changed.
-    pub(crate) fn ws_catalog_page(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+    /// The catalog panel in `rect`: its head, the search with the kind
+    /// switch, the active filters as chips (all of them behind Filters),
+    /// the target bar, the results and the key hints. `stacked`: above
+    /// the inventory (one-line rows); `fold`: the inspector is folded
+    /// away, so the selected row opens its details strip. Returns true if
+    /// the character changed.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn ws_catalog_panel(&mut self, ui: &mut egui::Ui, rect: egui::Rect, stacked: bool, fold: bool, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         self.ws_catalog_rows(lang);
+        if fold {
+            self.ws_catalog_preview(engine);
+        }
         let ws = theme::ws(ui);
         let mut changed = false;
         let mut close = false;
         let mut add: Option<bool> = None;
         // Keys, before the search field takes them: arrows move, Enter
-        // adds (Shift+Enter stays), Esc closes.
+        // adds (and hands the keys to the inventory), Shift+Enter adds and
+        // stays, Esc closes.
         let search_id = egui::Id::new("ws_catalog_search");
-        let free = !ui.ctx().wants_keyboard_input() || ui.ctx().memory(|m| m.has_focus(search_id));
+        let search_focused = ui.ctx().memory(|m| m.has_focus(search_id));
+        let free = (self.ws_gear.focus_catalog && !ui.ctx().wants_keyboard_input()) || search_focused;
         if free && !ui.ctx().is_popup_open() {
             use egui::{Key, Modifiers};
             let (down, up, enter_stay, enter, esc) = ui.input_mut(|i| {
@@ -525,43 +569,88 @@ impl CharacterView {
                 close = true;
             }
         }
-        egui::SidePanel::left("ws_catalog_filters")
-            .exact_width(FILTERS_WIDTH)
-            .resizable(false)
-            .frame(egui::Frame::new().fill(ws.chrome).corner_radius(CornerRadius::same(7)).inner_margin(egui::Margin::same(12)))
-            .show_inside(ui, |ui| {
-                egui::ScrollArea::vertical().id_salt("ws_catalog_filters").auto_shrink(false).show(ui, |ui| {
-                    // Room for the scroll bar.
-                    ui.set_max_width(ui.available_width() - 10.0);
-                    self.ws_catalog_filters(ui, lang)
-                });
-            });
-        egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 0, top: 0, bottom: 0 })).show_inside(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 8.0;
-            let Some(c) = self.ws_gear.catalog.as_ref() else { return };
-            let kinds: Vec<String> = c.slots.iter().filter(|s| s.on).map(|s| kind_noun(lang, s.kind.label)).collect();
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(lang.tr_fmt("Add {0}", &[&kinds.join(" / ")])).font(widgets::bold(15.0)).color(ws.text));
-                if let Some(p) = c.purchase.parent.as_deref().and_then(|g| items::edit::find(&self.doc, g)) {
-                    ui.label(RichText::new(lang.tr_fmt("in {0}", &[&p.get("name")])).size(13.0).color(ws.muted));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+        let ui = &mut child;
+        ui.painter().rect(rect, CornerRadius::same(6), ws.raised, egui::Stroke::new(1.0_f32, ws.divider), egui::StrokeKind::Inside);
+        let inner = rect.shrink(1.0);
+        ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+        if ui.rect_contains_pointer(inner) && ui.input(|i| i.pointer.any_pressed()) {
+            self.ws_gear.focus_catalog = true;
+        }
+        // Head.
+        let head = egui::Rect::from_min_size(inner.min, egui::vec2(inner.width(), 36.0));
+        ui.painter().rect_filled(egui::Rect::from_min_size(egui::pos2(head.left(), head.bottom() - 1.0), egui::vec2(head.width(), 1.0)), CornerRadius::ZERO, ws.divider);
+        {
+            let Some(c) = self.ws_gear.catalog.as_mut() else { return false };
+            let mut hu = ui.new_child(egui::UiBuilder::new().max_rect(head.shrink2(egui::vec2(10.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+            hu.spacing_mut().item_spacing.x = 8.0;
+            hu.label(icons::icon(icons::STOREFRONT, 15.0, ws.accent));
+            hu.label(widgets::title(&lang.tr("Catalog"), &ws));
+            let kinds: Vec<String> = c.slots.iter().map(|s| lang.tr(s.kind.label)).collect();
+            hu.add(egui::Label::new(RichText::new(kinds.join(" & ")).size(11.0).color(ws.muted)).truncate());
+            hu.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let glyph = if stacked { icons::CARET_UP } else { icons::CARET_DOUBLE_LEFT };
+                if widgets::icon_button(ui, glyph, 22.0).on_hover_text(lang.tr("Close the catalog (Esc)")).clicked() {
+                    close = true;
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::button(ui, Some(icons::CHECK), &lang.tr("Done"), Look::Secondary, 26.0).on_hover_text(lang.tr("Back to the list (Esc)")).clicked() {
-                        close = true;
-                    }
+                let n = c.active_filters();
+                let label = if n > 0 { format!("{} {n}", lang.tr("Filters")) } else { lang.tr("Filters") };
+                let r = widgets::button(ui, Some(icons::FUNNEL_SIMPLE), &label, if c.show_filters { Look::Secondary } else { Look::Ghost }, 24.0);
+                if r.on_hover_text(lang.tr("Show or hide every filter")).clicked() {
+                    c.show_filters = !c.show_filters;
+                }
+                if let Some((_, rows)) = &c.rows {
+                    ui.label(RichText::new(lang.tr_fmt("{0} of {1}", &[&rows.list.len(), &rows.total])).size(11.0).color(ws.muted));
+                }
+            });
+        }
+        let body = egui::Rect::from_min_max(egui::pos2(inner.left() + 10.0, head.bottom() + 8.0), egui::pos2(inner.right() - 10.0, inner.bottom()));
+        let mut bu = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
+        bu.spacing_mut().item_spacing.y = 8.0;
+        self.ws_catalog_search(&mut bu, lang);
+        self.ws_catalog_chips(&mut bu, lang);
+        if self.ws_gear.catalog.as_ref().is_some_and(|c| c.show_filters) {
+            let max_h = (body.height() * 0.4).clamp(120.0, 320.0);
+            widgets::card_frame(&ws).fill(ws.chrome).inner_margin(egui::Margin::same(10)).show(&mut bu, |ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical().id_salt("ws_catalog_filters").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+                    ui.set_max_width(ui.available_width() - 10.0);
+                    self.ws_catalog_filters(ui, lang);
                 });
             });
-            self.ws_catalog_installed(ui, lang);
-            self.ws_catalog_search(ui, lang);
-            if let Some(a) = self.ws_catalog_results(ui, lang, pdfs, status) {
-                add = Some(a);
-            }
-        });
-        if let Some(and_close) = add {
-            changed |= self.ws_catalog_add(engine, lang, status, and_close);
+        }
+        self.ws_catalog_target_bar(&mut bu, lang);
+        // Results, then the key hints.
+        let hints_h = 30.0;
+        let rest = bu.available_rect_before_wrap();
+        let results = egui::Rect::from_min_max(egui::pos2(inner.left(), rest.top()), egui::pos2(inner.right(), inner.bottom() - hints_h));
+        let mut ru = ui.new_child(egui::UiBuilder::new().max_rect(results).layout(egui::Layout::top_down(egui::Align::Min)));
+        ru.painter().rect_filled(egui::Rect::from_min_size(results.min, egui::vec2(results.width(), 1.0)), CornerRadius::ZERO, ws.divider);
+        if let Some(a) = self.ws_catalog_results(&mut ru, results.height(), stacked, fold, lang, pdfs, status) {
+            add = Some(a);
+        }
+        let hints = egui::Rect::from_min_max(egui::pos2(inner.left(), inner.bottom() - hints_h), inner.max);
+        ui.painter().rect_filled(hints, CornerRadius::ZERO, ws.chrome);
+        ui.painter().rect_filled(egui::Rect::from_min_size(hints.min, egui::vec2(hints.width(), 1.0)), CornerRadius::ZERO, ws.divider);
+        let mut hu = ui.new_child(egui::UiBuilder::new().max_rect(hints.shrink2(egui::vec2(10.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        hu.spacing_mut().item_spacing.x = 5.0;
+        let target = self.ws_gear.catalog.as_ref().and_then(|c| c.target()).and_then(|g| edit::find(&self.doc, g)).map(|e| e.get("name"));
+        let enter = match &target {
+            Some(t) => lang.tr_fmt("add into {0}", &[t]),
+            None => lang.tr("add"),
+        };
+        for (k, t) in [("Enter", enter), ("Shift+Enter", lang.tr("add, keep focus")), ("Tab", lang.tr("to the inventory"))] {
+            widgets::kbd(&mut hu, k);
+            hu.label(RichText::new(t).size(11.0).color(ws.muted));
+            hu.add_space(6.0);
+        }
+        if let Some(keep) = add {
+            changed |= self.ws_catalog_add(engine, lang, status, keep);
         }
         if close {
             self.ws_gear.catalog = None;
+            self.ws_gear.focus_catalog = false;
         }
         changed
     }
@@ -582,6 +671,7 @@ impl CharacterView {
         let (slot, index, rating) = (r.slot, r.index, r.rating);
         c.select(slot, index, rating);
         c.scroll = true;
+        self.item_editor = None;
     }
 
     /// The filters column.
@@ -751,261 +841,421 @@ fn preview(ch: &Character, before: &Sheet, settings: Option<&chummer_core::setti
 const ATTRIBUTES: &[&str] = &["BOD", "AGI", "REA", "STR", "CHA", "INT", "LOG", "WIL", "EDG", "MAG", "RES", "DEP"];
 
 impl CharacterView {
-    /// The page's items above the search ("Installed": name, rating,
-    /// grade, essence).
-    fn ws_catalog_installed(&self, ui: &mut egui::Ui, lang: &Language) {
-        let ws = theme::ws(ui);
-        let Some(c) = self.ws_gear.catalog.as_ref() else { return };
-        let container = super::ws_items::page_container(c.page);
-        let Some(sec) = chummer_core::sections::EQUIPMENT.iter().find(|s| s.container == container) else { return };
-        let list = self.doc.items(sec.container, sec.item);
-        if list.is_empty() {
-            return;
-        }
-        let ware = container == "cyberwares";
-        let note = if ware {
-            format!("{} · {} {}", lang.tr_fmt("{0} items", &[&list.len()]), lang.tr("Essence"), format::essence(self.sheet.essence, self.rules.essence_decimals))
-        } else {
-            lang.tr_fmt("{0} items", &[&list.len()])
-        };
-        ui.horizontal(|ui| {
-            ui.label(widgets::title(&lang.tr(if ware { "Installed" } else { sec.label }), &ws));
-            ui.label(RichText::new(note).size(11.5).color(ws.muted));
-        });
-        let width = ui.available_width();
-        let fit = (((width + 8.0) / (170.0 + 8.0)) as usize).clamp(1, 4);
-        let per = fit.min(list.len()).max(1);
-        // Room for "+N more" when some do not fit.
-        let room = if list.len() > per { 90.0 } else { 0.0 };
-        let card_w = ((width - room - (per as f32 - 1.0) * 8.0) / per as f32).floor() - 4.0;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            for el in list.iter().take(per) {
-                let name = super::display_name(sec, el, lang);
-                let mut bits = Vec::new();
-                if let Some(r) = el.get_i32("rating").filter(|r| *r > 0) {
-                    bits.push(format!("R{r}"));
-                }
-                let grade = el.get("grade");
-                if !grade.is_empty() {
-                    bits.push(grade);
-                }
-                let value = if ware { format!("{} {}", super::cell(el, "ess"), lang.tr("Ess")) } else { super::cell(el, "cost") };
-                egui::Frame::new().fill(ws.raised).stroke(egui::Stroke::new(1.0_f32, ws.divider)).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
-                    ui.set_width((card_w - 20.0).max(0.0));
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.add(egui::Label::new(RichText::new(&name).size(12.5).color(ws.text)).truncate());
-                    bits.push(value.trim().to_owned());
-                    ui.add(egui::Label::new(RichText::new(bits.join(" · ")).size(11.0).color(ws.muted)).truncate());
-                });
-            }
-            if list.len() > per {
-                ui.label(RichText::new(lang.tr_fmt("+{0} more", &[&(list.len() - per)])).size(11.5).color(ws.muted));
-            }
-        });
-    }
-
-    /// The search field and the sort order.
+    /// The search field and, for pages with several kinds, the kind switch
+    /// (All / Cyberware / Bioware).
     fn ws_catalog_search(&mut self, ui: &mut egui::Ui, lang: &Language) {
         let ws = theme::ws(ui);
         let Some(c) = self.ws_gear.catalog.as_mut() else { return };
+        let total = c.rows.as_ref().map_or(0, |(_, r)| r.total);
         let kinds: Vec<String> = c.slots.iter().filter(|s| s.on).map(|s| kind_noun(lang, s.kind.label)).collect();
-        let ware = c.ware();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            let sort_w = 180.0;
-            // The combo adds its padding and arrow to `sort_w`.
-            let field_w = (ui.available_width() - sort_w - 40.0).max(160.0);
-            let field = egui::Frame::new().fill(ws.well).stroke(egui::Stroke::new(1.0_f32, ws.control)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
-                ui.set_width((field_w - 18.0).max(0.0));
-                ui.horizontal(|ui| {
-                    ui.label(icons::icon(icons::MAGNIFYING_GLASS, 14.0, ws.muted));
-                    let r = ui.add(egui::TextEdit::singleline(&mut c.search).id(egui::Id::new("ws_catalog_search")).frame(false).hint_text(lang.tr_fmt("Search {0}", &[&kinds.join(" / ")])).desired_width(f32::INFINITY));
-                    if c.focus_search {
-                        r.request_focus();
-                        c.focus_search = false;
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if c.slots.len() > 1 {
+                    let labels: Vec<String> = std::iter::once(lang.tr("All")).chain(c.slots.iter().map(|s| short_kind(lang, s.kind.label))).collect();
+                    let items: Vec<(&str, &str)> = labels.iter().map(|l| (l.as_str(), "")).collect();
+                    let on: Vec<usize> = (0..c.slots.len()).filter(|i| c.slots[*i].on).collect();
+                    let cur = if on.len() == 1 { on[0] + 1 } else { 0 };
+                    if let Some(i) = widgets::segmented(ui, &items, cur, 28.0) {
+                        for (k, s) in c.slots.iter_mut().enumerate() {
+                            s.on = i == 0 || k + 1 == i;
+                        }
+                        c.selected = None;
                     }
+                }
+                let field_w = ui.available_width();
+                let field = egui::Frame::new().fill(ws.well).stroke(egui::Stroke::new(1.0_f32, ws.control)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
+                    ui.set_width((field_w - 18.0).max(0.0));
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.label(icons::icon(icons::MAGNIFYING_GLASS, 13.0, ws.muted));
+                        let hint = if total > 0 { lang.tr_fmt("Search {0} {1}", &[&total, &kinds.join(" / ")]) } else { lang.tr_fmt("Search {0}", &[&kinds.join(" / ")]) };
+                        let r = ui.add(egui::TextEdit::singleline(&mut c.search).id(egui::Id::new("ws_catalog_search")).frame(false).hint_text(hint).desired_width(f32::INFINITY));
+                        if c.focus_search {
+                            r.request_focus();
+                            c.focus_search = false;
+                        }
+                    });
                 });
-            });
-            // A click anywhere on the field (the icon, the margin) types in it.
-            if ui.interact(field.response.rect, egui::Id::new("ws_catalog_search_frame"), Sense::click()).clicked() {
-                ui.memory_mut(|m| m.request_focus(egui::Id::new("ws_catalog_search")));
-            }
-            crate::combo::Combo::from_id_salt("ws_catalog_sort").selected_text(lang.tr(c.sort.label())).width(sort_w).show_ui(ui, |ui| {
-                for s in [Sort::Match, Sort::Name, Sort::Cost, Sort::Avail, Sort::Essence] {
-                    if s == Sort::Essence && !ware {
-                        continue;
-                    }
-                    crate::combo::selectable_value(ui, &mut c.sort, s, lang.tr(s.label()));
+                // A click anywhere on the field (the icon, the margin) types in it.
+                if ui.interact(field.response.rect, egui::Id::new("ws_catalog_search_frame"), Sense::click()).clicked() {
+                    ui.memory_mut(|m| m.request_focus(egui::Id::new("ws_catalog_search")));
                 }
             });
         });
-        if let Some((_, rows)) = &c.rows {
-            ui.horizontal(|ui| {
-                let mut line = lang.tr_fmt("{0} of {1}", &[&rows.list.len(), &rows.total]);
-                if !c.search.trim().is_empty() {
-                    line = format!("{line} {}", lang.tr_fmt("match “{0}”", &[&c.search.trim()]));
+    }
+
+    /// The active filters as chips; × turns one off. The rest of the
+    /// line says how many match.
+    fn ws_catalog_chips(&mut self, ui: &mut egui::Ui, lang: &Language) {
+        let ws = theme::ws(ui);
+        let essence = format::essence(self.sheet.essence, self.rules.essence_decimals);
+        let max_avail = self.ws_max_avail();
+        let Some(c) = self.ws_gear.catalog.as_mut() else { return };
+        let mut chips: Vec<(String, u8)> = Vec::new();
+        if c.fit_essence && c.ware() {
+            chips.push((lang.tr_fmt("Fits essence {0}", &[&essence]), 0));
+        }
+        if let (true, Some(m)) = (c.fit_avail, max_avail) {
+            chips.push((lang.tr_fmt("Avail ≤ {0}", &[&m]), 1));
+        }
+        if c.affordable {
+            chips.push((lang.tr("Affordable"), 2));
+        }
+        if c.requirements_met {
+            chips.push((lang.tr("Requirements met"), 3));
+        }
+        if c.legality != [true; 3] {
+            chips.push((lang.tr("Legality"), 4));
+        }
+        if c.rating > 0 {
+            chips.push((lang.tr_fmt("Rating {0}", &[&c.rating]), 5));
+        }
+        if !c.books_off.is_empty() {
+            chips.push((lang.tr_fmt("{0} books off", &[&c.books_off.len()]), 6));
+        }
+        let cats: Vec<String> = c.categories.iter().cloned().collect();
+        let mut drop = None;
+        let mut drop_cat = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+            for (text, id) in &chips {
+                if chip_x(ui, text, &ws) {
+                    drop = Some(*id);
                 }
+            }
+            let file = c.slots.iter().find(|s| s.on).map_or("", |s| s.kind.file);
+            for cat in &cats {
+                if chip_x(ui, &lang.data_name(file, "", cat), &ws) {
+                    drop_cat = Some(cat.clone());
+                }
+            }
+            if c.ware() {
+                let g = c.purchase.grade.clone().unwrap_or_else(|| "Standard".into());
+                widgets::tag(ui, &lang.tr_fmt("Grade: {0}", &[&g]), ws.muted, ws.divider);
+            }
+            if let Some((_, rows)) = &c.rows {
                 if rows.hidden > 0 {
-                    line = format!("{line} · {}", lang.tr_fmt("{0} hidden by filters", &[&rows.hidden]));
+                    ui.label(RichText::new(lang.tr_fmt("{0} hidden by filters", &[&rows.hidden])).size(11.0).color(ws.muted));
                 }
-                ui.label(RichText::new(line).size(11.5).color(ws.muted));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(lang.tr("Enter adds · Shift+Enter adds and stays")).size(11.0).color(ws.muted));
-                });
-            });
+            }
+        });
+        match drop {
+            Some(0) => c.fit_essence = false,
+            Some(1) => c.fit_avail = false,
+            Some(2) => c.affordable = false,
+            Some(3) => c.requirements_met = false,
+            Some(4) => c.legality = [true; 3],
+            Some(5) => c.rating = 0,
+            Some(6) => c.books_off.clear(),
+            _ => {}
+        }
+        if let Some(cat) = drop_cat {
+            c.categories.remove(&cat);
         }
     }
 
-    /// The results table. Returns `Some(close)` when a row asks to be
-    /// added (double click: add and stay).
-    fn ws_catalog_results(&mut self, ui: &mut egui::Ui, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<bool> {
+    /// "Adding into Hermes Ikon · in Carried" with Change and ×, while
+    /// the catalog has a target container (or a location); "Choose where
+    /// to install it" when the kind needs one.
+    fn ws_catalog_target_bar(&mut self, ui: &mut egui::Ui, lang: &Language) {
         let ws = theme::ws(ui);
-        let c = self.ws_gear.catalog.as_mut()?;
-        let (key, rows) = c.rows.take()?;
-        let first = c.slots.iter().find(|s| s.on).map(|s| s.kind.tag).unwrap_or("gear");
-        let extra: Vec<&str> = select::columns(first).iter().filter(|(_, f)| !matches!(*f, "avail" | "cost" | "ess" | "rating")).map(|(h, _)| *h).collect();
-        let ware = c.ware();
-        // Fixed columns from the right; the name takes the rest.
-        let mut cols: Vec<(String, f32)> = vec![(lang.tr("Rating"), 46.0)];
-        cols.extend(extra.iter().map(|h| (lang.tr(h), 56.0)));
-        if ware {
-            cols.push((lang.tr("Ess"), 48.0));
+        let Some(c) = self.ws_gear.catalog.as_ref() else { return };
+        let tag = c.slots.iter().find(|s| s.on).map_or("", |s| s.kind.tag);
+        let needs = c.slots.iter().filter(|s| s.on).all(|s| select::parent_of(s.kind.tag).is_some());
+        let target = c.target().and_then(|g| edit::find(&self.doc, g)).cloned();
+        let location = c.location.clone();
+        if target.is_none() && location.is_none() && !needs {
+            return;
         }
-        cols.push((lang.tr("Avail"), 48.0));
-        cols.push((lang.tr("Cost"), 86.0));
-        cols.push((lang.tr("Source"), 64.0));
-        let gap = 10.0;
-        let fixed: f32 = cols.iter().map(|(_, w)| w + gap).sum();
-        let mut out = None;
-        widgets::card_frame(&ws).inner_margin(egui::Margin::same(0)).show(ui, |ui| {
+        let sec = super::ws_items::section_of(c.page);
+        let loc_name = target.as_ref().and_then(|t| {
+            let top = top_ancestor(&self.doc, &t.get("guid"));
+            let l = top.get("location");
+            (!l.is_empty()).then(|| edit::locations(&self.doc, &top.get("guid")).into_iter().find(|(g, n)| g.eq_ignore_ascii_case(&l) || *n == l).map_or(l, |(_, n)| n))
+        });
+        let mut pick: Option<Option<String>> = None;
+        let mut clear = false;
+        egui::Frame::new().fill(ws.selection).stroke(egui::Stroke::new(1.0_f32, ws.primary)).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin { left: 10, right: 6, top: 4, bottom: 4 }).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            let width = ui.available_width();
-            let name_w = (width - 20.0 - 18.0 - gap - fixed).max(120.0);
-            let xs = |rect: egui::Rect| {
-                let mut x = rect.left() + 10.0 + 18.0 + gap + name_w + gap;
-                cols.iter().map(|(_, w)| {
-                    let r = (x, *w);
-                    x += w + gap;
-                    r
-                }).collect::<Vec<_>>()
-            };
-            // Header.
-            let (head, _) = ui.allocate_exact_size(egui::vec2(width, 24.0), Sense::hover());
-            let hp = ui.painter();
-            let small = FontId::proportional(10.5);
-            hp.text(egui::pos2(head.left() + 10.0 + 18.0 + gap, head.center().y), egui::Align2::LEFT_CENTER, lang.tr("Name"), small.clone(), ws.muted);
-            for ((x, w), (h, _)) in xs(head).into_iter().zip(&cols) {
-                let right = h == &lang.tr("Cost");
-                let pos = if right { egui::pos2(x + w, head.center().y) } else { egui::pos2(x, head.center().y) };
-                hp.text(pos, if right { egui::Align2::RIGHT_CENTER } else { egui::Align2::LEFT_CENTER }, h, small.clone(), ws.muted);
-            }
-            hp.rect_filled(egui::Rect::from_min_size(egui::pos2(head.left(), head.bottom() - 1.0), egui::vec2(width, 1.0)), 0.0, ws.divider);
-            if rows.list.is_empty() {
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(10.0);
-                    ui.label(RichText::new(lang.tr("Nothing matches. Clear a filter or change the search.")).size(12.0).color(ws.muted));
-                });
-                ui.add_space(8.0);
-                return;
-            }
-            let selected = c.selected;
-            let scroll_to = selected.and_then(|s| rows.list.iter().position(|r| (r.slot, r.index) == s));
-            let mut pick = None;
-            let mut area = egui::ScrollArea::vertical().id_salt("ws_catalog_rows").auto_shrink([false, true]).max_height(ui.available_height() - 4.0);
-            if std::mem::take(&mut c.scroll) {
-                if let Some(i) = scroll_to {
-                    area = area.vertical_scroll_offset((i as f32 - 3.0).max(0.0) * ROW_HEIGHT);
+            ui.horizontal(|ui| {
+                ui.set_min_height(24.0);
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(icons::icon(icons::ARROW_BEND_DOWN_RIGHT, 14.0, ws.accent));
+                match (&target, &location) {
+                    (Some(t), _) => {
+                        ui.label(RichText::new(lang.tr("Adding into")).size(12.0).color(ws.muted));
+                        ui.label(icons::icon(kind_icon(&t.name), 14.0, ws.text));
+                        ui.add(egui::Label::new(RichText::new(super::display_name(&sec, t, lang)).font(widgets::bold(12.5)).color(ws.text)).truncate());
+                        if let Some(l) = &loc_name {
+                            ui.label(RichText::new(lang.tr_fmt("in {0}", &[l])).size(11.0).color(ws.muted));
+                        }
+                    }
+                    (None, Some((_, name))) => {
+                        ui.label(RichText::new(lang.tr("Adding into")).size(12.0).color(ws.muted));
+                        ui.label(icons::icon(icons::MAP_PIN, 14.0, ws.text));
+                        ui.label(RichText::new(name).font(widgets::bold(12.5)).color(ws.text));
+                    }
+                    (None, None) => {
+                        ui.label(RichText::new(lang.tr("Choose where to install it")).size(12.0).color(ws.text));
+                    }
                 }
-            }
-            area.show_rows(ui, ROW_HEIGHT, rows.list.len(), |ui, range| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                for i in range {
-                    let r = &rows.list[i];
-                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, ROW_HEIGHT), Sense::click());
-                    let on = selected == Some((r.slot, r.index));
-                    if !ui.is_rect_visible(rect) {
-                        continue;
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    if (target.is_some() || location.is_some()) && widgets::icon_button(ui, icons::X, 22.0).on_hover_text(lang.tr("Add at top level instead")).clicked() {
+                        clear = true;
                     }
-                    let p = ui.painter();
-                    if on {
-                        p.rect_filled(rect, 0.0, ws.selection);
-                        p.rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())), 0.0, ws.primary);
-                    } else if resp.hovered() {
-                        p.rect_filled(rect, 0.0, ws.hover);
-                    }
-                    let blocked = !r.why.is_empty();
-                    let ink = if blocked { ws.muted } else { ws.text };
-                    let tag = c.slots.get(r.slot).map_or("gear", |s| s.kind.tag);
-                    icons::paint(p, egui::Rect::from_min_size(egui::pos2(rect.left() + 10.0, rect.center().y - 9.0), egui::vec2(18.0, 18.0)), kind_icon(tag), 14.0, if on { ws.accent } else { ws.muted });
-                    let nx = rect.left() + 10.0 + 18.0 + gap;
-                    let clip = egui::Rect::from_min_max(egui::pos2(nx, rect.top()), egui::pos2(nx + name_w, rect.bottom()));
-                    let pc = p.with_clip_rect(clip);
-                    pc.text(egui::pos2(nx, rect.top() + 11.0), egui::Align2::LEFT_CENTER, &r.name, FontId::proportional(12.5), ink);
-                    let (sub, sub_color) = match r.why.first() {
-                        Some(w) => (format!("{} {w}", icons::WARNING), ws.warning),
-                        None => (r.sub.clone(), ws.muted),
-                    };
-                    pc.text(egui::pos2(nx, rect.top() + 27.0), egui::Align2::LEFT_CENTER, sub, FontId::proportional(11.0), sub_color);
-                    let mono = |v: String| (v, FontId::monospace(12.0));
-                    let mut cells: Vec<(String, FontId, Color32)> = Vec::new();
-                    let (t, f) = mono(if r.rating > 0 { r.rating.to_string() } else { "—".into() });
-                    cells.push((t, f, ink));
-                    for k in 0..extra.len() {
-                        let (t, f) = mono(r.extra.get(k).cloned().unwrap_or_default());
-                        cells.push((t, f, ink));
-                    }
-                    if ware {
-                        let (t, f) = mono(r.ess.map_or("—".into(), |e| format!("{e:.2}")));
-                        cells.push((t, f, ink));
-                    }
-                    let over = r.over || r.avail.as_ref().is_some_and(|a| a.legality == Legality::Forbidden);
-                    let (t, f) = mono(r.avail.as_ref().map_or("—".into(), |a| a.to_string()));
-                    cells.push((t, f, if over { ws.warning } else { ink }));
-                    let (t, f) = mono(r.cost.map_or("—".into(), format::nuyen));
-                    cells.push((t, f, ink));
-                    cells.push((r.source.as_ref().map_or(String::new(), |s| format!("{} {}", s.book, s.page)), FontId::proportional(11.0), ws.muted));
-                    let n = cells.len();
-                    for (k, ((x, w), (t, f, color))) in xs(rect).into_iter().zip(cells).enumerate() {
-                        let right = k == n - 2;
-                        let cell = egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w, rect.bottom()));
-                        let pos = if right { egui::pos2(x + w, rect.center().y) } else { egui::pos2(x, rect.center().y) };
-                        p.with_clip_rect(cell.expand2(egui::vec2(2.0, 0.0))).text(pos, if right { egui::Align2::RIGHT_CENTER } else { egui::Align2::LEFT_CENTER }, t, f, color);
-                    }
-                    // The source opens the PDF.
-                    let (sx, sw) = *xs(rect).last().unwrap_or(&(0.0, 0.0));
-                    let src_rect = egui::Rect::from_min_max(egui::pos2(sx, rect.top()), egui::pos2(sx + sw, rect.bottom()));
-                    let over_src = resp.hover_pos().is_some_and(|p| src_rect.contains(p)) && r.source.is_some();
-                    let resp = if over_src {
-                        resp.on_hover_text(r.source.as_ref().map(|s| s.to_string()).unwrap_or_default())
-                    } else if blocked {
-                        resp.on_hover_text(r.why.join("\n"))
-                    } else {
-                        resp
-                    };
-                    if resp.clicked() {
-                        if over_src {
-                            if let Some(s) = &r.source {
-                                pdf_ui::open(pdfs, s, status);
+                    let r = widgets::button(ui, Some(icons::CARET_DOWN), &lang.tr("Change"), Look::Ghost, 24.0);
+                    egui::Popup::menu(&r).show(|ui| {
+                        ui.set_min_width(220.0);
+                        if !needs && ui.button(lang.tr("Nothing (on its own)")).clicked() {
+                            pick = Some(None);
+                        }
+                        for (g, n) in self.ws_catalog_parents(&sec, tag, lang) {
+                            if ui.button(n).clicked() {
+                                pick = Some(Some(g));
                             }
                         }
-                        pick = Some((r.slot, r.index, r.rating, false));
-                    }
-                    if resp.double_clicked() && !blocked {
-                        pick = Some((r.slot, r.index, r.rating, true));
-                    }
-                    resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-                }
+                    });
+                });
             });
-            if let Some((s, i, rating, add)) = pick {
-                c.select(s, i, rating);
-                if add {
-                    out = Some(false);
+        });
+        let Some(c) = self.ws_gear.catalog.as_mut() else { return };
+        if clear {
+            c.purchase.parent = None;
+            c.parent_locked = false;
+            c.location = None;
+        }
+        if let Some(p) = pick {
+            c.purchase.parent = p;
+            c.parent_locked = false;
+            c.location = None;
+        }
+    }
+
+    /// Items of the page that can hold kind `tag`: (guid, name).
+    fn ws_catalog_parents(&self, sec: &chummer_core::sections::Section, tag: &str, lang: &Language) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        fn walk(nodes: &[chummer_core::tree::ItemNode], f: &mut dyn FnMut(&Element)) {
+            for n in nodes {
+                if let chummer_core::tree::Entry::Item { el, .. } = &n.value {
+                    f(el);
                 }
+                walk(&n.children, f);
+            }
+        }
+        walk(&chummer_core::tree::section_tree(&self.doc.doc, sec), &mut |el| {
+            let g = el.get("guid");
+            if !g.is_empty() && edit::child_kinds(&self.doc, &g).iter().any(|k| k.tag == tag) {
+                out.push((g, super::display_name(sec, el, lang)));
             }
         });
-        c.rows = Some((key, rows));
+        out
+    }
+
+    /// Make the selected owned item the catalog's target, when it can
+    /// hold a kind the catalog sells (switching to that kind); else add
+    /// at the top level again.
+    pub(crate) fn ws_catalog_target(&mut self, page: Page, guid: &str) {
+        let kinds: Vec<&'static str> = edit::child_kinds(&self.doc, guid).iter().map(|k| k.tag).collect();
+        let Some(c) = self.ws_gear.catalog.as_mut().filter(|c| c.page == page) else { return };
+        c.selected = None;
+        c.location = None;
+        if kinds.iter().any(|k| c.sells(k)) {
+            for s in c.slots.iter_mut() {
+                s.on = kinds.contains(&s.kind.tag);
+            }
+            c.purchase.parent = Some(guid.to_owned());
+            c.parent_locked = false;
+        } else if !c.parent_locked {
+            c.purchase.parent = None;
+            if c.slots.iter().all(|s| !s.on || select::parent_of(s.kind.tag).is_some()) {
+                // A kind that needs a container: back to the page's own kind.
+                for (i, s) in c.slots.iter_mut().enumerate() {
+                    s.on = i == 0;
+                }
+            }
+        }
+    }
+
+    /// A group's "+": add into location `loc` (its guid).
+    pub(crate) fn ws_catalog_set_location(&mut self, loc: Option<String>, _lang: &Language) {
+        let names: Vec<(String, String)> = {
+            let Some(c) = self.ws_gear.catalog.as_ref() else { return };
+            let container = super::ws_items::page_container(c.page);
+            let tag = page_kinds(container).first().copied().unwrap_or("");
+            let lc = match tag {
+                "gear" => "gearlocations",
+                "armor" => "armorlocations",
+                "weapon" => "weaponlocations",
+                "vehicle" => "vehiclelocations",
+                _ => "",
+            };
+            self.doc.doc.child(lc).map(|l| l.children_named("location").map(|e| (e.get("guid"), e.get("name"))).collect()).unwrap_or_default()
+        };
+        let Some(c) = self.ws_gear.catalog.as_mut() else { return };
+        c.location = loc.and_then(|g| names.into_iter().find(|(lg, _)| *lg == g));
+        if c.location.is_some() {
+            c.purchase.parent = None;
+            c.parent_locked = false;
+        }
+    }
+
+    /// The selected record's preview after the purchase: (essence after,
+    /// nuyen after, what), for the budget strip.
+    pub(crate) fn ws_catalog_preview_after(&self) -> Option<(f64, f64, String)> {
+        let c = self.ws_gear.catalog.as_ref()?;
+        if self.ws_item_page(self.tab) != Some(c.page) {
+            return None;
+        }
+        let (slot, r) = c.record()?;
+        let (_, Ok(p)) = c.preview.as_ref()? else { return None };
+        let name = r.name();
+        let what = if c.purchase.rating > 0 && select::rating_max(r) > 0 { format!("{name} {}", c.purchase.rating) } else { name };
+        let _ = slot;
+        Some((p.sheet.essence, p.nuyen, what))
+    }
+
+    /// The results as table rows (kept until the rows or the sort change).
+    fn ws_catalog_table_rows(&mut self, cols: &[Col], sort: Option<(String, bool)>, stacked: bool, lang: &Language) {
+        let Some(c) = self.ws_gear.catalog.as_mut() else { return };
+        let Some((rows_key, rows)) = &c.rows else { return };
+        let key = hash_of((rows_key, &sort, stacked, cols.len()));
+        if c.table.as_ref().is_some_and(|(k, _)| *k == key) {
+            return;
+        }
+        let col = |k: &str| cols.iter().position(|c| c.key == k);
+        let mut out: Vec<table::Row> = rows
+            .list
+            .iter()
+            .map(|r| {
+                let tag = c.slots.get(r.slot).map_or("gear", |s| s.kind.tag);
+                let mut cells = vec![Cell::default(); cols.len() - 1];
+                let mut set = |k: &str, cell: Cell| {
+                    if let Some(i) = col(k) {
+                        cells[i - 1] = cell;
+                    }
+                };
+                set("rating", if r.rating > 0 { Cell::num(r.rating.to_string(), Some(r.rating as f64)) } else { Cell::text("—").tone(Tone::Muted) });
+                set("ess", r.ess.map_or_else(|| Cell::text("—").tone(Tone::Muted), |e| Cell::num(format!("{e:.2}"), Some(e))));
+                let over = r.over || r.avail.as_ref().is_some_and(|a| a.legality == Legality::Forbidden);
+                set("avail", r.avail.as_ref().map_or_else(|| Cell::text("—").tone(Tone::Muted), |a| Cell::num(a.to_string(), Some(a.value as f64)).tone(if over { Tone::Warn } else { Tone::Normal })));
+                set("cost", r.cost.map_or_else(|| Cell::text("—").tone(Tone::Muted), |v| Cell::num(format::nuyen(v), Some(v))));
+                set("source", r.source.as_ref().map_or_else(Cell::default, |s| Cell::text(format!("{} {}", s.book, s.page)).tone(Tone::Muted).tip(s.to_string())));
+                for (k, v) in r.extra.iter().enumerate() {
+                    if let Some(i) = cols.iter().position(|c| c.key == EXTRA_KEYS.get(k).copied().unwrap_or("")) {
+                        cells[i - 1] = Cell::num(v.clone(), v.trim().parse::<f64>().ok());
+                    }
+                }
+                let sub = match &r.owned {
+                    Some(o) => Tag { text: o.clone(), tone: Tone::Teal, chip: false, icon: Some(icons::CHECK) },
+                    None => Tag::text(r.sub.clone(), Tone::Muted),
+                };
+                let (sub, tags) = if stacked { (None, if sub.text.is_empty() { vec![] } else { vec![sub] }) } else { (Some(sub), vec![]) };
+                let add = Action::new("add", icons::PLUS, lang.tr_fmt("Add {0}", &[&r.name])).primary();
+                table::Row::new(
+                    format!("{}:{}", r.slot, r.index),
+                    RowData {
+                        kind: RowKind::Item,
+                        name: r.name.clone(),
+                        icon: Some(kind_icon(tag)),
+                        tags,
+                        sub,
+                        cells,
+                        dim: r.why.first().cloned(),
+                        hover: if r.why.len() > 1 { r.why.join("\n") } else { String::new() },
+                        selectable: true,
+                        actions: if r.why.is_empty() { vec![add] } else { vec![] },
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        if let Some((k, asc)) = &sort {
+            if let Some(i) = col(k) {
+                table::sort_tree(&mut out, i, *asc);
+            }
+        }
+        c.table = Some((key, out));
+    }
+
+    /// The results table. Returns `Some(to_inventory)` when a row asks to
+    /// be added (double click: add and stay).
+    #[allow(clippy::too_many_arguments)]
+    fn ws_catalog_results(&mut self, ui: &mut egui::Ui, height: f32, stacked: bool, fold: bool, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<bool> {
+        let (cols, salt) = {
+            let c = self.ws_gear.catalog.as_ref()?;
+            let first = c.slots.iter().find(|s| s.on).map(|s| s.kind.tag).unwrap_or("gear");
+            let extra: Vec<&str> = select::columns(first).iter().filter(|(_, f)| !matches!(*f, "avail" | "cost" | "ess" | "rating")).map(|(h, _)| *h).collect();
+            let mut cols = vec![Col::name(lang.tr("Name")), Col::new("rating", "R").px(24.0).num().prio(70)];
+            for (k, h) in extra.iter().enumerate().take(EXTRA_KEYS.len()) {
+                cols.push(Col::new(EXTRA_KEYS[k], lang.tr(h)).px(52.0).mono().prio(20 - k as u8));
+            }
+            if c.ware() {
+                cols.push(Col::new("ess", lang.tr("Ess")).px(40.0).num().prio(80));
+            }
+            cols.push(Col::new("avail", lang.tr("Avail")).px(40.0).num().prio(60));
+            cols.push(Col::new("cost", lang.tr("Cost")).px(72.0).num().prio(90));
+            cols.push(Col::new("source", lang.tr("Source")).px(60.0).prio(5));
+            cols.push(Col::actions(26.0));
+            (cols, ("ws_catalog", c.page.0 as u8, c.page.1, first))
+        };
+        let id = table::table_id(salt);
+        let sort = table::sort_of(ui.ctx(), id);
+        self.ws_catalog_table_rows(&cols, sort, stacked, lang);
+        let c = self.ws_gear.catalog.as_mut()?;
+        let (key, mut rows) = c.table.take()?;
+        let selected = c.selected.map(|(s, i)| format!("{s}:{i}"));
+        let scroll = std::mem::take(&mut c.scroll);
+        // The details strip under the selected row.
+        let detail_at = selected.as_ref().filter(|_| fold).and_then(|k| rows.iter().position(|r| r.key == *k));
+        if let Some(i) = detail_at {
+            rows[i].children.push(table::Row::new("detail", RowData { kind: RowKind::Detail, ..Default::default() }));
+        }
+        let states = States { selected: selected.as_deref(), scroll_to: if scroll { selected.as_deref() } else { None }, ..Default::default() };
+        let empty = table::EmptyCard { title: lang.tr("Nothing matches."), sub: lang.tr("Clear a filter or change the search."), button: lang.tr("Clear filters") };
+        let row_h = if stacked { 30.0 } else { 36.0 };
+        let mut strip_add = false;
+        let t = table::Table::new(salt, &cols).height(height).row_height(row_h).flat().empty(empty).detail_height(54.0);
+        let events = {
+            let (sheet, decimals, nuyen_now) = (&self.sheet, self.rules.essence_decimals, self.budget.as_ref().map_or(self.doc.nuyen, |b| b.nuyen_left()));
+            let max_avail = (!self.doc.created).then(|| self.settings.as_ref().map_or(12, |s| s.max_availability())).filter(|m| *m > 0);
+            let c = self.ws_gear.catalog.as_mut()?;
+            t.show(ui, &rows, &states, lang, |ui, _| {
+                strip_add |= details_strip(ui, c, sheet, decimals, nuyen_now, max_avail, lang, pdfs, status);
+            })
+        };
+        if let Some(i) = detail_at {
+            rows[i].children.clear();
+        }
+        let c = self.ws_gear.catalog.as_mut()?;
+        c.table = Some((key, rows));
+        let mut out = strip_add.then_some(false);
+        let rating_of = |c: &Catalog, k: &str| -> Option<(usize, usize, i32)> {
+            let (s, i) = k.split_once(':')?;
+            let (s, i) = (s.parse().ok()?, i.parse().ok()?);
+            let r = c.rows.as_ref()?.1.list.iter().find(|r| r.slot == s && r.index == i)?;
+            Some((s, i, r.rating))
+        };
+        for e in events {
+            match e {
+                Event::Select(k) => {
+                    if let Some((s, i, r)) = rating_of(c, &k) {
+                        c.select(s, i, r);
+                    }
+                }
+                Event::Open(k) | Event::Action(k, "add", _) => {
+                    if let Some((s, i, r)) = rating_of(c, &k) {
+                        c.select(s, i, r);
+                        out = Some(false);
+                    }
+                }
+                Event::AddInto(_) => c.clear_filters(),
+                _ => {}
+            }
+        }
+        if c.selected.map(|(s, i)| format!("{s}:{i}")) != selected && c.selected.is_some() {
+            self.item_editor = None;
+        }
         out
     }
 
@@ -1013,7 +1263,7 @@ impl CharacterView {
     /// dialog does). A bonus selection is asked first, in the inspector.
     /// `close` closes the catalog afterwards. Returns true if the
     /// character changed.
-    fn ws_catalog_add(&mut self, _engine: &Arc<Engine>, lang: &Language, status: &mut Status, close: bool) -> bool {
+    fn ws_catalog_add(&mut self, _engine: &Arc<Engine>, lang: &Language, status: &mut Status, to_inventory: bool) -> bool {
         let store = self.store.clone();
         let Some(c) = self.ws_gear.catalog.as_mut() else { return false };
         let Some((slot, r)) = c.record() else { return false };
@@ -1036,13 +1286,34 @@ impl CharacterView {
                 }
             }
         }
+        let sec = super::ws_items::section_of(c.page);
+        let location = c.location.clone();
+        let before = super::ws_items::section_guids(&self.doc, &sec);
         match self.doc.apply(Command::AddItem { tag: tag.to_owned(), record: RecordRef::of(Record(&rec)), purchase }) {
             Ok(rep) => {
                 *status = rep.message.map(|m| (m, false));
-                c.answer = None;
-                c.purchase.answer = None;
-                if close {
-                    self.ws_gear.catalog = None;
+                if let Some(c) = self.ws_gear.catalog.as_mut() {
+                    c.answer = None;
+                    c.purchase.answer = None;
+                }
+                // The new item: the one added whose parent is not new too.
+                let after = super::ws_items::section_guids(&self.doc, &sec);
+                let new: Vec<&String> = after.difference(&before).collect();
+                let top = new.iter().find(|g| edit::parent(&self.doc, g).is_none_or(|p| !new.contains(&&p.get("guid")))).map(|g| (*g).clone());
+                if let Some(g) = top {
+                    let mut steps = 1;
+                    if let Some((loc, _)) = location {
+                        if edit::has_location(&self.doc, &g) && self.doc.set(Command::SetItemText { guid: g.clone(), field: "location".into(), value: loc }) {
+                            steps = 2;
+                        }
+                    }
+                    self.ws_record_add(g, steps);
+                }
+                if to_inventory {
+                    self.ws_gear.focus_catalog = false;
+                    if let Some(c) = self.ws_gear.catalog.as_mut() {
+                        c.focus_search = false;
+                    }
                 }
                 true
             }
@@ -1054,7 +1325,7 @@ impl CharacterView {
     }
 
     /// Compute the preview of the selected record when it changed.
-    fn ws_catalog_preview(&mut self, engine: &Engine) {
+    pub(crate) fn ws_catalog_preview(&mut self, engine: &Engine) {
         let Some(c) = self.ws_gear.catalog.as_ref() else { return };
         let Some((slot, r)) = c.record() else { return };
         let p = &c.purchase;
@@ -1093,6 +1364,7 @@ impl CharacterView {
             }
         };
         let locked_parent = self.ws_gear.catalog.as_ref().and_then(|c| c.purchase.parent.clone()).and_then(|g| items::edit::find(&self.doc, &g).map(|e| e.get("name")));
+        let target_name = locked_parent.clone();
         let sheet = &self.sheet;
         let Some(c) = self.ws_gear.catalog.as_mut() else { return false };
         let Some((slot_i, index)) = c.selected else { return false };
@@ -1336,7 +1608,12 @@ impl CharacterView {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 let can = !blocked && !needs_parent;
-                let r = ui.add_enabled_ui(can, |ui| widgets::button(ui, Some(icons::PLUS), &lang.tr_fmt("Add {0}", &[&name]), Look::Primary, 30.0)).inner;
+                let label = match &target_name {
+                    Some(t) => lang.tr_fmt("Add to {0}", &[t]),
+                    None if c.purchase.rating > 0 && max_rating > 0 => lang.tr_fmt("Add {0}", &[&format!("{name} {}", c.purchase.rating)]),
+                    None => lang.tr_fmt("Add {0}", &[&name]),
+                };
+                let r = ui.add_enabled_ui(can, |ui| widgets::button(ui, Some(icons::PLUS), &label, Look::Primary, 30.0)).inner;
                 let r = r.on_disabled_hover_text(lang.tr("Fix the problems above first"));
                 if r.clicked() {
                     add = Some(false);
@@ -1518,4 +1795,129 @@ fn pool_lines(ui: &mut egui::Ui, lines: &[pool_diff::Line], lang: &Language) {
         }
     }
     flush(ui, &mut hidden);
+}
+
+/// Keys of the kinds' own columns in the results table.
+const EXTRA_KEYS: [&str; 4] = ["x0", "x1", "x2", "x3"];
+
+/// "Cyber" for Cyberware in the kind switch.
+fn short_kind(lang: &Language, label: &str) -> String {
+    match label {
+        "Cyberware" => lang.tr("Cyber"),
+        "Bioware" => lang.tr("Bio"),
+        l => lang.tr(l),
+    }
+}
+
+/// An accent chip with an ×; returns whether it was clicked.
+fn chip_x(ui: &mut egui::Ui, text: &str, ws: &theme::WsPalette) -> bool {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(11.0), ws.accent);
+    let w = galley.size().x + 14.0 + 14.0;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 18.0), Sense::click());
+    let p = ui.painter();
+    if resp.hovered() {
+        p.rect_filled(rect, CornerRadius::same(9), ws.hover);
+    }
+    p.rect_stroke(rect, CornerRadius::same(9), egui::Stroke::new(1.0_f32, ws.primary), egui::StrokeKind::Inside);
+    p.galley(egui::pos2(rect.left() + 7.0, rect.center().y - galley.size().y / 2.0), galley, ws.accent);
+    icons::paint(p, egui::Rect::from_min_size(egui::pos2(rect.right() - 16.0, rect.top() + 2.0), egui::vec2(12.0, 14.0)), icons::X, 10.0, ws.accent);
+    resp.on_hover_text(text).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// The top-level item an item is in (itself at the top).
+fn top_ancestor(ch: &Character, guid: &str) -> Element {
+    let mut cur = edit::find(ch, guid).cloned().unwrap_or_else(|| Element::new("none"));
+    for _ in 0..16 {
+        match edit::parent(ch, &cur.get("guid")) {
+            Some(p) => cur = p.clone(),
+            None => break,
+        }
+    }
+    cur
+}
+
+/// The inspector folded under the selected catalog row (narrow
+/// windows): rating, grade, essence before → after, nuyen after,
+/// availability, the source and Add. Returns whether Add was clicked.
+#[allow(clippy::too_many_arguments)]
+fn details_strip(ui: &mut egui::Ui, c: &mut Catalog, sheet: &Sheet, decimals: u32, nuyen_now: f64, max_avail: Option<i32>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+    let ws = theme::ws(ui);
+    let Some((s, i)) = c.selected else { return false };
+    let Some(slot) = c.slots.get(s) else { return false };
+    let doc = slot.doc.clone();
+    let recs = data::records(&doc, slot.kind.data_container, slot.kind.data_item);
+    let Some(r) = recs.get(i).copied() else { return false };
+    let grade = c.grade(slot);
+    let grade_list = slot.grades.clone();
+    let mut add = false;
+    ui.spacing_mut().item_spacing.x = 14.0;
+    ui.add_space(24.0);
+    let max_rating = select::rating_max(r);
+    if max_rating > 0 {
+        let min = r.el().get_i32("minrating").unwrap_or(1).clamp(1, max_rating);
+        c.purchase.rating = c.purchase.rating.clamp(min, max_rating);
+        widgets::rating_stepper(ui, &mut c.purchase.rating, min, max_rating, &lang.tr("Lower Rating"), &lang.tr("Raise Rating"));
+    }
+    if !grade_list.is_empty() {
+        let cur = grade.as_ref().map_or_else(|| "Standard".to_owned(), |g| g.name.clone());
+        crate::combo::Combo::from_id_salt("ws_catalog_strip_grade").selected_text(cur.clone()).width(110.0).show_ui(ui, |ui| {
+            for g in &grade_list {
+                if crate::combo::selectable_label(ui, cur == g.name, &g.name).clicked() {
+                    c.purchase.grade = Some(g.name.clone());
+                }
+            }
+        });
+    }
+    let after = c.preview.as_ref().and_then(|(_, p)| p.as_ref().ok());
+    let stat = |ui: &mut egui::Ui, caption: &str, add: &dyn Fn(&mut egui::Ui)| {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.label(widgets::overline(caption, &ws));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                add(ui);
+            });
+        });
+    };
+    if !grade_list.is_empty() {
+        let e = after.map(|a| a.sheet.essence);
+        stat(ui, &lang.tr("Essence"), &|ui| {
+            ui.label(widgets::mono(format::essence(sheet.essence, decimals), 12.0, ws.muted));
+            if let Some(e) = e {
+                ui.label(icons::icon(icons::ARROW_RIGHT, 10.0, ws.muted));
+                ui.label(widgets::mono(format::essence(e, decimals), 12.5, if e < 0.0 { ws.error } else { ws.accent }));
+            }
+        });
+    }
+    if let Some(a) = after {
+        let n = a.nuyen;
+        stat(ui, &lang.tr("Nuyen after"), &|ui| {
+            ui.label(widgets::mono(format::nuyen(n), 12.5, if n < 0.0 { ws.error } else { ws.accent }));
+        });
+    } else if let Some(v) = select::preview_cost(r, &c.purchase) {
+        stat(ui, &lang.tr("Nuyen after"), &|ui| {
+            ui.label(widgets::mono(format::nuyen(nuyen_now - v), 12.5, ws.accent));
+        });
+    }
+    if let Some(av) = avail_at(r, c.purchase.rating, grade.as_ref()) {
+        let ok = max_avail.is_none_or(|m| av.add_to_parent || av.value <= m);
+        stat(ui, &lang.tr("Avail"), &|ui| {
+            ui.label(widgets::mono(av.to_string(), 12.5, if ok { ws.text } else { ws.warning }));
+            ui.label(icons::icon(if ok { icons::CHECK } else { icons::WARNING }, 11.0, if ok { ws.stun } else { ws.warning }));
+        });
+    }
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.add_space(4.0);
+        let blocked = after.is_some_and(|a| a.refused.is_some());
+        if ui.add_enabled_ui(!blocked, |ui| widgets::button(ui, Some(icons::PLUS), &lang.tr("Add"), Look::Primary, 26.0)).inner.on_hover_text(lang.tr("Add (Enter)")).clicked() {
+            add = true;
+        }
+        if let Some(src) = SourceRef::of(r.el()) {
+            if widgets::button(ui, Some(icons::BOOK_OPEN), &src.to_string(), Look::Ghost, 24.0).clicked() {
+                pdf_ui::open(pdfs, &src, status);
+            }
+        }
+    });
+    add
 }

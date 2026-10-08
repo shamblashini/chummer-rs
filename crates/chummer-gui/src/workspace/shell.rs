@@ -526,20 +526,47 @@ impl App {
         let mut roll = None;
         // Budget strip.
         let chips = crate::trace::time("budget chips", || self.views[i].ws_budgets(&self.lang));
+        // The catalog's selected record: Essence and Nuyen before → after.
+        self.views[i].ws_catalog_preview(&engine);
+        let after = self.views[i].ws_catalog_preview_after();
+        let rules = self.views[i].rules.essence_decimals;
         egui::TopBottomPanel::top("ws_budget").exact_height(44.0).frame(egui::Frame::new().fill(ws.ground).inner_margin(Margin::symmetric(16, 0))).show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 18.0;
                 for c in &chips {
-                    widgets::budget_chip(ui, &c.label, &c.value, c.fill, c.tone);
+                    let next = after.as_ref().and_then(|(ess, nuyen, _)| {
+                        if c.label == self.lang.tr("Essence") && (*ess - self.views[i].sheet.essence).abs() > 1e-9 {
+                            Some(chummer_core::format::essence(*ess, rules))
+                        } else if c.label == self.lang.tr("Nuyen") {
+                            Some(chummer_core::format::nuyen(*nuyen))
+                        } else {
+                            None
+                        }
+                    });
+                    match next {
+                        Some(n) => widgets::budget_chip_after(ui, &c.label, &c.value, &n, c.fill, c.tone),
+                        None => widgets::budget_chip(ui, &c.label, &c.value, c.fill, c.tone),
+                    };
+                }
+                if let Some((_, _, what)) = &after {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 5.0;
+                        ui.add(egui::Label::new(RichText::new(self.lang.tr_fmt("Previewing {0}", &[what])).size(11.5).color(ws.muted)).truncate());
+                        ui.label(icons::icon(icons::EYE, 13.0, ws.muted));
+                    });
                 }
             });
         });
-        // Inspector.
+        // Inspector (folded into the catalog's details strip on narrow
+        // windows while the catalog is open).
+        let folded = self.views[i].ws_inspector_folded(ctx.content_rect().width());
+        if !folded {
         egui::SidePanel::right("ws_inspector").default_width(320.0).min_width(240.0).max_width(560.0).resizable(true).frame(egui::Frame::new().fill(ws.chrome)).show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("ws_inspector_scroll").auto_shrink(false).show(ui, |ui| {
                 changed |= crate::trace::time("inspector", || self.ws_inspector(ui, i, &mut roll));
             });
         });
+        }
         // The page.
         let section = self.ws_section(DocKey::Character(id));
         let key = PopKey::new(DocKey::Character(id), PanelId::Section(section));

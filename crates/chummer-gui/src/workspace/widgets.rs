@@ -246,6 +246,36 @@ pub fn budget_chip(ui: &mut Ui, label: &str, value: &str, fill: Option<f32>, ton
     .response
 }
 
+/// A [`budget_chip`] with the value a purchase would leave: "2.35 → 2.15".
+pub fn budget_chip_after(ui: &mut Ui, label: &str, value: &str, after: &str, fill: Option<f32>, tone: Tone) -> Response {
+    let ws = theme::ws(ui);
+    let mut job = egui::text::LayoutJob::default();
+    let fmt = |font: FontId, color: Color32| egui::TextFormat { font_id: font, color, valign: egui::Align::Center, ..Default::default() };
+    job.append(value, 0.0, fmt(FontId::monospace(12.5), ws.muted));
+    job.append(icons::ARROW_RIGHT, 4.0, fmt(FontId::proportional(10.0), ws.muted));
+    job.append(after, 4.0, fmt(FontId::monospace(12.5), ws.accent));
+    ui.allocate_ui_with_layout(egui::vec2(78.0, 36.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+        ui.set_min_width(78.0);
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.add(egui::Label::new(overline(label, &ws)).extend());
+        ui.add(egui::Label::new(job).extend());
+        if let Some(f) = fill {
+            let w = ui.min_rect().width().max(78.0);
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 2.0), Sense::hover());
+            ui.painter().rect_filled(rect, CornerRadius::same(1), ws.divider);
+            let mut r = rect;
+            r.set_width(rect.width() * f.clamp(0.0, 1.0));
+            let bar = match tone {
+                Tone::Normal => ws.primary,
+                Tone::Warning => ws.warning,
+                Tone::Error => ws.error,
+            };
+            ui.painter().rect_filled(r, CornerRadius::same(1), bar);
+        }
+    })
+    .response
+}
+
 /// A segmented switch (the dark/light toggle, filters): returns the
 /// index clicked. Items are text or an icon glyph, with a tooltip.
 pub fn segmented(ui: &mut Ui, items: &[(&str, &str)], selected: usize, height: f32) -> Option<usize> {

@@ -1,32 +1,48 @@
 //! The Workspace's item pages: Cyberware & Bioware, the Street Gear
 //! sub-tabs (Gear, Clothing & Armor, Weapons, Drugs, Lifestyles) and
-//! Vehicles & Drones. Each is an "Add …" toolbar, the page's summary
-//! (essence, combat stats, vehicle stats, the lifestyle editor) and the
-//! section's tree table (`tree_table`, which draws itself in the
-//! Workspace style) in a card. A click on an item opens it in the
-//! inspector (`ws_inspector`); "Add …" opens the inline catalog
-//! (`ws_catalog`) in the page instead of Classic's selection dialog.
+//! Vehicles & Drones ("D · Purchase & inventory").
+//!
+//! Each page is a toolbar, the page's summary (essence; the lifestyle
+//! editor) and the inventory: the section's items in the item table
+//! (`ws_inventory`, `workspace::table`) in a fixed-height panel that
+//! scrolls itself. "Add …" opens the inline catalog (`ws_catalog`) next to
+//! the inventory, side by side, or above it with a drag handle when the
+//! page is narrow; the inventory stays in view, and what is added shows
+//! there at once, marked, with an inline Undo and the "Added since you
+//! opened this page" tray. A click on an item opens it in the inspector
+//! (`ws_inspector`) and, while the catalog is open, makes it the catalog's
+//! target when it can hold what the catalog sells.
 //!
 //! A child module of `view` (declared there with `#[path]`) so it can
 //! use the view's state; changes go through the same commands as the
 //! Classic tab pages.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use chummer_core::command::Command;
 use chummer_core::engine::Engine;
 use chummer_core::format;
+use chummer_core::items::edit;
 use chummer_core::lang::Language;
 use chummer_core::sections::{self, Section as Sec};
-use chummer_core::sources::{SourceRef, SourcebookLibrary};
-use chummer_core::tree::Entry;
-use eframe::egui::{self, RichText};
+use chummer_core::sources::SourcebookLibrary;
+use eframe::egui::{self, CornerRadius, Rect, RichText, Sense, Stroke, StrokeKind};
 
-use super::{display_name, kind_noun, tree_row, CharacterView, Tab, STREET_GEAR};
-use crate::pdf_ui::{self, Status};
+use super::ws_inventory::{self, DRUGS};
+use super::{kind_noun, CharacterView, Tab, STREET_GEAR};
+use crate::pdf_ui::Status;
 use crate::theme;
 use crate::workspace::icons;
+use crate::workspace::table::{self, EmptyCard, Footer, Row};
 use crate::workspace::widgets::{self, Look};
+
+/// The page is laid out side by side from this width (else stacked).
+pub const SIDE_BY_SIDE: f32 = 820.0;
+/// Below this window width the inspector folds into the catalog's
+/// details strip while the catalog is open.
+pub const FOLD_INSPECTOR: f32 = 1180.0;
+const HEAD_H: f32 = 36.0;
+const HANDLE_H: f32 = 10.0;
 
 /// The Workspace's item-page state, kept in the view.
 #[derive(Default)]
@@ -36,6 +52,31 @@ pub struct GearState {
     /// The Workspace item inspector's own state (sell percentage,
     /// location being typed, ammunition choices).
     pub(super) editor: super::ws_inspector::WsItemEditor,
+    /// The inventory rows per revision (`ws_inventory_rows`).
+    pub(super) rows: crate::memo::Memo<ws_inventory::RowsKey, Arc<Vec<Row>>>,
+    /// The page being visited and what was bought on it.
+    pub(super) visit: Option<Visit>,
+    /// Scroll the inventory to this row next frame (just added).
+    pub(super) scroll_to: Option<String>,
+    /// Keys go to the catalog (else the inventory); Tab switches.
+    pub(super) focus_catalog: bool,
+}
+
+/// A visit of an item page: from showing it until another page shows.
+pub struct Visit {
+    pub page: Page,
+    /// Items bought here, oldest first.
+    pub adds: Vec<Added>,
+}
+
+/// An item bought on the page: which, and where its command sits in the
+/// session log (to tell whether Undo would take back exactly it).
+pub struct Added {
+    pub guid: String,
+    /// The session log's length right after it.
+    pub log_len: usize,
+    /// Commands it took (an add, and a location for "+ add into").
+    pub steps: usize,
 }
 
 /// An item page: its tab and, on Street Gear, the sub-tab.
@@ -80,74 +121,130 @@ impl CharacterView {
         }
     }
 
+    /// Whether the inspector folds away: a narrow window with the catalog
+    /// open on the page shown and no owned item selected (the catalog's
+    /// details strip shows its record instead).
+    pub(crate) fn ws_inspector_folded(&self, window_width: f32) -> bool {
+        window_width < FOLD_INSPECTOR && self.item_editor.is_none() && self.ws_gear.catalog.as_ref().is_some_and(|c| self.ws_item_page(self.tab) == Some(c.page))
+    }
+
     /// The Workspace page for an item tab, `None` for other tabs. Returns
     /// whether the character changed.
     pub(crate) fn ws_items_page(&mut self, ui: &mut egui::Ui, tab: Tab, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> Option<bool> {
         let page = self.ws_item_page(tab)?;
-        if self.ws_gear.catalog.as_ref().is_some_and(|c| c.page == page) {
-            return Some(self.ws_catalog_page(ui, engine, lang, pdfs, status));
+        let sec = page_section(page).unwrap_or(DRUGS);
+        if self.ws_gear.visit.as_ref().is_none_or(|v| v.page != page) {
+            self.ws_gear.visit = Some(Visit { page, adds: Vec::new() });
         }
+        let open = self.ws_gear.catalog.as_ref().is_some_and(|c| c.page == page);
         let mut changed = false;
-        egui::ScrollArea::vertical().id_salt(("ws_items", tab as u8, page.1)).auto_shrink(false).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 10.0;
-            match page_section(page) {
-                Some(sec) => changed |= self.ws_item_list(ui, page, sec, engine, lang, pdfs, status),
-                None => changed |= self.ws_drugs(ui, lang),
+        ui.spacing_mut().item_spacing.y = 10.0;
+        let wide = ui.available_width().min(ui.clip_rect().width()) >= SIDE_BY_SIDE;
+        self.ws_items_toolbar(ui, page, &sec, open, wide, lang);
+        if !open {
+            match sec.container {
+                "cyberwares" => self.ws_essence_card(ui, lang),
+                "lifestyles" if !self.doc.items("lifestyles", "lifestyle").is_empty() => changed |= self.ws_lifestyle_card(ui, engine, lang, pdfs, status),
+                _ => {}
             }
-        });
+        }
+        // Within the page (a wide card above may have widened the Ui).
+        let rect = ui.available_rect_before_wrap();
+        let clip = ui.clip_rect();
+        let rect = Rect::from_min_max(rect.min, egui::pos2(rect.right().min(clip.right()), rect.bottom().min(clip.bottom()).max(rect.top() + 200.0)));
+        let open = self.ws_gear.catalog.as_ref().is_some_and(|c| c.page == page);
+        if open {
+            // Tab switches between the catalog and the inventory.
+            let keys_free = !ui.ctx().wants_keyboard_input() || ui.ctx().memory(|m| m.has_focus(egui::Id::new("ws_catalog_search")));
+            if keys_free && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
+                self.ws_gear.focus_catalog = !self.ws_gear.focus_catalog;
+                ui.memory_mut(|m| m.surrender_focus(egui::Id::new("ws_catalog_search")));
+            }
+            let fold = self.ws_inspector_folded(ui.ctx().content_rect().width());
+            if rect.width() >= SIDE_BY_SIDE {
+                let cat_w = (rect.width() * 0.47).clamp(380.0, 540.0);
+                let left = Rect::from_min_size(rect.min, egui::vec2(cat_w, rect.height()));
+                let right = Rect::from_min_max(egui::pos2(left.right() + 12.0, rect.top()), rect.max);
+                changed |= self.ws_catalog_panel(ui, left, false, fold, engine, lang, pdfs, status);
+                changed |= self.ws_inventory_panel(ui, right, page, &sec, false, lang, pdfs, status);
+            } else {
+                // Stacked: the catalog above, the inventory below a handle.
+                let id = egui::Id::new(("ws_items_split", page.0 as u8, page.1));
+                let mut inv_h: f32 = ui.ctx().data_mut(|d| d.get_persisted(id)).unwrap_or(318.0);
+                inv_h = inv_h.clamp(120.0, (rect.height() - 180.0).max(120.0));
+                let top = Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.bottom() - inv_h - HANDLE_H));
+                let handle = Rect::from_min_max(egui::pos2(rect.left(), top.bottom()), egui::pos2(rect.right(), top.bottom() + HANDLE_H));
+                let bottom = Rect::from_min_max(egui::pos2(rect.left(), handle.bottom()), rect.max);
+                changed |= self.ws_catalog_panel(ui, top, true, fold, engine, lang, pdfs, status);
+                let r = ui.interact(handle, id.with("handle"), Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeVertical).on_hover_text(lang.tr("Resize catalog and inventory"));
+                let ws = theme::ws(ui);
+                let bar = Rect::from_center_size(handle.center(), egui::vec2(36.0, 4.0));
+                ui.painter().rect_filled(bar, CornerRadius::same(2), if r.hovered() || r.dragged() { ws.muted } else { ws.control });
+                if r.dragged() {
+                    inv_h -= r.drag_delta().y;
+                    ui.ctx().data_mut(|d| d.insert_persisted(id, inv_h.clamp(120.0, (rect.height() - 180.0).max(120.0))));
+                }
+                changed |= self.ws_inventory_panel(ui, bottom, page, &sec, true, lang, pdfs, status);
+            }
+        } else {
+            changed |= self.ws_inventory_panel(ui, rect, page, &sec, false, lang, pdfs, status);
+        }
+        ui.allocate_rect(rect, Sense::hover());
         Some(changed)
     }
 
-    /// Toolbar, summary and tree of one item page.
-    #[allow(clippy::too_many_arguments)]
-    fn ws_item_list(&mut self, ui: &mut egui::Ui, page: Page, sec: Sec, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+    /// The page's toolbar: a line about the page, the layout switch while
+    /// the catalog is open, and the "Add …" buttons.
+    fn ws_items_toolbar(&mut self, ui: &mut egui::Ui, page: Page, sec: &Sec, open: bool, wide: bool, lang: &Language) {
         let ws = theme::ws(ui);
-        let mut changed = false;
-        // Toolbar: the "Add …" buttons and a line about the page.
-        let mut open = None;
+        let mut buy = None;
+        let mut close = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            for (i, tag) in page_kinds(sec.container).iter().enumerate() {
-                let label = chummer_core::items::kind(tag).map_or(*tag, |k| k.label);
-                let look = if i == 0 { Look::Primary } else { Look::Secondary };
-                let tip = match super::select::parent_of(tag) {
-                    Some(_) => lang.tr("Choose where to install it"),
-                    None => String::new(),
-                };
-                let r = widgets::button(ui, Some(icons::PLUS), &lang.tr_fmt("Add {0}", &[&kind_noun(lang, label)]), look, 26.0);
-                let r = if tip.is_empty() { r } else { r.on_hover_text(tip) };
-                if r.clicked() {
-                    open = Some(*tag);
-                }
-            }
+            ui.label(RichText::new(self.ws_page_note(sec, lang)).size(12.0).color(ws.muted));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(self.ws_page_note(sec, lang)).size(11.5).color(ws.muted));
+                if sec.container == "drugs" {
+                    if widgets::button(ui, Some(icons::FLASK), &lang.tr("Build custom drug…"), Look::Primary, 26.0).clicked() {
+                        self.drug_builder.open = true;
+                    }
+                    return;
+                }
+                let kinds = page_kinds(sec.container);
+                if open {
+                    let shop = if wide { lang.tr("Side by side") } else { lang.tr("Stacked") };
+                    if widgets::segmented(ui, &[(&shop, ""), (&lang.tr("Inventory only"), "")], 0, 26.0) == Some(1) {
+                        close = true;
+                    }
+                } else {
+                    for (i, tag) in kinds.iter().enumerate().rev() {
+                        let label = chummer_core::items::kind(tag).map_or(*tag, |k| k.label);
+                        let look = if i == 0 { Look::Primary } else { Look::Secondary };
+                        let r = widgets::button(ui, Some(icons::PLUS), &lang.tr_fmt("Add {0}", &[&kind_noun(lang, label)]), look, 26.0);
+                        let r = match super::select::parent_of(tag) {
+                            Some(_) => r.on_hover_text(lang.tr("Choose where to install it")),
+                            None => r,
+                        };
+                        if r.clicked() {
+                            buy = Some(*tag);
+                        }
+                    }
+                }
             });
         });
-        if let Some(tag) = open {
+        if let Some(tag) = buy {
+            let parent = self.item_editor.as_ref().map(|(g, _)| g.clone()).filter(|g| edit::child_kinds(&self.doc, g).iter().any(|k| k.tag == tag));
             self.ws_open_catalog(page, tag, None);
-        }
-        match sec.container {
-            "cyberwares" => self.ws_essence_card(ui, lang),
-            "weapons" => self.ws_weapon_card(ui, lang),
-            "vehicles" => self.ws_vehicle_card(ui, lang),
-            "lifestyles" => {
-                let cx = crate::magic_ui::Ctx { store: &self.store, engine, sheet: &self.sheet, settings: self.settings.as_ref(), lang, pdfs };
-                if !self.doc.items("lifestyles", "lifestyle").is_empty() {
-                    widgets::card_frame(&ws).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        changed |= self.lifestyle_editor.ui(ui, &mut self.doc, &cx, status);
-                    });
-                }
+            if let Some(g) = parent {
+                self.ws_catalog_target(page, &g);
             }
-            _ => {}
         }
-        changed |= self.ws_section(ui, &sec, lang, pdfs, status);
-        changed
+        if close {
+            self.ws_gear.catalog = None;
+        }
     }
 
-    /// "3 items · Essence 5.45" and the like, right of the toolbar.
-    fn ws_page_note(&self, sec: Sec, lang: &Language) -> String {
+    /// "3 items · Essence 5.45" and the like, in the toolbar.
+    fn ws_page_note(&self, sec: &Sec, lang: &Language) -> String {
         let count = self.doc.doc.child(sec.container).map_or(0, |c| c.children_named(sec.item).count());
         let items = lang.tr_fmt("{0} items", &[&count]);
         match sec.container {
@@ -164,7 +261,7 @@ impl CharacterView {
         let ws = theme::ws(ui);
         let s = &self.sheet;
         let d = self.rules.essence_decimals;
-        widgets::card_frame(&ws).show(ui, |ui| {
+        widgets::card_frame(&ws).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 18.0;
@@ -177,155 +274,252 @@ impl CharacterView {
         });
     }
 
-    /// Weapons: final stats (damage with STR, AP, accuracy, pool, ranges).
-    fn ws_weapon_card(&self, ui: &mut egui::Ui, lang: &Language) {
-        let weapons = self.doc.items("weapons", "weapon");
-        if weapons.is_empty() {
-            return;
-        }
-        let rows: Vec<Vec<String>> = weapons
-            .iter()
-            .map(|w| {
-                let st = self.weapon_stats(w, true);
-                let r = &st.ranges;
-                let bands: Vec<&str> = [&r.short, &r.medium, &r.long, &r.extreme].into_iter().map(String::as_str).filter(|b| !b.is_empty()).collect();
-                vec![w.get("name"), st.dice_pool.to_string(), st.damage.clone(), st.ap.clone(), st.accuracy.to_string(), st.rc.clone(), if st.reach != 0 { st.reach.to_string() } else { String::new() }, bands.join(" / ")]
-            })
-            .collect();
-        stats_card(ui, "ws_weapon_stats", &lang.tr("Combat stats"), &lang.tr_all(["Weapon", "Pool", "Damage", "AP", "Acc", "RC", "Reach", "Ranges"]), &rows, Some(1));
-    }
-
-    /// Vehicles: totals after mods.
-    fn ws_vehicle_card(&self, ui: &mut egui::Ui, lang: &Language) {
-        let vehicles = self.doc.items("vehicles", "vehicle");
-        if vehicles.is_empty() {
-            return;
-        }
-        let rows: Vec<Vec<String>> = vehicles
-            .iter()
-            .map(|v| {
-                let st = chummer_core::items::vehicle::stats(v);
-                let slots = if st.is_drone { format!("{}/{}", st.drone_mod_slots_used, st.drone_mod_slots) } else { format!("{}/{}", st.slots_used, st.slots) };
-                vec![v.get("name"), st.handling_text.clone(), st.speed_text.clone(), st.accel_text.clone(), st.body.to_string(), st.armor.to_string(), st.pilot.to_string(), st.sensor.to_string(), st.seats.to_string(), slots]
-            })
-            .collect();
-        stats_card(ui, "ws_vehicle_stats", &lang.tr("Vehicle stats"), &lang.tr_all(["Vehicle", "Handling", "Speed", "Accel", "Body", "Armor", "Pilot", "Sensor", "Seats", "Slots"]), &rows, None);
-    }
-
-    /// A section's items as a tree table in a card: groups, locations,
-    /// nesting, issue marks, the source and remove buttons.
-    fn ws_section(&mut self, ui: &mut egui::Ui, sec: &Sec, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
-        let ws = theme::ws(ui);
-        let count = self.doc.doc.child(sec.container).map_or(0, |c| c.children_named(sec.item).count());
-        let mut remove = None;
-        let mut clicked = None;
-        widgets::card_frame(&ws).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(widgets::title(&lang.tr(sec.label), &ws));
-                widgets::count_pill(ui, &count.to_string(), ws.selection, ws.accent);
-            });
-            if count == 0 {
-                ui.label(RichText::new(lang.tr("None.")).size(12.0).color(ws.muted));
-                return;
-            }
-            let tree = chummer_core::tree::section_tree(&self.doc.doc, sec);
-            let headers: Vec<String> = sec.columns.iter().map(|c| lang.tr(c.header)).collect();
-            let selected = self.item_editor.as_ref().map(|(g, _)| g.as_str());
-            let marks = self.item_marks(lang);
-            let remove_tip = lang.tr("Remove (also removes its improvements)");
-            let out = crate::tree_table::TreeTable::new(("ws", sec.container), &headers).selected(selected).show(ui, &tree, |n| tree_row(sec, n, lang, &marks), |ui, n| {
-                let Entry::Item { el, top } = n.value else { return };
-                if let Some(r) = SourceRef::of(el) {
-                    let tip = if pdfs.is_linked(&r.book) { format!("{r}") } else { format!("{r} · {}", lang.tr("No PDF linked for this book — Tools → Sourcebooks")) };
-                    if widgets::icon_button(ui, icons::BOOK_OPEN, 22.0).on_hover_text(tip).clicked() {
-                        pdf_ui::open(pdfs, &r, status);
-                    }
-                }
-                if top && widgets::icon_button(ui, icons::TRASH, 22.0).on_hover_text(&remove_tip).clicked() {
-                    remove = Some((sec.container.to_owned(), el.get("guid"), display_name(sec, el, lang)));
-                }
-            });
-            clicked = out.clicked;
-        });
-        if remove.is_some() {
-            self.confirm_remove = remove;
-        }
-        if let Some(g) = clicked {
-            self.ws_gear.catalog = None;
-            self.item_editor = Some((g, crate::item_editor::ItemEditor::default()));
-        }
-        false
-    }
-
-    /// Drugs: the custom drug builder and the drugs the character has.
-    fn ws_drugs(&mut self, ui: &mut egui::Ui, lang: &Language) -> bool {
+    /// Lifestyles: the lifestyle editor in a card of its own height
+    /// (scrolls when long, so the table keeps room).
+    fn ws_lifestyle_card(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
         let ws = theme::ws(ui);
         let mut changed = false;
-        ui.horizontal(|ui| {
-            if widgets::button(ui, Some(icons::FLASK), &lang.tr("Build custom drug…"), Look::Primary, 26.0).clicked() {
-                self.drug_builder.open = true;
-            }
-        });
-        let drugs: Vec<chummer_core::xml::Element> = self.doc.items("drugs", "drug").into_iter().cloned().collect();
-        widgets::card_frame(&ws).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
+        let max_h = (ui.available_height() * 0.45).max(160.0);
+        let cx = crate::magic_ui::Ctx { store: &self.store, engine, sheet: &self.sheet, settings: self.settings.as_ref(), lang, pdfs };
+        widgets::card_frame(&ws).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(widgets::title(&lang.tr("Your drugs"), &ws));
-                widgets::count_pill(ui, &drugs.len().to_string(), ws.selection, ws.accent);
-            });
-            if drugs.is_empty() {
-                ui.label(RichText::new(lang.tr("None.")).size(12.0).color(ws.muted));
-                return;
-            }
-            egui::Grid::new("ws_drugs").num_columns(4).spacing([18.0, 4.0]).min_row_height(24.0).show(ui, |ui| {
-                for h in lang.tr_all(["Name", "Grade", "Quantity"]) {
-                    ui.label(RichText::new(h).size(10.5).color(ws.muted));
-                }
-                ui.label("");
-                ui.end_row();
-                for d in &drugs {
-                    ui.label(RichText::new(d.get("name")).size(12.5).color(ws.text));
-                    ui.label(RichText::new(d.get("grade")).size(12.0).color(ws.muted));
-                    ui.label(widgets::mono(format!("×{}", d.get("quantity")), 12.0, ws.text));
-                    if widgets::icon_button(ui, icons::TRASH, 22.0).on_hover_text(lang.tr("Remove (no refund)")).clicked() {
-                        changed |= self.doc.set(Command::RemoveItem { container: "drugs".into(), guid: d.get("guid") });
-                    }
-                    ui.end_row();
-                }
+            egui::ScrollArea::vertical().id_salt("ws_lifestyle_editor").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+                changed |= self.lifestyle_editor.ui(ui, &mut self.doc, &cx, status);
             });
         });
         changed
     }
-}
 
-/// A card with a small table: small muted headers, the name column in
-/// the text face, the values monospace, column `accent` (the dice pool)
-/// in the accent colour.
-fn stats_card(ui: &mut egui::Ui, id: &str, title: &str, headers: &[String], rows: &[Vec<String>], accent: Option<usize>) {
-    let ws = theme::ws(ui);
-    widgets::card_frame(&ws).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.label(widgets::title(title, &ws));
-        egui::ScrollArea::horizontal().id_salt(id).show(ui, |ui| {
-            egui::Grid::new(id).num_columns(headers.len()).spacing([16.0, 2.0]).min_row_height(22.0).show(ui, |ui| {
-                for h in headers {
-                    ui.label(RichText::new(h).size(10.5).color(ws.muted));
+    /// The inventory panel in `rect`: its head (title, count, what was
+    /// bought here, expand/collapse, columns), the table and the "Added
+    /// since you opened this page" tray. `compact`: the stacked layout
+    /// (the tray folds into the head).
+    #[allow(clippy::too_many_arguments)]
+    fn ws_inventory_panel(&mut self, ui: &mut egui::Ui, rect: Rect, page: Page, sec: &Sec, compact: bool, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+        let ws = theme::ws(ui);
+        let catalog_open = self.ws_gear.catalog.as_ref().is_some_and(|c| c.page == page);
+        let cols = ws_inventory::columns(sec.container, self.doc.created, lang);
+        let id = ws_inventory::table_id(page);
+        let sort = table::sort_of(ui.ctx(), id);
+        let rows = self.ws_inventory_rows(sec, &cols, lang, sort);
+        let added: HashSet<String> = self.ws_gear.visit.as_ref().map(|v| v.adds.iter().map(|a| a.guid.clone()).filter(|g| edit::find(&self.doc, g).is_some()).collect()).unwrap_or_default();
+        let events;
+        let mut undo_all = false;
+        let mut undo_one: Option<String> = None;
+        let mut fold_all: Option<bool> = None;
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+        let ui = &mut child;
+        ui.painter().rect(rect, CornerRadius::same(6), ws.raised, Stroke::new(1.0_f32, ws.divider), StrokeKind::Inside);
+        let inner = rect.shrink(1.0);
+        ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+        let tray_lines = if compact || !catalog_open { 0 } else { added.len().min(3) };
+        let tray_h = if tray_lines > 0 { 40.0 + tray_lines as f32 * 24.0 } else { 0.0 };
+        // Head.
+        let head = Rect::from_min_size(inner.min, egui::vec2(inner.width(), HEAD_H));
+        ui.painter().rect_filled(Rect::from_min_size(egui::pos2(head.left(), head.bottom() - 1.0), egui::vec2(head.width(), 1.0)), CornerRadius::ZERO, ws.divider);
+        let mut hu = ui.new_child(egui::UiBuilder::new().max_rect(head.shrink2(egui::vec2(10.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        hu.spacing_mut().item_spacing.x = 8.0;
+        let (glyph, title) = match sec.container {
+            "cyberwares" => (icons::USER_FOCUS, lang.tr("Installed")),
+            "gears" => (icons::PACKAGE, lang.tr("Your gear")),
+            "drugs" => (icons::PILL, lang.tr("Your drugs")),
+            _ => (super::ws_inventory::kind_icon(sec.item), lang.tr(sec.label)),
+        };
+        hu.label(icons::icon(glyph, 15.0, ws.accent));
+        hu.label(widgets::title(&title, &ws));
+        widgets::count_pill(&mut hu, &table::item_count(&rows).to_string(), ws.selection, ws.accent);
+        hu.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            table::columns_button(ui, id, &cols, lang);
+            let parents = table::parent_keys(&rows);
+            if !parents.is_empty() {
+                let all_open = table::closed_of(ui.ctx(), id).is_empty();
+                let (g, t) = if all_open { (icons::ARROWS_IN_LINE_VERTICAL, lang.tr("Collapse all")) } else { (icons::ARROWS_OUT_LINE_VERTICAL, lang.tr("Expand all")) };
+                if widgets::button(ui, Some(g), &t, Look::Ghost, 24.0).clicked() {
+                    fold_all = Some(all_open);
                 }
-                ui.end_row();
-                for row in rows {
-                    for (i, c) in row.iter().enumerate() {
-                        if i == 0 {
-                            ui.label(RichText::new(c).size(12.5).color(ws.text));
-                        } else if accent == Some(i) {
-                            ui.label(widgets::mono(c, 12.5, ws.accent));
-                        } else {
-                            ui.label(widgets::mono(c, 12.0, ws.text));
-                        }
-                    }
-                    ui.end_row();
+            }
+            if compact && !added.is_empty() {
+                let r = widgets::button(ui, Some(icons::ARROW_COUNTER_CLOCKWISE), &lang.tr("Undo all"), Look::Ghost, 24.0);
+                if r.on_hover_text(lang.tr("Take back everything bought on this page")).clicked() {
+                    undo_all = true;
+                }
+                ui.label(RichText::new(lang.tr_fmt("{0} added on this page", &[&added.len()])).size(11.5).color(ws.stun));
+                ui.label(icons::icon(icons::CLOCK_COUNTER_CLOCKWISE, 13.0, ws.stun));
+            }
+        });
+        // Table.
+        let table_rect = Rect::from_min_max(egui::pos2(inner.left(), head.bottom()), egui::pos2(inner.right(), inner.bottom() - tray_h));
+        let mut tu = ui.new_child(egui::UiBuilder::new().max_rect(table_rect).layout(egui::Layout::top_down(egui::Align::Min)));
+        let essence_left = (sec.container == "cyberwares").then(|| format::essence(self.sheet.essence, self.rules.essence_decimals));
+        let footer = Footer {
+            left: match &essence_left {
+                Some(_) => format!("{} · {}", ws_inventory::count_line(lang, &rows), lang.tr("Essence left")),
+                None => ws_inventory::count_line(lang, &rows),
+            },
+            accent: essence_left.unwrap_or_default(),
+            cells: Vec::new(),
+            tail: lang.tr("purchase value"),
+        };
+        let kinds = page_kinds(sec.container);
+        let empty = EmptyCard {
+            title: lang.tr_fmt("No {0} yet", &[&kind_noun(lang, sec.label)]),
+            sub: if kinds.is_empty() { String::new() } else { lang.tr("Buy from the catalog; it opens next to this list.") },
+            button: lang.tr("Buy…"),
+        };
+        let focused = !catalog_open || !self.ws_gear.focus_catalog;
+        {
+            let states = self.ws_inventory_states(lang, &added);
+            let t = table::Table::new(ws_inventory::table_salt(page), &cols).height(table_rect.height()).footer(footer).focused(focused);
+            let t = if kinds.is_empty() { t } else { t.empty(empty) };
+            events = t.show(&mut tu, &rows, &states, lang, |_, _| {});
+        }
+        self.ws_gear.scroll_to = None;
+        if tu.ui_contains_pointer() && tu.input(|i| i.pointer.any_pressed()) {
+            self.ws_gear.focus_catalog = false;
+        }
+        // Tray.
+        if tray_lines > 0 {
+            let tray = Rect::from_min_max(egui::pos2(inner.left(), inner.bottom() - tray_h), inner.max);
+            ui.painter().rect_filled(Rect::from_min_size(tray.min, egui::vec2(tray.width(), 1.0)), CornerRadius::ZERO, ws.divider);
+            let mut tr = ui.new_child(egui::UiBuilder::new().max_rect(tray.shrink2(egui::vec2(10.0, 8.0))).layout(egui::Layout::top_down(egui::Align::Min)));
+            tr.spacing_mut().item_spacing.y = 2.0;
+            let (a, b) = self.ws_tray(&mut tr, sec, &added, lang);
+            undo_all |= a;
+            undo_one = undo_one.or(b);
+        }
+        // Events.
+        if let Some(close) = fold_all {
+            table::set_closed(ui.ctx(), id, if close { table::parent_keys(&rows) } else { HashSet::new() });
+        }
+        let mut changed = false;
+        let out = self.ws_inventory_events(events, page, sec, lang, pdfs, status);
+        changed |= out.changed;
+        if let Some(g) = undo_one {
+            changed |= self.ws_undo_added(sec, &g, status);
+        }
+        if undo_all {
+            let adds: Vec<String> = self.ws_gear.visit.as_ref().map(|v| v.adds.iter().rev().map(|a| a.guid.clone()).collect()).unwrap_or_default();
+            for g in adds {
+                if edit::find(&self.doc, &g).is_some() {
+                    changed |= self.ws_undo_added(sec, &g, status);
+                }
+            }
+        }
+        if let Some((tag, into)) = out.buy {
+            if !catalog_open || self.ws_gear.catalog.as_ref().is_some_and(|c| !c.sells(&tag)) {
+                self.ws_open_catalog(page, &tag, None);
+            }
+            self.ws_catalog_set_location(into, lang);
+            self.ws_gear.focus_catalog = true;
+        }
+        changed
+    }
+
+    /// "Added since you opened this page": a line per item, newest first,
+    /// with its essence and cost and an Undo each. Returns (Undo all,
+    /// Undo one).
+    fn ws_tray(&self, ui: &mut egui::Ui, sec: &Sec, added: &HashSet<String>, lang: &Language) -> (bool, Option<String>) {
+        let ws = theme::ws(ui);
+        let mut all = false;
+        let mut one = None;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.label(icons::icon(icons::CLOCK_COUNTER_CLOCKWISE, 13.0, ws.stun));
+            ui.label(RichText::new(lang.tr("Added since you opened this page")).font(widgets::bold(12.0)).color(ws.text));
+            widgets::count_pill(ui, &added.len().to_string(), ws.ground, ws.stun);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let label = if added.len() == 2 { lang.tr("Undo both") } else { lang.tr("Undo all") };
+                if widgets::button(ui, Some(icons::ARROW_COUNTER_CLOCKWISE), &label, Look::Ghost, 22.0).clicked() {
+                    all = true;
                 }
             });
         });
-    });
+        let Some(v) = &self.ws_gear.visit else { return (all, one) };
+        let last = self.ws_last_added().map(str::to_owned);
+        for a in v.adds.iter().rev().filter(|a| added.contains(&a.guid)).take(3) {
+            let Some(el) = edit::find(&self.doc, &a.guid) else { continue };
+            let mut name = super::display_name(sec, el, lang);
+            if let Some(r) = el.get_i32("rating").filter(|r| *r > 0) {
+                name = format!("{name} {r}");
+            }
+            let g = el.get("grade");
+            if !g.is_empty() && g != "Standard" && g != "None" {
+                name = format!("{name} · {g}");
+            }
+            if let Some(p) = edit::parent(&self.doc, &a.guid) {
+                name = format!("{name} → {}", p.get("name"));
+            }
+            let ess = edit::essence(&self.doc, &self.store, &self.rules, &a.guid).filter(|e| *e > 0.0);
+            let cost = edit::total_cost(&self.doc, &self.store, &a.guid);
+            let latest = last.as_deref() == Some(a.guid.as_str());
+            ui.horizontal(|ui| {
+                ui.set_min_height(22.0);
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(icons::icon(icons::PLUS, 12.0, ws.stun));
+                let w = (ui.available_width() - 70.0 - 70.0 - 50.0 - 24.0 - 32.0).max(60.0);
+                let cell = |ui: &mut egui::Ui, w: f32, right: bool, text: RichText| {
+                    let layout = if right { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
+                    ui.allocate_ui_with_layout(egui::vec2(w, 20.0), layout, |ui| {
+                        ui.set_width(w);
+                        ui.add(egui::Label::new(text).truncate());
+                    });
+                };
+                cell(ui, w, false, RichText::new(name).size(12.5).color(ws.text));
+                cell(ui, 70.0, true, widgets::mono(ess.map_or(String::new(), |e| format!("−{} {}", format::essence(e, self.rules.essence_decimals), lang.tr("Ess"))), 11.5, ws.muted));
+                cell(ui, 70.0, true, widgets::mono(format::nuyen(cost), 11.5, ws.text));
+                cell(ui, 50.0, false, RichText::new(if latest { lang.tr("just now") } else { String::new() }).size(11.0).color(ws.muted));
+                let tip = if self.doc.is_online() {
+                    lang.tr(crate::doc::ONLINE_UNDO)
+                } else if self.ws_added_is_latest(&a.guid) {
+                    lang.tr("Undo this purchase (Ctrl+Z)")
+                } else {
+                    lang.tr("Remove it (other changes came after it, so this is not an undo)")
+                };
+                let r = widgets::icon_button(ui, icons::ARROW_COUNTER_CLOCKWISE, 22.0).on_hover_text(tip);
+                if r.clicked() {
+                    one = Some(a.guid.clone());
+                }
+            });
+        }
+        (all, one)
+    }
+
+    /// Record an item bought on the page (for the marks, the inline Undo
+    /// and the tray). `steps`: the commands it took.
+    pub(super) fn ws_record_add(&mut self, guid: String, steps: usize) {
+        let log_len = self.doc.session().map_or(0, |s| s.log().len());
+        if let Some(v) = &mut self.ws_gear.visit {
+            v.adds.push(Added { guid: guid.clone(), log_len, steps });
+        }
+        self.ws_gear.scroll_to = Some(guid);
+    }
+}
+
+/// Every item guid in a section's container (all depths).
+pub(super) fn section_guids(ch: &chummer_core::character::Character, sec: &Sec) -> HashSet<String> {
+    let tree = if sec.container == "drugs" {
+        return ch.items("drugs", "drug").iter().map(|d| d.get("guid")).collect();
+    } else {
+        chummer_core::tree::section_tree(&ch.doc, sec)
+    };
+    let mut out = HashSet::new();
+    fn walk(nodes: &[chummer_core::tree::ItemNode], out: &mut HashSet<String>) {
+        for n in nodes {
+            if let chummer_core::tree::Entry::Item { el, .. } = &n.value {
+                let g = el.get("guid");
+                if !g.is_empty() {
+                    out.insert(g);
+                }
+            }
+            walk(&n.children, out);
+        }
+    }
+    walk(&tree, &mut out);
+    out
+}
+
+/// The section of the page a catalog was opened on.
+pub(super) fn section_of(page: Page) -> Sec {
+    page_section(page).unwrap_or(DRUGS)
 }
