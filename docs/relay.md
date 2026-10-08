@@ -7,7 +7,7 @@
    forwards their traffic when no direct path exists. That traffic is
    end-to-end encrypted QUIC: the relay cannot read it.
 2. **Mailbox.** An iroh endpoint beside the relay that serves the
-   `chummer-rs/mailbox/2` protocol. It keeps sealed messages for peers who
+   `chummer-rs/mailbox/3` protocol. It keeps sealed messages for peers who
    are offline (play-by-post, a GM who is not online). The messages are
    encrypted to the recipient's key and signed by the sender before they
    leave the app, so the operator cannot read them or see who wrote them.
@@ -77,6 +77,7 @@ certificate for `127.0.0.1`, HTTP 3340, HTTPS 3443).
 | `max_messages_per_sender_per_day` | 2000 | Uploads per sender per UTC day |
 | `max_bytes_per_sender_per_day` | 67108864 (64 MiB) | Upload bytes per sender per UTC day |
 | `max_messages_per_key` | 200 | Messages waiting in one mailbox that were signed by one key |
+| `max_messages_per_unbound_key` | 10 | The same, for a key registered without an uploading node (an invite nobody claimed yet) |
 | `expiry_secs` | 2592000 (30 days) | Uncollected messages are deleted after this |
 
 Senders and recipients are identified by the node id that the QUIC
@@ -89,12 +90,24 @@ Access is by capability; there are no accounts.
 
 - **Registration.** A mailbox owner sends `Register { scope, keys }`: the
   public keys that may put mail into its mailbox, for one scope (the
-  apps use one scope per campaign). It replaces that scope's list; the
-  same list again changes nothing; an empty list removes the scope. The
-  registrations are in `mailbox.redb` and survive restarts. The GM's app
-  registers every current invite key of the campaign (and the node keys
-  of players it added by node id) at every mailbox round and right after
-  an invite changed; each player's app registers the GM's campaign key.
+  apps use one scope per campaign), each optionally bound to one
+  uploading node. It replaces that scope's list; the same list again
+  changes nothing; an empty list removes the scope. A key in several
+  scopes may be uploaded by any node that one of them names, or by any
+  node if one of them leaves it unbound. The registrations are in
+  `mailbox.redb` and survive restarts. The GM's app registers every
+  current invite key of the campaign (and the node keys of players it
+  added by node id) at every mailbox round, right after an invite changed
+  and right after a player claimed an invite; each player's app registers
+  the GM's campaign keys, bound to the GM's node.
+- **Bound keys.** A claimed invite's key is bound to the node that
+  claimed it, and a member added by node id to that node. A put signed
+  with a bound key but uploaded by another node is refused ("this key may
+  only put mail from another device"). So a link that leaks after it was
+  claimed is useless for mail: the leaked key cannot put a single
+  message. An unclaimed invite's key is unbound (its player may join by
+  mail from any device), and at most `max_messages_per_unbound_key`
+  messages signed by it may wait.
 - **Signed puts.** Every put carries the signing key, a random nonce and
   an ed25519 signature over the recipient's node id, the uploading
   node's id, the nonce and the blob's BLAKE3 hash. The relay refuses an
@@ -104,7 +117,7 @@ Access is by capability; there are no accounts.
   for one mailbox cannot be replayed into another, or by another node.
 - **Caps.** The per-sender daily quotas stay. As a second net, at most
   `max_messages_per_key` messages signed by one key may wait in one
-  mailbox, so a leaked invite key cannot fill it.
+  mailbox (for bound keys this counts only the key holder's own mail).
 - **Revocation** is the owner registering the list without the key: from
   then on the key's puts are refused. Mail already waiting stays until
   the owner collects it (the GM's app drops it).
@@ -113,9 +126,11 @@ Access is by capability; there are no accounts.
   it. Refused puts are counted in memory only, for mailboxes with
   registrations.
 
-A database of the first protocol's layout is emptied when the relay
-opens it (it only held mail in transit; apps mail again what was not
-answered).
+A database of an older layout (the first protocol's, or `mailbox/2`'s
+without bound keys) is emptied when the relay opens it: it only held
+mail in transit and registrations, which the apps send again at their
+next mailbox round; apps mail again what was not answered. Apps and
+relays must both speak `chummer-rs/mailbox/3`.
 
 `relay_rate_limit` (bytes per second per client, off by default) limits
 relayed traffic.

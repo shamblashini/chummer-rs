@@ -624,7 +624,8 @@ for play-by-post. Each installation's identity is its node key
    they join, and how long an unused link works. **Create link** makes
    a link (`chummer-rs://join/…`) for that one player: copy it and send
    it to them only. The first device that joins with it claims it; the
-   same link then works for nobody else.
+   same link then works for nobody else, live or by mail (the relay
+   takes mail signed with its key only from the claiming device).
 4. The list shows every invite: not used yet (and when it expires),
    joined from which device and when, last seen, online, the characters
    the player has, and mail from them waiting in your mailbox. Per row:
@@ -839,11 +840,11 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   - The authority file keeps a compressed copy of each character plus
     the state 256 changes back, so characters with large mugshots make
     it large.
-  - A player whose invite key leaks (with the link, before or after it
-    was claimed) can still put up to 200 messages into the GM's mailbox
-    (the per-key cap) until the GM revokes or re-issues the invite; the
-    GM's app drops them. Invites are for players only (the role GM is
-    accepted but there is no co-GM support).
+  - Until an invite is claimed, its link works for whoever uses it
+    first, and up to 10 messages signed with its key may wait in the
+    GM's mailbox (enough for a join by mail). Once claimed, the relay
+    takes the key only from the claiming device. Invites are for players
+    only (the role GM is accepted but there is no co-GM support).
 - Some career-mode details:
   - Enchantments, rituals and enhancements learned at a grade.
   - Binding stacked foci (undo of a stacked focus binding works).

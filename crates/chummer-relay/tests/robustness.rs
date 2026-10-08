@@ -37,7 +37,7 @@ fn key() -> chummer_net::PublicKey {
 
 /// A put to `rcpt` (which takes mail signed by [`key`]).
 fn put(s: &Store, sender: EndpointId, rcpt: EndpointId, blob: Vec<u8>, now: u64) -> Result<u64, MailboxError> {
-    s.register(rcpt, [1; 16], &[key()], now)?;
+    s.register(rcpt, [1; 16], [key()], now)?;
     s.put(sender, rcpt, key(), chummer_net::invite::random_id(), blob, now)
 }
 
@@ -123,7 +123,7 @@ fn unreadable_database_is_an_error() {
 #[test]
 fn many_writers_at_once_get_unique_ids() {
     let d = dir("threads");
-    let limits = Limits { max_messages_per_recipient: 10_000, max_messages_per_key: 10_000, ..Limits::default() };
+    let limits = Limits { max_messages_per_recipient: 10_000, max_messages_per_key: 10_000, max_messages_per_unbound_key: 10_000, ..Limits::default() };
     let s = Arc::new(Store::open(&d.join("m.redb"), limits).unwrap());
     let bob = id();
     let threads: Vec<_> = (0..8)

@@ -234,3 +234,22 @@ fn offroad_values_upgrade_from_their_own_base() {
     assert_eq!((s.speed, s.offroad_speed), (3, 2));
     assert_eq!((s.accel, s.offroad_accel), (2, 2));
 }
+
+/// Prices are decimals all the way: the dearest record in the data
+/// (84,985,000¥) is not cut by the integer clamp of LB-44, in the nuyen
+/// spent or after a save and reload.
+#[test]
+fn prices_above_the_integer_limit_are_kept() {
+    let store = DataStore::discover().unwrap();
+    let mut ch = fixture("Davis Jones.chum5");
+    let doc = store.doc("vehicles.xml").unwrap();
+    let rec = data::find(&doc, "vehicles", "vehicle", "Lurssen Mobius").expect("the yacht");
+    assert!(rec.get("cost").trim().parse::<f64>().unwrap() > f64::from(chummer_core::xml::NUM_LIMIT));
+    let before = chummer_core::chargen::nuyen_spent(&ch, Some(&store));
+    items::add("vehicle", &mut ch, &store, rec, &Purchase::default()).unwrap();
+    let spent = chummer_core::chargen::nuyen_spent(&ch, Some(&store)) - before;
+    assert!(spent >= 84_985_000.0, "{spent}");
+    let again = Character::from_str(&ch.to_xml_string()).unwrap();
+    let spent_again = chummer_core::chargen::nuyen_spent(&again, Some(&store)) - before;
+    assert_eq!(spent, spent_again);
+}

@@ -16,7 +16,7 @@ use chummer_core::command::{Command, Rejected, Report};
 use chummer_core::engine::Engine;
 use chummer_net::campaign::{CampaignClient, DenyReason};
 use chummer_net::invite::{InviteLink, Role};
-use chummer_net::mailbox::MailboxClient;
+use chummer_net::mailbox::{MailboxClient, MailboxError, Registration};
 use chummer_net::node::dial_addr;
 use chummer_net::{Endpoint, EndpointId, NetError, PublicKey, SecretKey};
 use tokio::sync::mpsc;
@@ -338,7 +338,8 @@ impl PlayerSession {
     }
 
     /// Lets the GM's campaign keys put mail into our relay mailbox
-    /// (scope: the campaign), when that changed since the last time.
+    /// (scope: the campaign), from the GM's node only, when that changed
+    /// since the last time.
     /// A relay-side refusal (a full disk) is logged, not returned: our own
     /// mail still goes out.
     async fn ensure_registered(&self, mb: &MailboxClient) -> Result<(), NetError> {
@@ -348,7 +349,8 @@ impl PlayerSession {
         }
         let mut reg = self.inner.registered.lock().await;
         if reg.as_ref() != Some(&keys) {
-            match mb.register(self.inner.cfg.link.campaign.0, keys.clone()).await {
+            let host = self.inner.cfg.link.host;
+            match mb.register(self.inner.cfg.link.campaign.0, keys.iter().map(|k| Registration::bound(*k, host))).await {
                 Ok(_) => *reg = Some(keys),
                 Err(NetError::Mailbox(e)) => tracing::warn!("could not register the GM's key with the mailbox: {e}"),
                 Err(e) => return Err(e),
@@ -361,7 +363,7 @@ impl PlayerSession {
     /// campaign). Best effort.
     pub async fn unregister(&self) -> Result<(), NetError> {
         let mb = self.mailbox_client().await?;
-        mb.register(self.inner.cfg.link.campaign.0, Vec::new()).await?;
+        mb.register(self.inner.cfg.link.campaign.0, Vec::<Registration>::new()).await?;
         *self.inner.registered.lock().await = None;
         Ok(())
     }
@@ -582,7 +584,24 @@ impl PlayerSession {
 
     /// Mails the commands not mailed yet (and resync requests) to the GM.
     /// Returns the number of blobs stored.
+    ///
+    /// The relay refuses our invite key from this device when another
+    /// device claimed the invite ([`MailboxError::WrongDevice`]): that is
+    /// kept as the GM's "claimed" refusal ([`PlayerSession::denied`]).
     pub async fn send_mail(&self) -> Result<usize, NetError> {
+        let r = self.send_mail_inner().await;
+        if let Err(NetError::Mailbox(MailboxError::WrongDevice)) = &r {
+            if self.replica().denied() != Some(&DenyReason::Claimed) {
+                tracing::info!("the relay refused our invite key: the invite was claimed on another device");
+                self.replica().set_denied(Some(DenyReason::Claimed));
+                self.save_logged();
+                self.emit(vec![Event::Denied(DenyReason::Claimed)]);
+            }
+        }
+        r
+    }
+
+    async fn send_mail_inner(&self) -> Result<usize, NetError> {
         let mb = self.mailbox_client().await?;
         self.ensure_registered(&mb).await?;
         let host = self.inner.cfg.link.host;

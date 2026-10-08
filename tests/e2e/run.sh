@@ -575,13 +575,14 @@ PY
     NOTE="$out"
 }
 
-# P2 joins with its own invite. Its link then leaks: another device tries
-# it live (refused: claimed), a third one by mail while the GM is away
-# (the GM tells it by mail that the link was claimed), and a flood signed
-# with the leaked key is stopped by the per-key cap. The players are not
-# disturbed.
+# P2 joins with its own invite. The claim binds the invite's key to P2's
+# device at the relay. Its link then leaks: another device tries it live
+# (refused: claimed), a third one by mail while the GM is away (the relay
+# refuses the key from that device, which takes it as "claimed"), and a
+# flood signed with the leaked key from a fourth device stores nothing.
+# The players are not disturbed.
 sc_leaked-link() {
-    INVITED="2" world leaked-link 2 'max_messages_per_key = 40'
+    INVITED="2" world leaked-link 2
     relay_up; gm_up
     EVERY_MS=1000 players_up 20
     wait_for "P2 has its character" 120 status_is "$D/status/p2.json" "s['copies'] and s['label'] == 'P2'"
@@ -593,22 +594,22 @@ sc_leaked-link() {
     gm_away_after_join
     log "a third device tries it by mail; a flood with the leaked key"
     intruder_up 2 "$link"
-    wait_for "X2 mailed its join" 60 status_is "$D/status-x/x2.json" "s['mode'] == 'Mailbox'"
+    wait_for "X2 is refused by the relay" 90 status_is "$D/status-x/x2.json" "s['denied'] == 'Claimed'"
     local gm; gm=$("$TP" keygen "$D/gm/gm.key")
     abuse flood "$gm" --key /x/node.key --signer-link "$link" --count 200 || { log "flood failed"; return 1; }
-    grep -q 'too many messages from this key' "$D/abuse-flood.json" || { log "the per-key cap did not stop the leaked key"; return 1; }
-    local stored; stored=$(grep -o '"stored"' "$D/abuse-flood.json" | wc -l)
-    [ "$stored" -le 40 ] || { log "$stored puts with the leaked key got in"; return 1; }
+    grep -q 'only put mail from another device' "$D/abuse-flood.json" || { log "the relay did not refuse the leaked key from another device"; return 1; }
+    local stored; stored=$(grep -o '"stored"' "$D/abuse-flood.json" | wc -l || true)
+    [ "$stored" -eq 0 ] || { log "$stored puts with the leaked key got in"; return 1; }
+    local tried; tried=$(grep -o '"error"' "$D/abuse-flood.json" | wc -l)
     players_done 120
     log "the GM comes online"
     docker start "$P-gm" >/dev/null
-    wait_for "X2 is refused" 120 status_is "$D/status-x/x2.json" "s['denied'] == 'Claimed'"
-    status_is "$D/status-x/x2.json" "not s['copies']" || { log "X2 got a character"; return 1; }
     converge strict || return 1
+    status_is "$D/status-x/x2.json" "s['denied'] == 'Claimed' and not s['copies']" || { log "X2 got a character"; return 1; }
     inspect
     python3 -c "import json,sys; a=json.load(open('$D/authority.json')); sys.exit(0 if len(a['members']) == 3 else 1)" || { log "an intruder became a member"; return 1; }
-    docker logs "$P-gm" 2>&1 | grep -q "refused a mailed join" || { log "the GM did not refuse X2's mailed join"; return 1; }
-    NOTE="X2 refused by mail; $stored leaked-key puts stored before the cap"
+    ! docker logs "$P-gm" 2>&1 | grep -q "refused a mailed join" || { log "X2's mailed join got past the relay"; return 1; }
+    NOTE="X2 refused by the relay; 0 of $tried leaked-key puts stored"
 }
 
 # ----- main -----

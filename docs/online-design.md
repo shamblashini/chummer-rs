@@ -260,7 +260,10 @@ Work-order steps 5 and 7 and the messages for step 6.
   a node that is not a member yet is read only if it is a complete,
   one-blob `Join` with a valid claim proof; nothing else of theirs is
   kept. Each put is signed by a key the recipient registered with the
-  relay: the player's member key (or node key), the GM's campaign key. The
+  relay: the player's member key (or node key), the GM's campaign key.
+  Registered keys are bound to the uploading node where it is known (a
+  claimed invite to the claiming device, the GM's keys to the GM's
+  node), so a copied key cannot put mail from another device. The
   authority mails offline members everything they were not sent (the
   membership, answers to mailed submits, pushes since the version last
   sent).

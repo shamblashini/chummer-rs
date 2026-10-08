@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::Result;
 use chummer_net::campaign::{CampaignClient, CampaignHandler, CampaignHost, DenyReason, Hello, Welcome, CAMPAIGN_ALPN, PROTOCOL_VERSION};
 use chummer_net::invite::{CampaignId, InviteLink, MemberSecret, Role};
-use chummer_net::mailbox::{MailboxClient, MailboxError, PutAuth};
+use chummer_net::mailbox::{MailboxClient, MailboxError, PutAuth, Registration};
 use chummer_net::node::{bind, dial_addr};
 use chummer_net::seal::SealError;
 use chummer_net::{Endpoint, EndpointId, NetError, PublicKey, SecretKey};
@@ -248,8 +248,8 @@ async fn mailbox_put_fetch_only_by_recipient() -> Result<()> {
 /// Who may put mail: a stranger, an unsigned put, a key the recipient did
 /// not register, a signature by another key and a put replayed into
 /// another mailbox are all refused; a mailbox with no registrations takes
-/// nothing; the per-key cap stops a leaked key; the refusals are counted
-/// for the owner.
+/// nothing; the per-key cap stops a leaked key; a key bound to a node is
+/// refused from another; the refusals are counted for the owner.
 #[tokio::test(flavor = "multi_thread")]
 async fn mailbox_refuses_puts_without_a_registered_key() -> Result<()> {
     let relay = relay("access", Arc::new(ManualClock::new(T0)), |c| c.limits.max_messages_per_key = 5).await?;
@@ -308,6 +308,13 @@ async fn mailbox_refuses_puts_without_a_registered_key() -> Result<()> {
     // The GM still collects what was waiting.
     let (items, _) = gm.fetch(100).await?;
     assert_eq!(items.len(), 7);
+    gm.ack(items.iter().map(|i| i.id).collect()).await?;
+    // Bert claimed his invite on P's device: the GM binds his key to it.
+    // A copy of the key on Carol's device is refused outright.
+    let st = gm.register([9; 16], vec![Registration::bound(bert.public(), p_ep.id())]).await?;
+    assert_eq!(st.keys, 1);
+    assert_eq!(refused(carol.put(gm_ep.id(), vec![3], &bert).await), MailboxError::WrongDevice);
+    p.put(gm_ep.id(), vec![3], &bert).await?;
     let _ = gm_key;
     let _ = p_key;
 

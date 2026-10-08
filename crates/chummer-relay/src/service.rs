@@ -1,4 +1,4 @@
-//! Serves the mailbox protocol (`chummer-rs/mailbox/2`) from the [`Store`].
+//! Serves the mailbox protocol (`chummer-rs/mailbox/3`) from the [`Store`].
 //!
 //! A put's signature ([`chummer_net::mailbox::PutAuth`]) is checked here
 //! against the recipient, the uploading node (proven by the handshake)

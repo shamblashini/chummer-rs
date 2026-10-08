@@ -14,7 +14,7 @@ use chummer_core::command::Command;
 use chummer_core::engine::Engine;
 use chummer_net::campaign::{DenyReason, CAMPAIGN_ALPN};
 use chummer_net::invite::{CampaignId, InviteLink, Role};
-use chummer_net::mailbox::{MailboxClient, MailboxError};
+use chummer_net::mailbox::{MailboxClient, MailboxError, Registration};
 use chummer_net::node::{bind, dial_addr};
 use chummer_net::{Endpoint, EndpointId, NetError, SecretKey};
 use chummer_relay::{CertMode, Config, ManualClock, RelayNode};
@@ -187,6 +187,30 @@ fn members_by_node_id_mail_with_their_node_key() {
     assert!(a.remove_member(&p));
     assert!(a.mail_keys(NOW).is_empty());
     assert_eq!(a.admit(p, a.campaign(), None, NOW), Err(DenyReason::Revoked));
+}
+
+/// What the GM registers with the relay: a claimed invite's key only from
+/// the claiming device, an unclaimed one from any device (a first join by
+/// mail), a member added by node id only from that node.
+#[test]
+fn claimed_invite_keys_are_bound_to_their_device() {
+    let (mut a, _) = authority();
+    let anna = a.create_invite(Role::Player, "Anna", None, None, NOW).clone();
+    let p = node();
+    a.add_member(p, Role::Player, "Old friend");
+    let mut want = vec![Registration::any(anna.key()), Registration::bound(p, p)];
+    want.sort();
+    assert_eq!(a.mail_registrations(NOW), want);
+    let dev = node();
+    a.admit(dev, a.campaign(), Some(anna.key()), NOW).unwrap();
+    let mut want = vec![Registration::bound(anna.key(), dev), Registration::bound(p, p)];
+    want.sort();
+    assert_eq!(a.mail_registrations(NOW), want);
+    // A new link: a new key, unclaimed again (any device until claimed).
+    a.reissue_invite(&anna.id, None, NOW + 1).unwrap();
+    let key = a.invite(&anna.id).unwrap().key();
+    assert!(a.mail_registrations(NOW + 1).contains(&Registration::any(key)));
+    assert!(!a.mail_keys(NOW + 1).contains(&anna.key()));
 }
 
 #[test]
@@ -442,8 +466,9 @@ async fn reissued_link_supersedes_the_old_one() -> Result<()> {
 }
 
 /// The GM is never online live: a player joins by mail with a fresh
-/// invite (and is given the assigned character); a second device with
-/// the same link is told by mail that it was claimed.
+/// invite (and is given the assigned character); the relay then takes
+/// the invite's key only from that device, so a second device with the
+/// same link is refused there and told that it was claimed.
 #[tokio::test(flavor = "multi_thread")]
 async fn first_join_by_mail_and_a_leaked_link() -> Result<()> {
     let relay = relay("mailjoin").await?;
@@ -470,11 +495,19 @@ async fn first_join_by_mail_and_a_leaked_link() -> Result<()> {
     g.host.sync_mail(&g.mailbox).await?;
     assert_eq!(g.host.authority().character(&c).unwrap().karma, 15);
 
-    // The link leaks to another device, which tries by mail.
+    // The claim bound Anna's key to her device at the relay.
+    let regs = g.host.authority().mail_registrations(NOW);
+    assert!(regs.contains(&Registration::bound(link.member.as_ref().unwrap().key().public(), anna.ep.id())), "{regs:?}");
+
+    // The link leaks to another device, which tries by mail: the relay
+    // refuses the key from that device, and the thief is told "claimed"
+    // without the GM seeing anything.
     let thief = device(&relay, "Mallory", &link).await?;
     thief.session.sync().await;
+    assert_eq!(thief.session.denied(), Some(DenyReason::Claimed));
     let r = g.host.sync_mail(&g.mailbox).await?;
-    assert_eq!(r.refused, 1, "{r:?}");
+    assert_eq!((r.fetched, r.refused), (0, 0), "{r:?}");
+    assert!(r.status.as_ref().is_some_and(|s| s.refused_today >= 1), "{r:?}");
     thief.session.sync().await;
     assert_eq!(thief.session.denied(), Some(DenyReason::Claimed));
     assert!(thief.session.events().iter().any(|e| matches!(e, Event::Denied(DenyReason::Claimed))));

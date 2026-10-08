@@ -386,7 +386,16 @@ impl GmScreen {
         let task = net.spawn(async move {
             loop {
                 mail_round(&node, &host, &mail).await;
-                tokio::time::sleep(GM_MAIL_EVERY).await;
+                let next = tokio::time::Instant::now() + GM_MAIL_EVERY;
+                loop {
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(next) => break,
+                        // A live claim: the relay binds the invite's key to the device now.
+                        _ = host.host.mail_keys_changed() => {
+                            let _ = node.register_mail_keys(&host.host).await;
+                        }
+                    }
+                }
             }
         });
         if let Some(old) = o.mail_loop.replace(task.abort_handle()) {
