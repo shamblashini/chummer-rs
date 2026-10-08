@@ -1,12 +1,18 @@
-//! The campaign protocol, ALPN `chummer-rs/campaign/1`.
+//! The campaign protocol, ALPN `chummer-rs/campaign/2`.
 //!
 //! Between a player's app (client) and the GM's app (host, the campaign
 //! authority). Payloads are opaque bytes; the sync layer defines them.
 //!
 //! On one QUIC connection:
-//! 1. The client opens the first bi-directional stream and sends [`Hello`].
-//!    The host answers [`HelloReply::Welcome`] or [`HelloReply::Denied`]
-//!    and closes the stream. On `Denied` the host closes the connection.
+//! 1. The client opens the first bi-directional stream and sends [`Hello`]
+//!    (with the public half of its member key, if it has one). The host
+//!    answers a [`Challenge`] (a random nonce); the client answers a
+//!    [`HelloProof`]: its member key's signature over the campaign, both
+//!    node ids and the nonce ([`hello_message`]). The host then answers
+//!    [`HelloReply::Welcome`] or [`HelloReply::Denied`] and closes the
+//!    stream. On `Denied` the host closes the connection. A member key
+//!    whose proof does not check out is refused here, before the handler
+//!    sees it; the handler gets the proven key.
 //! 2. Each request after that is its own bi-directional stream opened by
 //!    the client: one [`Request`] frame, one [`Response`] frame. Streams are
 //!    cheap in QUIC and this needs no request ids.
@@ -23,31 +29,61 @@ use std::time::{Duration, Instant};
 
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
-use iroh::{Endpoint, EndpointAddr, EndpointId};
+use iroh::{Endpoint, EndpointAddr, EndpointId, PublicKey, SecretKey, Signature};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::frame::{read_frame, write_frame, MAX_FRAME};
-use crate::invite::{CampaignId, InviteToken, Role};
+use crate::invite::{CampaignId, Role};
 use crate::NetError;
 
 /// ALPN of the campaign protocol.
-pub const CAMPAIGN_ALPN: &[u8] = b"chummer-rs/campaign/1";
+pub const CAMPAIGN_ALPN: &[u8] = b"chummer-rs/campaign/2";
 
 /// Version of this crate's campaign protocol messages, sent in [`Hello`]
 /// and [`Welcome`].
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Largest frame on campaign streams (snapshots may be big).
 pub const MAX_CAMPAIGN_FRAME: usize = 16 * MAX_FRAME;
+
+const HELLO_DOMAIN: &[u8] = b"chummer-rs/campaign-hello/2\0";
 
 /// First message from a client.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hello {
     pub campaign_id: CampaignId,
-    /// Needed the first time; members are known by their node id afterwards.
-    pub invite_token: Option<InviteToken>,
+    /// The public half of the member key from the invite link. Members the
+    /// GM added by node id have none.
+    pub member_key: Option<PublicKey>,
     pub client_version: u32,
+}
+
+/// The host's answer to [`Hello`]: sign this.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Challenge {
+    pub nonce: [u8; 32],
+}
+
+/// The client's answer to the [`Challenge`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HelloProof {
+    /// The member key's signature over [`hello_message`]; `None` without
+    /// a member key.
+    pub sig: Option<Signature>,
+}
+
+/// What the member key signs in the handshake: the campaign, the host,
+/// the client's node id (proven by QUIC, so the proof cannot be used by
+/// another node) and the host's fresh nonce (so it cannot be replayed).
+pub fn hello_message(campaign: &CampaignId, host: &EndpointId, client: &EndpointId, nonce: &[u8; 32]) -> Vec<u8> {
+    let mut m = Vec::with_capacity(HELLO_DOMAIN.len() + 16 + 64 + 32);
+    m.extend_from_slice(HELLO_DOMAIN);
+    m.extend_from_slice(&campaign.0);
+    m.extend_from_slice(host.as_bytes());
+    m.extend_from_slice(client.as_bytes());
+    m.extend_from_slice(nonce);
+    m
 }
 
 /// The host let the client in.
@@ -55,13 +91,46 @@ pub struct Hello {
 pub struct Welcome {
     pub campaign_id: CampaignId,
     pub role: Role,
+    /// The name the GM gave this member's invite ("Anna").
+    pub label: String,
     pub server_version: u32,
+}
+
+/// Why the host refused a client.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+pub enum DenyReason {
+    #[error("the GM's app does not host this campaign")]
+    NoSuchCampaign,
+    #[error("you are not invited to this campaign; ask the GM for an invite link")]
+    NotInvited,
+    #[error("this invite link was already used on another device; ask the GM to issue you a new link")]
+    Claimed,
+    #[error("the GM revoked this invite")]
+    Revoked,
+    #[error("this invite link has expired; ask the GM for a new one")]
+    Expired,
+    #[error("the GM replaced this invite link with a newer one; use the new link")]
+    Superseded,
+    #[error("the invite key could not be proven")]
+    BadProof,
+    #[error("the GM's app speaks campaign protocol {server}, this app {client}; update chummer-rs")]
+    Version { client: u32, server: u32 },
+    #[error("{0}")]
+    Other(String),
+}
+
+impl DenyReason {
+    /// The refusal holds until the GM does something (a new link):
+    /// trying again, or mailing, does not help.
+    pub fn is_final(&self) -> bool {
+        !matches!(self, DenyReason::Other(_))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HelloReply {
     Welcome(Welcome),
-    Denied { reason: String },
+    Denied(DenyReason),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,12 +153,15 @@ pub struct Push(pub Vec<u8>);
 
 /// What the host application decides. Implemented by the sync layer.
 pub trait CampaignHandler: Send + Sync + std::fmt::Debug + 'static {
-    /// Admit or refuse `peer`. Returning `Err(reason)` sends `Denied`.
+    /// Admit or refuse `peer`. `member` is the member key the peer proved
+    /// (`hello.member_key`, checked). Returning `Err(reason)` sends
+    /// `Denied`.
     fn hello(
         &self,
         peer: EndpointId,
         hello: &Hello,
-    ) -> impl Future<Output = Result<Welcome, String>> + Send;
+        member: Option<PublicKey>,
+    ) -> impl Future<Output = Result<Welcome, DenyReason>> + Send;
 
     /// Handle a submission from an admitted peer. `Err` becomes
     /// [`Response::Error`]; rejections that the client should show belong in
@@ -118,6 +190,8 @@ struct Session {
 #[derive(Debug)]
 pub struct CampaignHost<H> {
     handler: Arc<H>,
+    /// This host's node id (what clients sign in the handshake).
+    me: EndpointId,
     sessions: Arc<Mutex<HashMap<EndpointId, Session>>>,
 }
 
@@ -125,15 +199,18 @@ impl<H> Clone for CampaignHost<H> {
     fn clone(&self) -> Self {
         CampaignHost {
             handler: self.handler.clone(),
+            me: self.me,
             sessions: self.sessions.clone(),
         }
     }
 }
 
 impl<H: CampaignHandler> CampaignHost<H> {
-    pub fn new(handler: H) -> Self {
+    /// A host for `handler` on the endpoint with id `me`.
+    pub fn new(handler: H, me: EndpointId) -> Self {
         CampaignHost {
             handler: Arc::new(handler),
+            me,
             sessions: Arc::default(),
         }
     }
@@ -181,9 +258,31 @@ impl<H: CampaignHandler> CampaignHost<H> {
 
     async fn serve(&self, conn: Connection) -> Result<(), NetError> {
         let peer = conn.remote_id();
+        let me = self.me;
         let (mut send, mut recv) = conn.accept_bi().await.map_err(NetError::connection)?;
         let hello: Hello = read_frame(&mut recv, MAX_FRAME).await?;
-        let role = match self.handler.hello(peer, &hello).await {
+        let nonce: [u8; 32] = {
+            use crypto_box::aead::rand_core::RngCore;
+            let mut n = [0u8; 32];
+            crypto_box::aead::OsRng.fill_bytes(&mut n);
+            n
+        };
+        write_frame(&mut send, &Challenge { nonce }, MAX_FRAME).await?;
+        let proof: HelloProof = read_frame(&mut recv, MAX_FRAME).await?;
+        let verdict = if hello.client_version != PROTOCOL_VERSION {
+            Err(DenyReason::Version { client: hello.client_version, server: PROTOCOL_VERSION })
+        } else {
+            match (hello.member_key, proof.sig) {
+                (None, _) => Ok(None),
+                (Some(k), Some(sig)) if k.verify(&hello_message(&hello.campaign_id, &me, &peer, &nonce), &sig).is_ok() => Ok(Some(k)),
+                (Some(_), _) => Err(DenyReason::BadProof),
+            }
+        };
+        let verdict = match verdict {
+            Ok(member) => self.handler.hello(peer, &hello, member).await,
+            Err(e) => Err(e),
+        };
+        let role = match verdict {
             Ok(welcome) => {
                 let role = welcome.role;
                 write_frame(&mut send, &HelloReply::Welcome(welcome), MAX_FRAME).await?;
@@ -191,7 +290,7 @@ impl<H: CampaignHandler> CampaignHost<H> {
                 role
             }
             Err(reason) => {
-                write_frame(&mut send, &HelloReply::Denied { reason }, MAX_FRAME).await?;
+                write_frame(&mut send, &HelloReply::Denied(reason), MAX_FRAME).await?;
                 send.finish().map_err(NetError::connection)?;
                 // Give the reply time to arrive, then hang up.
                 let _ = tokio::time::timeout(Duration::from_secs(5), conn.closed()).await;
@@ -272,25 +371,31 @@ pub struct CampaignClient {
 }
 
 impl CampaignClient {
-    /// Connects to `host`, says hello, and returns the client and the
+    /// Connects to `host`, says hello to `campaign` (proving `member`, the
+    /// invite's member key, when given), and returns the client and the
     /// stream of pushes from the host. The receiver ends when the
     /// connection does.
     pub async fn join(
         endpoint: &Endpoint,
         host: impl Into<EndpointAddr>,
-        hello: Hello,
+        campaign: CampaignId,
+        member: Option<&SecretKey>,
     ) -> Result<(CampaignClient, mpsc::Receiver<Vec<u8>>), NetError> {
         let conn = endpoint
             .connect(host, CAMPAIGN_ALPN)
             .await
             .map_err(|e| NetError::Connect(e.to_string()))?;
         let (mut send, mut recv) = conn.open_bi().await.map_err(NetError::connection)?;
+        let hello = Hello { campaign_id: campaign, member_key: member.map(SecretKey::public), client_version: PROTOCOL_VERSION };
         write_frame(&mut send, &hello, MAX_FRAME).await?;
+        let Challenge { nonce } = read_frame(&mut recv, MAX_FRAME).await?;
+        let sig = member.map(|m| m.sign(&hello_message(&campaign, &conn.remote_id(), &endpoint.id(), &nonce)));
+        write_frame(&mut send, &HelloProof { sig }, MAX_FRAME).await?;
         send.finish().map_err(NetError::connection)?;
         let reply: HelloReply = read_frame(&mut recv, MAX_FRAME).await?;
         let welcome = match reply {
             HelloReply::Welcome(w) => w,
-            HelloReply::Denied { reason } => {
+            HelloReply::Denied(reason) => {
                 conn.close(0u32.into(), b"");
                 return Err(NetError::Denied(reason));
             }

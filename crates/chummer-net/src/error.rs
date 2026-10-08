@@ -14,8 +14,8 @@ pub enum NetError {
     Connection(String),
     #[error(transparent)]
     Frame(#[from] FrameError),
-    #[error("the host refused to let us join: {0}")]
-    Denied(String),
+    #[error("the GM's app refused to let us join: {0}")]
+    Denied(crate::campaign::DenyReason),
     #[error("the other side reported an error: {0}")]
     Remote(String),
     #[error("protocol error: {0}")]

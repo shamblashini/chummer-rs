@@ -28,4 +28,5 @@ max_blob_bytes = 262144                  # 256 KiB per sealed message
 max_messages_per_recipient = 1000        # waiting for one recipient
 max_messages_per_sender_per_day = 2000   # uploads per sender per UTC day
 max_bytes_per_sender_per_day = 67108864  # 64 MiB per sender per UTC day
+max_messages_per_key = 200               # waiting in one mailbox, signed by one key
 expiry_secs = 2592000                    # 30 days; uncollected mail is deleted

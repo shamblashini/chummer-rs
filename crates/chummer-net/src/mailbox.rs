@@ -1,15 +1,30 @@
-//! The relay mailbox protocol, ALPN `chummer-rs/mailbox/1`, and its client.
+//! The relay mailbox protocol, ALPN `chummer-rs/mailbox/2`, and its client.
 //!
 //! The mailbox holds sealed blobs ([`crate::seal`]) for peers that are
 //! offline. Each request is one bi-directional stream: one
 //! [`MailboxRequest`], one [`MailboxResponse`].
 //!
-//! Fetch and ack carry no recipient: the relay uses the node id proven by
-//! the QUIC handshake, so a connection can only ever read and delete its own
-//! mail. The relay also counts sender quotas by that id.
+//! Fetch, ack and register carry no owner: the relay uses the node id
+//! proven by the QUIC handshake, so a connection can only ever read,
+//! delete and configure its own mailbox. The relay also counts sender
+//! quotas by that id.
+//!
+//! # Who may put mail
+//!
+//! Access is by capability, without accounts: each mailbox owner
+//! registers which public keys may put mail into its mailbox
+//! ([`MailboxRequest::Register`], one replace-the-set list per scope; the
+//! sync layer uses one scope per campaign). Every put carries a
+//! [`PutAuth`]: a signature by one of those keys over the recipient, the
+//! uploading node, a random nonce and the blob's BLAKE3 hash. The relay
+//! refuses unsigned puts, bad signatures, keys the recipient did not
+//! register, and every put to a mailbox with no registrations. Binding the
+//! recipient and the uploader stops a put from being replayed into
+//! another mailbox or by another node; the relay also refuses a nonce
+//! that is still waiting in the recipient's mailbox.
 
 use iroh::endpoint::Connection;
-use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
+use iroh::{Endpoint, EndpointAddr, EndpointId, PublicKey, SecretKey, Signature};
 use serde::{Deserialize, Serialize};
 
 use crate::frame::{read_frame, write_frame, MAX_FRAME};
@@ -17,7 +32,7 @@ use crate::seal::{self, Opened, SealError};
 use crate::NetError;
 
 /// ALPN of the mailbox protocol.
-pub const MAILBOX_ALPN: &[u8] = b"chummer-rs/mailbox/1";
+pub const MAILBOX_ALPN: &[u8] = b"chummer-rs/mailbox/2";
 
 /// Largest frame on mailbox streams.
 pub const MAX_MAILBOX_FRAME: usize = 4 * MAX_FRAME;
@@ -26,17 +41,70 @@ pub const MAX_MAILBOX_FRAME: usize = 4 * MAX_FRAME;
 /// with another request.
 pub const MAX_FETCH_BYTES: usize = 2 * MAX_FRAME;
 
+/// Most keys in one registration scope.
+pub const MAX_KEYS_PER_SCOPE: usize = 256;
+
+/// Most registration scopes per mailbox owner.
+pub const MAX_SCOPES: usize = 64;
+
+const PUT_DOMAIN: &[u8] = b"chummer-rs/mailbox-put/2\0";
+
+/// A registration scope: which list of allowed keys a [`MailboxRequest::Register`]
+/// replaces (the sync layer uses the campaign id).
+pub type Scope = [u8; 16];
+
+/// The proof that a put is allowed: signed by a key the recipient
+/// registered.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutAuth {
+    pub key: PublicKey,
+    pub nonce: [u8; 16],
+    pub sig: Signature,
+}
+
+impl PutAuth {
+    fn message(recipient: &EndpointId, uploader: &EndpointId, nonce: &[u8; 16], blob: &[u8]) -> Vec<u8> {
+        let mut m = Vec::with_capacity(PUT_DOMAIN.len() + 32 + 32 + 16 + 32);
+        m.extend_from_slice(PUT_DOMAIN);
+        m.extend_from_slice(recipient.as_bytes());
+        m.extend_from_slice(uploader.as_bytes());
+        m.extend_from_slice(nonce);
+        m.extend_from_slice(blake3::hash(blob).as_bytes());
+        m
+    }
+
+    /// Signs a put of `blob` to `recipient`, uploaded by `uploader` (the
+    /// node whose connection sends it), with `signer`.
+    pub fn sign(signer: &SecretKey, recipient: &EndpointId, uploader: &EndpointId, blob: &[u8]) -> PutAuth {
+        let nonce = crate::invite::random_id();
+        let sig = signer.sign(&PutAuth::message(recipient, uploader, &nonce, blob));
+        PutAuth { key: signer.public(), nonce, sig }
+    }
+
+    /// Whether the signature is good for this put.
+    pub fn verify(&self, recipient: &EndpointId, uploader: &EndpointId, blob: &[u8]) -> bool {
+        self.key.verify(&PutAuth::message(recipient, uploader, &self.nonce, blob), &self.sig).is_ok()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MailboxRequest {
-    /// Store `blob` for `recipient`.
+    /// Store `blob` for `recipient`, signed by a key it registered.
     Put {
         recipient: EndpointId,
         blob: Vec<u8>,
+        /// Required; `None` is refused (kept optional so the refusal is a
+        /// clear answer, not a decoding error).
+        auth: Option<PutAuth>,
     },
     /// Return up to `limit` of my oldest messages.
     Fetch { limit: u32 },
     /// Delete these messages of mine (after processing them).
     Ack { ids: Vec<u64> },
+    /// The keys that may put mail into my mailbox, for `scope`: replaces
+    /// what that scope had (idempotent; an empty list removes the scope).
+    /// Answered with [`MailboxResponse::Registered`].
+    Register { scope: Scope, keys: Vec<PublicKey> },
 }
 
 /// A stored message as delivered to its recipient.
@@ -46,9 +114,25 @@ pub struct MailItem {
     /// Who uploaded it, as seen by the relay. The proven author is the
     /// signer inside the sealed blob.
     pub sender: EndpointId,
+    /// The registered key the put was signed with.
+    pub key: PublicKey,
     /// Unix seconds when the relay received it.
     pub received: u64,
     pub blob: Vec<u8>,
+}
+
+/// The state of my mailbox, as the relay sees it (answer to a register).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailboxStatus {
+    /// Keys registered in all my scopes.
+    pub keys: u32,
+    /// Messages waiting for me.
+    pub waiting: u64,
+    /// Waiting messages per signing key.
+    pub by_key: Vec<(PublicKey, u64)>,
+    /// Puts to me the relay refused today (UTC): unsigned, bad
+    /// signatures, unregistered keys, caps.
+    pub refused_today: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +140,7 @@ pub enum MailboxResponse {
     Stored { id: u64 },
     Mail { items: Vec<MailItem>, more: bool },
     Acked { removed: u32 },
+    Registered(MailboxStatus),
     Error(MailboxError),
 }
 
@@ -68,16 +153,37 @@ pub enum MailboxError {
     RecipientFull { max: u64 },
     #[error("daily sending limit reached ({what})")]
     SenderQuota { what: String },
+    #[error("too many messages from this key are waiting ({max})")]
+    KeyFull { max: u64 },
+    #[error("the put is not signed")]
+    Unsigned,
+    #[error("the put's signature is not valid")]
+    BadSignature,
+    #[error("the recipient does not take mail signed by this key")]
+    NotAllowed,
+    #[error("this put was already stored (replayed)")]
+    Replayed,
+    #[error("too many keys or scopes ({what})")]
+    TooManyKeys { what: String },
     #[error("bad request: {0}")]
     BadRequest(String),
     #[error("relay error: {0}")]
     Internal(String),
 }
 
+impl MailboxError {
+    /// The put was refused for its key (not for space or quotas): sending
+    /// it again does not help until the recipient registers the key.
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, MailboxError::Unsigned | MailboxError::BadSignature | MailboxError::NotAllowed | MailboxError::Replayed)
+    }
+}
+
 /// A connection to a relay's mailbox.
 #[derive(Debug, Clone)]
 pub struct MailboxClient {
     conn: Connection,
+    me: EndpointId,
 }
 
 impl MailboxClient {
@@ -91,7 +197,7 @@ impl MailboxClient {
             .connect(mailbox, MAILBOX_ALPN)
             .await
             .map_err(|e| NetError::Connect(e.to_string()))?;
-        Ok(MailboxClient { conn })
+        Ok(MailboxClient { conn, me: endpoint.id() })
     }
 
     async fn request(&self, req: &MailboxRequest) -> Result<MailboxResponse, NetError> {
@@ -104,26 +210,36 @@ impl MailboxClient {
         }
     }
 
-    /// Stores an (already sealed) blob for `recipient`. Returns its id.
-    pub async fn put(&self, recipient: EndpointId, blob: Vec<u8>) -> Result<u64, NetError> {
-        match self
-            .request(&MailboxRequest::Put { recipient, blob })
-            .await?
-        {
+    /// Stores an (already sealed) blob for `recipient`, signed with
+    /// `signer` (a key `recipient` registered). Returns its id.
+    pub async fn put(&self, recipient: EndpointId, blob: Vec<u8>, signer: &SecretKey) -> Result<u64, NetError> {
+        let auth = PutAuth::sign(signer, &recipient, &self.me, &blob);
+        self.put_with(recipient, blob, Some(auth)).await
+    }
+
+    /// Stores `blob` with the given authorisation, as it is (for tests of
+    /// what the relay refuses).
+    pub async fn put_with(&self, recipient: EndpointId, blob: Vec<u8>, auth: Option<PutAuth>) -> Result<u64, NetError> {
+        match self.request(&MailboxRequest::Put { recipient, blob, auth }).await? {
             MailboxResponse::Stored { id } => Ok(id),
             other => Err(unexpected(other)),
         }
     }
 
-    /// Seals `payload` from `sender` to `recipient` and stores it.
-    pub async fn put_sealed(
-        &self,
-        sender: &SecretKey,
-        recipient: EndpointId,
-        payload: &[u8],
-    ) -> Result<u64, NetError> {
+    /// Seals `payload` from `sender` (this node's key) to `recipient` and
+    /// stores it, signed with `signer`.
+    pub async fn put_sealed(&self, sender: &SecretKey, signer: &SecretKey, recipient: EndpointId, payload: &[u8]) -> Result<u64, NetError> {
         let blob = seal::seal(sender, &recipient, payload)?;
-        self.put(recipient, blob).await
+        self.put(recipient, blob, signer).await
+    }
+
+    /// Replaces the keys that may put mail into my mailbox for `scope`
+    /// (an empty list removes the scope). Returns my mailbox's state.
+    pub async fn register(&self, scope: Scope, keys: Vec<PublicKey>) -> Result<MailboxStatus, NetError> {
+        match self.request(&MailboxRequest::Register { scope, keys }).await? {
+            MailboxResponse::Registered(s) => Ok(s),
+            other => Err(unexpected(other)),
+        }
     }
 
     /// Up to `limit` of my oldest messages, and whether there are more.
@@ -167,4 +283,24 @@ impl MailboxClient {
 
 fn unexpected(r: MailboxResponse) -> NetError {
     NetError::Protocol(format!("unexpected mailbox reply {r:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn put_auth_binds_recipient_uploader_and_blob() {
+        let signer = SecretKey::generate();
+        let (rcpt, other, up) = (SecretKey::generate().public(), SecretKey::generate().public(), SecretKey::generate().public());
+        let auth = PutAuth::sign(&signer, &rcpt, &up, b"blob");
+        assert!(auth.verify(&rcpt, &up, b"blob"));
+        assert!(!auth.verify(&other, &up, b"blob"), "replayed into another mailbox");
+        assert!(!auth.verify(&rcpt, &other, b"blob"), "uploaded by another node");
+        assert!(!auth.verify(&rcpt, &up, b"blob!"), "another blob");
+        let mut forged = auth.clone();
+        forged.key = SecretKey::generate().public();
+        assert!(!forged.verify(&rcpt, &up, b"blob"), "claims another key");
+        assert_ne!(PutAuth::sign(&signer, &rcpt, &up, b"blob").nonce, auth.nonce, "fresh nonce per put");
+    }
 }

@@ -1,4 +1,9 @@
-//! Serves the mailbox protocol (`chummer-rs/mailbox/1`) from the [`Store`].
+//! Serves the mailbox protocol (`chummer-rs/mailbox/2`) from the [`Store`].
+//!
+//! A put's signature ([`chummer_net::mailbox::PutAuth`]) is checked here
+//! against the recipient, the uploading node (proven by the handshake)
+//! and the blob; the store then checks the key against the recipient's
+//! registrations.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -73,10 +78,24 @@ impl MailboxService {
     pub fn handle(&self, peer: EndpointId, req: MailboxRequest) -> MailboxResponse {
         let now = self.clock.now();
         let result = match req {
-            MailboxRequest::Put { recipient, blob } => self
+            MailboxRequest::Put { recipient, blob, auth } => match auth {
+                None => {
+                    self.store.note_refused(recipient, now);
+                    Err(MailboxError::Unsigned)
+                }
+                Some(a) if !a.verify(&recipient, &peer, &blob) => {
+                    self.store.note_refused(recipient, now);
+                    Err(MailboxError::BadSignature)
+                }
+                Some(a) => self
+                    .store
+                    .put(peer, recipient, a.key, a.nonce, blob, now)
+                    .map(|id| MailboxResponse::Stored { id }),
+            },
+            MailboxRequest::Register { scope, keys } => self
                 .store
-                .put(peer, recipient, blob, now)
-                .map(|id| MailboxResponse::Stored { id }),
+                .register(peer, scope, &keys, now)
+                .map(MailboxResponse::Registered),
             MailboxRequest::Fetch { limit } => self
                 .store
                 .fetch(peer, limit, now)

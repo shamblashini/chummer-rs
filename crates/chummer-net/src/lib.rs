@@ -32,4 +32,4 @@ mod error;
 mod hex;
 
 pub use error::NetError;
-pub use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey};
+pub use iroh::{Endpoint, EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, Signature};

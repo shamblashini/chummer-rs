@@ -30,6 +30,24 @@ fn id() -> EndpointId {
     SecretKey::generate().public()
 }
 
+/// The key every test mailbox takes mail from.
+fn key() -> chummer_net::PublicKey {
+    SecretKey::from_bytes(&[42; 32]).public()
+}
+
+/// A put to `rcpt` (which takes mail signed by [`key`]).
+fn put(s: &Store, sender: EndpointId, rcpt: EndpointId, blob: Vec<u8>, now: u64) -> Result<u64, MailboxError> {
+    s.register(rcpt, [1; 16], &[key()], now)?;
+    s.put(sender, rcpt, key(), chummer_net::invite::random_id(), blob, now)
+}
+
+/// Lets `me` take mail from its own node key (what a test client signs
+/// with) through a mailbox connection.
+async fn open_own_mailbox(mb: &MailboxClient, me: EndpointId) -> Result<()> {
+    mb.register([1; 16], vec![me]).await?;
+    Ok(())
+}
+
 /// Opens `path`, which must not panic; returns whether it opened.
 fn opens(path: &Path) -> bool {
     match catch_unwind(AssertUnwindSafe(|| Store::open(path, Limits::default()))) {
@@ -46,7 +64,7 @@ fn damaged_database_files_are_errors_not_panics() {
     {
         let s = Store::open(&good, Limits::default()).unwrap();
         for i in 0..50u8 {
-            s.put(id(), id(), vec![i; 2000], T0).unwrap();
+            put(&s, id(), id(), vec![i; 2000], T0).unwrap();
         }
     }
     let bytes = std::fs::read(&good).unwrap();
@@ -72,7 +90,7 @@ fn damaged_database_files_are_errors_not_panics() {
             let s = Store::open(&p, Limits::default()).unwrap();
             let r = catch_unwind(AssertUnwindSafe(|| {
                 let b = id();
-                let _ = s.put(id(), b, vec![1], T0);
+                let _ = put(&s, id(), b, vec![1], T0);
                 let _ = s.fetch(b, 10, T0);
                 let _ = s.purge(T0 + 40 * DAY);
             }));
@@ -105,7 +123,7 @@ fn unreadable_database_is_an_error() {
 #[test]
 fn many_writers_at_once_get_unique_ids() {
     let d = dir("threads");
-    let limits = Limits { max_messages_per_recipient: 10_000, ..Limits::default() };
+    let limits = Limits { max_messages_per_recipient: 10_000, max_messages_per_key: 10_000, ..Limits::default() };
     let s = Arc::new(Store::open(&d.join("m.redb"), limits).unwrap());
     let bob = id();
     let threads: Vec<_> = (0..8)
@@ -113,7 +131,7 @@ fn many_writers_at_once_get_unique_ids() {
             let s = s.clone();
             std::thread::spawn(move || {
                 let me = id();
-                (0..40).map(|i| s.put(me, bob, vec![i; 100], T0).unwrap()).collect::<Vec<u64>>()
+                (0..40).map(|i| put(&s, me, bob, vec![i; 100], T0).unwrap()).collect::<Vec<u64>>()
             })
         })
         .collect();
@@ -136,7 +154,7 @@ fn big_mail_is_fetched_in_pages_exactly_once() {
     let s = Store::open(&d.join("m.redb"), limits).unwrap();
     let bob = id();
     for i in 0..7u8 {
-        s.put(id(), bob, vec![i; 900 * 1024], T0).unwrap();
+        put(&s, id(), bob, vec![i; 900 * 1024], T0).unwrap();
     }
     let mut got = Vec::new();
     loop {
@@ -160,16 +178,16 @@ fn clock_jumps_neither_lose_nor_resurrect_mail() {
     let limits = Limits { expiry_secs: 10 * DAY, max_messages_per_sender_per_day: 3, ..Limits::default() };
     let s = Store::open(&d.join("m.redb"), limits).unwrap();
     let (a, b) = (id(), id());
-    s.put(a, b, vec![1], T0 + DAY).unwrap();
+    put(&s, a, b, vec![1], T0 + DAY).unwrap();
     // The clock goes back a day (NTP step): the mail is still there and
     // does not count as expired.
     assert_eq!(s.fetch(b, 10, T0).unwrap().0.len(), 1);
     assert_eq!(s.purge(T0).unwrap(), 0);
     // Back in yesterday the daily quota is yesterday's.
     for _ in 0..3 {
-        s.put(a, id(), vec![0], T0).unwrap();
+        put(&s, a, id(), vec![0], T0).unwrap();
     }
-    assert!(matches!(s.put(a, id(), vec![0], T0), Err(MailboxError::SenderQuota { .. })));
+    assert!(matches!(put(&s, a, id(), vec![0], T0), Err(MailboxError::SenderQuota { .. })));
     // Then far forward: expired, not delivered, purged once.
     assert!(s.fetch(b, 10, T0 + 400 * DAY).unwrap().0.is_empty());
     assert_eq!(s.purge(T0 + 400 * DAY).unwrap(), 4);
@@ -253,7 +271,8 @@ async fn hostile_frames_do_not_hurt_the_mailbox() -> Result<()> {
     let (_idle_send, _idle_recv) = conn.open_bi().await?;
     let mb = MailboxClient::connect(&ep, dial_addr(mailbox, None)).await?;
     let me = ep.id();
-    tokio::time::timeout(WAIT, mb.put_sealed(&key, me, b"still works")).await??;
+    open_own_mailbox(&mb, me).await?;
+    tokio::time::timeout(WAIT, mb.put_sealed(&key, &key, me, b"still works")).await??;
     let (items, _) = tokio::time::timeout(WAIT, mb.fetch_opened(&key, 10)).await??;
     assert_eq!(items.len(), 1);
     ep.close().await;
@@ -277,7 +296,8 @@ async fn relay_restart_keeps_mail_and_old_connections_fail_fast() -> Result<()> 
     let (key, ep) = client(&relay).await?;
     let me = ep.id();
     let mb = MailboxClient::connect(&ep, dial_addr(mailbox, None)).await?;
-    let first = mb.put_sealed(&key, me, b"before the restart").await?;
+    open_own_mailbox(&mb, me).await?;
+    let first = mb.put_sealed(&key, &key, me, b"before the restart").await?;
 
     relay.shutdown().await?;
     let relay = RelayNode::spawn(config(&d, https, http, qad), clock).await?;
@@ -293,6 +313,11 @@ async fn relay_restart_keeps_mail_and_old_connections_fail_fast() -> Result<()> 
     let (items, _) = mb.fetch_opened(&key, 10).await?;
     assert_eq!(items.iter().map(|(i, _)| i.id).collect::<Vec<_>>(), [first]);
     assert_eq!(items[0].1.as_ref().unwrap().payload, b"before the restart");
+    // The registration survived the restart too: mail still gets in, and
+    // a stranger's still does not.
+    mb.put_sealed(&key, &key, me, b"after the restart").await?;
+    let stranger = SecretKey::generate();
+    assert!(matches!(mb.put_sealed(&key, &stranger, me, b"spam").await, Err(chummer_net::NetError::Mailbox(MailboxError::NotAllowed))));
     ep.close().await;
     relay.shutdown().await?;
     std::fs::remove_dir_all(&d)?;
@@ -308,7 +333,7 @@ fn damaged_database_is_moved_aside_on_start() {
     let p = d.join("mailbox.redb");
     {
         let s = Store::open(&p, Limits::default()).unwrap();
-        s.put(id(), id(), vec![1; 100], T0).unwrap();
+        put(&s, id(), id(), vec![1; 100], T0).unwrap();
     }
     let mut b = std::fs::read(&p).unwrap();
     for i in (0..b.len()).step_by(509) {
@@ -321,7 +346,7 @@ fn damaged_database_is_moved_aside_on_start() {
     assert_eq!(std::fs::read(&moved).unwrap(), b, "the damaged file is kept");
     assert!(s.is_empty().unwrap());
     let bob = id();
-    s.put(id(), bob, vec![2], T0).unwrap();
+    put(&s, id(), bob, vec![2], T0).unwrap();
     assert_eq!(s.fetch(bob, 10, T0).unwrap().0.len(), 1);
     drop(s);
     // A healthy database is opened as it is.
@@ -400,14 +425,14 @@ fn mailbox_works_again_after_the_disk_was_full() {
     let opener: chummer_relay::store::Opener = Box::new(move || redb::Database::builder().create_with_backend(backend.clone()));
     let s = Store::open_with(opener, Limits::default()).unwrap();
     let bob = id();
-    let first = s.put(id(), bob, vec![1; 1000], T0).unwrap();
+    let first = put(&s, id(), bob, vec![1; 1000], T0).unwrap();
     flaky.full.store(true, std::sync::atomic::Ordering::SeqCst);
     for _ in 0..3 {
-        assert!(matches!(s.put(id(), bob, vec![2; 50_000], T0), Err(MailboxError::Internal(_))));
+        assert!(matches!(put(&s, id(), bob, vec![2; 50_000], T0), Err(MailboxError::Internal(_))));
     }
     // The disk has room again.
     flaky.full.store(false, std::sync::atomic::Ordering::SeqCst);
-    let second = s.put(id(), bob, vec![3; 1000], T0).expect("works again without a restart");
+    let second = put(&s, id(), bob, vec![3; 1000], T0).expect("works again without a restart");
     let (items, _) = s.fetch(bob, 10, T0).unwrap();
     assert_eq!(items.iter().map(|i| i.id).collect::<Vec<_>>(), [first, second]);
     assert_eq!(s.ack(bob, &[first, second]).unwrap(), 2);

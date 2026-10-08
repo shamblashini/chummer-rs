@@ -1,20 +1,28 @@
-//! Campaign ids, invite tokens and invite links.
+//! Campaign ids, member keys and invite links.
 //!
 //! An invite link is
-//! `chummer-rs://join/<gm-node-id>?campaign=<id>&invite=<token>`, with an
-//! optional `&relay=<url>` hint when the GM uses a relay that is not in the
-//! player's default list. Ids and tokens are 128 random bits written as 32
-//! lower-case hex characters; the node id is iroh's 64-character hex form.
+//! `chummer-rs://join/<gm-node-id>?campaign=<id>&member=<secret>&gm=<key>`,
+//! with an optional `&relay=<url>` hint when the GM uses a relay that is not
+//! in the player's default list.
 //!
-//! The host keeps an [`InviteStore`]: which tokens are valid and the role
-//! each one grants. A token stays valid until the GM revokes it, so one link
-//! can be posted to a whole group.
+//! - `campaign`: 128 random bits, 32 lower-case hex characters.
+//! - `member`: the invite's member key, an ed25519 secret (64 hex
+//!   characters). Each invite has its own; possessing it is the permission
+//!   to join (live: the campaign protocol's hello proves it; by mail: the
+//!   mailed join carries a proof) and to put mail into the GM's relay
+//!   mailbox. The first node that joins with it claims the invite; after
+//!   that it only admits that node.
+//! - `gm`: the public half of the GM's campaign key
+//!   ([`derive_campaign_key`]). The player's app registers it with its own
+//!   relay mailbox, so the GM can mail it before the first live contact.
+//!
+//! Links without `member` are for members the GM added by node id; they
+//! prove themselves by their node key.
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
-use iroh::{EndpointId, RelayUrl};
+use iroh::{EndpointId, PublicKey, RelayUrl, SecretKey};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// URL scheme of invite links.
@@ -87,8 +95,9 @@ id16!(
     CampaignId
 );
 id16!(
-    /// A secret that lets a new player join a campaign.
-    InviteToken
+    /// Identifies one invite (a member slot) in a campaign. It stays the
+    /// same when the GM issues the member a new link.
+    InviteId
 );
 
 /// What a member of a campaign may do.
@@ -98,6 +107,86 @@ pub enum Role {
     Gm,
     /// Sees and edits only their own characters.
     Player,
+}
+
+/// The secret half of an invite's member key, as carried in the link.
+/// Its `Debug` form does not show the secret.
+#[derive(Clone, PartialEq, Eq)]
+pub struct MemberSecret(pub [u8; 32]);
+
+impl MemberSecret {
+    /// A new random member key.
+    pub fn random() -> MemberSecret {
+        MemberSecret(SecretKey::generate().to_bytes())
+    }
+
+    pub fn key(&self) -> SecretKey {
+        SecretKey::from_bytes(&self.0)
+    }
+
+    pub fn public(&self) -> PublicKey {
+        self.key().public()
+    }
+}
+
+impl fmt::Debug for MemberSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MemberSecret(public {})", self.public().fmt_short())
+    }
+}
+
+impl fmt::Display for MemberSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&crate::hex::encode(&self.0))
+    }
+}
+
+impl FromStr for MemberSecret {
+    type Err = InviteError;
+    fn from_str(s: &str) -> Result<Self, InviteError> {
+        crate::hex::decode::<32>(s.trim()).map(MemberSecret).ok_or(InviteError::BadId("member key"))
+    }
+}
+
+impl Serialize for MemberSecret {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for MemberSecret {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s: std::borrow::Cow<'de, str> = Deserialize::deserialize(d)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// The GM's campaign key of `generation`: what the GM's app signs mailbox
+/// puts to players with. Derived from the GM's node key (BLAKE3
+/// `derive_key`), so it needs no storage and `chummer-authority` can make
+/// links without the running host; a new generation is a new key
+/// (rotation).
+pub fn derive_campaign_key(gm: &SecretKey, campaign: CampaignId, generation: u32) -> SecretKey {
+    let mut material = Vec::with_capacity(32 + 16 + 4);
+    material.extend_from_slice(&gm.to_bytes());
+    material.extend_from_slice(&campaign.0);
+    material.extend_from_slice(&generation.to_be_bytes());
+    SecretKey::from_bytes(&blake3::derive_key("chummer-rs campaign key v1", &material))
+}
+
+const CLAIM_DOMAIN: &[u8] = b"chummer-rs/mail-claim/2\0";
+
+/// What a member key signs to join by mail (when the GM is offline): the
+/// campaign, the GM's node and the joining node. The mail is sealed to
+/// the GM and signed by the joining node, so only the GM reads the proof
+/// and it is no good to another node.
+pub fn claim_message(campaign: &CampaignId, host: &EndpointId, node: &EndpointId) -> Vec<u8> {
+    let mut m = Vec::with_capacity(CLAIM_DOMAIN.len() + 16 + 64);
+    m.extend_from_slice(CLAIM_DOMAIN);
+    m.extend_from_slice(&campaign.0);
+    m.extend_from_slice(host.as_bytes());
+    m.extend_from_slice(node.as_bytes());
+    m
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -114,6 +203,8 @@ pub enum InviteError {
     BadId(&'static str),
     #[error("the invite link's relay is not a valid URL")]
     BadRelay,
+    #[error("this is an invite link of an older chummer-rs version; ask your GM for a new one")]
+    OldLink,
 }
 
 /// A parsed `chummer-rs://join/...` link.
@@ -122,21 +213,22 @@ pub struct InviteLink {
     /// The GM's node id: the host to dial.
     pub host: EndpointId,
     pub campaign: CampaignId,
-    /// Absent for links that only point at a campaign (members rejoining).
-    pub invite: Option<InviteToken>,
+    /// The invite's member key. Absent for members the GM added by node id.
+    pub member: Option<MemberSecret>,
+    /// The GM's campaign key (public), for the player's mailbox.
+    pub gm_key: Option<PublicKey>,
     /// The GM's home relay, when it may not be in the player's relay list.
     pub relay: Option<RelayUrl>,
 }
 
 impl fmt::Display for InviteLink {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{SCHEME}://join/{}?campaign={}",
-            self.host, self.campaign
-        )?;
-        if let Some(t) = &self.invite {
-            write!(f, "&invite={t}")?;
+        write!(f, "{SCHEME}://join/{}?campaign={}", self.host, self.campaign)?;
+        if let Some(m) = &self.member {
+            write!(f, "&member={m}")?;
+        }
+        if let Some(k) = &self.gm_key {
+            write!(f, "&gm={k}")?;
         }
         if let Some(r) = &self.relay {
             let enc: String = url::form_urlencoded::byte_serialize(r.as_str().as_bytes()).collect();
@@ -158,84 +250,20 @@ impl FromStr for InviteLink {
         if host.is_empty() {
             return Err(InviteError::MissingHost);
         }
-        let host = host
-            .parse::<EndpointId>()
-            .map_err(|_| InviteError::BadHost)?;
-        let (mut campaign, mut invite, mut relay) = (None, None, None);
+        let host = host.parse::<EndpointId>().map_err(|_| InviteError::BadHost)?;
+        let (mut campaign, mut member, mut gm_key, mut relay) = (None, None, None, None);
         for (k, v) in url.query_pairs() {
             match &*k {
                 "campaign" => campaign = Some(v.parse::<CampaignId>()?),
-                "invite" => invite = Some(v.parse::<InviteToken>()?),
+                "member" => member = Some(v.parse::<MemberSecret>()?),
+                "gm" => gm_key = Some(v.parse::<PublicKey>().map_err(|_| InviteError::BadId("GM key"))?),
                 "relay" => relay = Some(v.parse::<RelayUrl>().map_err(|_| InviteError::BadRelay)?),
+                // Shared tokens of the first protocol: no longer valid.
+                "invite" => return Err(InviteError::OldLink),
                 _ => {} // unknown keys: ignored, for forward compatibility
             }
         }
-        Ok(InviteLink {
-            host,
-            campaign: campaign.ok_or(InviteError::MissingCampaign)?,
-            invite,
-            relay,
-        })
-    }
-}
-
-/// One invite the host has handed out.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Invite {
-    pub role: Role,
-    /// Free text for the GM ("Thursday group").
-    pub label: String,
-    /// Unix seconds.
-    pub created: u64,
-}
-
-/// The host's valid invite tokens and the role each one grants.
-///
-/// Serialisable (JSON, TOML or postcard) so the host can keep it with the
-/// campaign.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InviteStore {
-    invites: BTreeMap<InviteToken, Invite>,
-}
-
-impl InviteStore {
-    /// Makes a new random token granting `role`.
-    pub fn create(&mut self, role: Role, label: impl Into<String>, now_unix: u64) -> InviteToken {
-        let token = InviteToken::random();
-        self.invites.insert(
-            token,
-            Invite {
-                role,
-                label: label.into(),
-                created: now_unix,
-            },
-        );
-        token
-    }
-
-    /// Adds an invite made elsewhere (a token written to the campaign's
-    /// invites file by `chummer-authority invite`). Returns false when the
-    /// token was already known.
-    pub fn insert(&mut self, token: InviteToken, invite: Invite) -> bool {
-        if self.invites.contains_key(&token) {
-            return false;
-        }
-        self.invites.insert(token, invite);
-        true
-    }
-
-    /// The role `token` grants, if it is valid.
-    pub fn redeem(&self, token: &InviteToken) -> Option<Role> {
-        self.invites.get(token).map(|i| i.role)
-    }
-
-    /// Invalidates `token`. Returns whether it existed.
-    pub fn revoke(&mut self, token: &InviteToken) -> bool {
-        self.invites.remove(token).is_some()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&InviteToken, &Invite)> {
-        self.invites.iter()
+        Ok(InviteLink { host, campaign: campaign.ok_or(InviteError::MissingCampaign)?, member, gm_key, relay })
     }
 }
 
@@ -249,38 +277,19 @@ mod tests {
 
     #[test]
     fn format_and_parse() {
-        let link = InviteLink {
-            host: host(),
-            campaign: CampaignId([0x11; 16]),
-            invite: Some(InviteToken([0xab; 16])),
-            relay: None,
-        };
+        let gm = SecretKey::from_bytes(&[9; 32]);
+        let link = InviteLink { host: host(), campaign: CampaignId([0x11; 16]), member: Some(MemberSecret([0xab; 32])), gm_key: Some(gm.public()), relay: None };
         let s = link.to_string();
-        assert_eq!(
-            s,
-            format!(
-                "chummer-rs://join/{}?campaign={}&invite={}",
-                host(),
-                "11".repeat(16),
-                "ab".repeat(16)
-            )
-        );
+        assert_eq!(s, format!("chummer-rs://join/{}?campaign={}&member={}&gm={}", host(), "11".repeat(16), "ab".repeat(32), gm.public()));
         assert_eq!(s.parse::<InviteLink>().unwrap(), link);
+        assert!(!format!("{link:?}").contains(&"ab".repeat(32)), "Debug hides the member secret");
     }
 
     #[test]
     fn relay_hint_round_trips() {
-        let link = InviteLink {
-            host: host(),
-            campaign: CampaignId::random(),
-            invite: None,
-            relay: Some("https://relay.example.org:8443/".parse().unwrap()),
-        };
+        let link = InviteLink { host: host(), campaign: CampaignId::random(), member: None, gm_key: None, relay: Some("https://relay.example.org:8443/".parse().unwrap()) };
         let s = link.to_string();
-        assert!(
-            s.contains("relay=https%3A%2F%2Frelay.example.org%3A8443%2F"),
-            "{s}"
-        );
+        assert!(s.contains("relay=https%3A%2F%2Frelay.example.org%3A8443%2F"), "{s}");
         assert_eq!(s.parse::<InviteLink>().unwrap(), link);
     }
 
@@ -288,60 +297,33 @@ mod tests {
     fn rejects_bad_links() {
         let id = host();
         let c = "11".repeat(16);
-        assert_eq!(
-            "https://x/join".parse::<InviteLink>(),
-            Err(InviteError::NotALink)
-        );
-        assert_eq!(
-            "chummer-rs://open/abc".parse::<InviteLink>(),
-            Err(InviteError::NotALink)
-        );
-        assert_eq!(
-            format!("chummer-rs://join/?campaign={c}").parse::<InviteLink>(),
-            Err(InviteError::MissingHost)
-        );
-        assert_eq!(
-            format!("chummer-rs://join/nothex?campaign={c}").parse::<InviteLink>(),
-            Err(InviteError::BadHost)
-        );
-        assert_eq!(
-            format!("chummer-rs://join/{id}").parse::<InviteLink>(),
-            Err(InviteError::MissingCampaign)
-        );
-        assert_eq!(
-            format!("chummer-rs://join/{id}?campaign=12").parse::<InviteLink>(),
-            Err(InviteError::BadId("CampaignId"))
-        );
-        assert_eq!(
-            format!("chummer-rs://join/{id}?campaign={c}&invite=zz").parse::<InviteLink>(),
-            Err(InviteError::BadId("InviteToken"))
-        );
+        assert_eq!("https://x/join".parse::<InviteLink>(), Err(InviteError::NotALink));
+        assert_eq!("chummer-rs://open/abc".parse::<InviteLink>(), Err(InviteError::NotALink));
+        assert_eq!(format!("chummer-rs://join/?campaign={c}").parse::<InviteLink>(), Err(InviteError::MissingHost));
+        assert_eq!(format!("chummer-rs://join/nothex?campaign={c}").parse::<InviteLink>(), Err(InviteError::BadHost));
+        assert_eq!(format!("chummer-rs://join/{id}").parse::<InviteLink>(), Err(InviteError::MissingCampaign));
+        assert_eq!(format!("chummer-rs://join/{id}?campaign=12").parse::<InviteLink>(), Err(InviteError::BadId("CampaignId")));
+        assert_eq!(format!("chummer-rs://join/{id}?campaign={c}&member=zz").parse::<InviteLink>(), Err(InviteError::BadId("member key")));
+        assert_eq!(format!("chummer-rs://join/{id}?campaign={c}&invite={}", "ab".repeat(16)).parse::<InviteLink>(), Err(InviteError::OldLink));
         // Unknown keys are ignored.
-        assert!(format!("chummer-rs://join/{id}?campaign={c}&future=1")
-            .parse::<InviteLink>()
-            .is_ok());
+        assert!(format!("chummer-rs://join/{id}?campaign={c}&future=1").parse::<InviteLink>().is_ok());
     }
 
     #[test]
-    fn tokens_are_random() {
-        assert_ne!(InviteToken::random(), InviteToken::random());
+    fn ids_and_member_keys_are_random() {
+        assert_ne!(InviteId::random(), InviteId::random());
+        assert_ne!(MemberSecret::random(), MemberSecret::random());
     }
 
     #[test]
-    fn store_grants_roles_until_revoked() {
-        let mut store = InviteStore::default();
-        let p = store.create(Role::Player, "group", 100);
-        let g = store.create(Role::Gm, "co-gm", 100);
-        assert_eq!(store.redeem(&p), Some(Role::Player));
-        assert_eq!(store.redeem(&g), Some(Role::Gm));
-        assert_eq!(store.redeem(&InviteToken::random()), None);
-        // Survives a JSON-like round trip via postcard and keeps working.
-        let bytes = postcard::to_stdvec(&store).unwrap();
-        let mut back: InviteStore = postcard::from_bytes(&bytes).unwrap();
-        assert_eq!(back, store);
-        assert!(back.revoke(&p));
-        assert!(!back.revoke(&p));
-        assert_eq!(back.redeem(&p), None);
-        assert_eq!(back.iter().count(), 1);
+    fn campaign_keys_are_per_campaign_and_generation() {
+        let gm = SecretKey::from_bytes(&[3; 32]);
+        let (a, b) = (CampaignId([1; 16]), CampaignId([2; 16]));
+        let k = derive_campaign_key(&gm, a, 0).public();
+        assert_eq!(k, derive_campaign_key(&gm, a, 0).public(), "deterministic");
+        assert_ne!(k, derive_campaign_key(&gm, b, 0).public());
+        assert_ne!(k, derive_campaign_key(&gm, a, 1).public());
+        assert_ne!(k, gm.public());
+        assert_ne!(k, derive_campaign_key(&SecretKey::from_bytes(&[4; 32]), a, 0).public());
     }
 }
