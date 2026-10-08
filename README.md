@@ -635,7 +635,11 @@ for play-by-post. Each installation's identity is its node key
    connection, their joins and their mail) and **Remove**. Revoke, New
    link and Remove ask first. Select a character in the roster and set
    **Played by** to give it to a player. NPCs, critters and other
-   characters you keep are never sent to players.
+   characters you keep are never sent to players. **New campaign key…**
+   (next to New invite…) makes a new key for your mail to the players,
+   after a confirmation that explains it; it is only needed if the old
+   one may be known to someone it should not. Players get the new key
+   with their next sync (`chummer-authority rotate-key` does the same).
 
    ![Players & invites, Workspace dark: a new link for Carla, Anna online, Bert offline, a revoked and an expired invite](docs/screenshots/workspace-gm-invites-dark.png)
    ![Players & invites, Workspace light: revoking Bert asks first](docs/screenshots/workspace-gm-invites-light.png)

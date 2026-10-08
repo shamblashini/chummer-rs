@@ -689,7 +689,8 @@ fn workspace_home_and_campaign() {
 
 /// The GM's Players & invites panel, in both layouts: an online campaign
 /// (not served), a new invite with a character to give, its row, a new
-/// link and a revoke, each through the panel's own buttons.
+/// link, a revoke and a new campaign key, each through the panel's own
+/// buttons.
 #[test]
 fn players_and_invites_panel() {
     for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark, ThemeKind::WorkspaceLight] {
@@ -737,20 +738,29 @@ fn players_and_invites_panel() {
         let key = |h: &Harness| h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().invite(&invites[0].1).unwrap().key();
         let before = key(&h);
         h.click_text("New link");
-        h.frames(3);
+        // (The question scrolls into view: let the scrolling finish.)
+        h.frames(30);
         assert!(h.find_where(|t| t.starts_with("Give Anna a new link?")).is_some(), "{:?}", h.on_screen());
         h.click_text("New link");
         h.frames(2);
         assert_ne!(key(&h), before);
         // Revoke, confirmed.
         h.click_text("Revoke");
-        h.frames(3);
+        h.frames(30);
         assert!(h.find_where(|t| t.starts_with("Revoke Anna?")).is_some(), "{:?}", h.on_screen());
         h.click_text("Revoke");
         h.frames(2);
         let state = h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().invite(&invites[0].1).unwrap().state(0);
         assert!(matches!(state, chummer_sync::invites::InviteState::Revoked { .. }), "{state:?}");
         assert!(h.find_text("revoked").is_some(), "{:?}", h.on_screen());
+        // A new campaign key, after the explanation.
+        h.click_text("New campaign key…");
+        h.frames(3);
+        assert!(h.find_where(|t| t.starts_with("Make a new campaign key (now generation 0)?")).is_some(), "{:?}", h.on_screen());
+        h.click_text("New campaign key");
+        h.frames(2);
+        assert_eq!(h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().key_generation(), 1);
+        assert!(h.find_where(|t| t.starts_with("The campaign key is now generation 1")).is_some() || h.app.status.as_ref().is_some_and(|(m, _)| m.starts_with("The campaign key is now generation 1")), "{:?}", h.app.status);
         sizes(&mut h, FRAMES);
         assert!(h.app.close_campaign(true));
         h.frames(1);
