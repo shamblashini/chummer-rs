@@ -138,6 +138,19 @@ impl Pbp {
         Ok(r)
     }
 
+    /// The first contact by mail: the GM's mailbox takes the member's
+    /// key, the player's app registers the GM's key and mails a join, the
+    /// GM answers with the character.
+    async fn join_by_mail(&self) -> Result<()> {
+        self.gm_mail().await?;
+        assert_eq!(self.player.sync().await, SyncMode::Mailbox);
+        let r = self.gm_mail().await?;
+        assert_eq!(r.handled, 1, "the join: {r:?}");
+        assert_eq!(self.player.sync().await, SyncMode::Mailbox);
+        assert_eq!(self.player.replica().version(&self.c), Some(0));
+        Ok(())
+    }
+
     fn converged(&self) -> bool {
         let r = self.player.replica();
         let a = self.host.authority();
@@ -159,8 +172,7 @@ impl Pbp {
 async fn play_by_post_survives_a_relay_restart() -> Result<()> {
     let mut t = pbp("restart", |_, _| {}).await?;
     let c = t.c.clone();
-    t.gm_mail().await?;
-    assert_eq!(t.player.sync().await, SyncMode::Mailbox);
+    t.join_by_mail().await?;
     t.player.edit(&c, gain(1.0, "before")).await?;
     assert_eq!(t.player.sync().await, SyncMode::Mailbox);
 
@@ -191,8 +203,7 @@ async fn mail_lost_at_the_relay_is_sent_again() -> Result<()> {
     })
     .await?;
     let c = t.c.clone();
-    t.gm_mail().await?;
-    assert_eq!(t.player.sync().await, SyncMode::Mailbox);
+    t.join_by_mail().await?;
     t.player.edit(&c, gain(4.0, "lost in the mail")).await?;
     assert_eq!(t.player.sync().await, SyncMode::Mailbox);
     assert!(t.player.replica().outbox(&c)[0].mailed);

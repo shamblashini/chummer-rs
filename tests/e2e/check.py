@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Checks one end-to-end scenario's state.
 
-usage: check.py <authority-inspect.json> <status-dir> <start-karma> <strict|converge>
+usage: check.py <authority-inspect.json> <status-dir> <start-karma> <strict|converge> [skip]
+
+`skip`: comma-separated player names left out (a revoked player).
 
 Converged: every player's copy has the authority's version and hash, an
 empty outbox and no pending resync. Strict also checks that no op was lost
@@ -13,6 +15,7 @@ import json, os, sys
 
 auth = json.load(open(sys.argv[1]))
 status_dir, start, mode = sys.argv[2], int(sys.argv[3]), sys.argv[4]
+skip = set(filter(None, (sys.argv[5] if len(sys.argv) > 5 else "").split(",")))
 chars = {c["owner"]: c for c in auth["characters"] if c["owner"]}
 ok, hard, lines = True, False, []
 for f in sorted(os.listdir(status_dir)):
@@ -20,6 +23,8 @@ for f in sorted(os.listdir(status_dir)):
         continue
     s = json.load(open(os.path.join(status_dir, f)))
     name = s["name"]
+    if name in skip:
+        continue
     if not s["done"]:
         ok = False
         lines.append(f"{name}: still editing ({s['progress']['made']} made)")

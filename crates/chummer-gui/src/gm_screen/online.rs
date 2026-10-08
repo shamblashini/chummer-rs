@@ -218,6 +218,18 @@ impl GmScreen {
         self.online.is_some()
     }
 
+    /// Why the campaign could not go online, if it could not.
+    #[cfg(test)]
+    pub(crate) fn online_error(&self) -> Option<&str> {
+        self.online_error.as_deref()
+    }
+
+    /// The campaign's online state, once it is online.
+    #[cfg(test)]
+    pub(crate) fn hosted(&self) -> Option<&HostedCampaign> {
+        self.online.as_ref().map(|o| &o.hosted)
+    }
+
     /// Make the campaign online (or reopen its sidecar): its characters
     /// move into the authority and every member's document is backed by it.
     /// Starts making the campaign online on another thread (loading or
@@ -586,14 +598,17 @@ impl GmScreen {
         }
         if let Some((who, link)) = &shown {
             ui.label(small(lang.tr_fmt("Link for {0}: send it to that player only.", &[who]), accent));
+            // On its own line, as wide as the panel: the link is long and
+            // must not widen the panel.
+            let mut t = link.clone();
+            // (Less the frame's margins, or the panel grows a little every frame.)
+            ui.add(egui::TextEdit::singleline(&mut t).desired_width((ui.available_width() - 16.0).max(60.0)).font(egui::TextStyle::Monospace));
             ui.horizontal(|ui| {
-                let mut t = link.clone();
-                ui.add(egui::TextEdit::singleline(&mut t).desired_width((ui.available_width() - 110.0).max(80.0)).font(egui::TextStyle::Monospace));
                 if button(ui, crate::workspace::icons::COPY, &lang.tr("Copy")).clicked() {
                     ui.ctx().copy_text(link.clone());
                     *status = Some((lang.tr("Invite link copied."), false));
                 }
-                if button(ui, crate::workspace::icons::X, "").on_hover_text(lang.tr("Hide")).clicked() {
+                if button(ui, crate::workspace::icons::X, &lang.tr("Hide")).clicked() {
                     todo = Some(InviteDo::Dismiss);
                 }
             });

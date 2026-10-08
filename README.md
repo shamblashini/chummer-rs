@@ -317,10 +317,12 @@ Chummer 5.225.
   - Spells & Spirits tab → Create Spell… designs a custom spell (Street Grimoire). Chummer's rules compute its drain value and descriptors. In career mode it costs spell karma.
 - **Languages:** English, German, French, Japanese, Portuguese and Chinese data names and sheets.
 - **Online campaigns:** the GM hosts a campaign from the GM screen (or
-  with `chummer-authority`); players join with an invite link and edit
-  their own characters, live or by play-by-post. Every change is logged
-  with its author, and the GM can revert any of them. See
-  [Online campaigns](#online-campaigns).
+  with `chummer-authority`); each player joins with their own invite
+  link and edits their own characters, live or by play-by-post. Every
+  change is logged with its author, and the GM can revert any of them.
+  A link works on the first device that uses it; the GM can revoke it
+  or give the player a new one, and the relay mailbox only takes mail
+  signed by a current player's key. See [Online campaigns](#online-campaigns).
 
 ### Layout and themes
 
@@ -616,11 +618,23 @@ for play-by-post. Each installation's identity is its node key
    `<name>.authority` next to `<name>.chummercampaign`. From then on
    every change to them is logged, hosted or not. You still open only
    the `.chummercampaign` file.
-3. **Invite player** makes a link (`chummer-rs://join/…`). Copy it and
-   send it to your players. One link works for the whole group.
-4. When a player has joined, they show under Players. Select a
-   character in the roster and set **Played by** to the player. NPCs,
-   critters and other characters you keep are never sent to players.
+3. **Players & invites** (the inspector panel in Workspace, a section of
+   the right-hand panel in Classic): **New invite…** asks for the
+   player's name ("Anna"), optionally a character to give them when
+   they join, and how long an unused link works. **Create link** makes
+   a link (`chummer-rs://join/…`) for that one player: copy it and send
+   it to them only. The first device that joins with it claims it; the
+   same link then works for nobody else.
+4. The list shows every invite: not used yet (and when it expires),
+   joined from which device and when, last seen, online, the characters
+   the player has, and mail from them waiting in your mailbox. Per row:
+   **Copy link**, **New link** (for a new device: the old link and the
+   device that used it stop working, the new device gets the
+   characters), **Revoke** (cut the player off at once: their
+   connection, their joins and their mail) and **Remove**. Revoke, New
+   link and Remove ask first. Select a character in the roster and set
+   **Played by** to give it to a player. NPCs, critters and other
+   characters you keep are never sent to players.
 5. Edit characters as usual. Your changes reach the player at once ("GM
    gave you 100 karma: Good run" in their History). Their changes show in
    the Activity feed with their name.
@@ -641,11 +655,15 @@ campaign log as soon as it is made. Use Revert instead.
    Linux desktop file registers `chummer-rs://`; on Windows, Tools →
    Online Settings has a button for it; any system can pass the link as
    the first argument, `chummer-rs 'chummer-rs://join/…'`). Enter the
-   name the GM sees.
+   name the GM sees. The link is yours: it works only on the device that
+   joins with it first.
 2. The campaign shows under **Campaigns** on the Character Roster tab
-   with its state: online, via mailbox, or offline, and how many changes
-   wait to be confirmed. Your characters appear there when the GM gives
-   them to you; click one to open it.
+   with its state: online, via mailbox, or offline, the name the GM gave
+   your invite ("as Anna"), and how many changes wait to be confirmed.
+   Your characters appear there when the GM gives them to you; click one
+   to open it. If the GM's app refuses the link, the reason shows there
+   (used on another device, revoked, expired, or replaced by a newer
+   link): ask the GM for a new one.
 3. The tab shows a badge: ✔ synced, ⟳N changes waiting, ⚠N changes the
    GM's app refused (listed in the History tab, with Dismiss), ⏸
    offline. History shows the character's campaign log.
@@ -654,21 +672,31 @@ campaign log as soon as it is made. Use Revert instead.
 reachable, changes go to the relay's mailbox, sealed to the GM; the
 GM's app applies them when it next checks mail and mails back the
 results and its own changes. Mail is end-to-end encrypted; the relay
-cannot read it.
+cannot read it. A player can even join by mail while the GM is
+offline: the join goes into the GM's mailbox and is applied at the GM's
+next mail check. The mailbox only takes mail signed by keys its owner
+registered: the GM's takes the current invite keys, each player's takes
+the GM's campaign key, so strangers cannot fill it.
 
 **Always online: `chummer-authority`.** A campaign can run on a server
 instead of the GM's app (not both at the same time):
 
 ```bash
 chummer-authority --key node.key run Seattle.chummercampaign      # serve it (Ctrl+C / SIGTERM stops)
-chummer-authority --key node.key invite Seattle.chummercampaign   # print an invite link
+chummer-authority --key node.key invite create Seattle.chummercampaign --label Anna --assign Ghost --expires 7d
+chummer-authority --key node.key invite list Seattle.chummercampaign      # state of every invite
+chummer-authority --key node.key invite reissue Seattle.chummercampaign Anna   # a new link (new device)
+chummer-authority --key node.key invite revoke Seattle.chummercampaign Anna    # cut Anna off
+chummer-authority --key node.key invite remove Seattle.chummercampaign Anna
 chummer-authority --key node.key assign Seattle.chummercampaign Ghost Anna   # or a node id, or gm
 chummer-authority --key node.key status Seattle.chummercampaign   # members, owners, activity
 ```
 
 Copy the campaign file, its `.authority` file and the GM's `node.key`
-to the server (the key is the campaign's address). `invite` and
-`assign` work while it runs. It writes the characters back into the
+to the server (the key is the campaign's address). `invite ...` and
+`assign` work while it runs (it takes the changes in within seconds; an
+invite names its player by label or id). `rotate-key` makes a new GM
+campaign key, which players get with their next sync. It writes the characters back into the
 campaign file every few minutes and when it stops, so the GM can later
 open the file in the app again. Every change it accepts is journaled
 (`<name>.authority.journal`) before players are told, so a crash or
@@ -800,10 +828,11 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   - The authority file keeps a compressed copy of each character plus
     the state 256 changes back, so characters with large mugshots make
     it large.
-  - The relay mailbox accepts mail for anyone from anyone: a stranger
-    can fill a member's mailbox (1000 messages) within the default daily
-    sender quota (2000), which blocks play-by-post to that member until
-    the mail expires. There is no relay-side membership yet.
+  - A player whose invite key leaks (with the link, before or after it
+    was claimed) can still put up to 200 messages into the GM's mailbox
+    (the per-key cap) until the GM revokes or re-issues the invite; the
+    GM's app drops them. Invites are for players only (the role GM is
+    accepted but there is no co-GM support).
 - Some career-mode details:
   - Enchantments, rituals and enhancements learned at a grade.
   - Binding stacked foci (undo of a stacked focus binding works).

@@ -4,7 +4,7 @@
 //!   each other directly and helps them hole-punch. It only forwards
 //!   end-to-end encrypted QUIC packets.
 //! - The mailbox is an iroh endpoint next to it that serves
-//!   `chummer-rs/mailbox/1` ([`chummer_net::mailbox`]): sealed blobs for
+//!   `chummer-rs/mailbox/2` ([`chummer_net::mailbox`]): sealed blobs for
 //!   offline peers, kept in a redb database with size, count, quota and
 //!   expiry limits ([`store::Limits`]).
 //!

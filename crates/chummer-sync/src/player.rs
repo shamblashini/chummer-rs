@@ -339,6 +339,8 @@ impl PlayerSession {
 
     /// Lets the GM's campaign keys put mail into our relay mailbox
     /// (scope: the campaign), when that changed since the last time.
+    /// A relay-side refusal (a full disk) is logged, not returned: our own
+    /// mail still goes out.
     async fn ensure_registered(&self, mb: &MailboxClient) -> Result<(), NetError> {
         let keys = self.gm_keys();
         if keys.is_empty() {
@@ -346,8 +348,11 @@ impl PlayerSession {
         }
         let mut reg = self.inner.registered.lock().await;
         if reg.as_ref() != Some(&keys) {
-            mb.register(self.inner.cfg.link.campaign.0, keys.clone()).await?;
-            *reg = Some(keys);
+            match mb.register(self.inner.cfg.link.campaign.0, keys.clone()).await {
+                Ok(_) => *reg = Some(keys),
+                Err(NetError::Mailbox(e)) => tracing::warn!("could not register the GM's key with the mailbox: {e}"),
+                Err(e) => return Err(e),
+            }
         }
         Ok(())
     }

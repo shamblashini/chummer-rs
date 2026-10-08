@@ -371,7 +371,11 @@ impl Store {
                     }
                 };
                 if old == new {
-                    // Idempotent: nothing to write.
+                    // Idempotent: nothing to write (and no disk write, so
+                    // a full disk does not fail a repeated registration).
+                    drop(regs);
+                    txn.abort().map_err(db_err)?;
+                    return self.status_in(db, owner, now);
                 } else {
                     let mut allowed = txn.open_table(ALLOWED).map_err(db_err)?;
                     for k in old.iter().filter(|k| !new.contains(k)) {

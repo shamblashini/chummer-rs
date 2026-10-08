@@ -133,10 +133,64 @@ at). The GM can revert any entry.
 
 - Each installation has a key pair (the iroh node key). There are no
   accounts or passwords, and the relay stores no personal data.
-- The GM creates a campaign and an invite link:
-  `chummer-rs://join/<gm-node-id>?campaign=<id>&invite=<token>`.
-  Opening it registers the player's key with the campaign.
-- Roles: GM (everything) and player (own characters only).
+- Access is by capability: holding a key is the permission. Decided with
+  the owner on 2026-10-08 (before 1.0 the protocol, links, relay and
+  sidecar formats change without migration).
+- The GM makes **one invite per player**, labelled ("Anna"). Each has
+  its own member key (ed25519); the secret is in the link:
+  `chummer-rs://join/<gm-node-id>?campaign=<id>&member=<secret>&gm=<campaign-key>[&relay=<url>]`.
+  Links of the first protocol (`&invite=<token>`) are refused with "ask
+  your GM for a new one".
+- **Claim.** The first node that proves the member key joins and claims
+  the invite: it becomes a member bound to that node id. The same link
+  on another device is refused ("already used on another device").
+- **Re-issue.** A new link for the same member (a new device): a new
+  key; the invite is unclaimed again; the old node is out at once and its
+  key refused ("replaced by a newer link"). Whoever claims the new link
+  takes over the old node's characters.
+- **Revoke.** The invite stays listed as revoked; its node is out (the
+  live connection is closed) and its key no longer joins or mails.
+  **Remove** deletes the invite (and takes its member out). Other members
+  are not affected.
+- **Expiry** (optional): an unclaimed invite stops working at a time the
+  GM chose; claimed ones do not expire.
+- **Assign on claim** (optional): the invite names a character that the
+  claiming player gets.
+- Members the GM adds by node id (a campaign file's owner, or
+  `chummer-authority assign`) have no invite; they prove themselves by
+  their node key. Revoked, removed and replaced nodes are remembered and
+  not made members again from the campaign file.
+- **Proof.** Live: the campaign protocol's hello carries the member
+  key's public half; the host answers a random challenge, which the key
+  signs together with the campaign, both node ids and the nonce
+  (`chummer_net::campaign::hello_message`). By mail (the GM offline): the
+  first mailed `Join` carries a `ClaimProof`, the key's signature over
+  the campaign and both node ids; the mail is sealed to the GM and
+  signed by the joining node, so only the GM sees it and it is no good
+  for another node. The authority (`Authority::admit`) checks both the
+  same way and maps member key -> node id -> member.
+- **The GM's campaign key** signs what the GM's app puts into players'
+  mailboxes. It is derived from the GM's node key, the campaign id and
+  a generation (`derive_campaign_key`, BLAKE3 `derive_key`), so it needs
+  no storage and `chummer-authority` can make links without the running
+  host. Its public half is in the link (a play-by-post player registers
+  it before any contact) and in every membership (current key first, the
+  previous one during a rotation). `rotate-key` moves to the next
+  generation; mail to a member stays signed with the previous key until
+  that member was sent a membership naming the new one.
+- **Relay mailbox access** (see [relay.md](relay.md#who-may-put-mail)):
+  each mailbox owner registers which keys may put mail into its mailbox,
+  per campaign (a scope). The GM's app registers every active invite key
+  (claimed, or unclaimed and not expired, so a first join by mail gets
+  in) and the node keys of members added by node id, at every mailbox
+  round and right after an invite changed. Each player's app registers
+  the GM's campaign keys. Leaving a campaign removes the player's scope.
+- The authority keeps the invites with their secrets (the GM's own
+  file), so the GM can copy an unclaimed link again. Members record when
+  they were last seen (hello or mail).
+- Roles: GM (everything) and player (own characters only). The GM keeps
+  full power over characters; keys only govern who may talk to the
+  campaign.
 
 ### 7. Processes
 
@@ -168,8 +222,11 @@ Implemented (local part):
 
 Work-order steps 5 and 7 and the messages for step 6.
 
-- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`),
-  then postcard. `ClientMessage` (Join with the versions the client has,
+- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`, 2
+  since member keys: `Join` carries an optional `ClaimProof`, the
+  membership names the invite's label and the GM's campaign keys, and
+  `ServerMessage::Denied` tells a mailed join why it was refused), then
+  postcard. `ClientMessage` (Join with the versions the client has,
   Submit, Resync) travels as chummer-net's `Request::Submit` payload and
   `ServerMessage` (Joined, Ack, Push, Membership, Error) as its answer
   or as a server push. In the mailbox they are wrapped in `MailMessage`.
@@ -199,7 +256,11 @@ Work-order steps 5 and 7 and the messages for step 6.
   message is cut into chunks under the relay's blob limit (lowered when
   the relay answers `TooLarge`) and sealed to the recipient. The
   receiver checks the signer (a campaign member for the authority, the
-  GM for a player) and reassembles chunks in a saved `Inbox`. The
+  GM for a player) and reassembles chunks in a saved `Inbox`. Mail from
+  a node that is not a member yet is read only if it is a complete,
+  one-blob `Join` with a valid claim proof; nothing else of theirs is
+  kept. Each put is signed by a key the recipient registered with the
+  relay: the player's member key (or node key), the GM's campaign key. The
   authority mails offline members everything they were not sent (the
   membership, answers to mailed submits, pushes since the version last
   sent).
@@ -253,10 +314,17 @@ The glue the GUI and `chummer-authority` share between a GM's
 `.chummercampaign` file and the authority.
 
 - Files: the GM opens `<name>.chummercampaign` only. The authority
-  lives next to it in `<name>.authority`, made the first time the
-  campaign is hosted. `<name>.invites` takes invites made by
-  `chummer-authority invite` (`<token> <role> <label>` lines) for a
-  running host to merge.
+  lives next to it in `<name>.authority` (format 3: per-player invites),
+  made the first time the campaign is hosted. `<name>.invites` takes
+  invite changes made by `chummer-authority invite ...` (`InviteOp`s,
+  one JSON object per line: create, revoke, reissue, remove, rotate-key;
+  mode 0600, it holds member keys) for a running host, or the next one,
+  to apply. The host moves the file aside, applies the lines (they are
+  idempotent), saves, then deletes it.
+- A claim that gives a player a character (assign on claim, or a
+  re-issued link) is written into the campaign file's owners by the host
+  (`adopt_owner_changes`); until then `reconcile` keeps the authority's
+  owner.
 - Ids: `CharacterId` = the member's `MemberId` (32 hex digits); the
   campaign id is the same 128 bits in both crates.
 - Once a sidecar exists every change to the campaign's characters goes
@@ -290,15 +358,23 @@ The glue the GUI and `chummer-authority` share between a GM's
   reverts instead (History panel and the GM screen's feed).
 - GM screen: Host online (makes the campaign online the first time,
   swaps every member's `Doc` to the authority, including tabs it lent),
-  status and relay, Invite player (link with a Copy button), Players
-  (joined, connected), Played by (owner), the authority's feed with
-  author, character and Revert, Check mail with the last report, and a
-  mailbox round on host start and every three minutes. Opening a
+  status and relay, Players & invites (Workspace: an inspector panel
+  that pops out; Classic: a section of the right-hand panel; one drawing
+  function for both): New invite (label, character on claim, expiry) ->
+  link with Copy; per invite its state (not used yet / expires, joined
+  from device and when, revoked, expired), online or last seen, the
+  characters it plays, mail waiting from it, and Copy link, New link,
+  Revoke and Remove (the last three confirmed); members added by node id
+  with Remove; the mailbox's waiting and refused counts. Played by
+  (owner), the authority's feed with author, character and Revert, Check
+  mail with the last report, and a mailbox round on host start and every
+  three minutes. Opening a
   campaign that has a sidecar backs it by the authority (not served
   until Host online).
 - Player: File → Join Campaign (also prefilled from a `chummer-rs://`
-  argument), the Campaigns list on the Character Roster tab (state,
-  pending and refused counts, sync now, leave), characters as normal
+  argument), the Campaigns list on the Character Roster tab and the
+  Workspace home (state, the invite's label, why the GM's app refused
+  the link, pending and refused counts, sync now, leave), characters as normal
   tabs with a badge (✔, ⟳N, ⚠N, ⏸), and the character's campaign log
   in History ("GM gave you 100 karma: note", `feed::for_owner`), with
   refused changes and Dismiss. Joined campaigns are kept in
@@ -309,13 +385,17 @@ The glue the GUI and `chummer-authority` share between a GM's
 
 ### Headless authority (implemented: `chummer-authority`)
 
-`run` serves a campaign file with the same glue; it merges new invites
-and re-reads the campaign file when it changes (every 5 s), does a
-mailbox round every 3 minutes, and writes the characters back into the
-campaign file every 5 minutes when they changed and when it stops.
-`invite` appends to the invites file and prints the link, `assign` sets
-a member's owner in the campaign file, `status` prints the authority's
-state. A systemd unit is in `packaging/authority/`.
+`run` serves a campaign file with the same glue; it applies invite
+changes (and registers the new keys with the mailbox at once) and
+re-reads the campaign file when it changes (every 5 s), does a mailbox
+round every 3 minutes, writes owners that claims changed into the
+campaign file, and writes the characters back every 5 minutes when they
+changed and when it stops. `invite create --label --assign --expires`
+prints a new player's link, `invite list` shows every invite's state,
+`invite revoke`, `invite reissue` (prints the new link) and `invite
+remove` name an invite by label or id; they write to the invites file.
+`rotate-key` moves the GM's campaign key on. `assign` sets a member's
+owner in the campaign file, `status` prints the authority's state. A systemd unit is in `packaging/authority/`.
 
 ## Campaigns
 

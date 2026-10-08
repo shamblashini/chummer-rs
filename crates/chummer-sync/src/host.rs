@@ -554,8 +554,13 @@ impl AuthorityHost {
         let mut report = MailReport::default();
         let mut changed = Vec::new();
         // Who may mail us: always sent (it is idempotent), so a relay that
-        // lost its database learns it again.
-        self.register_mail_keys(mailbox, true).await?;
+        // lost its database learns it again. A relay-side failure (a full
+        // disk) does not stop the round: what is waiting is still read.
+        match self.register_mail_keys(mailbox, true).await {
+            Ok(_) => {}
+            Err(NetError::Mailbox(e)) => tracing::warn!("could not register the members' keys with the mailbox: {e}"),
+            Err(e) => return Err(e),
+        }
         let mut denials: Vec<(EndpointId, DenyReason)> = Vec::new();
         loop {
             let (items, more) = mail::fetch_page(mailbox, &self.shared.secret).await?;

@@ -7,13 +7,16 @@
    forwards their traffic when no direct path exists. That traffic is
    end-to-end encrypted QUIC: the relay cannot read it.
 2. **Mailbox.** An iroh endpoint beside the relay that serves the
-   `chummer-rs/mailbox/1` protocol. It keeps sealed messages for peers who
+   `chummer-rs/mailbox/2` protocol. It keeps sealed messages for peers who
    are offline (play-by-post, a GM who is not online). The messages are
    encrypted to the recipient's key and signed by the sender before they
    leave the app, so the operator cannot read them or see who wrote them.
+   A mailbox only takes mail signed by keys its owner registered (see
+   [Who may put mail](#who-may-put-mail)).
 
 The relay keeps no accounts and no personal data. It stores only sealed
-blobs, keyed by the recipient's node id, until they are collected or expire.
+blobs, keyed by the recipient's node id, until they are collected or
+expire, and for each mailbox the public keys that may put mail into it.
 
 The project's public relay is the default in the app
 (`chummer_net::config::DEFAULT_RELAY_URL`). Anyone can run their own one and
@@ -50,7 +53,7 @@ The release's Linux package includes `chummer-relay` (and the files of
 
 A small VPS is enough. The mailbox database is bounded by the limits
 below (per recipient: 1000 messages of at most 256 KiB, deleted after 30
-days). Most traffic is the hole-punching handshake; traffic is relayed in
+days; at most 64 registration scopes of 256 keys per mailbox). Most traffic is the hole-punching handshake; traffic is relayed in
 full only when two peers cannot connect directly.
 
 ## Configuration
@@ -73,11 +76,46 @@ certificate for `127.0.0.1`, HTTP 3340, HTTPS 3443).
 | `max_messages_per_recipient` | 1000 | Messages waiting for one recipient |
 | `max_messages_per_sender_per_day` | 2000 | Uploads per sender per UTC day |
 | `max_bytes_per_sender_per_day` | 67108864 (64 MiB) | Upload bytes per sender per UTC day |
+| `max_messages_per_key` | 200 | Messages waiting in one mailbox that were signed by one key |
 | `expiry_secs` | 2592000 (30 days) | Uncollected messages are deleted after this |
 
 Senders and recipients are identified by the node id that the QUIC
-handshake proves. A connection can only fetch and delete its own mail.
-Expired mail is purged every hour.
+handshake proves. A connection can only fetch, delete and configure its
+own mailbox. Expired mail is purged every hour.
+
+### Who may put mail
+
+Access is by capability; there are no accounts.
+
+- **Registration.** A mailbox owner sends `Register { scope, keys }`: the
+  public keys that may put mail into its mailbox, for one scope (the
+  apps use one scope per campaign). It replaces that scope's list; the
+  same list again changes nothing; an empty list removes the scope. The
+  registrations are in `mailbox.redb` and survive restarts. The GM's app
+  registers every current invite key of the campaign (and the node keys
+  of players it added by node id) at every mailbox round and right after
+  an invite changed; each player's app registers the GM's campaign key.
+- **Signed puts.** Every put carries the signing key, a random nonce and
+  an ed25519 signature over the recipient's node id, the uploading
+  node's id, the nonce and the blob's BLAKE3 hash. The relay refuses an
+  unsigned put, a bad signature, a key the recipient did not register,
+  a nonce still waiting in that mailbox (a replay), and any put to a
+  mailbox with no registrations (there is no open mode). A put signed
+  for one mailbox cannot be replayed into another, or by another node.
+- **Caps.** The per-sender daily quotas stay. As a second net, at most
+  `max_messages_per_key` messages signed by one key may wait in one
+  mailbox, so a leaked invite key cannot fill it.
+- **Revocation** is the owner registering the list without the key: from
+  then on the key's puts are refused. Mail already waiting stays until
+  the owner collects it (the GM's app drops it).
+- The answer to a registration is the mailbox's state: keys registered,
+  messages waiting (per key) and puts refused today. The GM screen shows
+  it. Refused puts are counted in memory only, for mailboxes with
+  registrations.
+
+A database of the first protocol's layout is emptied when the relay
+opens it (it only held mail in transit; apps mail again what was not
+answered).
 
 `relay_rate_limit` (bytes per second per client, off by default) limits
 relayed traffic.
@@ -202,4 +240,6 @@ involved.
   encrypted QUIC, and mailbox blobs are sealed boxes (X25519 +
   XSalsa20-Poly1305) to the recipient, signed (ed25519) by the sender.
 - The relay can see which node ids are connected, and for the mailbox,
-  which id sent how many bytes to which id, and when.
+  which id sent how many bytes to which id, and when, and which public
+  keys each mailbox takes mail from (random per invite; they name no
+  one).

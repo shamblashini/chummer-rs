@@ -687,6 +687,76 @@ fn workspace_home_and_campaign() {
     home_and_campaign(ThemeKind::WorkspaceDark);
 }
 
+/// The GM's Players & invites panel, in both layouts: an online campaign
+/// (not served), a new invite with a character to give, its row, a new
+/// link and a revoke, each through the panel's own buttons.
+#[test]
+fn players_and_invites_panel() {
+    for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark, ThemeKind::WorkspaceLight] {
+        let mut h = Harness::new(kind);
+        // A fresh campaign each round: the last round's online state
+        // (saved on a background thread at close) belongs to another one.
+        crate::bg::wait("save:authority", std::time::Duration::from_secs(60));
+        let file = campaign_file();
+        for ext in ["authority", "authority.journal", "invites"] {
+            let _ = std::fs::remove_file(file.with_extension(ext));
+        }
+        h.app.open_campaign(&file);
+        {
+            let App { gm, online, engine, views, .. } = &mut h.app;
+            gm.as_mut().unwrap().go_online(online, engine, views, false).unwrap();
+        }
+        crate::bg::wait("gm-go-online", std::time::Duration::from_secs(120));
+        for _ in 0..200 {
+            h.frames(1);
+            if h.app.gm.as_ref().unwrap().is_online() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(h.app.gm.as_ref().unwrap().is_online(), "{:?} {:?}", h.app.status, h.app.gm.as_ref().unwrap().online_error());
+        sizes(&mut h, FRAMES);
+        // The clicks at the wide size (in the narrow one the inspector
+        // reaches past the window's edge).
+        h.size = WIDE;
+        h.frames(2);
+        assert!(h.find_text("No invites yet.").is_some(), "{:?}", h.on_screen());
+        h.click_text("New invite…");
+        h.frames(2);
+        h.click_text("Name, e.g. Anna");
+        h.type_text("Anna");
+        h.frames(1);
+        h.click_text("Create link");
+        h.frames(2);
+        let invites: Vec<(String, chummer_net::invite::InviteId)> = h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().invites().values().map(|i| (i.label.clone(), i.id)).collect();
+        assert_eq!(invites.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["Anna"]);
+        assert!(h.find_text("Link for Anna: send it to that player only.").is_some(), "{:?}", h.on_screen());
+        assert!(h.find_text("waiting for the player").is_some(), "{:?}", h.on_screen());
+        assert!(h.find_text("not used yet").is_some(), "{:?}", h.on_screen());
+        // A new link (with its confirmation): the key changes.
+        let key = |h: &Harness| h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().invite(&invites[0].1).unwrap().key();
+        let before = key(&h);
+        h.click_text("New link");
+        h.frames(1);
+        assert!(h.find_where(|t| t.starts_with("Give Anna a new link?")).is_some(), "{:?}", h.on_screen());
+        h.click_text("New link");
+        h.frames(2);
+        assert_ne!(key(&h), before);
+        // Revoke, confirmed.
+        h.click_text("Revoke");
+        h.frames(1);
+        assert!(h.find_where(|t| t.starts_with("Revoke Anna?")).is_some(), "{:?}", h.on_screen());
+        h.click_text("Revoke");
+        h.frames(2);
+        let state = h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().invite(&invites[0].1).unwrap().state(0);
+        assert!(matches!(state, chummer_sync::invites::InviteState::Revoked { .. }), "{state:?}");
+        assert!(h.find_text("revoked").is_some(), "{:?}", h.on_screen());
+        sizes(&mut h, FRAMES);
+        assert!(h.app.close_campaign(true));
+        h.frames(1);
+    }
+}
+
 /// The tool windows and dialogs over a character, in both layouts.
 #[test]
 fn tool_windows_and_dialogs() {

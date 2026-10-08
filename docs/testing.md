@@ -22,10 +22,12 @@ The suites added for robustness, by crate:
 | `chummer-sync/tests/chaos.rs` | Randomised: 2-3 players and one authority. The network delays, reorders, duplicates and loses messages. Players edit offline and restart. The GM edits and reverts. The authority restarts, cleanly or by crashing back to its last save. At the end all copies must have the authority's version and hash. Every command must have run exactly once (karma equals the start plus the accepted amounts) or have been reported as refused. Each message goes through the wire encoding. |
 | `chummer-sync/tests/regressions.rs` | The bugs that chaos.rs found, each reduced to a small exchange. |
 | `chummer-sync/tests/net_faults.rs` | Real connections through an in-process relay. Play-by-post across a relay restart. Mail lost at the relay is sent again. A member that stops reading does not stall the pushes to the others. |
+| `chummer-sync/tests/invites.rs` | Per-player invites. On the authority: the first device claims an invite and the same link on another device is refused; a re-issued link refuses the old key everywhere and moves the characters to the new device; revoke cuts one member and leaves the others; unclaimed invites expire; mailed claims need a proof for the joining node; members added by node id mail with their node key; the invites file applies once; assign on claim reaches the campaign file; key rotation. Through an in-process relay: revoke closes the live connection, refuses the rejoin and the member's mail, and the other member goes on; a re-issued link supersedes the old one on a new device; a first join by mail with the character assigned, and a leaked link refused by mail; a rotated campaign key reaches an offline member. |
+| `chummer-relay/tests/net.rs` | The campaign handshake with a member key: the challenge, a second device with a claimed key, a proof by another key or none. The mailbox: only the recipient reads and deletes its mail; puts from a stranger, unsigned, with a forged signature, replayed into another mailbox or by another uploader, or to a mailbox with no registrations are refused; the per-key cap; a registration without a key revokes it; registrations survive a relay restart. |
 | `chummer-relay/tests/robustness.rs` | The mailbox store with damaged, empty or unreadable database files. Concurrent writers. Paging of big mail. Clock jumps against expiry and quotas. Hostile frames on raw mailbox streams. A relay restart while a client is connected. |
 | `chummer-core/tests/fuzz_*.rs`, `prop_commands.rs`, `roundtrip_saves.rs` | Mutated `.chum5`, `.chum5lz`, campaign and settings files never panic. All fixtures save and load to the same state. Random command sequences are deterministic and survive postcard and JSON round trips. Undo and redo restore the exact state. |
 | `chummer-cli/tests/cli_robustness.rs` | The CLI on missing, empty, binary, deep, non-UTF-8 and odd inputs: an error and no panic. |
-| `chummer-gui/src/ui_tests.rs` | Headless egui: opens every character fixture in both layouts and draws every section for a few frames. Also the command palette, catalog add, and undo/redo. |
+| `chummer-gui/src/ui_tests.rs` | Headless egui: opens every character fixture in both layouts and draws every section for a few frames. Also the command palette, catalog add, undo/redo, and the GM's Players & invites panel (new invite, new link, revoke through its buttons) in Classic and Workspace. |
 
 Tuning knobs (environment variables):
 
@@ -67,7 +69,11 @@ The output, the container logs and `summary.txt` are in
   `https://relay:3443#<mailbox-id>` is known before it starts.
 - **GM.** `chummer-authority run` serves a campaign file. `chummer-testpeer
   make-campaign` makes that file, with one Munin_Career character for each
-  player, owned by that player. The GM does a mailbox round every 10 s.
+  player, owned by that player (added by node id; their link carries the
+  GM's campaign key). Players listed in `INVITED` get a character without
+  an owner and their own invite instead (`chummer-authority invite create
+  --assign`, run on the host), and join with that link. The GM does a
+  mailbox round every 10 s.
 - **Players.** Each player is `chummer-testpeer player`, which is built on
   chummer-sync's `PlayerSession`. It makes a scripted series of karma
   gains of known amounts, with large notes when asked, and syncs live or
@@ -113,9 +119,12 @@ After each scenario the script also checks:
 | many-players | 12 players at once. | strict |
 | long-pbp | 3 players make 80 edits each by mail, with large notes. The blob limit is 16 KiB, so mail travels in many chunks. | strict |
 | mail-expiry | Mail expires 20 s after it is stored, and the GM comes online after that. Players must mail their commands again. | strict |
-| abuse | Hostile mail: an oversized blob, unsealed bytes, a sealed message from a non-member, malformed frames, a flood until the quota stops it, and a member's garbage. Then normal play. | the relay refuses or limits each one; strict |
+| abuse | Hostile mail: an oversized blob, unsealed bytes, a sealed message from a stranger, an unsigned put, malformed frames, a stranger's flood, a member's flood until the quota stops it, and a member's garbage. Then normal play. | the relay refuses a stranger's puts (none stored) and limits the member's; strict |
 | disk-full | The relay's data is on a nearly full 3 MiB tmpfs while players mail. Then the disk is freed and the GM comes online. | the relay stays up; the mailbox stores mail again without a restart; strict |
 | db-damage | `mailbox.redb` is damaged, and then made unreadable, between relay restarts. Mail in the damaged file is lost; players mail it again. | the relay starts again on the damaged file (it moves it aside); it refuses the unreadable one with an error; strict |
+| stranger-flood | A node no player gave a key floods the GM's mailbox (1500 puts) and a player's (500), and sends an unsigned put, while the GM is away and players play by mail. | no stranger put is stored; the GM's mailbox counts the refusals; strict |
+| revoked-player | P3 joins with its own invite (its character assigned on claim). Mid-game the GM runs `chummer-authority invite revoke`. P3 keeps editing. | P3 is told "revoked" and goes offline; its character does not change after the revoke; P3 is no longer a member; P1 and P2 strict |
+| leaked-link | P2 joins with its own invite; its link leaks. Another device tries it live; while the GM is away a third one tries it by mail, and a flood is signed with the leaked key (`max_messages_per_key = 40`). | both intruders are refused ("claimed") and get no character; at most 40 leaked-key puts are stored; the members stay GM, P1, P2; strict |
 
 ### Results
 

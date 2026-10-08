@@ -30,12 +30,13 @@ BASE=debian:bookworm-slim
 OUT="${E2E_OUT:-$HERE/out/$(date +%Y%m%d-%H%M%S)}"
 TARGET="${CARGO_TARGET_DIR:-$ROOT/target}"
 TP="$TARGET/release/chummer-testpeer"
+AUTH="$TARGET/release/chummer-authority"
 FIXTURE="$ROOT/crates/chummer-core/tests/fixtures/Munin_Career.chum5"
 UG="$(id -u):$(id -g)"
 KARMA=50
 TIMEOUT="${E2E_TIMEOUT:-300}"
 
-ALL_SCENARIOS=(baseline netem partition pbp relay-restart relay-kill gm-crash player-crash many-players long-pbp mail-expiry abuse disk-full db-damage)
+ALL_SCENARIOS=(baseline netem partition pbp relay-restart relay-kill gm-crash player-crash many-players long-pbp mail-expiry abuse disk-full db-damage stranger-flood revoked-player leaked-link)
 
 log() { printf '\e[1m[%s]\e[0m %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 
@@ -72,6 +73,10 @@ S=""; D=""; ENTRY=""; LINK=""; NPLAYERS=0; MB=""
 declare -a PIDS
 
 # world <scenario> <players> [relay limits toml lines...]
+# Players are added to the campaign by node id, except those listed in
+# INVITED (e.g. INVITED="3"): they get a character without an owner and
+# an invite (`chummer-authority invite create --assign`), and join with
+# its link ($D/p<i>/link).
 world() {
     S="$1"; NPLAYERS="$2"; shift 2
     D="$OUT/$S"
@@ -99,9 +104,25 @@ world() {
     "$TP" keygen "$D/gm/gm.key" >/dev/null
     local owners=()
     for i in $(seq 1 "$NPLAYERS"); do
-        owners+=(--owner "$("$TP" keygen "$D/p$i/node.key")")
+        local id; id=$("$TP" keygen "$D/p$i/node.key")
+        if invited "$i"; then owners+=(--owner invite); else owners+=(--owner "$id"); fi
     done
     LINK=$("$TP" make-campaign --out "$D/gm/campaign.chummercampaign" --character "$FIXTURE" --gm-key "$D/gm/gm.key" --karma "$KARMA" "${owners[@]}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["link"])')
+    for i in $(seq 1 "$NPLAYERS"); do
+        if invited "$i"; then
+            authority invite create /gm/campaign.chummercampaign --label "P$i" --assign "PC $((i - 1))" > "$D/p$i/link"
+        fi
+    done
+}
+
+invited() { case " ${INVITED:-} " in *" $1 "*) return 0;; esac; return 1; }
+
+# authority <args...>: chummer-authority (on the host) with the GM's key,
+# on the GM's files; /gm/ in arguments means $D/gm/.
+authority() {
+    local args=()
+    for a in "$@"; do args+=("${a//\/gm\//$D/gm/}"); done
+    XDG_CONFIG_HOME="$D/gm/config" "$AUTH" --key "$D/gm/gm.key" "${args[@]}"
 }
 
 # relay [extra docker args...]: starts the relay with its data in $D/relay.
@@ -127,12 +148,44 @@ gm_up() {
 # player <i> <edits> [extra testpeer args...]
 player_up() {
     local i="$1" edits="$2"; shift 2
+    local link="$LINK"
+    [ -s "$D/p$i/link" ] && link=$(cat "$D/p$i/link")
     docker run -d --name "$P-p$i" --label "$LABEL=1" --user "$UG" --cap-add NET_ADMIN \
         --network "$P-$S-p$i" -e HOME=/state \
         -v "$D/p$i:/state" -v "$D/status:/status" -v "$D/relay/self-signed-cert.pem:/ca.pem:ro" -v "$ROOT/resources:/resources:ro" \
-        "$IMG" chummer-testpeer player --key /state/node.key --link "$LINK" --relay "$ENTRY" --ca /ca.pem \
+        "$IMG" chummer-testpeer player --key /state/node.key --link "$link" --relay "$ENTRY" --ca /ca.pem \
         --state /state --status "/status/p$i.json" --name "P$i" --edits "$edits" --every-ms "${EVERY_MS:-400}" --sync-secs 3 "$@" >/dev/null
 }
+
+# intruder <n> <link>: a player on a new device (its own node key) with
+# someone else's link, on the extra network; status in $D/status-x/x<n>.json.
+intruder_up() {
+    local n="$1" link="$2"
+    mkdir -p "$D/x$n" "$D/status-x"
+    "$TP" keygen "$D/x$n/node.key" >/dev/null
+    docker run -d --name "$P-x$n" --label "$LABEL=1" --user "$UG" \
+        --network "$P-$S-x" -e HOME=/state \
+        -v "$D/x$n:/state" -v "$D/status-x:/status" -v "$D/relay/self-signed-cert.pem:/ca.pem:ro" -v "$ROOT/resources:/resources:ro" \
+        "$IMG" chummer-testpeer player --key /state/node.key --link "$link" --relay "$ENTRY" --ca /ca.pem \
+        --state /state --status "/status/x$n.json" --name "X$n" --edits 3 --every-ms 1000 --sync-secs 3 >/dev/null
+}
+
+# abuse <mode> <target-id> [extra testpeer args...]: hostile mailbox
+# traffic from a stranger's key (/x/node.key) unless --key is given;
+# the answers go to $D/abuse-<mode><suffix>.json.
+abuse() {
+    local mode="$1" target="$2"; shift 2
+    local out="$D/abuse-$mode${SUFFIX:-}.json"
+    mkdir -p "$D/x"
+    [ -s "$D/x/node.key" ] || "$TP" keygen "$D/x/node.key" >/dev/null
+    docker run --rm --label "$LABEL=1" --user "$UG" --network "$P-$S-x" \
+        -v "$D/x:/x" -v "$D/relay/self-signed-cert.pem:/ca.pem:ro" "$IMG" \
+        chummer-testpeer abuse --relay "$ENTRY" --ca /ca.pem --target "$target" --mode "$mode" "$@" \
+        > "$out" 2> "$D/logs/abuse-$mode${SUFFIX:-}.log"
+}
+
+# status_of <file> <python expression on s>: true when it holds.
+status_is() { python3 -c "import json,sys; s=json.load(open('$1')); sys.exit(0 if ($2) else 1)"; }
 
 players_up() {
     local edits="$1"; shift
@@ -167,7 +220,7 @@ converge() {
     while :; do
         if inspect 2>/dev/null; then
             set +e
-            python3 "$HERE/check.py" "$D/authority.json" "$D/status" "$KARMA" "$mode" > "$D/check.txt"
+            python3 "$HERE/check.py" "$D/authority.json" "$D/status" "$KARMA" "$mode" "${SKIP:-}" > "$D/check.txt"
             rc=$?
             set -e
             [ $rc -ne 1 ] && break
@@ -359,24 +412,28 @@ sc_abuse() {
     world abuse 2 'max_messages_per_recipient = 300' 'max_messages_per_sender_per_day = 150'
     relay_up; gm_up
     local gm; gm=$("$TP" keygen "$D/gm/gm.key")
+    wait_for "the GM registered its mailbox" 60 logs_have "$P-gm" "mailbox:"
     mkdir -p "$D/x"
     "$TP" keygen "$D/x/node.key" >/dev/null
+    # P1 is a member added by node id: its node key may mail the GM.
     cp "$D/p1/node.key" "$D/x/member.key"
-    for m in oversized garbage forged frames flood member-garbage; do
-        local key=/x/node.key
-        [ "$m" = member-garbage ] && key=/x/member.key
-        docker run --rm --label "$LABEL=1" --user "$UG" --network "$P-$S-x" \
-            -v "$D/x:/x" -v "$D/relay/self-signed-cert.pem:/ca.pem:ro" "$IMG" \
-            chummer-testpeer abuse --key "$key" --relay "$ENTRY" --ca /ca.pem --target "$gm" --mode "$m" --count 400 \
-            > "$D/abuse-$m.json" 2> "$D/logs/abuse-$m.log" || { log "abuse $m failed"; return 1; }
+    for m in oversized garbage forged frames unsigned flood; do
+        abuse "$m" "$gm" --key /x/node.key --count 400 || { log "abuse $m failed"; return 1; }
     done
+    SUFFIX=-member abuse flood "$gm" --key /x/member.key --count 400 || { log "member flood failed"; return 1; }
+    abuse member-garbage "$gm" --key /x/member.key || { log "abuse member-garbage failed"; return 1; }
     grep -q 'too large' "$D/abuse-oversized.json" || { log "oversized blob was not refused"; return 1; }
-    grep -q 'limit\|full' "$D/abuse-flood.json" || { log "the flood was never limited"; return 1; }
-    grep -q 'stored' "$D/abuse-frames.json" || { log "mailbox unusable after bad frames"; return 1; }
+    for m in garbage forged flood; do
+        grep -q 'does not take mail' "$D/abuse-$m.json" || { log "a stranger's $m was not refused"; return 1; }
+        ! grep -q '"stored"' "$D/abuse-$m.json" || { log "a stranger's $m got in"; return 1; }
+    done
+    grep -q 'not signed' "$D/abuse-unsigned.json" || { log "an unsigned put was not refused"; return 1; }
+    grep -q 'limit\|full' "$D/abuse-flood-member.json" || { log "the member's flood was never limited"; return 1; }
+    grep -q 'stored\|does not take mail' "$D/abuse-frames.json" || { log "mailbox unusable after bad frames"; return 1; }
     players_up 10
     converge strict
     sleep 12
-    grep -q "dropped" "$D/logs/gm.log" 2>/dev/null || docker logs "$P-gm" 2>&1 | grep -q "dropped" || NOTE="(GM did not log dropped mail)"
+    docker logs "$P-gm" 2>&1 | grep -q "dropped" || NOTE="(GM did not log dropped mail)"
 }
 
 sc_disk-full() {
@@ -403,10 +460,9 @@ sc_disk-full() {
     log "freeing the disk: the mailbox must work again without a restart"
     docker exec "$P-relay" rm -f /data/fill
     local gm; gm=$("$TP" keygen "$D/gm/gm.key")
-    mkdir -p "$D/x"; "$TP" keygen "$D/x/node.key" >/dev/null
-    docker run --rm --label "$LABEL=1" --user "$UG" --network "$P-$S-x" -v "$D/x:/x" -v "$D/relay/self-signed-cert.pem:/ca.pem:ro" "$IMG" \
-        chummer-testpeer abuse --key /x/node.key --relay "$ENTRY" --ca /ca.pem --target "$gm" --mode garbage > "$D/after-free.json"
-    grep -q stored "$D/after-free.json" || { log "the mailbox still fails after the disk was freed: $(cat "$D/after-free.json")"; return 1; }
+    mkdir -p "$D/x"; cp "$D/p1/node.key" "$D/x/member.key"
+    SUFFIX=-after-free abuse garbage "$gm" --key /x/member.key
+    grep -q stored "$D/abuse-garbage-after-free.json" || { log "the mailbox still fails after the disk was freed: $(cat "$D/abuse-garbage-after-free.json")"; return 1; }
     log "the GM comes online"
     docker start "$P-gm" >/dev/null
     converge strict 300
@@ -447,6 +503,107 @@ open(p,'wb').write(b)"
     sleep 5
     docker start "$P-gm" >/dev/null
     converge strict 240
+}
+
+# A stranger (a node no player gave a key) floods the GM's and a
+# player's mailbox: every put is refused before it is stored. Then
+# play-by-post goes on as usual.
+sc_stranger-flood() {
+    world stranger-flood 2
+    relay_up; gm_up
+    EVERY_MS=1200 players_up 12
+    local gm p1; gm=$("$TP" keygen "$D/gm/gm.key"); p1=$("$TP" keygen "$D/p1/node.key")
+    gm_away_after_join
+    log "a stranger floods the GM's and P1's mailboxes"
+    abuse flood "$gm" --key /x/node.key --count 1500 || { log "flood failed"; return 1; }
+    SUFFIX=-p1 abuse flood "$p1" --key /x/node.key --count 500 || { log "flood failed"; return 1; }
+    SUFFIX=-unsigned abuse unsigned "$gm" --key /x/node.key
+    for f in flood flood-p1; do
+        ! grep -q '"stored"' "$D/abuse-$f.json" || { log "stranger mail got into a mailbox ($f)"; return 1; }
+        local n; n=$(grep -o 'does not take mail' "$D/abuse-$f.json" | wc -l)
+        [ "$n" -ge 400 ] || { log "only $n refusals in $f"; return 1; }
+    done
+    players_done 120
+    sleep 5
+    log "the GM comes online"
+    docker start "$P-gm" >/dev/null
+    converge strict
+    # The GM's mailbox counted the refusals (logged with its mail rounds).
+    local refused; refused=$(docker logs "$P-gm" 2>&1 | grep -o '[0-9]* refused today' | tail -1 | cut -d' ' -f1)
+    NOTE="GM mailbox refused today: ${refused:-?}"
+    [ "${refused:-0}" -ge 1500 ] || { log "the GM's mailbox did not count the refused puts (${refused:-none})"; return 1; }
+}
+
+# P3 joins with its own invite; mid-game the GM revokes it with
+# `chummer-authority invite revoke`: P3's live connection is cut, its
+# joins are refused, its later edits never reach the campaign. P1 and P2
+# play on and converge.
+sc_revoked-player() {
+    INVITED="3" world revoked-player 3
+    relay_up; gm_up
+    EVERY_MS=500 players_up 40
+    wait_for "P3 has its character" 120 status_is "$D/status/p3.json" "s['copies'] and s['label'] == 'P3' and s['online']"
+    sleep 4
+    log "the GM revokes P3"
+    authority invite revoke /gm/campaign.chummercampaign P3 >&2
+    wait_for "P3 is refused" 60 status_is "$D/status/p3.json" "s['denied'] == 'Revoked' and not s['online']"
+    # What reached the GM before the revoke; nothing may after it.
+    sleep 6
+    inspect
+    cp "$D/authority.json" "$D/authority-at-revoke.json"
+    SKIP=P3 converge strict || return 1
+    sleep 10
+    inspect
+    python3 - "$D/authority-at-revoke.json" "$D/authority.json" "$D/status/p3.json" <<'PY' || return 1
+import json, sys
+before, after, p3 = (json.load(open(f)) for f in sys.argv[1:4])
+cid = p3["copies"][0]["id"]
+k = lambda a: [c for c in a["characters"] if c["id"] == cid][0]
+assert k(after)["version"] == k(before)["version"], f"P3's character changed after the revoke: v{k(before)['version']} -> v{k(after)['version']}"
+assert all(m["id"] != p3["id"] for m in after["members"]), "P3 is still a member"
+inv = [i for i in after["invites"] if i["label"] == "P3"][0]
+assert inv["state"].startswith("Revoked"), inv
+assert p3["denied"] == "Revoked" and not p3["online"], p3
+assert p3["progress"]["made"] > 0 and p3["copies"][0]["outbox"] > 0, "P3 kept editing, nothing got through"
+print(f"P3's character stayed at v{k(after)['version']}; {p3['copies'][0]['outbox']} edits of P3 refused")
+PY
+    NOTE="P3 cut off at v$(python3 -c "import json; a=json.load(open('$D/authority-at-revoke.json')); print(max(c['version'] for c in a['characters']))")"
+}
+
+# P2 joins with its own invite. Its link then leaks: another device tries
+# it live (refused: claimed), a third one by mail while the GM is away
+# (the GM tells it by mail that the link was claimed), and a flood signed
+# with the leaked key is stopped by the per-key cap. The players are not
+# disturbed.
+sc_leaked-link() {
+    INVITED="2" world leaked-link 2 'max_messages_per_key = 40'
+    relay_up; gm_up
+    EVERY_MS=1000 players_up 20
+    wait_for "P2 has its character" 120 status_is "$D/status/p2.json" "s['copies'] and s['label'] == 'P2'"
+    local link; link=$(cat "$D/p2/link")
+    log "the link leaks: another device tries it live"
+    intruder_up 1 "$link"
+    wait_for "X1 is refused" 90 status_is "$D/status-x/x1.json" "s['denied'] == 'Claimed'"
+    status_is "$D/status-x/x1.json" "not s['copies']" || { log "X1 got a character"; return 1; }
+    gm_away_after_join
+    log "a third device tries it by mail; a flood with the leaked key"
+    intruder_up 2 "$link"
+    sleep 8
+    local gm; gm=$("$TP" keygen "$D/gm/gm.key")
+    abuse flood "$gm" --key /x/node.key --signer-link "$link" --count 200 || { log "flood failed"; return 1; }
+    grep -q 'too many messages from this key' "$D/abuse-flood.json" || { log "the per-key cap did not stop the leaked key"; return 1; }
+    local stored; stored=$(grep -o '"stored"' "$D/abuse-flood.json" | wc -l)
+    [ "$stored" -le 40 ] || { log "$stored puts with the leaked key got in"; return 1; }
+    players_done 120
+    log "the GM comes online"
+    docker start "$P-gm" >/dev/null
+    wait_for "X2 is refused" 120 status_is "$D/status-x/x2.json" "s['denied'] == 'Claimed'"
+    status_is "$D/status-x/x2.json" "not s['copies']" || { log "X2 got a character"; return 1; }
+    converge strict || return 1
+    inspect
+    python3 -c "import json,sys; a=json.load(open('$D/authority.json')); sys.exit(0 if len(a['members']) == 3 else 1)" || { log "an intruder became a member"; return 1; }
+    docker logs "$P-gm" 2>&1 | grep -q "refused a mailed join" && NOTE="X2 refused by mail" || NOTE="X2 refused live"
+    NOTE="$NOTE; $stored leaked-key puts stored before the cap"
 }
 
 # ----- main -----

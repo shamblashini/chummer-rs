@@ -10,10 +10,10 @@
 //! - [`config`] and [`node`]: relay list and endpoint setup. Peers are found
 //!   by [`EndpointId`] through the configured relays only
 //!   ([`node::RelayLookup`]); no third-party DNS or pkarr servers.
-//! - [`campaign`]: the `chummer-rs/campaign/1` protocol between a player's
+//! - [`campaign`]: the `chummer-rs/campaign/2` protocol between a player's
 //!   app and the GM's app (hello, submit/ack, server push, ping).
-//! - [`invite`]: campaign ids, invite tokens and `chummer-rs://join/...` links.
-//! - [`mailbox`]: the `chummer-rs/mailbox/1` protocol to the relay's
+//! - [`invite`]: campaign ids, member keys and `chummer-rs://join/...` links.
+//! - [`mailbox`]: the `chummer-rs/mailbox/2` protocol to the relay's
 //!   store-and-forward mailbox, and its client.
 //! - [`seal`]: end-to-end sealing of mailbox blobs to a recipient's
 //!   [`EndpointId`], signed by the sender.
