@@ -167,7 +167,8 @@ jobs:
             choco install innosetup -y --no-progress
           fi
           name="chummer-rs-$LABEL-${{ matrix.name }}-setup"
-          "$iscc" /Qp "/DAppVersion=$VERSION" "/DSourceDir=$(cygpath -w "$PWD/$PKGDIR")" "/DOutputDir=$(cygpath -w "$PWD")" "/DOutputName=$name" packaging/windows/chummer-rs.iss
+          # Git Bash would turn the /D... switches into paths.
+          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$iscc" /Qp "/DAppVersion=$VERSION" "/DSourceDir=$(cygpath -w "$PWD/$PKGDIR")" "/DOutputDir=$(cygpath -w "$PWD")" "/DOutputName=$name" packaging/windows/chummer-rs.iss
           echo "SETUP=$name.exe" >> "$GITHUB_ENV"
       - name: Test the installer
         if: runner.os == 'Windows'
@@ -249,8 +250,17 @@ jobs:
           ditto "$dir/chummer-rs.app" "$stage/chummer-rs.app"
           cp LICENSE "$stage/"
           ln -s /Applications "$stage/Applications"
-          hdiutil create -volname "chummer-rs $VERSION" -srcfolder "$stage" -ov -format UDZO "$dir.dmg"
-          hdiutil verify "$dir.dmg"
+          # hdiutil fails now and then with "Resource busy/temporarily
+          # unavailable" on CI runners: retry.
+          for i in 1 2 3 4 5; do
+            hdiutil create -volname "chummer-rs $VERSION" -srcfolder "$stage" -ov -format UDZO "$dir.dmg" && break
+            sleep 10
+          done
+          for i in 1 2 3 4 5; do
+            hdiutil verify "$dir.dmg" && break
+            [ $i = 5 ] && exit 1
+            sleep 10
+          done
           echo "DMG=$dir.dmg" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
