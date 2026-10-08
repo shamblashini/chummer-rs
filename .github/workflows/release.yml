@@ -104,10 +104,10 @@ jobs:
           for p in $(pacman -Qoq $files | sort -u); do
             pacman -Q "$p" >> "$out/README.txt"
             mkdir -p "$out/licenses/$p"
-            pacman -Qlq "$p" | grep -E '/share/licenses/' | copy_licences "$p"
+            { pacman -Qlq "$p" | grep -E '/share/licenses/' || true; } | copy_licences "$p"
             # Packages without a licence directory: their copying files.
             if [ -z "$(ls -A "$out/licenses/$p")" ]; then
-              pacman -Qlq "$p" | grep -iE '/[^/]*(copying|licen[cs]e|copyright)[^/]*$' | copy_licences "$p"
+              { pacman -Qlq "$p" | grep -iE '/[^/]*(copying|licen[cs]e|copyright)[^/]*$' || true; } | copy_licences "$p"
             fi
           done
           # libxslt's package has carried no licence file: take it from
