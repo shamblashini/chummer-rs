@@ -3,6 +3,13 @@
 //!
 //! Loading a `.chum5lz` takes a quarter of a second, saving one several
 //! seconds (LZMA), and a file dialog blocks for as long as it is open.
+//!
+//! Characters are saved as `.chumrs` (chummer-rs's own container,
+//! `chummer_core::chumrs`). A Chummer5a file (.chum5/.chum5lz) opens as
+//! before; its first Save asks whether to save it as `.chumrs` (the
+//! default, through Save As; the .chum5 stays untouched) or keep saving the
+//! Chummer5a file. File → Export to Chummer5a writes a copy in Chummer's
+//! format without changing which file the character is.
 //! Each runs on its own thread ([`crate::bg`]); the app picks the result
 //! up on a later frame ([`App::poll_io`]). A save writes a copy of the
 //! character taken when it started, so editing on meanwhile is safe: the
@@ -11,6 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use chummer_core::character::Character;
+use chummer_core::chumrs::{self, Extras};
 use eframe::egui;
 
 use crate::bg;
@@ -56,6 +64,9 @@ pub struct Io {
     rescan: bool,
     /// The files from the command line are loading.
     pub startup: bool,
+    /// The first Save of a Chummer5a file: the question "save as .chumrs
+    /// or keep the .chum5" is open for this view.
+    pub ask_format: Option<(u64, Then)>,
 }
 
 const ROSTER_SCAN: &str = "roster-scan";
@@ -66,6 +77,18 @@ impl Io {
     /// Whether characters are still loading.
     pub fn has_loads(&self) -> bool {
         !self.loading.is_empty()
+    }
+}
+
+/// `path`, with `.ext` added when it has no character extension (a name
+/// typed without one).
+fn with_extension(path: PathBuf, ext: &str) -> PathBuf {
+    if chummer_core::chum5lz::is_character_file(&path) {
+        path
+    } else {
+        let mut s = path.into_os_string();
+        s.push(format!(".{ext}"));
+        PathBuf::from(s)
     }
 }
 
@@ -95,7 +118,7 @@ impl App {
         }
         let owned = path.to_owned();
         let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        if bg::spawn(&self.ctx, load_id(path), self.lang.tr_fmt("Opening {0}…", &[&name]), move || Character::load(&owned).map_err(|e| e.to_string())) {
+        if bg::spawn(&self.ctx, load_id(path), self.lang.tr_fmt("Opening {0}…", &[&name]), move || chumrs::load_any(&owned).map_err(|e| e.to_string())) {
             self.io.loading.push(path.to_owned());
         }
     }
@@ -104,7 +127,8 @@ impl App {
     pub(crate) fn open_dialog(&mut self) {
         bg::dialog(&self.ctx, "dialog:open", || {
             rfd::FileDialog::new()
-                .add_filter("Chummer character", &["chum5", "chum5lz"])
+                .add_filter("Character", &["chumrs", "chum5", "chum5lz"])
+                .add_filter("chummer-rs character", &["chumrs"])
                 .add_filter("Raw Chummer5 Saves", &["chum5"])
                 .add_filter("Compressed Chummer5 Saves", &["chum5lz"])
                 .add_filter("All files", &["*"])
@@ -131,21 +155,112 @@ impl App {
         let Some(v) = self.views.get(idx) else { return false };
         let view = v.ws_id();
         match (save_as, v.path()) {
-            (false, Some(p)) => self.start_save(view, p, then),
-            _ => {
-                // Keep the current file's format; Chummer's Save As offers
-                // both (`DialogFilter_Chum5` / `DialogFilter_Chum5lz`).
-                let compressed = v.path().is_some_and(|p| chummer_core::chum5lz::is_chum5lz(&p));
-                let (first, second) = if compressed { (("Compressed Chummer5 Saves", "chum5lz"), ("Raw Chummer5 Saves", "chum5")) } else { (("Raw Chummer5 Saves", "chum5"), ("Compressed Chummer5 Saves", "chum5lz")) };
-                let name = format!("{}.{}", v.ch().display_name(), first.1);
-                let started = bg::dialog(&self.ctx, format!("dialog:saveas:{view}"), move || {
-                    rfd::FileDialog::new().add_filter(first.0, &[first.1]).add_filter(second.0, &[second.1]).set_file_name(name).save_file()
-                });
-                if started {
-                    self.io.asking.push((view, then));
+            // A Chummer5a file: the first Save asks what to do; while
+            // quitting or closing, Save As .chumrs is the default.
+            (false, Some(p)) if chummer_core::chum5lz::is_chummer_file(&p) && !v.doc().keep_chummer_format => {
+                if then == Then::Nothing {
+                    self.io.ask_format = Some((view, then));
+                    true
+                } else {
+                    self.save_as_dialog(idx, then)
                 }
-                started
             }
+            (false, Some(p)) => self.start_save(view, p, then),
+            _ => self.save_as_dialog(idx, then),
+        }
+    }
+
+    /// The Save As dialog for character `idx` (on its own thread): a
+    /// .chumrs first, Chummer5a's formats offered too. Returns whether it
+    /// opened.
+    fn save_as_dialog(&mut self, idx: usize, then: Then) -> bool {
+        let Some(v) = self.views.get(idx) else { return false };
+        let view = v.ws_id();
+        let stem = v.path().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or_else(|| v.ch().display_name());
+        let dir = v.path().and_then(|p| p.parent().map(Path::to_path_buf));
+        let name = format!("{stem}.{}", chumrs::EXTENSION);
+        let started = bg::dialog(&self.ctx, format!("dialog:saveas:{view}"), move || {
+            let mut d = rfd::FileDialog::new()
+                .add_filter("chummer-rs character", &[chumrs::EXTENSION])
+                .add_filter("Raw Chummer5 Saves", &["chum5"])
+                .add_filter("Compressed Chummer5 Saves", &["chum5lz"])
+                .set_file_name(name);
+            if let Some(dir) = dir.filter(|d| d.is_dir()) {
+                d = d.set_directory(dir);
+            }
+            d.save_file()
+        });
+        if started {
+            self.io.asking.push((view, then));
+        }
+        started
+    }
+
+    /// File → Export to Chummer5a: a copy as .chum5 or .chum5lz; the
+    /// character keeps its file and stays as modified as it was.
+    pub(crate) fn export_chummer(&mut self, idx: usize) {
+        let Some(v) = self.views.get(idx) else { return };
+        let stem = v.path().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or_else(|| v.ch().display_name());
+        let dir = v.path().and_then(|p| p.parent().map(Path::to_path_buf));
+        let job = v.doc().export_job_lazy();
+        bg::spawn(&self.ctx, format!("{STATUS}export-chummer"), self.lang.tr("Exporting…"), move || {
+            let mut d = rfd::FileDialog::new().add_filter("Raw Chummer5 Saves", &["chum5"]).add_filter("Compressed Chummer5 Saves", &["chum5lz"]).set_file_name(format!("{stem}.chum5"));
+            if let Some(dir) = dir.filter(|d| d.is_dir()) {
+                d = d.set_directory(dir);
+            }
+            let out = with_extension(d.save_file()?, "chum5");
+            Some(match job(out.clone()) {
+                Ok(()) => (format!("Exported to {}", out.display()), false),
+                Err(e) => (format!("Could not export {}: {e}", out.display()), true),
+            })
+        });
+    }
+
+    /// The question on the first Save of a Chummer5a file. Drawn each
+    /// frame while it is open.
+    pub(crate) fn format_question(&mut self, ctx: &egui::Context) {
+        let Some((view, then)) = self.io.ask_format else { return };
+        let Some(idx) = self.views.iter().position(|v| v.ws_id() == view) else {
+            self.io.ask_format = None;
+            return;
+        };
+        let name = self.views[idx].path().and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned())).unwrap_or_default();
+        let mut choice = None;
+        egui::Window::new(self.lang.tr("Save"))
+            .id(egui::Id::new("save_format_question"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(self.lang.tr_fmt("{0} is a Chummer5a file.", &[&name]));
+                ui.label(self.lang.tr("chummer-rs saves characters as .chumrs: smaller, checked for damage, and it keeps the change history. The Chummer5a file stays as it is; File → Export to Chummer5a writes one again at any time."));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let b = ui.button(self.lang.tr("Save as .chumrs…"));
+                    if b.clicked() {
+                        choice = Some(1);
+                    }
+                    if ui.button(self.lang.tr("Keep saving as Chummer5a")).clicked() {
+                        choice = Some(2);
+                    }
+                    if ui.button(self.lang.tr("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        choice = Some(0);
+                    }
+                });
+            });
+        let Some(choice) = choice else { return };
+        self.io.ask_format = None;
+        match choice {
+            1 => {
+                self.save_as_dialog(idx, then);
+            }
+            2 => {
+                self.views[idx].doc_mut().keep_chummer_format = true;
+                if let Some(p) = self.views[idx].path() {
+                    self.start_save(view, p, then);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -237,7 +352,7 @@ impl App {
         }
         // In the order they were opened (tabs keep that order).
         while let Some(path) = self.io.loading.first().cloned() {
-            match bg::take::<Result<Character, String>>(&load_id(&path)) {
+            match bg::take::<Result<(Character, Extras), String>>(&load_id(&path)) {
                 // The job failed outright.
                 None if !bg::busy(&load_id(&path)) => {
                     self.io.loading.remove(0);
@@ -247,7 +362,7 @@ impl App {
                 Some(r) => {
                     self.io.loading.remove(0);
                     match r {
-                        Ok(ch) => self.loaded(&path, ch),
+                        Ok((ch, extras)) => self.loaded(&path, ch, extras),
                         Err(e) => self.status = Some((e, true)),
                     }
                 }
@@ -258,6 +373,13 @@ impl App {
             match bg::take::<Option<PathBuf>>(&id) {
                 None if bg::busy(&id) => self.io.asking.push((view, then)),
                 Some(Some(path)) => {
+                    let path = with_extension(path, chumrs::EXTENSION);
+                    if chummer_core::chum5lz::is_chummer_file(&path) {
+                        // Chose Chummer5a's format: keep it from now on.
+                        if let Some(v) = self.views.iter_mut().find(|v| v.ws_id() == view) {
+                            v.doc_mut().keep_chummer_format = true;
+                        }
+                    }
                     if !self.start_save(view, path, then) && then == Then::Quit {
                         self.io.quitting = false;
                     }
@@ -313,7 +435,7 @@ impl App {
         bg::keep_painting(&self.ctx);
     }
 
-    fn loaded(&mut self, path: &Path, ch: Character) {
+    fn loaded(&mut self, path: &Path, ch: Character, extras: Extras) {
         if let Some(i) = self.views.iter().position(|v| v.path().as_deref() == Some(path)) {
             // Opened twice while loading.
             self.active = i;
@@ -321,6 +443,13 @@ impl App {
             return;
         }
         let mut v = crate::trace::time("open file (first compute)", || CharacterView::new(ch, &self.engine));
+        let guide_in_file = extras.guide.is_some();
+        v.doc_mut().set_extras(extras);
+        if guide_in_file && v.guided() {
+            // Start the guide again from where the file says it was.
+            v.set_guided(false);
+            v.set_guided(true);
+        }
         if let Some(t) = self.io.start_tab {
             v.set_tab(t);
         }
@@ -331,7 +460,11 @@ impl App {
             self.home = None;
         }
         self.remember(path);
-        self.status = Some((format!("Opened {}", path.display()), false));
+        self.status = Some(if chummer_core::chum5lz::is_chummer_file(path) {
+            (self.lang.tr_fmt("Opened {0} (a Chummer5a file: Save offers to keep it or save as .chumrs)", &[&path.display().to_string()]), false)
+        } else {
+            (format!("Opened {}", path.display()), false)
+        });
         if self.io.loading.is_empty() {
             self.io.start_tab = None;
             self.io.startup = false;

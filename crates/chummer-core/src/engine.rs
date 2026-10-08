@@ -105,10 +105,15 @@ impl Engine {
 
     /// Save, refreshing the export totals first.
     pub fn save(&self, ch: &mut Character, path: &std::path::Path) -> std::io::Result<()> {
+        self.save_with(ch, path, &crate::chumrs::Extras::default())
+    }
+
+    /// [`Engine::save`] with what a `.chumrs` keeps besides the character.
+    pub fn save_with(&self, ch: &mut Character, path: &std::path::Path, extras: &crate::chumrs::Extras) -> std::io::Result<()> {
         let rules = self.rules_for(ch);
         let store = self.store_for_character(ch);
         let sheet = calc::compute(ch, &rules, Some(&store), Some(&self.catalog));
         calc::stamp_totals(ch, &sheet, &rules);
-        ch.save(path)
+        ch.save_with(path, extras)
     }
 }

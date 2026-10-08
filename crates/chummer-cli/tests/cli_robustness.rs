@@ -196,3 +196,41 @@ fn apply_with_odd_logs() {
         assert_no_crash(&format!("apply <{name}>"), &o);
     }
 }
+
+/// `convert` between .chum5, .chumrs and .chum5lz keeps the character
+/// (equal `hash`), and bad input or a damaged .chumrs fails cleanly.
+#[test]
+fn convert_between_formats() {
+    let s = Scratch::new("convert");
+    let davis = fixture("Barrett.chum5");
+    let hash = |p: &Path| {
+        let o = s.run([OsString::from("hash"), p.as_os_str().to_owned()]);
+        assert!(o.status.success(), "{}", describe("hash", &o));
+        String::from_utf8_lossy(&o.stdout).trim().to_owned()
+    };
+    let want = hash(&davis);
+    let rs = s.path("b.chumrs");
+    let back = s.path("b.chum5");
+    let lz = s.path("b.chum5lz");
+    for (a, b) in [(&davis, &rs), (&rs, &back), (&rs, &lz), (&lz, &s.path("c.chumrs"))] {
+        let o = s.run([OsString::from("convert"), a.clone().into_os_string(), b.clone().into_os_string()]);
+        assert!(o.status.success(), "{}", describe("convert", &o));
+        assert_eq!(hash(b), want, "{} -> {}", a.display(), b.display());
+    }
+    assert_eq!(&std::fs::read(&rs).unwrap()[..4], b"PK\x03\x04");
+    assert!(std::fs::read_to_string(&back).unwrap().starts_with("<?xml"));
+    // A roster lists a .chumrs.
+    let o = s.run(["roster", s.0.to_str().unwrap()]);
+    assert!(String::from_utf8_lossy(&o.stdout).matches("Barrett").count() >= 4, "{}", describe("roster", &o));
+
+    let mut bytes = std::fs::read(&rs).unwrap();
+    let n = bytes.len();
+    bytes.truncate(n / 2);
+    let cut = s.write("cut.chumrs", &bytes);
+    for args in [vec![cut.into_os_string(), s.path("x.chum5").into_os_string()], vec![rs.clone().into_os_string(), s.path("x.txt").into_os_string()], vec![rs.into_os_string()]] {
+        let mut a = vec![OsString::from("convert")];
+        a.extend(args);
+        let o = s.run(a);
+        assert_error("convert <bad>", &o);
+    }
+}

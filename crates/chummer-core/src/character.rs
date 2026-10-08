@@ -20,6 +20,22 @@ pub enum LoadError {
     Xml(PathBuf, xml::XmlError),
     #[error("{0} is not a Chummer character (root element <{1}>)")]
     NotCharacter(PathBuf, String),
+    /// A `.chumrs` container that cannot be read (damaged, too new, ...).
+    #[error("cannot open {0}: {1}")]
+    Format(PathBuf, String),
+}
+
+impl LoadError {
+    /// The same error about the file `path`.
+    pub fn with_path(self, path: &Path) -> LoadError {
+        let p = path.to_owned();
+        match self {
+            LoadError::Io(_, e) => LoadError::Io(p, e),
+            LoadError::Xml(_, e) => LoadError::Xml(p, e),
+            LoadError::NotCharacter(_, r) => LoadError::NotCharacter(p, r),
+            LoadError::Format(_, m) => LoadError::Format(p, m),
+        }
+    }
 }
 
 /// Text fields shown on the "Character Info" tab.
@@ -74,15 +90,10 @@ pub fn uses_priority_tables(build_method: &str) -> bool {
 }
 
 impl Character {
+    /// Load a `.chumrs`, `.chum5` or `.chum5lz` (a `.chumrs`'s history
+    /// and guide state are dropped; [`crate::chumrs::load_any`] keeps them).
     pub fn load(path: &Path) -> Result<Character, LoadError> {
-        let src = crate::chum5lz::read_text(path).map_err(|e| LoadError::Io(path.to_owned(), e))?;
-        let mut c = Character::from_str(&src).map_err(|e| match e {
-            LoadError::Xml(_, x) => LoadError::Xml(path.to_owned(), x),
-            LoadError::NotCharacter(_, r) => LoadError::NotCharacter(path.to_owned(), r),
-            other => other,
-        })?;
-        c.file = Some(path.to_owned());
-        Ok(c)
+        crate::chumrs::load_any(path).map(|(c, _)| c)
     }
 
     #[allow(clippy::should_implement_trait)]
@@ -194,10 +205,17 @@ impl Character {
         self.to_document().to_xml_string()
     }
 
-    /// Write the character; a `.chum5lz` path is LZMA-compressed like
-    /// Chummer's compressed saves.
+    /// Write the character in the format the extension names: a
+    /// `.chumrs` container, a `.chum5lz` (LZMA-compressed like Chummer's
+    /// compressed saves) or plain `.chum5` XML.
     pub fn save(&mut self, path: &Path) -> std::io::Result<()> {
-        crate::chum5lz::write_text(path, &self.to_xml_string())?;
+        self.save_with(path, &crate::chumrs::Extras::default())
+    }
+
+    /// [`Character::save`] with what a `.chumrs` keeps besides the
+    /// character (ignored for Chummer's formats).
+    pub fn save_with(&mut self, path: &Path, extras: &crate::chumrs::Extras) -> std::io::Result<()> {
+        crate::chumrs::save_any(path, self, extras)?;
         self.file = Some(path.to_owned());
         self.dirty = false;
         Ok(())

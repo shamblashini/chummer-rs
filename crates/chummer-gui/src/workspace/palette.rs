@@ -27,6 +27,7 @@ pub enum Cmd {
     SaveAs,
     Print,
     Export,
+    ExportChummer,
     Close,
     NewCampaign,
     OpenCampaign,
@@ -49,7 +50,7 @@ pub enum Cmd {
 }
 
 impl Cmd {
-    pub const ALL: [Cmd; 26] = [
+    pub const ALL: [Cmd; 27] = [
         Cmd::NewCharacter,
         Cmd::NewCritter,
         Cmd::Open,
@@ -57,6 +58,7 @@ impl Cmd {
         Cmd::SaveAs,
         Cmd::Print,
         Cmd::Export,
+        Cmd::ExportChummer,
         Cmd::Close,
         Cmd::NewCampaign,
         Cmd::OpenCampaign,
@@ -88,6 +90,7 @@ impl Cmd {
             Cmd::SaveAs => "Save As…",
             Cmd::Print => "Print…",
             Cmd::Export => "Export…",
+            Cmd::ExportChummer => "Export to Chummer5a (.chum5)…",
             Cmd::Close => "Close",
             Cmd::NewCampaign => "New Campaign",
             Cmd::OpenCampaign => "Open Campaign…",
@@ -142,7 +145,7 @@ impl Cmd {
             Cmd::Open | Cmd::OpenCampaign => icons::FOLDER_OPEN,
             Cmd::Save | Cmd::SaveAs => icons::FLOPPY_DISK,
             Cmd::Print => icons::PRINTER,
-            Cmd::Export => icons::EXPORT,
+            Cmd::Export | Cmd::ExportChummer => icons::EXPORT,
             Cmd::Close => icons::X,
             Cmd::NewCampaign | Cmd::JoinCampaign => icons::USERS_THREE,
             Cmd::Undo => icons::ARROW_U_UP_LEFT,

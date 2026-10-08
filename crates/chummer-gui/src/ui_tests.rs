@@ -76,7 +76,7 @@ fn scratch() -> &'static Path {
         for src in [core.join("fixtures"), core.join("chum5lz")] {
             for e in std::fs::read_dir(&src).into_iter().flatten().flatten() {
                 let p = e.path();
-                if p.extension().is_some_and(|x| x == "chum5" || x == "chum5lz") {
+                if chummer_core::chum5lz::is_character_file(&p) {
                     std::fs::copy(&p, dir.join("fixtures").join(e.file_name())).expect("copy fixture");
                 }
             }
@@ -332,6 +332,7 @@ impl Harness {
         a.home = None;
         a.online.show_settings = false;
         a.online.join = None;
+        a.io.ask_format = None;
         a.ws.palette.close();
         egui::Popup::close_all(&self.ctx);
         self.frame(Vec::new());
@@ -1022,6 +1023,73 @@ fn close_changed_document_asks_first() {
         assert_eq!(h.app.home, Some(Home::Roster));
         sizes(&mut h, 2);
     }
+}
+
+/// Draws frames until character `i` is saved (not modified) or 30 s
+/// passed.
+fn wait_saved(h: &mut Harness, i: usize) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while h.app.views[i].ch().dirty && std::time::Instant::now() < end {
+        h.frame(Vec::new());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!h.app.views[i].ch().dirty, "saved: {:?}", h.app.status);
+}
+
+/// A Chummer5a file's first Save asks whether to save as .chumrs or keep
+/// the .chum5; keeping it saves the .chum5 and does not ask again. A
+/// .chumrs saves with its history: the earlier sessions' changes and this
+/// one's, which the History panel lists.
+#[test]
+fn chumrs_and_the_first_save_of_a_chum5() {
+    use chummer_core::chumrs::{self, Extras, HistoryItem};
+    use chummer_core::command::Command;
+    let mut h = Harness::new(ThemeKind::Graphite);
+    let i = h.open(&fixture("Munin.chum5"));
+    let path = h.app.views[i].path().unwrap();
+    h.app.views[i].doc_mut().apply(Command::SetField { key: "alias".into(), value: "Ghost".into() }).unwrap();
+    h.frames(1);
+    h.key(Key::S, Modifiers::COMMAND);
+    h.frames(2);
+    assert!(h.app.io.ask_format.is_some(), "the first Save asks");
+    assert!(h.find_text(&h.app.lang.tr("Save as .chumrs…")).is_some());
+    h.click_text(&h.app.lang.tr("Keep saving as Chummer5a"));
+    wait_saved(&mut h, i);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with("<?xml") && text.contains("<alias>Ghost</alias>"), "saved as .chum5");
+    h.app.views[i].doc_mut().apply(Command::SetField { key: "alias".into(), value: "Ghost 2".into() }).unwrap();
+    h.key(Key::S, Modifiers::COMMAND);
+    h.frames(1);
+    assert!(h.app.io.ask_format.is_none(), "asked once");
+    wait_saved(&mut h, i);
+    assert!(std::fs::read_to_string(&path).unwrap().contains("<alias>Ghost 2</alias>"));
+    h.close_all();
+
+    // A .chumrs with history from an earlier session.
+    let ch = chummer_core::character::Character::load(&fixture("Munin.chum5")).unwrap();
+    let rs = scratch().join(format!("history-{:?}.chumrs", std::thread::current().id()).replace(['(', ')'], ""));
+    let earlier = vec![HistoryItem { at: 1_700_000_000_000, author: String::new(), description: "Raised Pistols to 5".into() }];
+    chumrs::write(&rs, &ch, &Extras { history: earlier.clone(), ..Default::default() }).unwrap();
+    let before = h.app.views.len();
+    h.app.open(&rs);
+    h.wait_loaded(before + 1);
+    let i = h.app.views.len() - 1;
+    assert_eq!(h.app.views[i].doc().earlier_history(), &earlier[..]);
+    h.app.views[i].doc_mut().apply(Command::SetField { key: "alias".into(), value: "Ghost".into() }).unwrap();
+    h.app.views[i].show_history();
+    h.frames(2);
+    assert!(h.find_text(&h.app.lang.tr("Earlier sessions")).is_some(), "shown: {:?}", h.on_screen());
+    assert!(h.find_text("Raised Pistols to 5").is_some());
+    h.key(Key::S, Modifiers::COMMAND);
+    h.frames(1);
+    assert!(h.app.io.ask_format.is_none(), "a .chumrs saves without asking");
+    wait_saved(&mut h, i);
+    let (back, extras) = chumrs::load_any(&rs).unwrap();
+    assert_eq!(back.field("alias"), "Ghost");
+    assert_eq!(extras.history.len(), 2, "{:?}", extras.history);
+    assert_eq!(extras.history[0], earlier[0]);
+    h.close_all();
+    let _ = std::fs::remove_file(&rs);
 }
 
 /// Several characters open: switch between them, close the one in

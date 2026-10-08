@@ -11,7 +11,8 @@
 //! they change), so there is one strip, not two.
 //!
 //! A child module of `view`. Where the guide is (the current step and
-//! the steps visited) is remembered per file in
+//! the steps visited) is saved in the character's `.chumrs`
+//! (`guide.json`); for a Chummer5a file it is remembered per file in
 //! `$XDG_CONFIG_HOME/chummer-rs/guide.ini`, never in the .chum5.
 
 use std::path::{Path, PathBuf};
@@ -200,7 +201,8 @@ impl CharacterView {
             return;
         }
         let steps = guide::steps_for(&self.build_method(), &self.doc);
-        let remembered = self.doc.file.as_deref().and_then(load_state).and_then(|(s, v)| steps.iter().position(|x| *x == s).map(|i| (i, v)));
+        let in_file = self.doc.guide_state().and_then(|g| Some((Step::parse(&g.step)?, g.visited.iter().filter_map(|v| Step::parse(v)).collect::<Vec<_>>())));
+        let remembered = in_file.or_else(|| self.doc.file.as_deref().and_then(load_state)).and_then(|(s, v)| steps.iter().position(|x| *x == s).map(|i| (i, v)));
         let (current, visited) = remembered.unwrap_or_else(|| {
             // New: the wizard did the concept; for an older file, the
             // steps before the first one with something to do.
@@ -266,8 +268,11 @@ impl CharacterView {
         if !g.visited.contains(&step) {
             g.visited.push(step);
         }
-        if let Some(f) = self.doc.file.as_deref() {
-            save_state(f, step, &g.visited);
+        let visited: Vec<String> = g.visited.iter().map(|s| s.id().to_owned()).collect();
+        let visited_steps = g.visited.clone();
+        self.doc.set_guide_state(Some(chummer_core::chumrs::GuideState { step: step.id().to_owned(), visited }));
+        if let Some(f) = self.doc.file.as_deref().filter(|f| !chummer_core::chumrs::is_chumrs(f)) {
+            save_state(f, step, &visited_steps);
         }
     }
 

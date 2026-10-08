@@ -983,7 +983,7 @@ impl App {
         for c in Cmd::ALL {
             let enabled = match c {
                 Cmd::Save => has || self.home == Some(Home::Campaign),
-                Cmd::SaveAs | Cmd::Print | Cmd::Export | Cmd::Close => has,
+                Cmd::SaveAs | Cmd::Print | Cmd::Export | Cmd::ExportChummer | Cmd::Close => has,
                 Cmd::Undo => undo.is_some(),
                 Cmd::Redo => redo.is_some(),
                 Cmd::Dark => kind != ThemeKind::WorkspaceDark,
@@ -1071,6 +1071,7 @@ impl App {
             }
             Cmd::Print if has => self.show_print = true,
             Cmd::Export if has => self.show_export = true,
+            Cmd::ExportChummer if has => self.export_chummer(self.active),
             Cmd::Close if has => self.close_tab(self.active, false),
             Cmd::NewCampaign => self.new_campaign(),
             Cmd::OpenCampaign => self.open_campaign_dialog(),
@@ -1090,7 +1091,7 @@ impl App {
             Cmd::GuidedCreation => self.set_guided(!crate::view::guided_preference()),
             Cmd::About => self.show_about = true,
             Cmd::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-            Cmd::Save | Cmd::SaveAs | Cmd::Print | Cmd::Export | Cmd::Close => {}
+            Cmd::Save | Cmd::SaveAs | Cmd::Print | Cmd::Export | Cmd::ExportChummer | Cmd::Close => {}
         }
     }
 }

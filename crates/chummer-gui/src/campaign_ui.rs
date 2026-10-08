@@ -20,7 +20,7 @@ pub type Picked = Vec<(std::path::PathBuf, Result<chummer_core::character::Chara
 /// comes from [`picked_characters`] with the same `link`.
 pub fn pick_characters(ctx: &egui::Context, link: bool) {
     crate::bg::dialog(ctx, format!("dialog:gm-add:{link}"), || -> Picked {
-        let files = rfd::FileDialog::new().add_filter("Chummer character", &["chum5", "chum5lz"]).add_filter("All files", &["*"]).pick_files().unwrap_or_default();
+        let files = rfd::FileDialog::new().add_filter("Character", &["chumrs", "chum5", "chum5lz"]).add_filter("All files", &["*"]).pick_files().unwrap_or_default();
         files.into_iter().map(|p| {
             let ch = chummer_core::character::Character::load(&p).map_err(|e| e.to_string());
             (p, ch)

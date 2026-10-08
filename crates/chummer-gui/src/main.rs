@@ -498,6 +498,10 @@ impl App {
                 ui.close();
                 self.show_export = true;
             }
+            if ui.add_enabled(has, egui::Button::new(self.lang.tr("Export to Chummer5a (.chum5)…"))).clicked() {
+                ui.close();
+                self.export_chummer(self.active);
+            }
             if ui.add_enabled(has, egui::Button::new(self.lang.tr("Close")).shortcut_text("Ctrl+W")).clicked() {
                 ui.close();
                 self.close_tab(self.active, false);
@@ -796,7 +800,7 @@ impl App {
                 if ui.button(format!("{}  {}", crate::theme::glyph(crate::theme::glyph("📂")), self.lang.tr("Open Character…"))).clicked() {
                     self.open_dialog();
                 }
-                ui.weak(self.lang.tr("or drop .chum5 or .chum5lz files onto this window"));
+                ui.weak(self.lang.tr("or drop .chumrs, .chum5 or .chum5lz files onto this window"));
                 ui.add_space(16.0);
                 if self.pdfs.linked_count() == 0 && ui.button(format!("{} {}", crate::theme::glyph(crate::theme::glyph("📖")), self.lang.tr("Link your sourcebook PDFs…"))).clicked() {
                     self.show_sources = true;
@@ -1098,6 +1102,7 @@ impl App {
         let mut open = self.show_export;
         egui::Window::new(self.lang.tr("Export Character")).id(egui::Id::new("export_character")).open(&mut open).default_width(420.0).show(ctx, |ui| self.export_ui(ui));
         self.show_export = open;
+        self.format_question(ctx);
         let mut open = self.show_print;
         egui::Window::new(self.lang.tr("Character Sheet")).id(egui::Id::new("character_sheet")).open(&mut open).default_width(460.0).show(ctx, |ui| self.print_ui(ui));
         self.show_print = open;
@@ -1221,7 +1226,7 @@ fn main() -> anyhow::Result<()> {
             "--layout" => layout_arg = args.next().and_then(|t| theme::Layout::parse(&t)),
             "--new" => window = Some("new".into()),
             "-h" | "--help" => {
-                println!("usage: chummer-rs [chummer-rs://join/... invite link] [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--layout <classic|workspace>] [--theme <classic|graphite|dark|light>] [file.chum5|file.chum5lz|file.chummercampaign ...]");
+                println!("usage: chummer-rs [chummer-rs://join/... invite link] [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--layout <classic|workspace>] [--theme <classic|graphite|dark|light>] [file.chumrs|file.chum5|file.chum5lz|file.chummercampaign ...]");
                 return Ok(());
             }
             // An invite link (the chummer-rs:// handler passes it as an argument).

@@ -2,29 +2,36 @@
 //! encounters (initiative and damage), and the activity feed.
 //!
 //! The format is chummer-rs's own (Chummer has no campaign file). A
-//! `.chummercampaign` file is one LZMA stream (the `.chum5lz` container,
-//! [`crate::chum5lz`]) holding one JSON document:
+//! `.chummercampaign` file is a [`crate::container`] (ZIP +
+//! `manifest.json`, format `"chummer-rs campaign"`, schema version 1),
+//! the same container as a `.chumrs` character ([`crate::chumrs`]):
+//!
+//! - `campaign.json`: the campaign as one JSON document:
 //!
 //! ```text
-//! { "format": "chummer-rs campaign", "version": 1,
-//!   "id": "<32 hex>", "name": "...", "created": "2026-10-06T12:00:00",
+//! { "id": "<32 hex>", "name": "...", "created": "2026-10-06T12:00:00",
 //!   "gm_notes": "...",
 //!   "members": [ { "id": "<32 hex>", "kind": "Player", "name": "...",
-//!                  "character": { "storage": "embedded", "xml": "<character>…" }
-//!                               | { "storage": "linked", "path": "runners/ghost.chum5" },
+//!                  "character": { "storage": "embedded", "entry": "members/<id>.xml" }
+//!                               | { "storage": "linked", "path": "runners/ghost.chumrs" },
 //!                  "player": "...", "owner": null, "group": "...", "notes": "...",
 //!                  "visible_to_players": false } ],
 //!   "encounters": [ ... ], "log": [ { "at": 1759750000000, "author": "GM",
 //!                  "member": "<32 hex>", "description": "..." } ] }
 //! ```
 //!
-//! An embedded character is its canonical XML ([`crate::command::canonical`]),
-//! so loading it back gives the same [`crate::command::state_hash`]; the
-//! whole file is compressed once. A linked character stays in its own
-//! `.chum5`/`.chum5lz`; a relative path is resolved against the campaign
-//! file's folder. Every field has a default and unknown fields are
-//! ignored, so older and newer files load; only a wrong `format` fails. A
-//! file that is plain JSON (not compressed) also loads, for debugging.
+//! - `members/<id>.xml`: an embedded character, its canonical XML
+//!   ([`crate::command::canonical`]), with its mugshots in
+//!   `members/<id>/mugshots/<n>.<ext>` as in a `.chumrs`. Loading it back
+//!   gives the same [`crate::command::state_hash`].
+//!
+//! A linked character stays in its own file (`.chumrs`, `.chum5` or
+//! `.chum5lz`); a relative path is resolved against the campaign file's
+//! folder. Every field has a default and unknown fields are ignored. Files
+//! from before the container (one LZMA stream of JSON with `"format":
+//! "chummer-rs campaign", "version": 1` and the embedded characters as an
+//! `"xml"` string) still load, as does plain JSON in that form (for
+//! debugging); saving writes the container.
 //!
 //! Ids are 128 random bits written as 32 lower-case hex digits, the form
 //! `chummer_net::invite::CampaignId` uses, so the two convert through
@@ -48,8 +55,23 @@ pub use initiative::{Combatant, Encounter, InitStats};
 
 /// The `format` value of a campaign file.
 pub const FORMAT: &str = "chummer-rs campaign";
-/// The schema version this build writes.
+/// The `version` of the JSON document ([`Campaign::to_json`]).
 pub const VERSION: u32 = 1;
+/// The container's schema version this build writes.
+pub const SCHEMA_VERSION: u32 = 1;
+/// The campaign's entry in the container.
+pub const CAMPAIGN_ENTRY: &str = "campaign.json";
+
+/// Upgrades of older campaign containers, by schema version.
+pub static MIGRATIONS: &[crate::container::Migration] = &[];
+
+pub static KIND: crate::container::Kind = crate::container::Kind {
+    format: FORMAT,
+    noun: "campaign",
+    schema_version: SCHEMA_VERSION,
+    migrations: MIGRATIONS,
+    limits: crate::container::Limits { file: 256 << 20, entries: 16384, entry: crate::chum5lz::MAX_DECOMPRESSED, total: 1 << 30, manifest: 8 << 20 },
+};
 /// File extension, without the dot.
 pub const EXTENSION: &str = "chummercampaign";
 
@@ -281,6 +303,8 @@ pub enum CampaignError {
     Character(#[from] LoadError),
     #[error("the member has no character")]
     Empty,
+    #[error("cannot open the campaign: {0}")]
+    Format(#[from] crate::container::ContainerError),
 }
 
 impl Member {
@@ -426,14 +450,48 @@ impl Campaign {
         Ok(doc.campaign)
     }
 
-    /// Write the campaign (compressed) to `path`, through a temporary file
-    /// so a failed write leaves the old file.
+    /// Write the campaign to `path` (atomically: a failed write leaves the
+    /// old file).
     pub fn save(&self, path: &Path) -> Result<(), CampaignError> {
-        let io = |e| CampaignError::Io(path.to_owned(), e);
-        let bytes = crate::chum5lz::compress(self.to_json().as_bytes()).map_err(io)?;
-        let tmp = path.with_extension(format!("{EXTENSION}.tmp"));
-        std::fs::write(&tmp, bytes).map_err(io)?;
-        std::fs::rename(&tmp, path).map_err(io)
+        crate::container::atomic_write(path, &self.to_bytes()).map_err(|e| CampaignError::Io(path.to_owned(), e))
+    }
+
+    /// The `.chummercampaign` container's bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        use crate::container::Archive;
+        let mut a = Archive::new();
+        let mut doc = serde_json::to_value(self).expect("campaigns serialise");
+        if let Some(members) = doc.get_mut("members").and_then(|m| m.as_array_mut()) {
+            for m in members {
+                let id = m.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
+                let Some(c) = m.get_mut("character").and_then(|c| c.as_object_mut()) else { continue };
+                if c.get("storage").and_then(|s| s.as_str()) != Some("embedded") {
+                    continue;
+                }
+                let xml = c.remove("xml").and_then(|x| x.as_str().map(str::to_owned)).unwrap_or_default();
+                if xml.is_empty() || id.is_empty() {
+                    continue;
+                }
+                let entry = format!("members/{id}.xml");
+                // Mugshots out, as in a .chumrs; a document that does not
+                // parse is kept as it is.
+                match crate::xml::parse(&xml) {
+                    Ok(d) => {
+                        let (text, shots) = crate::chumrs::split_document(d, &format!("members/{id}/"));
+                        a.put(entry.clone(), text);
+                        for (n, b) in shots {
+                            a.put(n, b);
+                        }
+                    }
+                    Err(_) => a.put(entry.clone(), xml),
+                }
+                c.insert("entry".into(), entry.into());
+            }
+        }
+        a.put(CAMPAIGN_ENTRY, serde_json::to_vec_pretty(&doc).expect("campaigns serialise"));
+        a.manifest.created = if self.created.is_empty() || self.created.ends_with('Z') { self.created.clone() } else { format!("{}Z", self.created) };
+        a.manifest.extra.insert("summary".into(), serde_json::json!({ "name": self.name, "members": self.members.len() }));
+        crate::container::encode(&KIND, &a)
     }
 
     pub fn load(path: &Path) -> Result<Campaign, CampaignError> {
@@ -441,13 +499,47 @@ impl Campaign {
         Campaign::from_bytes(&bytes)
     }
 
+    /// A campaign from a file's bytes: the container, or the older single
+    /// LZMA stream (or plain JSON) of [`Campaign::to_json`].
     pub fn from_bytes(bytes: &[u8]) -> Result<Campaign, CampaignError> {
+        if crate::container::is_container(bytes) {
+            return Campaign::from_container(bytes);
+        }
         let text = match bytes.iter().find(|b| !b.is_ascii_whitespace()) {
             Some(b'{') => bytes.to_vec(),
             _ => crate::chum5lz::decompress(bytes).map_err(|_| CampaignError::NotACampaign)?,
         };
         let text = String::from_utf8(text).map_err(|_| CampaignError::NotACampaign)?;
         Campaign::from_json(&text)
+    }
+
+    fn from_container(bytes: &[u8]) -> Result<Campaign, CampaignError> {
+        use crate::container::ContainerError;
+        let a = match crate::container::decode(&KIND, bytes) {
+            Ok(a) => a,
+            Err(ContainerError::WrongFormat { .. } | ContainerError::NotAContainer(_)) => return Err(CampaignError::NotACampaign),
+            Err(e) => return Err(e.into()),
+        };
+        let text = a.text(CAMPAIGN_ENTRY)?.ok_or_else(|| ContainerError::Corrupt(format!("{CAMPAIGN_ENTRY} is missing")))?;
+        let mut doc: serde_json::Value = serde_json::from_str(text)?;
+        if let Some(members) = doc.get_mut("members").and_then(|m| m.as_array_mut()) {
+            for m in members {
+                let Some(c) = m.get_mut("character").and_then(|c| c.as_object_mut()) else { continue };
+                let Some(entry) = c.remove("entry").and_then(|e| e.as_str().map(str::to_owned)) else { continue };
+                let raw = a.text(&entry)?.ok_or_else(|| ContainerError::Corrupt(format!("{entry} is missing")))?;
+                let xml = match crate::xml::parse(raw) {
+                    Ok(mut d) => {
+                        crate::chumrs::insert_mugshots(&mut d, &a)?;
+                        d.to_xml_string()
+                    }
+                    // Not XML: as stored (the member fails to load later,
+                    // with the parser's message).
+                    Err(_) => raw.to_owned(),
+                };
+                c.insert("xml".into(), xml.into());
+            }
+        }
+        Ok(serde_json::from_value(doc)?)
     }
 
     /// Members in roster order: by kind ([`MemberKind::ALL`], then other

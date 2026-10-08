@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chummer_core::character::Character;
+use chummer_core::chumrs::{Extras, GuideState, HistoryItem};
 use chummer_core::command::{Command, Rejected, Report, Session};
 use chummer_core::engine::Engine;
 use chummer_sync::msg::{FeedEntry, Hash};
@@ -66,6 +67,13 @@ enum Kind {
 pub struct Doc {
     kind: Kind,
     engine: Arc<Engine>,
+    /// What the `.chumrs` it was opened from kept besides the character
+    /// (the history of earlier sessions, the guide's place); saved again
+    /// with it.
+    extras: Extras,
+    /// Opened from a Chummer5a file (.chum5/.chum5lz) and the user chose
+    /// to keep saving in that format rather than as .chumrs.
+    pub keep_chummer_format: bool,
 }
 
 impl Deref for Doc {
@@ -110,20 +118,55 @@ pub struct LogLine {
 }
 
 impl Doc {
+    fn of(kind: Kind, engine: Arc<Engine>) -> Doc {
+        Doc { kind, engine, extras: Extras::default(), keep_chummer_format: false }
+    }
+
+    /// Take what a `.chumrs` kept besides the character (see
+    /// [`chummer_core::chumrs::load_any`]).
+    pub fn set_extras(&mut self, extras: Extras) {
+        self.extras = extras;
+    }
+
+    /// The history saved in the file, from earlier sessions (oldest
+    /// first).
+    pub fn earlier_history(&self) -> &[HistoryItem] {
+        &self.extras.history
+    }
+
+    pub fn guide_state(&self) -> Option<&GuideState> {
+        self.extras.guide.as_ref()
+    }
+
+    /// Where guided creation is, saved with the character in a `.chumrs`.
+    pub fn set_guide_state(&mut self, g: Option<GuideState>) {
+        self.extras.guide = g;
+    }
+
+    /// What a save writes besides the character: the earlier history and
+    /// this session's changes, the guide's place.
+    pub fn extras_for_save(&self) -> Extras {
+        let mut e = self.extras.clone();
+        if let Kind::Local(s) = &self.kind {
+            e.history.extend(s.log().iter().map(|l| HistoryItem { at: l.envelope.at, author: l.envelope.author.clone(), description: l.description.clone() }));
+        }
+        e
+    }
+
     pub fn new(ch: Character, engine: Arc<Engine>) -> Doc {
-        Doc { kind: Kind::Local(Session::new(ch)), engine }
+        Doc::of(Kind::Local(Session::new(ch)), engine)
     }
 
     /// A character whose commands carry `author` (the campaign's GM).
     pub fn with_author(ch: Character, engine: Arc<Engine>, author: &str) -> Doc {
-        Doc { kind: Kind::Local(Session::new(ch).with_author(author)), engine }
+        Doc::of(Kind::Local(Session::new(ch).with_author(author)), engine)
     }
 
     /// A character of an online campaign; `None` when the backend does not
     /// have it.
     pub fn online(backend: Backend, engine: Arc<Engine>) -> Option<Doc> {
         let (ch, seen) = pull(&backend)?;
-        Some(Doc { kind: Kind::Online(Box::new(Online { backend, ch, seen, revision: 0, last_sync: Default::default() })), engine })
+        Some(Doc::of(Kind::Online(Box::new(Online { backend, ch, seen, revision: 0, last_sync: Default::default() })), engine))
     }
 
     pub fn ch(&self) -> &Character {
@@ -290,10 +333,20 @@ impl Doc {
     pub fn save_job(&self, path: PathBuf) -> impl FnOnce() -> std::io::Result<()> + Send + 'static {
         let engine = self.engine.clone();
         let mut copy = self.ch().clone();
+        let extras = self.extras_for_save();
         move || {
             let _s = crate::trace::span("save file");
-            engine.save(&mut copy, &path)
+            engine.save_with(&mut copy, &path, &extras)
         }
+    }
+
+    /// An export of a copy (to a Chummer5a `.chum5`/`.chum5lz` path given
+    /// later, e.g. after a file dialog) as a job for another thread. The character keeps its own file and
+    /// stays as modified as it was.
+    pub fn export_job_lazy(&self) -> impl FnOnce(PathBuf) -> std::io::Result<()> + Send + 'static {
+        let engine = self.engine.clone();
+        let mut copy = self.ch().clone();
+        move |path| engine.save(&mut copy, &path)
     }
 
     /// A [`Doc::save_job`] to `path` succeeded; `revision` is what

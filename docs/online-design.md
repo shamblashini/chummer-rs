@@ -23,8 +23,8 @@ project owner on 2026-10-06; this file is the reference for the work.
   gave you 100 karma: <note>").
 - Changes made while the other side is offline are queued, and go
   through the relay's mailbox, so play-by-post games work.
-- `.chum5`/`.chum5lz` import stays. Export and the storage format do not
-  have to match Chummer's.
+- `.chum5`/`.chum5lz` import and export stay. The storage format does not
+  have to match Chummer's (it is `.chumrs`, docs/file-format.md).
 
 ## Building blocks
 
@@ -412,7 +412,7 @@ and shown by the GUI's GM screen (`gm_screen.rs`, `campaign_ui.rs`).
   notes, visible_to_players }`. `kind` is Player, NPC, Enemy, Critter,
   Spirit, Drone, or any other name (kept as `Other`). `character` is
   `Embedded { xml }` (the canonical form, `command::canonical`) or
-  `Linked { path }` (a `.chum5`/`.chum5lz`; a relative path is resolved
+  `Linked { path }` (a `.chumrs`/`.chum5`/`.chum5lz`; a relative path is resolved
   against the campaign file's folder). `owner` is the owning player's
   node id (hex) for online campaigns; `visible_to_players` is stored for
   later and not used locally.
@@ -435,13 +435,16 @@ and shown by the GUI's GM screen (`gm_screen.rs`, `campaign_ui.rs`).
 
 ### File
 
-A `.chummercampaign` file is one LZMA stream (the `.chum5lz`
-container) holding one JSON document: `{"format": "chummer-rs
-campaign", "version": 1, ...the Campaign's fields...}`. Every field has
-a default and unknown fields are ignored, so newer and older files load;
-only a different `format` is refused. A plain (uncompressed) JSON file
-also loads. Saving writes a temporary file and renames it. Loading an
-embedded member and hashing it gives the `state_hash` it had when saved.
+A `.chummercampaign` file is a ZIP container shared with `.chumrs`
+characters ([file-format.md](file-format.md)): `manifest.json` (format
+`"chummer-rs campaign"`, schema version, BLAKE3 checksums),
+`campaign.json` with the Campaign's fields, and each embedded member's
+canonical XML as `members/<id>.xml` (mugshots as images). Every field
+has a default and unknown fields are ignored; a different `format` or a
+newer schema version is refused. Older files (one LZMA stream of the
+JSON, `"version": 1`) and plain JSON still load. Saving writes a
+temporary file, syncs it and renames it. Loading an embedded member and
+hashing it gives the `state_hash` it had when saved.
 
 ### What the sync (steps 5–8) builds on
 

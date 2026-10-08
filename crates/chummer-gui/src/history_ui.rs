@@ -2,7 +2,8 @@
 //!
 //! A local character: this session's changes, newest first, with Undo and
 //! Redo. Undone changes stay listed (greyed) until a new change replaces
-//! them.
+//! them. Below them, the changes of earlier sessions a `.chumrs` kept
+//! (read-only).
 //!
 //! An online character: its campaign log instead. A player sees their
 //! character's log (their own changes and the GM's, "GM gave you 100
@@ -52,6 +53,7 @@ fn local(ui: &mut egui::Ui, doc: &mut Doc, lang: &Language) -> bool {
     ui.separator();
     if session.log().is_empty() && !session.can_redo() {
         ui.weak(lang.tr("No changes yet."));
+        earlier(ui, doc, lang);
         return changed;
     }
     egui::Grid::new("history").num_columns(2).striped(true).spacing([10.0, 3.0]).show(ui, |ui| {
@@ -70,7 +72,28 @@ fn local(ui: &mut egui::Ui, doc: &mut Doc, lang: &Language) -> bool {
             ui.end_row();
         }
     });
+    earlier(ui, doc, lang);
     changed
+}
+
+/// The history saved in the file, newest first.
+fn earlier(ui: &mut egui::Ui, doc: &Doc, lang: &Language) {
+    let items = doc.earlier_history();
+    if items.is_empty() {
+        return;
+    }
+    ui.separator();
+    ui.strong(lang.tr("Earlier sessions"));
+    egui::Grid::new("history_earlier").num_columns(2).striped(true).spacing([10.0, 3.0]).show(ui, |ui| {
+        for e in items.iter().rev() {
+            ui.weak(short_time(e.at));
+            let r = ui.label(&e.description);
+            if !e.author.is_empty() {
+                r.on_hover_text(&e.author);
+            }
+            ui.end_row();
+        }
+    });
 }
 
 fn online(ui: &mut egui::Ui, doc: &mut Doc, lang: &Language) -> bool {

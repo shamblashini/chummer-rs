@@ -26,9 +26,15 @@ pub fn is_chum5lz(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case("chum5lz"))
 }
 
-/// Whether `path` is a character file Chummer opens: `.chum5` or
-/// `.chum5lz`.
+/// Whether `path` is a character file chummer-rs opens: `.chumrs`, or
+/// Chummer's `.chum5` or `.chum5lz`.
 pub fn is_character_file(path: &Path) -> bool {
+    is_chummer_file(path) || crate::chumrs::is_chumrs(path)
+}
+
+/// Whether `path` is one of Chummer5a's character files: `.chum5` or
+/// `.chum5lz`.
+pub fn is_chummer_file(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case("chum5") || e.eq_ignore_ascii_case("chum5lz"))
 }
 
@@ -74,10 +80,21 @@ fn io_err<E: std::fmt::Display>(e: E) -> std::io::Error {
 }
 
 /// The XML text of a character file, decompressed when it is a
-/// `.chum5lz`. A UTF-8 byte order mark stays (the XML parser skips it).
+/// `.chum5lz`, taken out of the container when it is a `.chumrs` (with
+/// its mugshots put back). A UTF-8 byte order mark stays (the XML parser
+/// skips it).
 pub fn read_text(path: &Path) -> std::io::Result<String> {
     let bytes = std::fs::read(path)?;
-    let bytes = if is_chum5lz(path) { decompress(&bytes)? } else { bytes };
+    if crate::container::is_container(&bytes) {
+        let (ch, _) = crate::chumrs::from_bytes(&bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        return Ok(ch.doc.to_xml_string());
+    }
+    text_from_bytes(&bytes, is_chum5lz(path))
+}
+
+/// The XML text of a `.chum5` (`lzma` false) or `.chum5lz` file's bytes.
+pub fn text_from_bytes(bytes: &[u8], lzma: bool) -> std::io::Result<String> {
+    let bytes = if lzma { decompress(bytes)? } else { bytes.to_vec() };
     String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
@@ -87,11 +104,7 @@ pub fn read_text(path: &Path) -> std::io::Result<String> {
 /// into place.
 pub fn write_text(path: &Path, text: &str) -> std::io::Result<()> {
     let bytes = if is_chum5lz(path) { compress(text.as_bytes())? } else { text.as_bytes().to_vec() };
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = std::path::PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
+    crate::container::atomic_write(path, &bytes)
 }
 
 #[cfg(test)]
@@ -125,6 +138,7 @@ mod tests {
         assert!(is_chum5lz(Path::new("a/B.CHUM5LZ")));
         assert!(!is_chum5lz(Path::new("a/b.chum5")));
         assert!(is_character_file(Path::new("b.chum5")) && is_character_file(Path::new("b.chum5lz")));
+        assert!(is_character_file(Path::new("b.chumrs")) && !is_chummer_file(Path::new("b.chumrs")));
         assert!(!is_character_file(Path::new("b.xml")));
     }
 }
