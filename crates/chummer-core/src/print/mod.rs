@@ -32,7 +32,7 @@ mod social;
 mod vehicles;
 
 pub use render::{
-    available_sheets, available_sheets_in, find_sheet, html_to_pdf, pdf_converter, render, render_report, RenderError, RenderReport, DEFAULT_SHEET,
+    available_sheets, available_sheets_in, find_sheet, html_to_pdf, pdf_converter, render, render_report, xsltproc_path, RenderError, RenderReport, DEFAULT_SHEET,
 };
 
 use std::sync::Arc;
