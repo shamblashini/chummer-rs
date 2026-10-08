@@ -31,6 +31,11 @@ impl App {
         let gui_ini = crate::theme::config_path().and_then(|p| std::fs::read_to_string(p).ok());
         if crate::setup_ui::should_show(gui_ini.as_deref(), ran_before, look_from_command_line) {
             self.open_setup();
+        } else if gui_ini.is_none() && ran_before && !look_from_command_line {
+            // An earlier version that never wrote gui.ini ran the Classic
+            // layout: keep it rather than switch silently.
+            let ctx = self.ctx.clone();
+            self.set_appearance(&ctx, self.appearance.with_layout(crate::theme::Layout::Classic));
         }
     }
 

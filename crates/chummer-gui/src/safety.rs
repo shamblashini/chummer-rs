@@ -249,9 +249,10 @@ fn append_to_log(text: &str) {
     }
 }
 
-/// Threads whose panics are caught and reported where they happen.
-fn recovered_thread(name: &str) -> bool {
-    name.starts_with("bg ") || name.starts_with("chummer-net")
+/// Only a panic on the main (UI) thread ends the app; others (background
+/// jobs, network, scans) are caught or end just their thread.
+fn ends_the_app(thread: &str) -> bool {
+    thread == "main"
 }
 
 fn install_panic_hook() {
@@ -259,7 +260,7 @@ fn install_panic_hook() {
     std::panic::set_hook(Box::new(move |info| {
         previous(info);
         let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
-        if recovered_thread(&thread) {
+        if !ends_the_app(&thread) {
             return;
         }
         let Some(s) = session() else { return };
@@ -404,7 +405,12 @@ static SNAPS: Mutex<BTreeMap<u64, Snap>> = Mutex::new(BTreeMap::new());
 /// panic hook: never waits for the store). Returns what was written.
 fn emergency_save() -> Vec<String> {
     let Some(s) = session() else { return Vec::new() };
-    let Ok(snaps) = SNAPS.try_lock() else { return Vec::new() };
+    // A panic while the store was locked poisons it; the copies are still good.
+    let snaps = match SNAPS.try_lock() {
+        Ok(s) => s,
+        Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return Vec::new(),
+    };
     let dir = recovery_dir(&s.root, s.pid);
     let mut out = Vec::new();
     for (key, snap) in snaps.iter() {
@@ -843,9 +849,9 @@ mod tests {
 
     #[test]
     fn only_crashing_threads_are_logged() {
-        assert!(recovered_thread("bg save:3"));
-        assert!(recovered_thread("chummer-net"));
-        assert!(!recovered_thread("main"));
+        assert!(!ends_the_app("bg save:3"));
+        assert!(!ends_the_app("chummer-net"));
+        assert!(ends_the_app("main"));
         assert!(pid_alive(std::process::id()));
     }
 }
