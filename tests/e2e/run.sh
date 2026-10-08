@@ -80,6 +80,9 @@ declare -a PIDS
 world() {
     S="$1"; NPLAYERS="$2"; shift 2
     D="$OUT/$S"
+    # A scenario run again in one go: keep the earlier run's files apart
+    # (stale status files would pass the check at once).
+    [ -e "$D" ] && mv "$D" "$D.$(date +%s%N)"
     mkdir -p "$D/relay" "$D/gm/config" "$D/status" "$D/logs"
     docker network create --label "$LABEL=1" "$P-$S-gm" >/dev/null
     for i in $(seq 1 "$NPLAYERS"); do
