@@ -75,9 +75,9 @@ jobs:
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: false
-          install: mingw-w64-x86_64-libxslt curl
+          install: mingw-w64-ucrt-x86_64-libxslt curl
       - name: Bundle xsltproc
         if: runner.os == 'Windows'
         shell: msys2 {0}
@@ -85,8 +85,8 @@ jobs:
           set -euo pipefail
           out=xslt-bundle
           mkdir -p "$out/licenses"
-          exe=/mingw64/bin/xsltproc.exe
-          files="$exe $(ldd "$exe" | awk '$3 ~ /^\/mingw64\// {print $3}')"
+          exe=/ucrt64/bin/xsltproc.exe
+          files="$exe $(ldd "$exe" | awk '$3 ~ /^\/ucrt64\// {print $3}' | sort -u)"
           cp $files "$out/"
           {
             echo "xsltproc and its libraries, from MSYS2 (https://packages.msys2.org/),"
@@ -96,7 +96,9 @@ jobs:
           # Copy licence files as <dir>-<name>: packages may have two COPYING.
           copy_licences() {
             while read -r f; do
-              [ -f "$f" ] && cp "$f" "$out/licenses/$1/$(basename "$(dirname "$f")")-$(basename "$f")"
+              if [ -f "$f" ]; then
+                cp "$f" "$out/licenses/$1/$(basename "$(dirname "$f")")-$(basename "$f")"
+              fi
             done
           }
           for p in $(pacman -Qoq $files | sort -u); do
@@ -110,16 +112,16 @@ jobs:
           done
           # libxslt's package has carried no licence file: take it from
           # the upstream release it was built from.
-          if [ -z "$(ls -A "$out/licenses/mingw-w64-x86_64-libxslt")" ]; then
-            v=$(pacman -Q mingw-w64-x86_64-libxslt | awk '{print $2}' | sed 's/-[0-9]*$//')
-            curl -fsSL "https://gitlab.gnome.org/GNOME/libxslt/-/raw/v$v/Copyright" -o "$out/licenses/mingw-w64-x86_64-libxslt/Copyright"
+          if [ -z "$(ls -A "$out/licenses/mingw-w64-ucrt-x86_64-libxslt")" ]; then
+            v=$(pacman -Q mingw-w64-ucrt-x86_64-libxslt | awk '{print $2}' | sed 's/-[0-9]*$//')
+            curl -fsSL "https://gitlab.gnome.org/GNOME/libxslt/-/raw/v$v/Copyright" -o "$out/licenses/mingw-w64-ucrt-x86_64-libxslt/Copyright"
           fi
+          ls -la "$out" "$out/licenses"/*
           for p in $(pacman -Qoq $files | sort -u); do
             if [ -z "$(ls -A "$out/licenses/$p")" ]; then
               echo "::error::no licence found for $p"; exit 1
             fi
           done
-          ls -la "$out" "$out/licenses"/*
           "$out/xsltproc.exe" --version
       - name: Character sheets with the bundled xsltproc
         if: runner.os == 'Windows'
