@@ -820,7 +820,7 @@ fn workspace_gm_add_rename_and_roll() {
     h.frame(vec![button(to, false)]);
     h.frames(2);
     assert!(in_encounter(&h, npc), "dropped onto the encounter ({:?})", h.app.status);
-    // The sword button on the player's row (shown on hover).
+    // The add (⊕) button on the player's row (shown on hover).
     let row = leftmost(&h, &player_name);
     h.frame(vec![Event::PointerMoved(row.center())]);
     h.frames(1);
