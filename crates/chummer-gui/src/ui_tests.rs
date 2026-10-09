@@ -773,6 +773,143 @@ fn players_and_invites_panel() {
     }
 }
 
+/// The GM screen's campaign (`campaign_file`), opened; returns the
+/// members' ids and names.
+fn gm_with_campaign(kind: ThemeKind) -> (Harness, Vec<(chummer_core::campaign::MemberId, String)>) {
+    let mut h = Harness::new(kind);
+    h.size = WIDE;
+    h.app.open_campaign(&campaign_file());
+    assert!(h.app.gm.is_some(), "{:?}", h.app.status);
+    h.frames(3);
+    let members = h.app.gm.as_ref().unwrap().campaign.members.iter().map(|m| (m.id, m.name.clone())).collect();
+    (h, members)
+}
+
+fn in_encounter(h: &Harness, id: chummer_core::campaign::MemberId) -> bool {
+    h.app.gm.as_ref().unwrap().campaign.encounters[0].has_member(id)
+}
+
+/// The leftmost text `name` (the roster is left of the board).
+fn leftmost(h: &Harness, name: &str) -> Rect {
+    h.texts.iter().filter(|(t, _)| t.trim() == name).map(|(_, r)| *r).min_by(|a, b| a.left().total_cmp(&b.left())).unwrap_or_else(|| panic!("{name} on screen: {:?}", h.on_screen()))
+}
+
+/// Workspace GM screen: drag an NPC from the roster onto the encounter
+/// (the board says what a drop does); add a player with its row's add
+/// button; rename on the card's title (Esc cancels, Enter renames, and
+/// the encounter row follows); roll a pool and see the result card and
+/// the tray.
+#[test]
+fn workspace_gm_add_rename_and_roll() {
+    use crate::workspace::icons;
+    let (mut h, members) = gm_with_campaign(ThemeKind::WorkspaceDark);
+    let (player, player_name) = members[0].clone();
+    let (npc, npc_name) = members[2].clone();
+    // Drag the NPC onto the empty board.
+    let from = leftmost(&h, &npc_name).center();
+    let to = h.find_where(|t| t.starts_with("Add combatants:")).unwrap_or_else(|| panic!("the empty board: {:?}", h.on_screen())).center();
+    let button = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+    h.frame(vec![Event::PointerMoved(from)]);
+    h.frame(vec![button(from, true)]);
+    for k in 1..=8 {
+        h.frame(vec![Event::PointerMoved(from + (to - from) * (k as f32 / 8.0))]);
+    }
+    h.frames(1);
+    let hint = format!("Add {npc_name} to the encounter");
+    assert!(h.find_where(|t| t.contains(&hint)).is_some(), "the board says what a drop does: {:?}", h.on_screen());
+    h.frame(vec![button(to, false)]);
+    h.frames(2);
+    assert!(in_encounter(&h, npc), "dropped onto the encounter ({:?})", h.app.status);
+    // The sword button on the player's row (shown on hover).
+    let row = leftmost(&h, &player_name);
+    h.frame(vec![Event::PointerMoved(row.center())]);
+    h.frames(1);
+    let sword = h.texts.iter().filter(|(t, r)| t == icons::PLUS_CIRCLE && (r.center().y - row.center().y).abs() < 10.0).map(|(_, r)| *r).min_by(|a, b| a.left().total_cmp(&b.left())).unwrap_or_else(|| panic!("an add button on the row: {:?}", h.on_screen()));
+    h.click_at(sword.center());
+    h.frames(1);
+    assert!(in_encounter(&h, player), "the row's button adds it");
+    assert_eq!(h.app.gm.as_ref().unwrap().campaign.encounters[0].combatants.len(), 2);
+    // Rename on the card's title (the selected member: the player).
+    let title = h.texts.iter().filter(|(t, _)| t.trim() == player_name).map(|(_, r)| *r).max_by(|a, b| a.height().total_cmp(&b.height())).unwrap();
+    h.click_at(title.center());
+    h.frames(1);
+    h.key(Key::A, Modifiers::COMMAND);
+    h.type_text("Nobody");
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frames(1);
+    assert_eq!(h.app.gm.as_ref().unwrap().campaign.member(player).unwrap().name, player_name, "Esc keeps the name");
+    let title = h.texts.iter().filter(|(t, _)| t.trim() == player_name).map(|(_, r)| *r).max_by(|a, b| a.height().total_cmp(&b.height())).unwrap();
+    h.click_at(title.center());
+    h.frames(1);
+    h.key(Key::A, Modifiers::COMMAND);
+    h.type_text("Raven");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    let gm = h.app.gm.as_ref().unwrap();
+    assert_eq!(gm.campaign.member(player).unwrap().name, "Raven");
+    assert!(gm.campaign.encounters[0].combatants.iter().any(|c| c.member == Some(player) && c.name == "Raven"), "the encounter row follows");
+    assert!(h.count("Raven") >= 3, "roster, encounter row and card: {:?}", h.on_screen());
+    // Roll Defense on the card: the result card and the tray.
+    h.click_text("Defense");
+    h.frames(2);
+    let gm = h.app.gm.as_ref().unwrap();
+    assert_eq!(gm.rolls().len(), 1);
+    let hits = gm.rolls()[0].roll.hits.to_string();
+    assert!(h.find_text("Dice rolls").is_some(), "the tray: {:?}", h.on_screen());
+    assert!(h.count(&hits) >= 2, "the card under the pools and the tray show the hits: {:?}", h.on_screen());
+    assert!(h.find_where(|t| t.starts_with("hits · ")).is_some(), "{:?}", h.on_screen());
+    assert!(h.app.close_campaign(true));
+}
+
+/// Workspace GM screen: F2 renames the selected roster member in place;
+/// the row menu adds it to the encounter.
+#[test]
+fn workspace_gm_roster_rename_and_menu() {
+    let (mut h, members) = gm_with_campaign(ThemeKind::WorkspaceLight);
+    let (npc, npc_name) = members[2].clone();
+    let row = leftmost(&h, &npc_name);
+    h.click_at(row.center());
+    h.frames(1);
+    h.key(Key::F2, Modifiers::NONE);
+    h.frames(1);
+    h.key(Key::A, Modifiers::COMMAND);
+    h.type_text("Ganger Boss");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    assert_eq!(h.app.gm.as_ref().unwrap().campaign.member(npc).unwrap().name, "Ganger Boss");
+    // Right click: Add to encounter.
+    let row = leftmost(&h, "Ganger Boss");
+    let button = |pressed| Event::PointerButton { pos: row.center(), button: PointerButton::Secondary, pressed, modifiers: Modifiers::NONE };
+    h.frame(vec![Event::PointerMoved(row.center())]);
+    h.frame(vec![button(true)]);
+    h.frame(vec![button(false)]);
+    h.frames(1);
+    h.click_where("Add to encounter in the menu", |t| t.ends_with("Add to encounter") && t.chars().count() > "Add to encounter".len());
+    h.frames(1);
+    assert!(in_encounter(&h, npc));
+    assert!(h.app.close_campaign(true));
+}
+
+/// Classic GM screen: drag an NPC from the roster onto the initiative
+/// board; the row's add button adds a player.
+#[test]
+fn classic_gm_drag_and_button_add() {
+    use crate::workspace::icons;
+    let (mut h, members) = gm_with_campaign(ThemeKind::Graphite);
+    let (player, player_name) = members[0].clone();
+    let (npc, npc_name) = members[2].clone();
+    let from = leftmost(&h, &npc_name).center();
+    let to = h.find_where(|t| t.starts_with("Add combatants:")).unwrap_or_else(|| panic!("the empty board: {:?}", h.on_screen())).center();
+    drag(&mut h, from, to);
+    assert!(in_encounter(&h, npc), "dropped onto the encounter ({:?})", h.app.status);
+    let row = leftmost(&h, &player_name);
+    let sword = h.texts.iter().filter(|(t, r)| t == icons::PLUS_CIRCLE && (r.center().y - row.center().y).abs() < 10.0).map(|(_, r)| *r).next().unwrap_or_else(|| panic!("an add button on the row: {:?}", h.on_screen()));
+    h.click_at(sword.center());
+    h.frames(1);
+    assert!(in_encounter(&h, player));
+    assert!(h.app.close_campaign(true));
+}
+
 /// The tool windows and dialogs over a character, in both layouts.
 #[test]
 fn tool_windows_and_dialogs() {
