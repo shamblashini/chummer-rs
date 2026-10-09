@@ -361,3 +361,29 @@ fn parentdetails_filters() {
     assert!(place::filter_matches(Some(&deck), &and, false));
     assert!(!place::filter_matches(Some(&arm), &and, false));
 }
+
+#[test]
+fn underbarrel_weapons_move_out_and_into_another_weapon() {
+    let mut s = session();
+    let ak = buy(&mut s, "weapon", "AK-97", 0, None, None);
+    let colt = buy(&mut s, "weapon", "Colt M23", 0, None, None);
+    let gl = buy(&mut s, "weapon", "Underbarrel Grenade Launcher", 0, Some(&ak), None);
+    assert_eq!(parent_of(&s, &gl).as_deref(), Some(ak.as_str()));
+    let can_take = |s: &Session, w: &str| edit::child_kinds(s.ch(), w).iter().any(|k| k.tag == "weapon");
+    assert!(!can_take(&s, &ak), "one underbarrel per weapon");
+    mv(&mut s, &gl, Dest::Top).unwrap();
+    let host = edit::find(s.ch(), &ak).unwrap();
+    assert!(host.child("underbarrel").is_none(), "no empty <underbarrel> is left behind");
+    assert!(can_take(&s, &ak), "the rifle takes an underbarrel again");
+    assert_eq!(edit::find(s.ch(), &gl).unwrap().get("parentid"), "", "a top-level weapon is no longer granted");
+    assert!(!edit::is_included(s.ch(), &gl));
+    mv(&mut s, &gl, Dest::Item(colt.clone())).unwrap();
+    let host = edit::find(s.ch(), &colt).unwrap();
+    assert_eq!(host.children_named("underbarrel").count(), 1);
+    assert_eq!(parent_of(&s, &gl).as_deref(), Some(colt.as_str()));
+    // A rifle is no underbarrel weapon.
+    assert!(mv(&mut s, &ak, Dest::Item(colt.clone())).is_err());
+    mv(&mut s, &gl, Dest::Item(ak.clone())).unwrap();
+    assert!(edit::find(s.ch(), &colt).unwrap().child("underbarrel").is_none());
+    assert_eq!(edit::find(s.ch(), &ak).unwrap().children_named("underbarrel").count(), 1);
+}

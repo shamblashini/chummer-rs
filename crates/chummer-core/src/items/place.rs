@@ -413,13 +413,18 @@ fn take(doc: &mut Element, guid: &str) -> Option<Element> {
             return Some(e);
         }
     }
+    let mut found = None;
     for c in doc.elements_mut() {
         if let Some(e) = take(c, guid) {
-            c.children.retain(|n| !matches!(n, Node::Element(u) if u.name == "underbarrel" && u.elements().next().is_none()));
-            return Some(e);
+            found = Some(e);
+            break;
         }
     }
-    None
+    // The wrapper the item sat in, if it is an underbarrel left empty.
+    if found.is_some() {
+        doc.children.retain(|n| !matches!(n, Node::Element(u) if u.name == "underbarrel" && u.elements().next().is_none()));
+    }
+    found
 }
 
 /// Whether every item above `guid` is equipped (so its improvements are
@@ -519,13 +524,7 @@ pub fn move_item(ch: &mut Character, store: &DataStore, guid: &str, dest: &Dest,
                 _ => {}
             }
             let p = super::find_by_guid_mut(&mut ch.doc, pg).ok_or(Misfit::Missing)?;
-            if list == "underbarrel" {
-                let mut ub = Element::new("underbarrel");
-                ub.push(el);
-                p.push(ub);
-            } else {
-                p.child_or_insert(list).push(el);
-            }
+            p.child_or_insert(list).push(el);
         }
         Dest::Top | Dest::Location(_) => {
             let container = top_container(&tag).ok_or(Misfit::NeedsParent)?;
