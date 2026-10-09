@@ -80,10 +80,12 @@ other systems build it with `cargo build --release -p chummer-relay`.
 
 - A certificate. The default is Let's Encrypt: the relay gets and renews
   it by itself over port 443 (TLS-ALPN-01). It needs the DNS name to point at
-  the server first, and a contact email. Certificates are cached in
+  the server first; a contact email is optional. Certificates are cached in
   `<data_dir>/acme`. You can instead give it a certificate you already
   have (`cert_mode = "manual"`, PEM files, e.g. from certbot; restart the
-  relay after renewal).
+  relay after renewal). Behind a reverse proxy that does HTTPS itself
+  (Coolify, Caddy, nginx, Cloudflare), use `cert_mode = "proxy"`: the
+  relay then needs no certificate (see [Deploy on Coolify](#deploy-on-coolify)).
 
 A small VPS is enough. The mailbox database is bounded by the limits
 below (per recipient: 1000 messages of at most 256 KiB, deleted after 30
@@ -93,13 +95,15 @@ full only when two peers cannot connect directly.
 ## Configuration
 
 Copy [`packaging/relay/relay.example.toml`](../packaging/relay/relay.example.toml)
-to `/etc/chummer-relay/relay.toml` and set at least `hostname` and
-`tls.contact_email`. Every other key has a default (shown in the example).
+to `/etc/chummer-relay/relay.toml` and set at least `hostname`
+(`tls.contact_email` is optional). Every other key has a default (shown in the example).
 `chummer-relay --print-config` prints the defaults.
 
 Command-line flags override the file: `--config`, `--hostname`,
-`--data-dir`, `--cert-mode lets-encrypt|manual|self-signed`,
-`--contact-email`. `--dev` starts a local test relay (self-signed
+`--data-dir`, `--cert-mode lets-encrypt|manual|self-signed|proxy`,
+`--contact-email`. So do the environment variables `RELAY_HOSTNAME`,
+`RELAY_DATA_DIR`, `RELAY_CERT_MODE` and `RELAY_CONTACT_EMAIL` (empty ones
+are ignored). `--dev` starts a local test relay (self-signed
 certificate for `127.0.0.1`, HTTP 3340, HTTPS 3443).
 
 ### Mailbox limits
@@ -222,38 +226,51 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 ## Deploy on Coolify
 
-[Coolify](https://coolify.io) runs its own Traefik proxy on TCP 80 and 443,
-so the plain compose file (host networking, ports 80 and 443) clashes with
-it. Use `packaging/relay/docker-compose.coolify.yml` instead (also attached
-to every release). Traefik passes the relay's HTTPS connections through
-unopened (TLS passthrough, matched by host name). The relay keeps getting
-its own Let's Encrypt certificate, and QUIC address discovery uses that
-same certificate. The two UDP ports are published straight on the server,
-because Traefik does not carry UDP.
+[Coolify](https://coolify.io) runs its own proxy (Traefik) on TCP 80 and
+443, so the plain compose file (host networking, its own certificate)
+clashes with it. Use `packaging/relay/docker-compose.coolify.yml` instead
+(also attached to every release). The relay then runs with
+`cert_mode = "proxy"`:
 
-1. Point a DNS name at the Coolify server, e.g.
-   `relay.example.org`, and open **UDP 7842 and 7843** in the server's
-   firewall (and the cloud provider's, if any). TCP 80 and 443 are
-   already open for Coolify.
+- Coolify's proxy does HTTPS for the relay's domain, with the certificate
+  Coolify gets from Let's Encrypt, and forwards plain HTTP (websockets
+  included) to the relay's port 80.
+- The relay needs no certificate, no email and no open ports on the
+  server.
+- QUIC address discovery is off, because it needs the relay's own
+  certificate and UDP. Peers still connect through the relay, which is all
+  play-by-post needs. Live sessions find a direct path less often, so
+  more traffic goes through the relay (and Cloudflare, if used): a little
+  more latency. For the most direct connections, use a DNS-only
+  (grey-cloud) name and the host-networking `docker-compose.yml` outside
+  Coolify's proxy instead.
+
+The same works with the domain behind Cloudflare's proxy (orange cloud).
+Cloudflare carries the HTTPS and websocket traffic, and nothing else is
+needed. Use SSL mode "Full (strict)", since Coolify's certificate is a
+real one.
+
+Steps:
+
+1. Point a DNS name at the Coolify server, e.g. `relay.example.org`
+   (proxied through Cloudflare or not).
 2. In Coolify: **New resource → Docker Compose Empty**, and paste
    `docker-compose.coolify.yml`.
-3. **Leave the service's Domain field empty.** A domain makes Coolify add
-   its own HTTPS router and certificate for that host, which takes the
-   traffic away from the passthrough router in the file.
-4. Under **Environment Variables**, set `RELAY_HOSTNAME`
-   (`relay.example.org`) and `RELAY_CONTACT_EMAIL` (for Let's Encrypt).
-   `RELAY_TAG` is optional: `latest` (default), `edge` (to match app
-   builds from master) or a version.
+3. Set the `chummer-relay` service's **Domain** to
+   `https://relay.example.org`. Coolify routes it to the container's
+   port 80 and gets the certificate.
+4. Optional, under **Environment Variables**: `RELAY_HOSTNAME`
+   (`relay.example.org`) so the log prints the complete relay entry, and
+   `RELAY_TAG` (`edge` by default, which follows master; `latest` or a
+   version once a release has proxy mode).
 5. Deploy. The logs show `mailbox node connected to the relay` and the
-   mailbox node id, see [The mailbox node id](#the-mailbox-node-id). The
-   first start takes a few seconds longer while the certificate is issued.
+   mailbox node id. The relay entry for the app is
+   `https://relay.example.org#<mailbox node id>`; see
+   [The mailbox node id](#the-mailbox-node-id).
 
-The data (mailbox, the mailbox node key, the certificate) lives in the
-`chummer-relay-data` volume. Back it up: a new mailbox key means a new
-mailbox node id. Behind Traefik, the relay sees Traefik's address rather
-than the client's on TCP. That does not matter: the mailbox's limits are
-per key, not per address, and address discovery runs on UDP, which goes
-directly to the relay.
+The data (the mailbox, and the mailbox node key) lives in the
+`chummer-relay-data` volume. Back it up: a new key means a new mailbox
+node id, and every app would need the new entry.
 
 To check it from your machine:
 
@@ -261,8 +278,11 @@ To check it from your machine:
 curl -s -o /dev/null -w "%{http_code}\n" https://relay.example.org/ping
 ```
 
-`200` means Traefik hands the connection to the relay and the
-certificate is valid.
+`200` means the proxy reaches the relay.
+
+Any other TLS-terminating reverse proxy (Caddy, nginx) works the same
+way. Set `cert_mode = "proxy"` in `relay.toml`, and forward the domain,
+websocket upgrades included, to the relay's `http_bind`.
 
 ## Deploy with systemd
 

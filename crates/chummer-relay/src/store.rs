@@ -171,12 +171,14 @@ impl Store {
     fn prepare(opener: &Opener) -> Result<Database, redb::Error> {
         let db = opener()?;
         let txn = db.begin_write()?;
+        // Counted before `open_table(META)`, which makes the table: a new
+        // file is not "an older layout".
+        let old = txn.list_tables()?.count();
         let format = match txn.open_table(META) {
             Ok(meta) => meta.get("format")?.map(|g| g.value()),
             Err(_) => None,
         };
         if format != Some(FORMAT) {
-            let old = txn.list_tables()?.count();
             for name in ["messages", "inbox", "quota", "registrations", "allowed", "allow", "refused", "meta"] {
                 txn.delete_table(redb::TableDefinition::<&str, &[u8]>::new(name)).ok();
             }

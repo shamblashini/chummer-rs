@@ -17,8 +17,8 @@ mailbox_enabled = true
 # relay_rate_limit = 1048576        # bytes/second per client through the relay
 
 [tls]
-cert_mode = "lets-encrypt"  # or "manual" (cert_path/key_path) or "self-signed"
-contact_email = "you@example.org"
+cert_mode = "lets-encrypt"  # or "manual" (cert_path/key_path), "self-signed", or "proxy" (HTTPS done by a reverse proxy)
+contact_email = "you@example.org"   # optional
 acme_production = true
 # cert_path = "/etc/letsencrypt/live/relay.example.org/fullchain.pem"
 # key_path = "/etc/letsencrypt/live/relay.example.org/privkey.pem"

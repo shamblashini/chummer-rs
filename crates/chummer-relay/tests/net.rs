@@ -370,3 +370,65 @@ async fn mailbox_node_key_survives_restart() -> Result<()> {
     std::fs::remove_dir_all(dir)?;
     Ok(())
 }
+
+/// Behind a TLS-terminating proxy (`cert_mode = "proxy"`): the relay
+/// serves plain HTTP, has no QUIC address discovery, needs no hostname, and
+/// its mailbox node connects through the local port. Mail goes through.
+#[tokio::test(flavor = "multi_thread")]
+async fn proxy_mode_serves_plain_http_and_the_mailbox() -> Result<()> {
+    let clock = Arc::new(ManualClock::new(T0));
+    let relay = relay("proxy", clock.clone(), |c| {
+        c.hostname = String::new();
+        c.tls.cert_mode = CertMode::Proxy;
+        c.http_bind = "[::]:0".parse().unwrap();
+    })
+    .await?;
+    assert!(relay.relay_url().is_none());
+    assert_eq!(relay.local_url().scheme(), "http");
+    assert!(relay.self_signed_cert().is_none());
+    let entry = relay.relay_entry();
+    assert_eq!(entry.url, *relay.local_url());
+    assert_eq!(entry.qad_port, Some(0));
+    let mailbox = relay.mailbox_id().expect("mailbox enabled");
+
+    let (alice_key, alice_ep) = endpoint(&relay, vec![]).await?;
+    // Bob uses another URL for the same relay, as players use the proxy's
+    // public one while the mailbox node uses the local port: the relay
+    // forwards by node id, so the URLs need not match.
+    let mut other = relay.relay_entry();
+    other.url = format!("http://localhost:{}", relay.local_url().port().unwrap()).parse()?;
+    assert_ne!(other.url, *relay.local_url());
+    let bob_key = SecretKey::generate();
+    let bob_ep = bind(bob_key.clone(), &chummer_net::config::NetConfig::with_relays([other]), vec![]).await?;
+    tokio::time::timeout(WAIT, bob_ep.online()).await?;
+    let alice = MailboxClient::connect(&alice_ep, dial_addr(mailbox, None)).await?;
+    let bob = MailboxClient::connect(&bob_ep, dial_addr(mailbox, None)).await?;
+    let cap = SecretKey::generate();
+    bob.register([2; 16], vec![cap.public()]).await?;
+    let id = alice.put_sealed(&alice_key, &cap, bob_ep.id(), b"behind the proxy").await?;
+    let (mail, _) = bob.fetch_opened(&bob_key, 100).await?;
+    assert_eq!(mail.len(), 1);
+    assert_eq!(mail[0].0.id, id);
+    assert_eq!(mail[0].1.as_ref().expect("opens").payload, b"behind the proxy");
+    for c in [&alice, &bob] {
+        c.close();
+    }
+    for ep in [alice_ep, bob_ep] {
+        ep.close().await;
+    }
+    relay.shutdown().await?;
+
+    // With a hostname, the public URL is https://<hostname> (the proxy's).
+    let relay = relay_named_proxy(clock).await?;
+    assert_eq!(relay.relay_url().map(|u| u.as_str()), Some("https://relay.example.org/"));
+    assert_eq!(relay.relay_entry().url.as_str(), "https://relay.example.org/");
+    relay.shutdown().await
+}
+
+async fn relay_named_proxy(clock: Arc<ManualClock>) -> Result<RelayNode> {
+    relay("proxy-named", clock, |c| {
+        c.hostname = "relay.example.org".into();
+        c.tls.cert_mode = CertMode::Proxy;
+    })
+    .await
+}

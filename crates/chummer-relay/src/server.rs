@@ -36,7 +36,9 @@ pub const PURGE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 pub struct RelayNode {
     server: Server,
     router: Option<Router>,
-    url: RelayUrl,
+    /// Public URL; `None` behind a proxy when no hostname was given.
+    url: Option<RelayUrl>,
+    local_url: RelayUrl,
     qad_port: Option<u16>,
     ca_cert: Option<Vec<u8>>,
     _purge: Option<tokio::task::JoinHandle<()>>,
@@ -115,7 +117,8 @@ impl RelayNode {
     /// Starts the relay described by `cfg`.
     pub async fn spawn(cfg: Config, clock: Arc<dyn Clock>) -> Result<RelayNode> {
         let host = cfg.hostname.trim();
-        if host.is_empty() {
+        let proxied = cfg.tls.cert_mode == CertMode::Proxy;
+        if host.is_empty() && !proxied {
             bail!("`hostname` is required (the public DNS name of this server)");
         }
         std::fs::create_dir_all(&cfg.data_dir)
@@ -125,17 +128,18 @@ impl RelayNode {
         let mut ca_cert = None;
         let cert = match cfg.tls.cert_mode {
             CertMode::LetsEncrypt => {
-                let Some(contact) = cfg.tls.contact_email.clone() else {
-                    bail!("cert_mode = \"lets-encrypt\" needs tls.contact_email");
-                };
-                let acme = AcmeConfig::letsencrypt(cfg.tls.acme_production)
+                let mut acme = AcmeConfig::letsencrypt(cfg.tls.acme_production)
                     .domains(vec![host.to_string()])
-                    .contact(vec![format!("mailto:{contact}")])
                     .cache_path(data_dir.join(ACME_CACHE_DIR));
-                CertConfig::LetsEncrypt {
+                if let Some(contact) = cfg.tls.contact_email.as_deref().map(str::trim) {
+                    if !contact.is_empty() {
+                        acme = acme.contact(vec![format!("mailto:{contact}")]);
+                    }
+                }
+                Some(CertConfig::LetsEncrypt {
                     acme_config: acme,
                     server_config_builder: base_tls()?,
-                }
+                })
             }
             CertMode::Manual => {
                 let cert = cfg
@@ -149,51 +153,76 @@ impl RelayNode {
                     .clone()
                     .unwrap_or_else(|| data_dir.join("key.pem"));
                 let (certs, key) = load_pem(&cert, &key)?;
-                CertConfig::Manual {
+                Some(CertConfig::Manual {
                     server_config: base_tls()?.with_single_cert(certs, key)?,
-                }
+                })
             }
             CertMode::SelfSigned => {
                 let (certs, key) = self_signed(data_dir, host)?;
                 ca_cert = Some(certs[0].to_vec());
-                CertConfig::Manual {
+                Some(CertConfig::Manual {
                     server_config: base_tls()?.with_single_cert(certs, key)?,
-                }
+                })
             }
+            CertMode::Proxy => None,
         };
 
         let mut relay = RelayConfig::new(cfg.http_bind);
-        relay.tls = Some(RelayTlsConfig::new(cfg.https_bind, cert));
+        relay.tls = cert.map(|c| RelayTlsConfig::new(cfg.https_bind, c));
         if let Some(bps) = cfg.relay_rate_limit.and_then(NonZeroU32::new) {
             relay.limits.client_rx = Some(ClientRateLimit::new(bps));
         }
+        if proxied && cfg.qad_enabled {
+            tracing::info!("cert_mode = \"proxy\": QUIC address discovery is off (it needs a certificate)");
+        }
         let mut server_cfg = ServerConfig::default();
         server_cfg.relay = Some(relay);
-        server_cfg.quic = cfg.qad_enabled.then(|| QuicConfig::new(cfg.qad_bind));
+        server_cfg.quic = (cfg.qad_enabled && !proxied).then(|| QuicConfig::new(cfg.qad_bind));
         server_cfg.metrics_addr = cfg.metrics_bind;
         let server = Server::spawn(server_cfg)
             .await
             .context("starting the relay server")?;
 
-        let https: SocketAddr = server.https_addr().context("relay has no HTTPS address")?;
         let host_part = if host.contains(':') && !host.starts_with('[') {
             format!("[{host}]")
         } else {
             host.to_string()
         };
-        let url: RelayUrl = if https.port() == 443 {
-            format!("https://{host_part}")
+        // `local_url`: how the mailbox node reaches this relay. Behind a
+        // proxy it connects straight to the plain-HTTP port instead of going
+        // out through the proxy (the relay forwards by node id, so peers
+        // using the public URL still reach it).
+        let (url, local_url): (Option<RelayUrl>, RelayUrl) = if proxied {
+            let http = server.http_addr().context("relay has no HTTP address")?;
+            let local: RelayUrl = format!("http://127.0.0.1:{}", http.port()).parse()?;
+            let public = if host.is_empty() {
+                None
+            } else {
+                Some(
+                    format!("https://{host_part}")
+                        .parse()
+                        .context("relay URL from hostname")?,
+                )
+            };
+            (public, local)
         } else {
-            format!("https://{host_part}:{}", https.port())
-        }
-        .parse()
-        .context("relay URL from hostname")?;
+            let https: SocketAddr = server.https_addr().context("relay has no HTTPS address")?;
+            let url: RelayUrl = if https.port() == 443 {
+                format!("https://{host_part}")
+            } else {
+                format!("https://{host_part}:{}", https.port())
+            }
+            .parse()
+            .context("relay URL from hostname")?;
+            (Some(url.clone()), url)
+        };
         let qad_port = server.quic_addr().map(|a| a.port());
 
         let mut node = RelayNode {
             server,
             router: None,
             url,
+            local_url,
             qad_port,
             ca_cert,
             _purge: None,
@@ -237,9 +266,15 @@ impl RelayNode {
         Ok(node)
     }
 
-    /// The relay's public URL.
-    pub fn relay_url(&self) -> &RelayUrl {
-        &self.url
+    /// The relay's public URL (`None` with `cert_mode = "proxy"` and no
+    /// hostname: then it is whatever HTTPS address the proxy serves).
+    pub fn relay_url(&self) -> Option<&RelayUrl> {
+        self.url.as_ref()
+    }
+
+    /// The URL that reaches this relay from the machine it runs on.
+    pub fn local_url(&self) -> &RelayUrl {
+        &self.local_url
     }
 
     /// The mailbox node's id, when the mailbox is enabled.
@@ -257,10 +292,11 @@ impl RelayNode {
         self.ca_cert.as_deref()
     }
 
-    /// The entry for this relay in a client's relay list.
+    /// The entry for this relay in a client's relay list (with the public
+    /// URL, or the local one when there is none).
     pub fn relay_entry(&self) -> RelayEntry {
         RelayEntry {
-            url: self.url.clone(),
+            url: self.url.clone().unwrap_or_else(|| self.local_url.clone()),
             mailbox: self.mailbox_id(),
             qad_port: Some(self.qad_port.unwrap_or(0)),
         }
@@ -268,6 +304,7 @@ impl RelayNode {
 
     fn client_config_without_mailbox(&self) -> NetConfig {
         let mut entry = self.relay_entry();
+        entry.url = self.local_url.clone();
         entry.mailbox = None;
         let mut cfg = NetConfig::with_relays([entry]);
         cfg.extra_ca_roots.extend(self.ca_cert.clone());

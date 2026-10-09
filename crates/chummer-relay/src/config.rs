@@ -12,7 +12,7 @@ pub use crate::store::Limits;
 #[serde(rename_all = "kebab-case")]
 pub enum CertMode {
     /// Let's Encrypt via ACME (TLS-ALPN-01 on the HTTPS port). Needs
-    /// `hostname` pointing at this server and `contact_email`.
+    /// `hostname` pointing at this server; `contact_email` is optional.
     LetsEncrypt,
     /// A certificate and key you provide (PEM files), e.g. from certbot.
     Manual,
@@ -20,13 +20,18 @@ pub enum CertMode {
     /// directory. Clients must be given the certificate to trust. For
     /// testing and private groups.
     SelfSigned,
+    /// No TLS here: a reverse proxy in front (Coolify's Traefik, Caddy,
+    /// nginx, Cloudflare) terminates HTTPS for `hostname` and forwards plain
+    /// HTTP to `http_bind`, websocket upgrades included. QUIC address
+    /// discovery is off (it needs a certificate of its own).
+    Proxy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TlsConfig {
     pub cert_mode: CertMode,
-    /// ACME account contact, without `mailto:`.
+    /// ACME account contact, without `mailto:`. Optional.
     pub contact_email: Option<String>,
     /// Use Let's Encrypt production (true) or staging (false).
     pub acme_production: bool,
@@ -52,7 +57,9 @@ impl Default for TlsConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// Public DNS name of this server, e.g. `relay.example.org`.
+    /// Public DNS name of this server, e.g. `relay.example.org`. Optional
+    /// with `cert_mode = "proxy"`, where it only decides the relay entry
+    /// that is printed.
     pub hostname: String,
     /// Where the mailbox database, the mailbox node key and certificates live.
     pub data_dir: PathBuf,

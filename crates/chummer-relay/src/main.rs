@@ -16,16 +16,16 @@ struct Args {
     #[arg(long, short)]
     config: Option<PathBuf>,
     /// Public DNS name of this server (overrides the file).
-    #[arg(long)]
+    #[arg(long, env = "RELAY_HOSTNAME")]
     hostname: Option<String>,
     /// Data directory (overrides the file).
-    #[arg(long)]
+    #[arg(long, env = "RELAY_DATA_DIR")]
     data_dir: Option<PathBuf>,
     /// How to get the TLS certificate (overrides the file).
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, env = "RELAY_CERT_MODE")]
     cert_mode: Option<CertMode>,
-    /// Let's Encrypt contact email (overrides the file).
-    #[arg(long)]
+    /// Let's Encrypt contact email (overrides the file). Optional.
+    #[arg(long, env = "RELAY_CONTACT_EMAIL")]
     contact_email: Option<String>,
     /// Local test setup: self-signed certificate for 127.0.0.1 on
     /// unprivileged ports (HTTP 3340, HTTPS 3443, QAD 7842, mailbox 7843).
@@ -63,21 +63,28 @@ async fn main() -> Result<()> {
         cfg.http_bind = "[::]:3340".parse()?;
         cfg.https_bind = "[::]:3443".parse()?;
     }
-    if let Some(h) = args.hostname {
+    // Empty environment variables (an unset Coolify field) mean "not given".
+    if let Some(h) = args.hostname.filter(|h| !h.trim().is_empty()) {
         cfg.hostname = h;
     }
-    if let Some(d) = args.data_dir {
+    if let Some(d) = args.data_dir.filter(|d| !d.as_os_str().is_empty()) {
         cfg.data_dir = d;
     }
     if let Some(m) = args.cert_mode {
         cfg.tls.cert_mode = m;
     }
-    if let Some(e) = args.contact_email {
+    if let Some(e) = args.contact_email.filter(|e| !e.trim().is_empty()) {
         cfg.tls.contact_email = Some(e);
     }
 
     let mut node = RelayNode::spawn(cfg.clone(), Arc::new(SystemClock)).await?;
-    tracing::info!("relay listening: {}", node.relay_url());
+    match node.relay_url() {
+        Some(url) => tracing::info!("relay listening: {url}"),
+        None => tracing::info!(
+            "relay listening on {} behind your proxy (no hostname set)",
+            node.local_url()
+        ),
+    }
     match node.mailbox_id() {
         Some(id) => {
             match node.wait_online(std::time::Duration::from_secs(30)).await {
@@ -85,7 +92,12 @@ async fn main() -> Result<()> {
                 Err(e) => tracing::warn!("{e:#} (is `hostname` reachable from this server?)"),
             }
             tracing::info!("mailbox node id: {id}");
-            tracing::info!("give users this relay entry: {}", node.relay_entry());
+            match node.relay_url() {
+                Some(_) => tracing::info!("give users this relay entry: {}", node.relay_entry()),
+                None => tracing::info!(
+                    "give users this relay entry: https://<the domain your proxy serves>#{id}"
+                ),
+            }
         }
         None => tracing::info!("mailbox disabled"),
     }

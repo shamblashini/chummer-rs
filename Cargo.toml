@@ -29,7 +29,7 @@ n0-future = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 redb = "4.3"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 toml = "1"
 rcgen = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["std"] }

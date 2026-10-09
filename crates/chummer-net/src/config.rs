@@ -53,10 +53,20 @@ impl RelayEntry {
         self
     }
 
+    /// Whether this is the project's default relay ([`DEFAULT_RELAY_URL`]).
+    pub fn is_default(&self) -> bool {
+        DEFAULT_RELAY_URL
+            .parse::<RelayUrl>()
+            .is_ok_and(|d| d == self.url)
+    }
+
     pub(crate) fn iroh_config(&self) -> iroh_relay::RelayConfig {
         let quic = match self.qad_port {
             Some(0) => None,
             Some(p) => Some(iroh_relay::RelayQuicConfig::new(p)),
+            // The project relay sits behind a TLS proxy (Cloudflare), which
+            // carries no UDP: don't probe it.
+            None if self.is_default() => None,
             None => Some(iroh_relay::RelayQuicConfig::new(DEFAULT_QAD_PORT)),
         };
         iroh_relay::RelayConfig::new(self.url.clone(), quic)
@@ -187,6 +197,9 @@ mod tests {
             DEFAULT_RELAY_URL.parse().unwrap(),
         ]);
         assert_eq!(cfg.relays.len(), 2);
+        // The project relay is behind a proxy without UDP: no QAD probes.
+        assert!(cfg.relays[0].iroh_config().quic.is_none());
+        assert!(cfg.relays[1].iroh_config().quic.is_some());
     }
 }
 
