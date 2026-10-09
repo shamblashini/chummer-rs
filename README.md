@@ -613,9 +613,9 @@ was.
   character.
 
   ![Cyberware with the catalog beside it: two items added this visit, a record previewed](docs/screenshots/workspace-inventory-dark.png)
-  ![A narrow window: the catalog above the inventory, the selected record's details under its row](docs/screenshots/workspace-inventory-stacked-dark.png)
+  ![A narrow window: the catalog above the inventory, the selected record's details under its row, the budget strip's "+4"](docs/screenshots/workspace-inventory-stacked-dark.png)
   ![Adding into the selected goggles: the Target, its capacity, what does not fit dimmed with the reason](docs/screenshots/workspace-inventory-target-dark.png)
-  ![The item table in career: a selected container, a hovered mod's actions](docs/screenshots/workspace-inventory-table-dark.png)
+  ![The item table in career: the selected glasses, a hovered mod's Edit and Sell, the ⋯ on every row](docs/screenshots/workspace-inventory-table-dark.png)
   ![A row's ⋯ menu, open on a row that is not selected](docs/screenshots/workspace-inventory-menu-dark.png)
   ![Dragging a vision enhancement onto goggles: the targets outlined, the chip says what the drop does](docs/screenshots/workspace-inventory-drag-dark.png)
   ![Weapons: dice pool, damage, ammunition and the equipped toggles](docs/screenshots/workspace-inventory-weapons-dark.png)
