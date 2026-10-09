@@ -313,6 +313,8 @@ pub struct Host {
     tag: String,
     kinds: Vec<&'static str>,
     cats: Vec<String>,
+    /// Gear allowed by name (`allowgear/gearname`), besides `cats`.
+    names: Vec<String>,
     data: Element,
     /// (used, total).
     pub capacity: Option<(f64, f64)>,
@@ -348,6 +350,10 @@ pub fn accepts(ch: &Character, store: &DataStore, guid: &str) -> Vec<Accepted> {
         let at = out.iter().position(|a| a.tag == "mod").map_or(0, |i| i + 1);
         out.insert(at, Accepted { tag: "weaponmount", label: "Weapon mount", categories: Vec::new() });
     }
+    // Saved ware and accessories may not carry their data's `allowgear`.
+    if matches!(el.name.as_str(), "cyberware" | "accessory") && !out.iter().any(|a| a.tag == "gear") && data_of(store, el).child("allowgear").is_some() {
+        out.push(Accepted { tag: "gear", label: "Gear", categories: Vec::new() });
+    }
     if tag == "gear" && !edit::is_gear_container(ch, store, guid) {
         out.retain(|a| a.tag != "gear");
     }
@@ -378,6 +384,17 @@ fn gear_categories(ch: &Character, store: &DataStore, el: &Element, guid: &str) 
     }
 }
 
+/// Gear an item allows by name (`allowgear/gearname` of ware and weapon
+/// accessories, e.g. Built-in Medkit: the medkits).
+fn gear_names(store: &DataStore, el: &Element) -> Vec<String> {
+    if !matches!(el.name.as_str(), "cyberware" | "accessory") {
+        return Vec::new();
+    }
+    let of = |e: &Element| -> Vec<String> { e.child("allowgear").map(|a| a.children_named("gearname").map(|c| c.text().trim().to_owned()).filter(|c| !c.is_empty()).collect()).unwrap_or_default() };
+    let saved = of(el);
+    if saved.is_empty() { of(&data_of(store, el)) } else { saved }
+}
+
 impl Host {
     pub fn of(ch: &Character, store: &DataStore, guid: &str) -> Option<Host> {
         let el = find(ch, guid)?.clone();
@@ -385,7 +402,8 @@ impl Host {
         let accepted = accepts(ch, store, guid);
         let kinds = accepted.iter().map(|a| a.tag).collect();
         let cats = accepted.into_iter().find(|a| a.tag == "gear").map(|a| a.categories).unwrap_or_default();
-        Some(Host { tag, kinds, cats, data: data_of(store, &el), capacity: edit::capacity(ch, guid), root: root_container(ch, guid), el })
+        let names = gear_names(store, &el);
+        Some(Host { tag, kinds, cats, names, data: data_of(store, &el), capacity: edit::capacity(ch, guid), root: root_container(ch, guid), el })
     }
 
     /// Whether it takes an item of kind `tag` with data element `data`
@@ -401,8 +419,13 @@ impl Host {
         let category = data.get("category");
         match tag {
             "gear" => {
-                if !self.cats.is_empty() && !self.cats.iter().any(|c| c.eq_ignore_ascii_case(&category)) {
-                    return Err(Misfit::Category(self.cats.clone()));
+                let restricted = !self.cats.is_empty() || !self.names.is_empty();
+                let by_cat = self.cats.iter().any(|c| c.eq_ignore_ascii_case(&category));
+                let by_name = self.names.iter().any(|n| *n == data.get("name"));
+                if restricted && !by_cat && !by_name {
+                    let mut allowed = self.cats.clone();
+                    allowed.extend(self.names.iter().cloned());
+                    return Err(Misfit::Category(allowed));
                 }
             }
             "cyberware" | "bioware" => {

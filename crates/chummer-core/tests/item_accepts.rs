@@ -176,3 +176,24 @@ fn a_weapon_mount_bought_in_career_costs_what_the_inspector_command_costs() {
     assert_eq!(expenses(&a), ea + 1);
     assert_eq!(expenses(&a), expenses(&b));
 }
+
+/// Ware that allows gear by name (`allowgear/gearname`), not only by
+/// category: a Built-in Medkit takes the medkits and nothing else.
+#[test]
+fn ware_takes_gear_allowed_by_name() {
+    let mut s = session();
+    let arm = buy(&mut s, "cyberware", "Obvious Full Arm", 0, None, Some("Right"));
+    let kit = buy(&mut s, "cyberware", "Built-in Medkit", 0, Some(&arm), None);
+    let k = kinds(&s, &kit);
+    let el = edit::find(s.ch(), &kit).unwrap().clone();
+    assert!(k.contains(&"gear"), "{k:?} for {} ({})", el.name, el.to_xml_string().chars().take(400).collect::<String>());
+    let medkit = buy(&mut s, "gear", "Medkit", 3, Some(&kit), None);
+    assert_eq!(edit::parent(s.ch(), &medkit).map(|p| p.get("guid")), Some(kit.clone()));
+    // The placement rules the catalog and Move check: medkits only.
+    let store = engine().store_for_character(s.ch());
+    let gear = store.doc("gear.xml").unwrap();
+    let rec = |n: &str| chummer_core::data::find(&gear, "gears", "gear", n).unwrap().el().clone();
+    let at = Dest::Item(kit.clone());
+    assert!(place::check(s.ch(), &store, Candidate::Record { tag: "gear", rec: &rec("Medkit"), rating: 3 }, &at, false).is_ok());
+    assert!(place::check(s.ch(), &store, Candidate::Record { tag: "gear", rec: &rec("Flashlight"), rating: 0 }, &at, false).is_err(), "a flashlight is not a medkit");
+}
