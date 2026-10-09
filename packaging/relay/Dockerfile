@@ -5,7 +5,9 @@
 # The compile stage runs on the build machine's own architecture and
 # cross-compiles for the target one, so an arm64 image needs no emulated
 # (and very slow) Rust build.
-FROM --platform=$BUILDPLATFORM rust:1-bookworm AS build
+# Base images come from the AWS mirror of Docker's official images: Docker
+# Hub's anonymous pull limit broke CI builds (429 Too Many Requests).
+FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/rust:1-bookworm AS build
 ARG TARGETARCH
 WORKDIR /src
 RUN case "${TARGETARCH:-amd64}" in \
@@ -27,7 +29,7 @@ RUN t="$(cat /rust-target)" \
  && cargo build --release --locked -p chummer-relay --target "$t" \
  && cp "target/$t/release/chummer-relay" /usr/local/bin/chummer-relay
 
-FROM debian:bookworm-slim
+FROM public.ecr.aws/docker/library/debian:bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/shamblashini/chummer-rs" \
       org.opencontainers.image.description="chummer-relay: relay and mailbox server for chummer-rs online campaigns" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"

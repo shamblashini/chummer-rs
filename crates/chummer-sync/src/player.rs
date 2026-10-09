@@ -972,6 +972,7 @@ mod tests {
         assert_eq!(again.label(), None, "membership label is empty for a member added by node id");
         again.close();
         ep.close().await;
-        std::fs::remove_dir_all(&dir).unwrap();
+        // Best effort: a background save may still be finishing a file.
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

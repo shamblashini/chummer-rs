@@ -64,8 +64,8 @@ impl RelayEntry {
         let quic = match self.qad_port {
             Some(0) => None,
             Some(p) => Some(iroh_relay::RelayQuicConfig::new(p)),
-            // The project relay sits behind a TLS proxy (Cloudflare), which
-            // carries no UDP: don't probe it.
+            // The project relay runs behind Coolify's TLS proxy
+            // (cert_mode "proxy"), so it has no QUIC address discovery.
             None if self.is_default() => None,
             None => Some(iroh_relay::RelayQuicConfig::new(DEFAULT_QAD_PORT)),
         };
@@ -197,7 +197,7 @@ mod tests {
             DEFAULT_RELAY_URL.parse().unwrap(),
         ]);
         assert_eq!(cfg.relays.len(), 2);
-        // The project relay is behind a proxy without UDP: no QAD probes.
+        // The project relay is behind a TLS proxy: no QAD probes.
         assert!(cfg.relays[0].iroh_config().quic.is_none());
         assert!(cfg.relays[1].iroh_config().quic.is_some());
     }
