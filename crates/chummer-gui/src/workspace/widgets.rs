@@ -1080,15 +1080,18 @@ fn step_field(ui: &mut Ui, id: egui::Id, value: &mut f64, min: f64, max: f64, st
             v.text_edit_bg_color = Some(Color32::TRANSPARENT);
             v.override_text_color = Some(ws.text);
         }
-        let r = child.add(egui::DragValue::new(value).range(min..=max).speed(speed).max_decimals(decimals));
+        // A saved value outside the range (a rating above a lowered
+        // maximum) is shown as it is; only a user change is clamped.
+        let r = child.add(egui::DragValue::new(value).range(min..=max).clamp_existing_to_range(false).speed(speed).max_decimals(decimals));
         if step_button(&mut child, icons::PLUS, inner.height(), *value < max, raise_tip).clicked() {
             *value += step;
         }
         r
     });
     let mut resp = resp;
-    *value = value.clamp(min, max);
     if *value != old {
+        // Moved by a button, a drag or typing: keep it in range.
+        *value = value.clamp(min, max);
         resp.mark_changed();
     }
     resp
@@ -1116,6 +1119,24 @@ pub fn qty_stepper(ui: &mut Ui, id: impl std::hash::Hash, value: &mut f64, min: 
 #[cfg(test)]
 mod stepper_tests {
     use super::*;
+
+    /// Drawing a stepper whose saved value is above its maximum must not
+    /// change the value (it would mark the file modified on a plain click).
+    #[test]
+    fn an_out_of_range_value_is_left_alone() {
+        let ctx = egui::Context::default();
+        let mut v = 7;
+        let mut changed = false;
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    changed |= num_stepper(ui, "oor", &mut v, 1, 6, "lower", "raise").changed();
+                });
+            });
+        }
+        assert_eq!(v, 7);
+        assert!(!changed);
+    }
 
     #[test]
     fn field_fits_the_range_and_the_value() {
