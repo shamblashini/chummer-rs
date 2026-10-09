@@ -29,6 +29,7 @@ pub(crate) fn columns(tag: &str) -> &'static [(&'static str, &'static str)] {
         "armor" | "armormod" => &[("Armor", "armor"), ("Avail", "avail"), ("Cost", "cost")],
         "weapon" => &[("DV", "damage"), ("AP", "ap"), ("Avail", "avail"), ("Cost", "cost")],
         "accessory" | "mod" => &[("Avail", "avail"), ("Cost", "cost")],
+        "weaponmount" => &[("Slots", "slots"), ("Avail", "avail"), ("Cost", "cost")],
         "vehicle" => &[("Handling", "handling"), ("Speed", "speed"), ("Avail", "avail"), ("Cost", "cost")],
         "spell" => &[("Type", "type"), ("Range", "range"), ("DV", "dv")],
         "power" => &[("PP", "points")],
@@ -44,7 +45,7 @@ pub fn parent_of(tag: &str) -> Option<(&'static str, &'static str)> {
     match tag {
         "armormod" => Some(("armors", "armor")),
         "accessory" => Some(("weapons", "weapon")),
-        "mod" => Some(("vehicles", "vehicle")),
+        "mod" | "weaponmount" => Some(("vehicles", "vehicle")),
         _ => None,
     }
 }

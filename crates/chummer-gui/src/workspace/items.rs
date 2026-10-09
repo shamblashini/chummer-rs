@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use chummer_core::engine::Engine;
 use chummer_core::format;
-use chummer_core::items::edit;
+use chummer_core::items::{edit, place};
 use chummer_core::lang::Language;
 use chummer_core::sections::{self, Section as Sec};
 use chummer_core::sources::SourcebookLibrary;
@@ -63,6 +63,9 @@ pub struct GearState {
     /// While a row is dragged: the inventory's drop targets
     /// (`ws_inventory_drops`), with the key they were computed for.
     pub(super) drops: Option<(u64, table::Drops)>,
+    /// The kind last chosen for adding into an item, by the item's kind
+    /// ("vehicle" → "weaponmount"), for this session.
+    pub(super) into_kinds: std::collections::HashMap<String, &'static str>,
 }
 
 /// A visit of an item page: from showing it until another page shows.
@@ -233,10 +236,12 @@ impl CharacterView {
             });
         });
         if let Some(tag) = buy {
-            let parent = self.item_editor.as_ref().map(|(g, _)| g.clone()).filter(|g| edit::child_kinds(&self.doc, g).iter().any(|k| k.tag == tag));
-            self.ws_open_catalog(page, tag, None);
+            // Into the selected item when it takes that kind; else at the
+            // top level (a vehicle selected and "Add vehicle": a vehicle).
+            let parent = self.item_editor.as_ref().map(|(g, _)| g.clone()).filter(|g| place::accepts(&self.doc, &self.store, g).iter().any(|k| k.tag == tag));
+            self.ws_open_catalog(page, tag);
             if let Some(g) = parent {
-                self.ws_catalog_target(page, &g);
+                self.ws_catalog_into(page, &g, Some(tag));
             }
         }
         if close {
@@ -356,8 +361,32 @@ impl CharacterView {
                 ui.label(icons::icon(icons::CLOCK_COUNTER_CLOCKWISE, 13.0, ws.stun));
             }
         });
+        // The selected item takes other items: what the catalog does with
+        // it, or a way to add into it.
+        let mut add_into = None;
+        let hint = self.ws_into_hint(sec, page, compact, lang);
+        let hint_h = if hint.is_some() { 32.0 } else { 0.0 };
+        if let Some((text, button)) = hint {
+            let strip = Rect::from_min_size(egui::pos2(inner.left(), head.bottom()), egui::vec2(inner.width(), hint_h));
+            ui.painter().rect_filled(strip, CornerRadius::ZERO, ws.selection);
+            ui.painter().rect_filled(Rect::from_min_size(egui::pos2(strip.left(), strip.bottom() - 1.0), egui::vec2(strip.width(), 1.0)), CornerRadius::ZERO, ws.divider);
+            let mut su = ui.new_child(egui::UiBuilder::new().max_rect(strip.shrink2(egui::vec2(10.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+            su.spacing_mut().item_spacing.x = 6.0;
+            su.label(icons::icon(icons::ARROW_BEND_DOWN_RIGHT, 13.0, ws.accent));
+            su.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                if let Some((g, label)) = &button {
+                    if widgets::button(ui, Some(icons::PLUS), label, Look::Secondary, 24.0).clicked() {
+                        add_into = Some(g.clone());
+                    }
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(&text).size(12.0).color(ws.text)).truncate()).on_hover_text(&text);
+                });
+            });
+        }
         // Table.
-        let table_rect = Rect::from_min_max(egui::pos2(inner.left(), head.bottom()), egui::pos2(inner.right(), inner.bottom() - tray_h));
+        let table_rect = Rect::from_min_max(egui::pos2(inner.left(), head.bottom() + hint_h), egui::pos2(inner.right(), inner.bottom() - tray_h));
         let mut tu = ui.new_child(egui::UiBuilder::new().max_rect(table_rect).layout(egui::Layout::top_down(egui::Align::Min)));
         let essence_left = (sec.container == "cyberwares").then(|| format::essence(self.sheet.essence, self.rules.essence_decimals));
         let footer = Footer {
@@ -401,6 +430,9 @@ impl CharacterView {
             table::set_closed(ui.ctx(), id, if close { table::parent_keys(&rows) } else { HashSet::new() });
         }
         let mut changed = false;
+        if let Some(g) = add_into {
+            self.ws_add_into(page, &g, None);
+        }
         let out = self.ws_inventory_events(events, page, sec, lang, pdfs, status);
         changed |= out.changed;
         if let Some(g) = undo_one {
@@ -418,13 +450,38 @@ impl CharacterView {
             changed |= self.ws_catalog_drop_buy(&key, to, lang, status);
         }
         if let Some((tag, into)) = out.buy {
-            if !catalog_open || self.ws_gear.catalog.as_ref().is_some_and(|c| !c.sells(&tag)) {
-                self.ws_open_catalog(page, &tag, None);
+            if !catalog_open || self.ws_gear.catalog.as_ref().is_some_and(|c| !c.sells(&tag) || c.target().is_some()) {
+                self.ws_open_catalog(page, &tag);
             }
             self.ws_catalog_set_location(into, lang);
             self.ws_gear.focus_catalog = true;
         }
         changed
+    }
+
+    /// The inventory's line about the selected item when it takes other
+    /// items: "Buying into X — pick what to add above" while the catalog
+    /// adds into it, else what it takes and a button to add into it.
+    /// `stacked`: the catalog is above the inventory (else on its left).
+    fn ws_into_hint(&self, sec: &Sec, page: Page, stacked: bool, lang: &Language) -> Option<(String, Option<(String, String)>)> {
+        let g = self.item_editor.as_ref().map(|(g, _)| g.as_str())?;
+        if place::root_container(&self.doc, g) != Some(sec.container) {
+            return None;
+        }
+        let el = edit::find(&self.doc, g)?;
+        let name = super::display_name(sec, el, lang);
+        let into = self.ws_gear.catalog.as_ref().is_some_and(|c| c.page == page && c.anchor().is_some_and(|a| a.eq_ignore_ascii_case(g)));
+        if into {
+            let t = if stacked { "Buying into {0} — pick what to add above" } else { "Buying into {0} — pick what to add on the left" };
+            return Some((lang.tr_fmt(t, &[&name]), None));
+        }
+        let accepted = place::accepts(&self.doc, &self.store, g);
+        if accepted.is_empty() {
+            return None;
+        }
+        let ptag = edit::tag_of(el);
+        let kinds: Vec<String> = accepted.iter().map(|a| super::ws_catalog::into_label(lang, ptag, a.tag, a.label)).collect();
+        Some((lang.tr_fmt("{0} takes {1}", &[&name, &kinds.join(", ")]), Some((g.to_owned(), lang.tr_fmt("Add into {0}", &[&name])))))
     }
 
     /// "Added since you opened this page": a line per item, newest first,

@@ -8,7 +8,8 @@
 //!
 //! - the kinds an item takes ([`edit::child_kinds`]); gear only into gear
 //!   that is a container ([`edit::is_gear_container`]);
-//! - gear: the parent's `addoncategory` list (`SelectGear`);
+//! - gear: the parent's `addoncategory` list (`SelectGear`), or its
+//!   `allowgear` categories in ware and accessories;
 //! - ware: `requireparent` or a `[n]` capacity and no `mountsto` to go
 //!   into ware, no `requireparent` at the top level, the parent's
 //!   `allowsubsystems` categories (`SelectCyberware`);
@@ -318,18 +319,73 @@ pub struct Host {
     root: Option<&'static str>,
 }
 
+/// A kind of item an owned item takes inside it: what its "Add …"
+/// commands offer and the Workspace catalog sells when it is the target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Accepted {
+    /// The kind (`items::KINDS`).
+    pub tag: &'static str,
+    /// Its English name here ("Vehicle mod", "Underbarrel weapon").
+    pub label: &'static str,
+    /// The categories it takes; empty = any. Gear: the parent's
+    /// `addoncategory` (gear, armor) or `allowgear` (ware, accessories);
+    /// ware: the parent's subsystems; weapons: "Underbarrel Weapons" on a
+    /// weapon, the mount's `weaponmountcategories`.
+    pub categories: Vec<String>,
+}
+
+/// The kinds an owned item takes inside it, most natural first (a
+/// vehicle: mods, weapon mounts, gear; a weapon: accessories, an
+/// underbarrel weapon; armor: mods, gear; ware: ware, gear). Gear only
+/// into gear that is a container ([`edit::is_gear_container`]); a full
+/// weapon mount takes nothing. The same list the purchase rules
+/// ([`Host::takes`]) check against.
+pub fn accepts(ch: &Character, store: &DataStore, guid: &str) -> Vec<Accepted> {
+    let Some(el) = find(ch, guid) else { return Vec::new() };
+    let tag = tag_of(el);
+    let mut out: Vec<Accepted> = edit::child_kinds(ch, guid).into_iter().map(|k| Accepted { tag: k.tag, label: k.label, categories: Vec::new() }).collect();
+    if tag == "vehicle" {
+        let at = out.iter().position(|a| a.tag == "mod").map_or(0, |i| i + 1);
+        out.insert(at, Accepted { tag: "weaponmount", label: "Weapon mount", categories: Vec::new() });
+    }
+    if tag == "gear" && !edit::is_gear_container(ch, store, guid) {
+        out.retain(|a| a.tag != "gear");
+    }
+    for a in out.iter_mut() {
+        a.categories = match (tag, a.tag) {
+            (_, "gear") => gear_categories(ch, store, el, guid),
+            (_, "cyberware" | "bioware") => list(&el.get("subsystems")),
+            ("weapon", "weapon") => vec!["Underbarrel Weapons".into()],
+            (_, "weapon") => list(&el.get("weaponmountcategories")),
+            _ => Vec::new(),
+        };
+    }
+    out
+}
+
+/// The gear categories an item takes: `addoncategory` of gear and armor
+/// (`SelectGear`'s allowed categories), `allowgear/gearcategory` of ware
+/// and weapon accessories (`CyberwareGearAdd`, the accessory's "Add
+/// Gear"). Empty when any category may.
+fn gear_categories(ch: &Character, store: &DataStore, el: &Element, guid: &str) -> Vec<String> {
+    match el.name.as_str() {
+        "cyberware" | "accessory" => {
+            let of = |e: &Element| -> Vec<String> { e.child("allowgear").map(|a| a.children_named("gearcategory").map(|c| c.text().trim().to_owned()).filter(|c| !c.is_empty()).collect()).unwrap_or_default() };
+            let saved = of(el);
+            if saved.is_empty() { of(&data_of(store, el)) } else { saved }
+        }
+        _ => edit::addon_categories(ch, store, guid),
+    }
+}
+
 impl Host {
     pub fn of(ch: &Character, store: &DataStore, guid: &str) -> Option<Host> {
         let el = find(ch, guid)?.clone();
         let tag = tag_of(&el).to_owned();
-        let mut kinds: Vec<&'static str> = edit::child_kinds(ch, guid).iter().map(|k| k.tag).collect();
-        if tag == "vehicle" {
-            kinds.push("weaponmount");
-        }
-        if tag == "gear" && !edit::is_gear_container(ch, store, guid) {
-            kinds.retain(|k| *k != "gear");
-        }
-        Some(Host { tag, kinds, cats: edit::addon_categories(ch, store, guid), data: data_of(store, &el), capacity: edit::capacity(ch, guid), root: root_container(ch, guid), el })
+        let accepted = accepts(ch, store, guid);
+        let kinds = accepted.iter().map(|a| a.tag).collect();
+        let cats = accepted.into_iter().find(|a| a.tag == "gear").map(|a| a.categories).unwrap_or_default();
+        Some(Host { tag, kinds, cats, data: data_of(store, &el), capacity: edit::capacity(ch, guid), root: root_container(ch, guid), el })
     }
 
     /// Whether it takes an item of kind `tag` with data element `data`

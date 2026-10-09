@@ -33,8 +33,6 @@ pub struct WsItemEditor {
     guid: String,
     /// `SellItem.SellPercent`, in percent.
     sell_percent: f64,
-    /// Weapon mount size id picked for "Add Weapon Mount".
-    mount_size: String,
     /// Delete was clicked once; the second click confirms.
     confirm_remove: bool,
     /// Ammunition, matrix and damage tracking (`play_ui`).
@@ -45,7 +43,7 @@ pub struct WsItemEditor {
 
 impl Default for WsItemEditor {
     fn default() -> Self {
-        WsItemEditor { guid: String::new(), sell_percent: 50.0, mount_size: String::new(), confirm_remove: false, play: Default::default(), new_location: String::new() }
+        WsItemEditor { guid: String::new(), sell_percent: 50.0, confirm_remove: false, play: Default::default(), new_location: String::new() }
     }
 }
 
@@ -82,8 +80,9 @@ impl CharacterView {
             *status = Some(s);
         }
         if let Some((tag, parent)) = res.add_child.take() {
-            if let Some(page) = self.ws_item_page(self.tab) {
-                self.ws_open_catalog(page, &tag, Some(parent));
+            // The catalog adds into the item, showing that kind.
+            if let (Some(page), Some(k)) = (self.ws_item_page(self.tab), items::kind(&tag)) {
+                self.ws_add_into(page, &parent, Some(k.tag));
             }
         }
         if let Some(g) = res.select.take() {
@@ -273,19 +272,20 @@ impl WsItemEditor {
             res.changed |= ch.set(Command::SetItemText { guid: guid.to_owned(), field: "notes".into(), value: notes });
         }
 
-        self.contents(ui, ch, store, lang, guid, &tag, &mut res);
+        self.contents(ui, ch, store, lang, guid, &mut res);
         widgets::rule(ui);
         self.remove(ui, ch, store, lang, guid, &tag, included, &mut res);
         res
     }
 
     /// Nested items and the "Add …" commands.
-    #[allow(clippy::too_many_arguments)]
-    fn contents(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, guid: &str, tag: &str, res: &mut EditorResult) {
+    fn contents(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, guid: &str, res: &mut EditorResult) {
         let ws = theme::ws(ui);
         let kids = edit::children(ch, guid);
-        let kinds = edit::child_kinds(ch, guid);
-        if kids.is_empty() && kinds.is_empty() && tag != "vehicle" {
+        // What it takes: each opens the catalog on that kind, adding into
+        // it (as selecting it in the inventory does).
+        let kinds = items::place::accepts(ch, store, guid);
+        if kids.is_empty() && kinds.is_empty() {
             return;
         }
         ui.add_space(2.0);
@@ -313,21 +313,6 @@ impl WsItemEditor {
                 }
             }
         });
-        if tag == "vehicle" {
-            // Weapon mounts have no selection dialog kind (`CreateWeaponMount`).
-            let sizes = edit::weapon_mount_sizes(store);
-            ui.horizontal(|ui| {
-                let cur = sizes.iter().find(|(id, _)| *id == self.mount_size).map(|(_, n)| n.clone()).unwrap_or_else(|| lang.tr("Mount size…"));
-                crate::combo::Combo::from_id_salt(("ws_mount_size", guid)).selected_text(cur).show_ui(ui, |ui| {
-                    for (id, n) in &sizes {
-                        crate::combo::selectable_value(ui, &mut self.mount_size, id.clone(), n);
-                    }
-                });
-                if ui.add_enabled_ui(!self.mount_size.is_empty(), |ui| widgets::button(ui, Some(icons::PLUS), &lang.tr("Add Weapon Mount"), Look::Secondary, 24.0)).inner.clicked() {
-                    res.changed |= ch.run(Command::AddWeaponMount { vehicle: guid.to_owned(), size: self.mount_size.clone() }, &mut res.status).is_some();
-                }
-            });
-        }
     }
 
     /// Career mode sells (`ICanSell.Sell`), creation mode deletes.

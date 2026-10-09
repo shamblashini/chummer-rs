@@ -659,22 +659,46 @@ was.
   online characters keep Undo off and Remove works), earlier ones this
   visit with the bar, and all of them in "Added since you opened this
   page" with Undo each and Undo all.
-  The selected inventory row is the catalog's target when it can hold
-  the selected record: an accent outline and a "Target" chip on its row,
-  an "Adding into Glasses" bar over the results with its capacity ("1/4
-  capacity"), Change and ×. When it cannot (a flashlight for glasses,
-  glasses that are full), the purchase goes to the top level and the bar
-  says why. What does not go into the selected container is listed last,
-  dimmed, with the reason: the purchase rules of `items::place` (the
-  container's `addoncategory` list, ware subsystems and
-  `requireparent`, `parentdetails`, free mounts, free capacity at the
-  rating shown). A location group's "+" adds into that location.
+  Selecting an inventory row that takes other items makes the catalog
+  add into it at once and sell what it takes (`items::place::accepts`,
+  the same list the inspector's "Add …" offers): an accent outline and a
+  "Target" chip on its row, an "Adding into Ford Americar" bar over the
+  results with its capacity ("3/11 capacity"), Change and ×, and under
+  it a switch between the kinds it takes: a vehicle Mods, Weapon mounts
+  and Gear; a weapon mount Weapons; a weapon Accessories and, with an
+  under-barrel slot, Underbarrel weapons; armor Armor mods and Gear;
+  ware its subsystems (Cyberware or Bioware) and the gear it allows
+  (`allowgear`: a commlink implant takes commlinks, cybereyes sensors);
+  a commlink, a deck or other gear container Plugins. It opens on the
+  most natural kind (mods, accessories, armor mods, the ware's
+  subsystems), or on the kind last chosen for that type of item this
+  session, with the categories the item takes as the category filter;
+  the filters, columns and preview are the chosen kind's, and Add (or a
+  drop) is the same `AddItem` with the item as the parent. The inventory
+  says so under its head ("Buying into Ford Americar (Sedan) — pick what
+  to add on the left"); × goes back to the top level and the page's own
+  kinds (Cyberware, Vehicles…), and the inventory line then offers
+  "Add into …" again. With the catalog closed, the line says what the
+  selected item takes ("Commlink takes Gear") with an "Add into" button
+  that opens the catalog adding into it; the inspector's "Add …"
+  buttons do the same. A row that takes nothing keeps the catalog at
+  the top level, on the page's kinds. A selected record that does not go
+  into the target is refused with the reason in the bar (Add does not
+  fall back to the top level). What does not go into the target is
+  listed last, dimmed, with the reason: the purchase rules of
+  `items::place` (the container's `addoncategory` or `allowgear` list,
+  ware subsystems and `requireparent`, `parentdetails`, free mounts,
+  free capacity at the rating shown). A location group's "+" adds into
+  that location.
+
+  ![A vehicle selected: the catalog adds into it, on Mods, with Weapon mounts and Gear beside](docs/screenshots/workspace-add-into-vehicle-dark.png)
+  ![A commlink implant selected on the Cyberware page: the catalog sells the commlinks it takes](docs/screenshots/workspace-add-into-cyberware-dark.png)
 - **Inspector**: creation issues with Finish creation, the selected
   item in the Workspace style (rating, quantity, equipped and wireless,
   custom name, location, cost, availability, essence, capacity,
   ammunition, matrix and vehicle panels, notes, contents with their
-  "Add …" commands, which open the catalog with the parent set, Sell or
-  Delete), the selected attribute (range, what modifies it, the
+  "Add …" commands, which open the catalog adding into the item on that
+  kind (weapon mounts included), Sell or Delete), the selected attribute (range, what modifies it, the
   skills and limits that use it, the raise button), skill (pool,
   specializations, rule) or skill group, in career Karma & Nuyen (karma,
   career karma, nuyen and street cred, Add entry, and the ledger

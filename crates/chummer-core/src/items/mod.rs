@@ -90,6 +90,9 @@ pub const KINDS: &[Kind] = &[
     Kind { tag: "accessory", container: "weapons", file: "weapons.xml", data_container: "accessories", data_item: "accessory", label: "Weapon accessory" },
     Kind { tag: "vehicle", container: "vehicles", file: "vehicles.xml", data_container: "vehicles", data_item: "vehicle", label: "Vehicle" },
     Kind { tag: "mod", container: "vehicles", file: "vehicles.xml", data_container: "mods", data_item: "mod", label: "Vehicle mod" },
+    // The "Size" records only (`vehicle::add_weapon_mount`); the others
+    // are a mount's options.
+    Kind { tag: "weaponmount", container: "vehicles", file: "vehicles.xml", data_container: "weaponmounts", data_item: "weaponmount", label: "Weapon mount" },
     Kind { tag: "lifestyle", container: "lifestyles", file: "lifestyles.xml", data_container: "lifestyles", data_item: "lifestyle", label: "Lifestyle" },
     Kind { tag: "drug", container: "drugs", file: "drugcomponents.xml", data_container: "drugs", data_item: "drug", label: "Drug" },
     Kind { tag: "spell", container: "spells", file: "spells.xml", data_container: "spells", data_item: "spell", label: "Spell" },

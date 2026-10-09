@@ -898,7 +898,7 @@ fn workspace_catalog_add_then_undo_redo() {
     h.app.views[i].ws_go(Section::Gear(0));
     h.frames(2);
     let before = gear_count(&h);
-    h.app.views[i].ws_open_catalog((Tab::StreetGear, 0), "gear", None);
+    h.app.views[i].ws_open_catalog((Tab::StreetGear, 0), "gear");
     sizes(&mut h, 2);
     h.size = WIDE;
     h.frames(1);
@@ -938,13 +938,13 @@ fn workspace_catalog_add_then_undo_redo() {
         h.app.views[i].ws_go(Section::Gear(g));
         h.frames(1);
         for tag in ["gear", "armor", "weapon", "drug", "lifestyle"] {
-            h.app.views[i].ws_open_catalog((Tab::StreetGear, g), tag, None);
+            h.app.views[i].ws_open_catalog((Tab::StreetGear, g), tag);
             sizes(&mut h, 2);
         }
     }
     for (tab, tag) in [(Tab::Cyberware, "cyberware"), (Tab::Cyberware, "bioware"), (Tab::Vehicles, "vehicle")] {
         h.app.views[i].ws_go(Section::Page(tab));
-        h.app.views[i].ws_open_catalog((tab, 0), tag, None);
+        h.app.views[i].ws_open_catalog((tab, 0), tag);
         sizes(&mut h, 2);
         // Select the first row and look at the preview in the inspector.
         h.size = WIDE;
@@ -1073,11 +1073,11 @@ fn workspace_inventory_narrow_stacks() {
     assert!(h.find_text(&cat).unwrap().bottom() < h.find_text(&inv).unwrap().top());
 }
 
-/// Workspace inventory: the selected inventory row becomes the
-/// catalog's target when it can hold the selected record ("Adding into",
-/// the Target chip, its free capacity); when it cannot, the purchase goes
-/// to the top level and the bar says why. What does not fit a target is
-/// dimmed with the reason; Add puts the item inside; × adds at the top
+/// Workspace inventory: selecting an inventory row that takes other
+/// items makes it the catalog's target at once ("Adding into", the
+/// Target chip, its free capacity, the hint in the inventory), whatever
+/// record is selected; what does not fit it is dimmed with the reason
+/// and the bar says why. Add puts the item inside; × adds at the top
 /// level again. The inspector has no "Install in" choice.
 #[test]
 fn workspace_inventory_adds_into_the_target() {
@@ -1087,38 +1087,30 @@ fn workspace_inventory_adds_into_the_target() {
     gear_catalog_pick(&mut h, i, "Flashlight");
     assert!(h.find_text(&h.app.lang.tr("Install in")).is_none(), "no Install in choice: {:?}", h.on_screen());
     let glasses = gear_guid(&h, "Glasses");
+    // A click on the glasses: the catalog adds into them, and the
+    // selected flashlight is refused with the reason.
+    let row = inventory_row(&h, "Glasses");
+    h.click_at(row.center());
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_target_guid().as_deref(), Some(glasses.as_str()), "the selected container is the target");
+    assert!(h.find_where(|t| t.starts_with("Buying into Glasses")).is_some(), "the inventory's hint: {:?}", h.on_screen());
+    assert!(h.find_where(|t| t.contains("only takes")).is_some(), "the bar says why: {:?}", h.on_screen());
     // Munin's glasses (rating 2) are full: a vision enhancement is
     // refused with the reason.
-    let row = inventory_row(&h, "Glasses");
-    h.click_at(row.center());
-    h.frames(2);
     catalog_search(&mut h, i, "Vision Magnification");
     h.frames(1);
-    assert!(h.app.views[i].ws_catalog_target_guid().is_none());
     assert!(h.find_where(|t| t.contains("Glasses is full (2/2 capacity used")).is_some(), "{:?}", h.on_screen());
-    // Rating 4 has room.
-    assert!(h.app.views[i].doc_mut().set(chummer_core::command::Command::SetItemRating { guid: glasses.clone(), rating: 4 }));
-    catalog_search(&mut h, i, "Flashlight");
-    // The inventory's "Glasses" (right of the catalog's).
-    let row = inventory_row(&h, "Glasses");
-    h.click_at(row.center());
-    h.frames(2);
-    // A flashlight does not go into glasses: top level, and why.
-    assert!(h.app.views[i].ws_catalog_target_guid().is_none(), "a flashlight cannot go into the glasses");
-    assert!(h.find_text(&h.app.lang.tr("Adding at the top level")).is_some(), "{:?}", h.on_screen());
-    assert!(h.find_where(|t| t.contains("only takes")).is_some(), "the bar says why: {:?}", h.on_screen());
-    // A vision enhancement does: the selected glasses are the target.
-    catalog_search(&mut h, i, "Vision Magnification");
-    h.frames(1);
-    assert_eq!(h.app.views[i].ws_catalog_target_guid().as_deref(), Some(glasses.as_str()), "the selected container is the target");
-    assert!(h.find_text(&h.app.lang.tr("Adding into")).is_some() && h.find_where(|t| t.contains(&h.app.lang.tr("Target"))).is_some(), "{:?}", h.on_screen());
-    assert!(h.find_where(|t| t.ends_with(" capacity") && t.contains('/')).is_some(), "the target's free capacity: {:?}", h.on_screen());
-    // What does not fit is dimmed with the reason.
-    catalog_search(&mut h, i, "Flashlight");
-    h.frames(1);
-    catalog_search(&mut h, i, "Vision Magnification");
     let kids = |h: &Harness| chummer_core::items::edit::children(h.app.views[i].ch(), &glasses).len();
     let before = kids(&h);
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    assert_eq!(kids(&h), before, "refused, not bought at the top level either");
+    // Rating 4 has room.
+    assert!(h.app.views[i].doc_mut().set(chummer_core::command::Command::SetItemRating { guid: glasses.clone(), rating: 4 }));
+    catalog_search(&mut h, i, "Vision Magnification");
+    h.frames(1);
+    assert!(h.find_text(&h.app.lang.tr("Adding into")).is_some() && h.find_where(|t| t.contains(&h.app.lang.tr("Target"))).is_some(), "{:?}", h.on_screen());
+    assert!(h.find_where(|t| t.ends_with(" capacity") && t.contains('/')).is_some(), "the target's free capacity: {:?}", h.on_screen());
     h.key(Key::Enter, Modifiers::NONE);
     h.frames(2);
     assert_eq!(kids(&h), before + 1, "Add puts it into the glasses ({:?})", h.app.status);
@@ -1129,6 +1121,191 @@ fn workspace_inventory_adds_into_the_target() {
     h.click_at(Pos2::new(change.right() + 4.0 + 13.0 + 8.0, bar.center().y));
     h.frames(2);
     assert!(h.app.views[i].ws_catalog_target_guid().is_none(), "× clears the target: {:?}", h.on_screen());
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["gear"], Some("gear")));
+    assert!(h.find_where(|t| t.starts_with("Glasses takes")).is_some(), "the hint offers to add into it again: {:?}", h.on_screen());
+}
+
+/// Buy an item of kind `tag` with a command (no catalog); returns the
+/// new item's guid.
+fn buy_item(h: &mut Harness, i: usize, tag: &str, name: &str, parent: Option<&str>, answer: Option<&str>) -> String {
+    use chummer_core::command::{Command, RecordRef};
+    fn guids(e: &chummer_core::xml::Element, out: &mut Vec<String>) {
+        if chummer_core::items::edit::is_item(e) {
+            out.push(e.get("guid"));
+        }
+        for c in e.elements() {
+            guids(c, out);
+        }
+    }
+    let mut before = Vec::new();
+    guids(&h.app.views[i].ch().doc, &mut before);
+    let purchase = chummer_core::items::Purchase { qty: 1.0, parent: parent.map(str::to_owned), answer: answer.map(str::to_owned), cost_multiplier: 1.0, ..Default::default() };
+    h.app.views[i].doc_mut().apply(Command::AddItem { tag: tag.into(), record: RecordRef { id: String::new(), name: name.into() }, purchase }).unwrap_or_else(|e| panic!("{name}: {}", e.reason));
+    h.frames(2);
+    let mut after = Vec::new();
+    guids(&h.app.views[i].ch().doc, &mut after);
+    let new: Vec<String> = after.into_iter().filter(|g| !before.contains(g)).collect();
+    let ch = h.app.views[i].ch();
+    new.iter().find(|g| chummer_core::items::edit::parent(ch, g).is_none_or(|p| !new.contains(&p.get("guid")))).cloned().unwrap()
+}
+
+fn parent_guid(h: &Harness, i: usize, g: &str) -> Option<String> {
+    chummer_core::items::edit::parent(h.app.views[i].ch(), g).map(|p| p.get("guid"))
+}
+
+/// Click the "Adding into" bar's kind switch segment `label`.
+fn click_into_kind(h: &mut Harness, label: &str) {
+    let bar = h.find_text(&h.app.lang.tr("Adding into")).expect("the target bar");
+    let r = h.texts.iter().filter(|(t, r)| t == label && r.top() > bar.bottom() && r.top() < bar.bottom() + 40.0).map(|(_, r)| *r).next().unwrap_or_else(|| panic!("{label} in the kind switch: {:?}", h.on_screen()));
+    h.click_at(r.center());
+    h.frames(2);
+}
+
+/// Workspace, Vehicles & Drones: with the catalog closed, a vehicle
+/// selected says what it takes, and "Add into" opens the catalog adding
+/// into it, on its mods. The switch shows mods, weapon mounts and gear;
+/// a mount and a mod bought land on the vehicle, a weapon bought with
+/// the mount selected lands in the mount, a mod dragged onto the vehicle
+/// too. × returns to the page's own kinds; the kind chosen last for a
+/// vehicle comes back the next time.
+#[test]
+fn workspace_vehicle_selected_adds_into_it() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin.chum5"));
+    h.app.views[i].ws_go(Section::Page(Tab::Vehicles));
+    h.frames(2);
+    let car = buy_item(&mut h, i, "vehicle", "Ford Americar (Sedan)", None, None);
+    h.frames(2);
+    h.click_at(inventory_row(&h, "Ford Americar (Sedan)").center());
+    h.frames(2);
+    assert!(!catalog_shown(&h));
+    assert!(h.find_where(|t| t.starts_with("Ford Americar (Sedan) takes Mods, Weapon mounts, Gear")).is_some(), "the hint: {:?}", h.on_screen());
+    h.click_text("Add into Ford Americar (Sedan)");
+    h.frames(2);
+    assert!(catalog_shown(&h));
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["mod", "weaponmount", "gear"], Some("mod")), "mods first");
+    assert_eq!(h.app.views[i].ws_catalog_target_guid().as_deref(), Some(car.as_str()));
+    assert!(h.find_where(|t| t.starts_with("Buying into Ford Americar (Sedan)")).is_some(), "{:?}", h.on_screen());
+    // A weapon mount.
+    click_into_kind(&mut h, "Weapon mounts");
+    assert_eq!(h.app.views[i].ws_catalog_kinds().1, Some("weaponmount"));
+    catalog_search(&mut h, i, "Standard");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    let mount = h.app.views[i].ws_last_added().map(str::to_owned).unwrap_or_else(|| panic!("a mount was bought: {:?}", h.app.status));
+    assert_eq!(chummer_core::items::edit::find(h.app.views[i].ch(), &mount).map(|e| e.name.clone()).as_deref(), Some("weaponmount"));
+    assert_eq!(parent_guid(&h, i, &mount).as_deref(), Some(car.as_str()), "on the vehicle");
+    // A mod.
+    click_into_kind(&mut h, "Mods");
+    catalog_search(&mut h, i, "Rigger Interface");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    let iface = h.app.views[i].ws_last_added().map(str::to_owned).expect("a mod was bought");
+    assert_eq!(parent_guid(&h, i, &iface).as_deref(), Some(car.as_str()), "the mod is on the vehicle ({:?})", h.app.status);
+    // Dragged onto the vehicle.
+    catalog_search(&mut h, i, "Manual Operation");
+    let from = catalog_row(&h, "Manual Operation").center();
+    let to = inventory_row(&h, "Ford Americar (Sedan)").center();
+    drag(&mut h, from, to);
+    let tips = h.app.views[i].ws_last_added().map(str::to_owned).expect("dropped and bought");
+    assert_eq!(parent_guid(&h, i, &tips).as_deref(), Some(car.as_str()), "dropped onto the vehicle ({:?})", h.app.status);
+    // The mount takes weapons.
+    let mount_name = chummer_core::items::edit::find(h.app.views[i].ch(), &mount).map(|e| e.get("name")).unwrap();
+    h.app.views[i].ws_select_item((Tab::Vehicles, 0), &mount);
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["weapon"], Some("weapon")), "a mount takes weapons ({mount_name})");
+    catalog_search(&mut h, i, "Ares Predator V");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    let gun = h.app.views[i].ws_last_added().map(str::to_owned).expect("a weapon was bought");
+    assert_eq!(parent_guid(&h, i, &gun).as_deref(), Some(mount.as_str()), "in the mount ({:?})", h.app.status);
+    // × returns to the page's kinds.
+    h.app.views[i].ws_select_item((Tab::Vehicles, 0), &car);
+    h.frames(2);
+    let bar = h.find_text(&h.app.lang.tr("Adding into")).expect("the target bar");
+    let change = h.find_text(&h.app.lang.tr("Change")).expect("Change");
+    h.click_at(Pos2::new(change.right() + 4.0 + 13.0 + 8.0, bar.center().y));
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["vehicle", "mod"], Some("vehicle")), "back to Vehicles");
+    assert!(h.app.views[i].ws_catalog_target_guid().is_none());
+    // The kind chosen last for a vehicle (weapon mounts, then mods):
+    // mods again.
+    h.app.views[i].ws_select_item((Tab::Vehicles, 0), &car);
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds().1, Some("mod"));
+    click_into_kind(&mut h, "Gear");
+    h.app.views[i].ws_select_item((Tab::Vehicles, 0), &gun);
+    h.frames(1);
+    h.app.views[i].ws_select_item((Tab::Vehicles, 0), &car);
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds().1, Some("gear"), "remembered for the session");
+}
+
+/// Workspace, Cyberware: ware with room for gear (a commlink implant)
+/// selected: the catalog sells gear of its categories and the purchase
+/// lands inside; × returns to Cyberware & Bioware. The inspector's
+/// "+ Gear…" does the same.
+#[test]
+fn workspace_cyberware_selected_adds_gear_into_it() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin.chum5"));
+    h.app.views[i].ws_go(Section::Page(Tab::Cyberware));
+    h.frames(2);
+    let implant = buy_item(&mut h, i, "cyberware", "Commlink", None, None);
+    h.app.views[i].ws_open_catalog((Tab::Cyberware, 0), "cyberware");
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["cyberware", "bioware"], Some("cyberware")));
+    h.click_at(inventory_row(&h, "Commlink").center());
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["gear"], Some("gear")), "{:?}", h.on_screen());
+    assert_eq!(h.app.views[i].ws_catalog_target_guid().as_deref(), Some(implant.as_str()));
+    catalog_search(&mut h, i, "Hermes Ikon");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    let link = h.app.views[i].ws_last_added().map(str::to_owned).expect("bought");
+    assert_eq!(parent_guid(&h, i, &link).as_deref(), Some(implant.as_str()), "inside the implant ({:?})", h.app.status);
+    // ×: back to the page's kinds.
+    let bar = h.find_text(&h.app.lang.tr("Adding into")).expect("the target bar");
+    let change = h.find_text(&h.app.lang.tr("Change")).expect("Change");
+    h.click_at(Pos2::new(change.right() + 4.0 + 13.0 + 8.0, bar.center().y));
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["cyberware", "bioware"], Some("cyberware")));
+    // The inspector's "+ Gear…" (the implant is still selected).
+    let gear = format!("{}…", h.app.lang.tr("Gear"));
+    h.click_text(&gear);
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["gear"], Some("gear")), "the inspector's button switches the catalog");
+    assert_eq!(h.app.views[i].ws_catalog_target_guid().as_deref(), Some(implant.as_str()));
+}
+
+/// Workspace, Weapons: a weapon selected adds accessories into it (and
+/// an underbarrel weapon when it has the slot); × returns to Weapons.
+#[test]
+fn workspace_weapon_selected_adds_accessories() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin.chum5"));
+    h.app.views[i].ws_go(Section::Gear(2));
+    h.frames(2);
+    let rifle = buy_item(&mut h, i, "weapon", "FN HAR", None, None);
+    h.app.views[i].ws_open_catalog((Tab::StreetGear, 2), "weapon");
+    h.frames(2);
+    h.click_at(inventory_row(&h, "FN HAR").center());
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["accessory", "weapon"], Some("accessory")));
+    assert!(h.find_text(&h.app.lang.tr("Underbarrel weapons")).is_some(), "the switch: {:?}", h.on_screen());
+    catalog_search(&mut h, i, "Gas-Vent 2 System");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    let vent = h.app.views[i].ws_last_added().map(str::to_owned).expect("bought");
+    assert_eq!(parent_guid(&h, i, &vent).as_deref(), Some(rifle.as_str()), "on the rifle ({:?})", h.app.status);
+    let bar = h.find_text(&h.app.lang.tr("Adding into")).expect("the target bar");
+    let change = h.find_text(&h.app.lang.tr("Change")).expect("Change");
+    h.click_at(Pos2::new(change.right() + 4.0 + 13.0 + 8.0, bar.center().y));
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["weapon", "accessory"], Some("weapon")));
 }
 
 /// The inventory's row of `name`: the rightmost text (the catalog's

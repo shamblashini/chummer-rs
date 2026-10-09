@@ -712,7 +712,7 @@ impl CharacterView {
     /// Select an owned item: it shows in the inspector; the catalog keeps
     /// its search but drops its selection, and adds into the item when
     /// it can hold the catalog's kind.
-    pub(super) fn ws_select_item(&mut self, page: Page, guid: &str) {
+    pub(crate) fn ws_select_item(&mut self, page: Page, guid: &str) {
         self.item_editor = Some((guid.to_owned(), crate::item_editor::ItemEditor::default()));
         self.ws_catalog_target(page, guid);
     }
