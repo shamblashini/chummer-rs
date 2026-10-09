@@ -140,7 +140,13 @@ relayed traffic.
 ## Deploy with Docker
 
 Every release publishes the image `ghcr.io/shamblashini/chummer-relay`
-with two tags: the version (`0.5.0`) and `latest`. Each release also
+with two tags: the version (`0.5.0`) and `latest`. Between releases, the
+"Relay image" workflow publishes `:edge` (and `:sha-<commit>`) whenever
+the relay or the code it is built from changes on master; it can also be
+started by hand (Actions → Relay image → Run workflow) with a tag of your
+choice. To follow it, set `image: ghcr.io/shamblashini/chummer-relay:edge`
+in `docker-compose.yml`; the relay and the apps must speak the same
+protocol, so use `edge` only with app builds from master. Each release also
 carries `docker-compose.yml` and `relay.example.toml`. On the server:
 
 ```bash

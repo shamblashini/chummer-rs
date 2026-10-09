@@ -127,14 +127,10 @@ impl Online {
         self.node.clone()
     }
 
-    /// The display name, or a default.
+    /// The name the player chose (empty until they pick one; never the
+    /// computer's account name, which would be shared with the GM).
     pub fn display_name(&self) -> String {
-        let n = self.settings.name.trim();
-        if n.is_empty() {
-            whoami()
-        } else {
-            n.to_owned()
-        }
+        self.settings.name.trim().to_owned()
     }
 
     /// Whether anything online is running (the UI then repaints now and
@@ -161,7 +157,8 @@ impl Online {
         let link = j.link().ok_or("not a valid invite link")?;
         let node = self.node()?;
         let dir = self.dir.clone().ok_or("no user config directory found")?;
-        let mut cfg = PlayerConfig::new(self.display_name(), link);
+        let chosen = self.display_name();
+        let mut cfg = PlayerConfig::new(if chosen.is_empty() { "Player".to_owned() } else { chosen }, link);
         cfg.mailbox = node.mailbox_id();
         cfg.path = Some(JoinedList::replica_path(&dir, j));
         let session = {
@@ -317,12 +314,13 @@ impl Online {
                 }
                 ui.horizontal(|ui| {
                     ui.label(lang.tr("Your name"));
-                    ui.add(egui::TextEdit::singleline(&mut name).desired_width(220.0));
+                    ui.add(egui::TextEdit::singleline(&mut name).hint_text(lang.tr("Shown to your GM")).desired_width(220.0));
                 });
                 ui.weak(lang.tr("The GM sees this name. Your characters sync when the GM's app is online; otherwise changes go through the relay's mailbox."));
                 ui.weak(lang.tr("An invite link is for one player: the first device that joins with it keeps it."));
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(parsed.is_ok(), crate::theme::primary_button(ui, lang.tr("Join"))).clicked() {
+                    let ready = parsed.is_ok() && !name.trim().is_empty();
+                    if ui.add_enabled(ready, crate::theme::primary_button(ui, lang.tr("Join"))).on_disabled_hover_text(lang.tr("Paste an invite link and enter your name")).clicked() {
                         match self.join(&link, &name, engine) {
                             Ok(_) => {
                                 *status = Some((lang.tr("Joined. Your characters appear on the start screen once the GM gives them to you."), false));
@@ -366,7 +364,7 @@ impl Online {
         }
         egui::Grid::new("online_settings_grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label(lang.tr("Your name"));
-            ui.add(egui::TextEdit::singleline(&mut self.form.name).hint_text(whoami()).desired_width(260.0));
+            ui.add(egui::TextEdit::singleline(&mut self.form.name).hint_text(lang.tr("Shown to your GM")).desired_width(260.0));
             ui.end_row();
             ui.label(lang.tr("Node id"));
             match self.secret() {
@@ -463,9 +461,6 @@ fn default_entry() -> String {
     }
 }
 
-fn whoami() -> String {
-    std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_else(|_| "Player".into())
-}
 
 /// Registers `chummer-rs://` links for the current user (no admin rights
 /// needed): `HKCU\Software\Classes\chummer-rs`.
