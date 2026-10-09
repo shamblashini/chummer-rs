@@ -261,6 +261,17 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
             Some(loc) => flag(edit::set_text(ch, guid, "location", &loc)),
             None => Ok(Done::Unchanged),
         },
+        MoveItem { item, to } => {
+            let enforce = items::place::enforces_capacity(ch, engine);
+            match items::place::move_item(ch, store, item, to, enforce) {
+                Ok(true) => changed(),
+                Ok(false) => Ok(Done::Unchanged),
+                Err(m) => {
+                    let name = edit::find(ch, item).map(|e| e.get("name")).unwrap_or_else(|| "That item".into());
+                    Err(Rejected::new(m.message(&name, &items::place::place_name(ch, to))))
+                }
+            }
+        }
         AddWeaponMount { vehicle, size } => {
             edit::add_weapon_mount(ch, store, vehicle, size).map_err(Rejected::new)?;
             changed()

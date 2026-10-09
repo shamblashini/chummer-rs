@@ -182,6 +182,11 @@ fn what(cmd: &Command, b: &Character, a: &Character, engine: &Engine) -> String 
         SetItemWireless { guid, on } => format!("Turned wireless {} for {}", on_off(*on), item_name(b, guid)),
         SetItemText { guid, field, value } => format!("Set {} of {} to {}", if field == "notes" { "notes" } else { field.as_str() }, item_name(b, guid), excerpt(value)),
         AddItemLocation { guid, name } => format!("Moved {} to new location {name}", item_name(b, guid)),
+        MoveItem { item, to } => match to {
+            crate::items::place::Dest::Item(p) => format!("Moved {} into {}", item_name(b, item), item_name(b, p)),
+            crate::items::place::Dest::Top => format!("Moved {} to the top level", item_name(b, item)),
+            to => format!("Moved {} to {}", item_name(b, item), crate::items::place::place_name(b, to)),
+        },
         AddWeaponMount { vehicle, .. } => format!("Added a weapon mount to {}", item_name(b, vehicle)),
         AddCustomDrug { name, .. } => format!("Added drug {}", if name.trim().is_empty() { "Custom Drug" } else { name.trim() }),
         ApplyKit { kit } => {

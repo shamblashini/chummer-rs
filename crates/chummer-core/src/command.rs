@@ -225,6 +225,12 @@ pub enum Command {
     /// `from..=to` are the campaign versions it takes back (the
     /// authority's bookkeeping, so later reverts can rebuild around it).
     Revert { snapshot: Vec<u8>, what: String, from: u64, to: u64 },
+
+    // ----- items (appended: the wire form numbers variants in order) -----
+    /// Move an owned item into another item, to the top level of its list
+    /// or into a location, under the rules of buying it there
+    /// ([`crate::items::place`]).
+    MoveItem { item: String, to: crate::items::place::Dest },
 }
 
 impl Command {
@@ -392,8 +398,11 @@ impl Command {
             SetVehicleDamage { vehicle: g.clone(), filled: 4 },
             SetMatrixDamage { device: g.clone(), filled: 1 },
             SetActiveCommlink { device: g.clone(), on: true },
-            SetHomeNode { device: g, on: false },
+            SetHomeNode { device: g.clone(), on: false },
             Revert { snapshot: Vec::new(), what: s("Raised Pistols to 5 (10 karma)"), from: 3, to: 4 },
+            MoveItem { item: g.clone(), to: crate::items::place::Dest::Item(g.clone()) },
+            MoveItem { item: g.clone(), to: crate::items::place::Dest::Top },
+            MoveItem { item: g.clone(), to: crate::items::place::Dest::Location(g) },
         ]
     }
 }

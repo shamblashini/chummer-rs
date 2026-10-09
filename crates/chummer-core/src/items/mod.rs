@@ -23,6 +23,7 @@ pub mod edit;
 pub mod gear;
 pub mod lifestyle;
 pub mod magic;
+pub mod place;
 pub mod quality;
 pub mod vehicle;
 pub mod weapon;

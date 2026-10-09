@@ -175,6 +175,9 @@ fn capacity_strings() {
     assert_eq!(edit::parse_capacity("[2]", 0), (0.0, 2.0));
     assert_eq!(edit::parse_capacity("Rating/[1]", 3), (3.0, 1.0));
     assert_eq!(edit::parse_capacity("[*]", 0), (0.0, 0.0));
+    // Rating-dependent armor mod capacities.
+    assert_eq!(edit::parse_capacity("FixedValues([1],[2],[3])", 2), (0.0, 2.0));
+    assert_eq!(edit::parse_capacity("FixedValues([1],[2],[3])", 9), (0.0, 3.0));
     assert_eq!(edit::custom_name_field("gear"), Some("gearname"));
 }
 

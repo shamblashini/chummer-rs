@@ -101,7 +101,7 @@ pub fn parent<'a>(ch: &'a Character, guid: &str) -> Option<&'a Element> {
 }
 
 /// Guids of an item and every item inside it.
-fn subtree_guids(e: &Element, out: &mut Vec<String>) {
+pub(crate) fn subtree_guids(e: &Element, out: &mut Vec<String>) {
     if ITEM_TAGS.contains(&e.name.as_str()) {
         let g = e.get("guid");
         if !g.is_empty() {
@@ -120,7 +120,7 @@ fn record_in<'a>(doc: &'a Element, container: &str, item: &'a str, saved: &Eleme
 }
 
 /// Run `f` with the data record of a saved item, if it has one.
-fn with_record<T>(store: &DataStore, e: &Element, f: impl FnOnce(Record<'_>) -> T) -> Option<T> {
+pub(crate) fn with_record<T>(store: &DataStore, e: &Element, f: impl FnOnce(Record<'_>) -> T) -> Option<T> {
     let (file, container, item) = match tag_of(e) {
         "gear" => {
             let doc = store.doc("gear.xml").ok()?;
@@ -266,7 +266,7 @@ fn refresh_bonuses(ch: &mut Character, store: &DataStore, guid: &str) {
 /// data `wirelessbonus` applies as `{guid}Wireless`, replacing the base
 /// bonus when `@mode="replace"`; with it off, those improvements go and
 /// the base ones come back.
-fn refresh_wireless(ch: &mut Character, store: &DataStore, guid: &str) {
+pub(crate) fn refresh_wireless(ch: &mut Character, store: &DataStore, guid: &str) {
     let Some(e) = find(ch, guid).cloned() else { return };
     let Some(kind) = bonus_kind(tag_of(&e)) else { return };
     let Some(wb) = data_node(store, &e, "wirelessbonus") else { return };
@@ -289,14 +289,14 @@ fn refresh_wireless(ch: &mut Character, store: &DataStore, guid: &str) {
     }
 }
 
-fn is_equipped(e: &Element) -> bool {
+pub(crate) fn is_equipped(e: &Element) -> bool {
     e.get_bool("equipped").unwrap_or(true)
 }
 
 /// Enable or disable the improvements of an item and everything in it.
 /// Enabling skips nested items that are themselves unequipped
 /// (`Armor.Equipped`, `Gear.ChangeEquippedStatus`).
-fn set_tree_enabled(ch: &mut Character, guid: &str, on: bool) {
+pub(crate) fn set_tree_enabled(ch: &mut Character, guid: &str, on: bool) {
     let Some(e) = find(ch, guid).cloned() else { return };
     fn walk(e: &Element, on: bool, top: bool, out: &mut Vec<String>) {
         if ITEM_TAGS.contains(&e.name.as_str()) {
@@ -574,6 +574,12 @@ pub fn essence(ch: &Character, store: &DataStore, rules: &Rules, guid: &str) -> 
 /// n, `[m]` consumes m of the parent, `n/[m]` both; `[*]` consumes nothing.
 pub fn parse_capacity(s: &str, rating: i32) -> (f64, f64) {
     let s = s.trim();
+    // `FixedValues([1],[2],…)`: the entry at the rating, then as above.
+    if let Some(inner) = s.strip_prefix("FixedValues(").and_then(|r| r.strip_suffix(')')) {
+        let parts: Vec<&str> = inner.split(',').collect();
+        let i = (rating.max(1) as usize - 1).min(parts.len().saturating_sub(1));
+        return parse_capacity(parts.get(i).copied().unwrap_or(""), rating);
+    }
     let val = |t: &str| {
         let t = t.trim().trim_start_matches('[').trim_end_matches(']');
         if t.is_empty() || t == "*" { 0.0 } else { armor::rating_value(t, rating) }
@@ -706,6 +712,18 @@ pub fn addon_categories(ch: &Character, store: &DataStore, guid: &str) -> Vec<St
         return Vec::new();
     }
     with_record(store, e, |r| r.el().children_named("addoncategory").map(Element::text).filter(|c| !c.is_empty()).collect()).unwrap_or_default()
+}
+
+/// Whether a gear item is a container: it holds gear already, has room
+/// (capacity), a list of what goes in (`addoncategory`), or is a Matrix
+/// device. The Workspace makes only these the catalog's target on a click
+/// and drop target for gear ([`super::place`]).
+pub fn is_gear_container(ch: &Character, store: &DataStore, guid: &str) -> bool {
+    let Some(e) = find(ch, guid).filter(|e| e.name == "gear") else { return false };
+    e.child("children").is_some_and(|c| c.children_named("gear").next().is_some())
+        || capacity(ch, guid).is_some()
+        || !addon_categories(ch, store, guid).is_empty()
+        || e.get("devicerating").trim().parse::<i32>().is_ok_and(|d| d > 0)
 }
 
 /// The items directly inside an item: `(guid, tag, name)`.
