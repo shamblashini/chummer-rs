@@ -217,6 +217,7 @@ impl App {
         let mut outcome = Outcome::Open;
         let thumbs = s.thumbs(ctx).clone();
         let mut new_language = None;
+        let mut open_files = false;
         let mut new_look = None;
         egui::Modal::new(egui::Id::new("first_start_setup")).show(ctx, |ui| {
             ui.set_width(640.0);
@@ -374,6 +375,13 @@ impl App {
                             }
                             ui.add_space(4.0);
                         }
+                        ui.add_space(6.0);
+                        if let Some(root) = chummer_core::paths::data_root() {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.weak(self.lang.tr_fmt("Your own files (custom data, character sheets, kits) live in {0}.", &[&root.display()]));
+                                open_files |= crate::prefs::open_button(ui, &self.lang, "Open").on_hover_text(self.lang.tr("Later: Tools → Open user data folder.")).clicked();
+                            });
+                        }
                     }
                 }
             });
@@ -394,6 +402,9 @@ impl App {
                 });
             });
         });
+        if open_files {
+            self.open_user_data_folder();
+        }
         if let Some(code) = new_language {
             self.set_language(&code);
         }

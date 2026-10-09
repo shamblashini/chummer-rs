@@ -155,23 +155,47 @@ impl DataStore {
     }
 }
 
-/// Find a bundled resource directory (`data`, `lang`, `sheets`, ...).
+/// Find a bundled resource directory (`data`, `lang`, `sheets`, ...) in
+/// the [`resource_root`].
 pub fn resource_dir(name: &str) -> Option<PathBuf> {
+    resource_root().map(|r| r.join(name)).filter(|p| p.is_dir())
+}
+
+/// The folder holding the bundled resources: the first of
+/// [`resource_root_candidates`] with a `data` folder. One root for every
+/// resource, so the user's own `sheets` and `customdata` folders (in the
+/// data root, which has no `data` folder) are never taken for bundled ones.
+pub fn resource_root() -> Option<PathBuf> {
+    find_resource_root(resource_root_candidates())
+}
+
+/// The first candidate with a `data` folder.
+pub fn find_resource_root(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    candidates.into_iter().find(|p| p.join("data").is_dir())
+}
+
+/// Where the bundled resources may be: `$CHUMMER_RESOURCES`, `resources`
+/// next to the program (release archives, Windows), `install.sh`'s
+/// `<prefix>/share/chummer-rs/resources`, the macOS bundle's
+/// `Contents/Resources/resources`, a system `/usr/share/chummer-rs`, and
+/// the source tree.
+pub fn resource_root_candidates() -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(dir) = std::env::var("CHUMMER_RESOURCES") {
-        candidates.push(PathBuf::from(dir).join(name));
+        candidates.push(PathBuf::from(dir));
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("resources").join(name));
-            candidates.push(dir.join("../share/chummer-rs").join(name));
+            candidates.push(dir.join("resources"));
+            candidates.push(dir.join("../share/chummer-rs/resources"));
             // macOS app bundle: Contents/MacOS/chummer-rs, Contents/Resources/resources.
-            candidates.push(dir.join("../Resources/resources").join(name));
+            candidates.push(dir.join("../Resources/resources"));
         }
     }
-    candidates.push(PathBuf::from("/usr/share/chummer-rs").join(name));
-    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources").join(name));
-    candidates.into_iter().find(|p| p.is_dir())
+    candidates.push(PathBuf::from("/usr/share/chummer-rs/resources"));
+    candidates.push(PathBuf::from("/usr/share/chummer-rs"));
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources"));
+    candidates
 }
 
 /// Records inside a document: `<root><container><item/>...</container></root>`.
@@ -233,4 +257,34 @@ pub const BROWSABLE: &[(&str, &str, &str, &str)] = &[
 pub fn shared_store() -> Option<&'static DataStore> {
     static STORE: OnceLock<Option<DataStore>> = OnceLock::new();
     STORE.get_or_init(DataStore::discover).as_ref()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_user_root_is_never_a_resource_root() {
+        // An install.sh prefix: the user's data root is <prefix>/share/chummer-rs
+        // (with its own sheets and customdata), the program's resources are
+        // in its `resources` folder.
+        let t = std::env::temp_dir().join(format!("chummer-resource-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let user = t.join("share/chummer-rs");
+        for d in ["sheets", "customdata", "kits"] {
+            std::fs::create_dir_all(user.join(d)).unwrap();
+        }
+        let bin = t.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let cands = || vec![bin.join("resources"), user.clone(), bin.join("../share/chummer-rs/resources")];
+        assert_eq!(find_resource_root(cands()), None);
+        std::fs::create_dir_all(user.join("resources/data")).unwrap();
+        std::fs::create_dir_all(user.join("resources/sheets")).unwrap();
+        assert_eq!(find_resource_root(cands()), Some(bin.join("../share/chummer-rs/resources")));
+        // The default list looks in that folder, not in the user root.
+        let defaults = resource_root_candidates();
+        assert!(defaults.iter().any(|p| p.ends_with("share/chummer-rs/resources")));
+        assert!(!defaults.iter().any(|p| p.ends_with("share/chummer-rs") && !p.starts_with("/usr")));
+        let _ = std::fs::remove_dir_all(&t);
+    }
 }

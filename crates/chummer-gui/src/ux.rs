@@ -63,9 +63,13 @@ impl App {
 
     /// Tools menu: Preferences….
     pub(crate) fn ux_tools_menu(&mut self, ui: &mut egui::Ui) {
-        if ui.button(self.lang.tr("Preferences…")).on_hover_text(self.lang.tr("Autosave, backups and updates")).clicked() {
+        if ui.button(self.lang.tr("Preferences…")).on_hover_text(self.lang.tr("Autosave, backups, updates and folders")).clicked() {
             ui.close();
             self.ux.show_prefs = true;
+        }
+        if ui.button(self.lang.tr("Open user data folder")).on_hover_text(self.lang.tr("Your custom data, character sheets, kits and other files")).clicked() {
+            ui.close();
+            self.open_user_data_folder();
         }
     }
 
@@ -75,6 +79,10 @@ impl App {
             ui.close();
             self.open_setup();
         }
+        if ui.button(self.lang.tr("Show crash logs")).on_hover_text(self.lang.tr("The folder with the logs of unexpected closes, for bug reports")).clicked() {
+            ui.close();
+            self.show_crash_logs();
+        }
     }
 
     fn prefs_window(&mut self, ctx: &egui::Context) {
@@ -83,7 +91,7 @@ impl App {
         }
         let mut open = true;
         let mut out = (None, false);
-        egui::Window::new(self.lang.tr("Preferences")).id(egui::Id::new("preferences")).open(&mut open).collapsible(false).default_width(460.0).show(ctx, |ui| {
+        egui::Window::new(self.lang.tr("Preferences")).id(egui::Id::new("preferences")).open(&mut open).collapsible(false).default_width(640.0).show(ctx, |ui| {
             out = prefs::prefs_ui(ui, &mut self.ux.prefs, &self.lang);
         });
         self.ux.show_prefs = open;
@@ -93,21 +101,35 @@ impl App {
                 self.status = Some((format!("Could not save the settings: {e}"), true));
             }
         }
-        let root = crate::safety::data_dir();
-        let folder = match action {
+        match action {
             Some(PrefsAction::RunSetup) => {
                 self.ux.show_prefs = false;
                 self.open_setup();
-                None
             }
-            Some(PrefsAction::OpenRecoveryFolder) => root.map(|r| crate::safety::recovery_root(&r)),
-            Some(PrefsAction::OpenBackupsFolder) => crate::backups::backups_dir(),
-            None => None,
-        };
-        if let Some(dir) = folder {
-            if let Err(e) = prefs::open_folder(&dir) {
-                self.status = Some((format!("Could not open {}: {e}", dir.display()), true));
-            }
+            Some(PrefsAction::OpenFolder(dir)) => self.open_folder(Some(dir)),
+            None => {}
         }
+    }
+
+    /// Open a folder in the file manager (created first); errors go to
+    /// the status line.
+    pub(crate) fn open_folder(&mut self, dir: Option<std::path::PathBuf>) {
+        let Some(dir) = dir else {
+            self.status = Some((self.lang.tr("No home folder found"), true));
+            return;
+        };
+        if let Err(e) = prefs::open_folder(&dir) {
+            self.status = Some((format!("Could not open {}: {e}", dir.display()), true));
+        }
+    }
+
+    /// Tools → Open user data folder.
+    pub(crate) fn open_user_data_folder(&mut self) {
+        self.open_folder(chummer_core::paths::data_root());
+    }
+
+    /// Help → Show crash logs.
+    pub(crate) fn show_crash_logs(&mut self) {
+        self.open_folder(chummer_core::paths::user_dir(chummer_core::paths::UserDir::Crashes));
     }
 }

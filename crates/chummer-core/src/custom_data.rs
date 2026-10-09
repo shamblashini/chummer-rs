@@ -218,13 +218,14 @@ pub fn discover(root: &Path) -> Vec<CustomDataDirectory> {
 }
 
 /// Folders searched for custom data: the bundled `customdata` resource
-/// directory, then `$XDG_DATA_HOME/chummer-rs/customdata` for the user's own.
+/// directory, then the user's `customdata` folder ([`crate::paths`]).
 pub fn default_roots() -> Vec<PathBuf> {
+    roots_with_user(crate::paths::user_dir(crate::paths::UserDir::CustomData))
+}
+
+/// The bundled root, then `user` when it is a folder.
+pub fn roots_with_user(user: Option<PathBuf>) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = crate::data::resource_dir("customdata").into_iter().collect();
-    let user = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .map(|b| b.join("chummer-rs").join("customdata"));
     if let Some(u) = user.filter(|u| u.is_dir() && !roots.iter().any(|r| same_dir(r, u))) {
         roots.push(u);
     }

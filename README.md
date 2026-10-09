@@ -44,6 +44,10 @@ Prebuilt packages for Linux, Windows and macOS are on the
   not notarised by Apple, so the first time right-click it and choose
   Open (or run `xattr -dr com.apple.quarantine /Applications/chummer-rs.app`).
   `chummer-cli` is inside the bundle, in `chummer-rs.app/Contents/MacOS/`.
+  Nothing inside the app needs editing (no "Show Package Contents"):
+  your custom data, sheets and kits go in
+  `~/Library/Application Support/chummer-rs` (see
+  [Where your files live](#where-your-files-live)).
 - **Linux**: unpack `chummer-rs-<version>-linux-x86_64.tar.gz` and run
   `chummer-rs`. Keep the `resources` folder next to the program.
 
@@ -95,7 +99,8 @@ This installs to `~/.local`:
 
 - `chummer-rs`: the desktop application.
 - `chummer-cli`: the command-line tool.
-- The game data, in `~/.local/share/chummer-rs`.
+- The game data, in `~/.local/share/chummer-rs/resources` (replaced on
+  every install and update; your own files next to it are kept).
 - A desktop entry, so `.chumrs`, `.chummercampaign` and `.chum5` files
   open with chummer-rs.
 
@@ -204,7 +209,7 @@ The steps follow the build method:
 | Life Modules | Concept & metatype → life modules → qualities → attributes → … as above |
 
 The current step and the steps visited are saved in the `.chumrs`; for a
-Chummer5a file they are remembered in `~/.config/chummer-rs/guide.ini`,
+Chummer5a file they are remembered in `guide.ini` in the config folder,
 not in the .chum5.
 
 | | Start | Mid-way | Review |
@@ -375,10 +380,11 @@ Chummer 5.225.
   - 📖 links on items, skills and data entries open your PDF at the rule's page, in evince, zathura, okular or another viewer.
   - Tools → Sourcebooks can import your Chummer5a links from a Wine or Proton prefix, scan a folder, and detect page offsets with `pdftotext`.
   - A folder scan matches PDFs by title (`&` and "and" are the same), then, with `pdftotext`, by each book's known text. That finds errata, books printed inside another book's PDF (Data Trails' Dissonant Echoes) and files with odd names. Files it can't link are listed with the reason: another edition, errata with no book of its own, a duplicate, or a book Chummer has no data for.
-- **Character sheets** (File → Print, Ctrl+P): Chummer's own XSLT sheets, in all six languages, opened in your browser to view or print.
+- **Character sheets** (File → Print, Ctrl+P): Chummer's own XSLT sheets, in all six languages, opened in your browser to view or print. Your own sheets (`*.xsl`) go in the `sheets` user folder (the dialog's Open folder button; other languages in a `de-de`, `fr-fr`, ... subfolder) and are listed with the bundled ones; one with a bundled sheet's file name replaces it. A user sheet may import the bundled helper files (`Shadowrun 5 set.xslt` ...) without copying them.
 - **Export** to XML, JSON (Chummer's format) and Squad Manager.
 - **Custom data:**
   - All of Chummer5a's optional rule packs can be applied through house-rule presets.
+  - Your own Chummer5a-style custom data folders go in the `customdata` user folder (Character Settings → Custom data → Open folder) and are merged like the bundled ones.
   - Tools → Character settings duplicates and edits presets: build method, budgets, books, karma costs, options and custom data.
   - Share house rules: Export saves a preset as a Chummer settings file (Chummer5a reads it too); Import installs one, and asks before it replaces a different file of the same name.
   - A character whose settings file is not installed shows a warning with an Import button; its budgets use Standard, and its `<settings>` stays as it was until you pick another file with "Change Settings File" (Common tab).
@@ -400,7 +406,7 @@ Chummer 5.225.
 - **GM tools:**
   - File → New Critter… builds a critter or NPC from `critters.xml`, as Chummer does. Spirits, sprites and other Force creatures are built at a chosen Force: attributes, skills and powers follow from it. Spirits get their optional powers and Materialization (or Possession or Inhabitation). Critters open in career mode with rules ignored.
   - Special → Add PACKS Kit… applies a kit from `packs.xml` to a character in creation: qualities, attributes, skills, skill groups, knowledge skills, adept powers, martial arts, complex forms, A.I. programs, spells, spirits, lifestyles, armor, weapons, cyberware, bioware, gear, vehicles and karma for nuyen. Attribute and skill levels use creation points first, then karma, within the creation maximums. Chummer 5.226 applies no attributes, skills or powers from a kit.
-  - Special → Create PACKS Kit… saves the character's things as a Custom kit in `~/.local/share/chummer-rs/packs/custom_*_packs.xml`. Custom kits can also be deleted there.
+  - Special → Create PACKS Kit… saves the character's things as a Custom kit in the `kits` user folder (`custom_*_packs.xml`). Custom kits can also be deleted there.
   - Spells & Spirits tab → Create Spell… designs a custom spell (Street Grimoire). Chummer's rules compute its drain value and descriptors. In career mode it costs spell karma.
 - **Languages:** English, German, French, Japanese, Portuguese and Chinese data names and sheets.
 - **Online campaigns:** the GM hosts a campaign from the GM screen (or
@@ -441,7 +447,7 @@ Skills and attributes stay flat tables.
 
 View → Appearance selects the layout (Classic, described above, or
 [Workspace](#workspace-layout)) and its theme. The choice is saved in
-`~/.config/chummer-rs/gui.ini`; `--layout classic|workspace` and
+`gui.ini` in the config folder; `--layout classic|workspace` and
 `--theme classic|graphite|dark|light` override it. New users start in
 the Workspace layout, dark (the [first-start setup](#first-start-setup)
 offers the choice); a gui.ini from an earlier version without a
@@ -792,7 +798,47 @@ chummer-cli campaign list seattle.chummercampaign
 prints them) or of envelopes (command, seed, time, author). It prints
 what each command did and the final version and hash.
 
-Settings are stored in `~/.config/chummer-rs/`.
+Settings are stored in the config folder; `chummer-cli folders` prints
+every folder (see [Where your files live](#where-your-files-live)).
+
+### Where your files live
+
+The program and its game data are read-only: nothing in the
+installation folder (or inside `chummer-rs.app`) needs editing. Your own
+files go in per-user folders, in the place each system expects:
+
+| Folder | Linux | macOS | Windows |
+|---|---|---|---|
+| User data (root) | `~/.local/share/chummer-rs` | `~/Library/Application Support/chummer-rs` | `%APPDATA%\chummer-rs` |
+| `customdata/`: custom data folders | `~/.local/share/chummer-rs/customdata` | `…/Application Support/chummer-rs/customdata` | `%APPDATA%\chummer-rs\customdata` |
+| `sheets/`: your XSLT character sheets | `~/.local/share/chummer-rs/sheets` | `…/Application Support/chummer-rs/sheets` | `%APPDATA%\chummer-rs\sheets` |
+| `kits/`: PACKS kits | `~/.local/share/chummer-rs/kits` | `…/Application Support/chummer-rs/kits` | `%APPDATA%\chummer-rs\kits` |
+| `settings/`: character settings (rulesets) | `~/.config/chummer-rs/settings` | `…/Application Support/chummer-rs/settings` | `%APPDATA%\chummer-rs\settings` |
+| `gui.ini`, `guide.ini`, `sourcebooks.xml`, `online.json`, `node.key`, `campaigns/` | `~/.config/chummer-rs` | `…/Application Support/chummer-rs` | `%APPDATA%\chummer-rs` |
+| `app.ron` (window state, recent files) | `~/.local/share/chummer-rs` | `…/Application Support/chummer-rs` | `%APPDATA%\chummer-rs` |
+| `backups/`, `crashes/`, `recovery/`, `sessions/` | `~/.local/share/chummer-rs` | `…/Application Support/chummer-rs` | `%LOCALAPPDATA%\chummer-rs` |
+
+- `XDG_DATA_HOME` (data, backups, crash logs) and `XDG_CONFIG_HOME`
+  (config) move them on every system when set to an absolute path.
+- The folders are made at the first start, each with a `README.txt`
+  saying what goes there.
+- Tools → Open user data folder opens the root; Tools → Preferences →
+  Folders lists every folder with Open and Copy path; Help → Show crash
+  logs opens `crashes/`; the Print dialog and Character Settings → Custom
+  data have an Open folder button; the first-start setup's last page
+  says where the root is.
+- `./install.sh` puts the game data in `~/.local/share/chummer-rs/resources`;
+  that one folder belongs to the program and is replaced on update.
+- Moving from 0.4: on macOS and Windows, files that older versions kept
+  in `~/.local/share/chummer-rs` and `~/.config/chummer-rs` are moved to
+  the new folders once at start (a file already at the new place is
+  kept; the old folder gets a `MOVED.txt`). On every system the old
+  `packs/` folder becomes `kits/`. Each move is listed in
+  `migration.log` in the user data root.
+
+| Workspace, dark | Classic, Graphite |
+|---|---|
+| ![Preferences → Folders, Workspace dark](docs/screenshots/preferences-folders-dark.png) | ![Preferences → Folders, Classic Graphite](docs/screenshots/preferences-folders-graphite.png) |
 
 ### First-start setup
 
@@ -834,7 +880,8 @@ stays away for that language (`translation_notice_seen=` in gui.ini).
 ### Crash recovery, autosave and backups
 
 Everything here is written by background threads, under
-`~/.local/share/chummer-rs/` (`$XDG_DATA_HOME/chummer-rs`):
+`~/.local/share/chummer-rs/` (macOS: `~/Library/Application Support/chummer-rs/`,
+Windows: `%LOCALAPPDATA%\chummer-rs\`; `$XDG_DATA_HOME/chummer-rs` when set):
 
 - **Autosave.** Every 2 minutes, and whenever the window loses focus,
   each character with unsaved changes is copied to
@@ -1004,7 +1051,7 @@ Settings enter `https://127.0.0.1:3443#<mailbox id>` and its
 The next start offers the characters that were not saved (see
 [Crash recovery](#crash-recovery-autosave-and-backups)). Please attach
 the crash log ("Copy the report" in the dialog, or the newest file in
-`~/.local/share/chummer-rs/crashes/`) to a bug report. Debug builds can
+the crash logs folder: Help → Show crash logs) to a bug report. Debug builds can
 try the recovery with `CHUMMER_CRASH_AFTER=<seconds>`, which panics in a
 frame after that many seconds.
 
@@ -1155,6 +1202,11 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   - Create PACKS Kit does not write skills (Chummer 5.226 does not either).
   - "Select Martial Art" entries in kits are skipped.
   - Chummer reads custom kits from its own `packs` folder. To use a kit in both programs, copy the file.
+- Custom data folders added to the `customdata` user folder are found at
+  the next start (no rescan while running). An `./install.sh` install
+  made by an older install.sh is not updated in place (the updater links the
+  release page); run the new `./install.sh` once, which keeps your
+  files.
 - Tree differences from Chummer5a: multi-level qualities are one row per
   level, not one merged node; the one gear item whose data says
   `startcollapsed` starts open; vehicle mods are always grouped by

@@ -15,6 +15,7 @@ postcard.workspace = true
 blake3.workspace = true
 zip.workspace = true
 flate2.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 # An independent LZMA decoder to check .chum5lz files against.

@@ -17,7 +17,7 @@
 //! read their colours with [`palette`] (or [`ws`] for Workspace roles) or
 //! the small helpers ([`accent`], [`warn`], ...) so switching themes
 //! recolours everything. The choice is kept in
-//! `$XDG_CONFIG_HOME/chummer-rs/gui.ini` (see [`Appearance`]).
+//! `gui.ini` in the config root (see [`Appearance`], [`config_path`]).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -935,9 +935,10 @@ pub fn strip_frame(ui: &mut egui::Ui, add_tabs: impl FnOnce(&mut egui::Ui)) {
 
 // ----- persistence -----
 
-/// `$XDG_CONFIG_HOME/chummer-rs/gui.ini`, next to `sourcebooks.xml`.
+/// `gui.ini` in the config root ([`chummer_core::paths::config_root`]),
+/// next to `sourcebooks.xml`.
 pub fn config_path() -> Option<PathBuf> {
-    chummer_core::settings::user_settings_dir().and_then(|d| d.parent().map(|p| p.join("gui.ini")))
+    chummer_core::paths::config_root().map(|p| p.join("gui.ini"))
 }
 
 /// The value of a `key=` line of a gui.ini.

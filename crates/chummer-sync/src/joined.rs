@@ -83,6 +83,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn identity_and_core_agree_on_the_config_folder() {
+        assert_eq!(chummer_net::identity::config_dir(), chummer_core::paths::config_root());
+        assert_eq!(dir(), chummer_core::paths::config_root().map(|c| c.join("campaigns")));
+    }
+
+    #[test]
     fn add_save_load() {
         let dir = std::env::temp_dir().join(format!("chummer-sync-joined-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

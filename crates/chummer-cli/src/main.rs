@@ -74,7 +74,8 @@ USAGE:
                                <dir>/<sheet>.html; fails if any sheet does
         --pdf                  convert to PDF (needs chromium, wkhtmltopdf
                                or weasyprint; else print the HTML from a browser)
-    chummer-cli sheets [lang]              List available sheets
+    chummer-cli sheets [lang]              List available sheets (bundled and your own)
+    chummer-cli folders                    Show where your files live
 
     chummer-cli settings list              List settings presets (house rules)
     chummer-cli settings export <name|key> -o <file.xml>
@@ -105,6 +106,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Files from older versions' folders move once (macOS, Windows).
+    chummer_core::paths::migrate_now();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -159,6 +162,17 @@ fn run(args: &[String]) -> Result<()> {
         "sheets" => {
             for (name, path) in print::available_sheets(rest.first().map_or("en-us", String::as_str)) {
                 println!("{name}\t{}", path.display());
+            }
+            Ok(())
+        }
+        "folders" => {
+            let roots = chummer_core::paths::Roots::current().context("no home folder")?;
+            println!("{:<20} {}", "User data", roots.data.display());
+            if roots.config != roots.data {
+                println!("{:<20} {}", "Configuration", roots.config.display());
+            }
+            for d in chummer_core::paths::UserDir::ALL {
+                println!("{:<20} {}", d.label(), roots.dir(d).display());
             }
             Ok(())
         }

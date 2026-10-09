@@ -865,6 +865,7 @@ impl App {
             return;
         };
         let sheets = chummer_core::print::available_sheets(&self.lang.code);
+        let mut open_sheets = false;
         ui.horizontal(|ui| {
             ui.label(self.lang.tr("Character Sheet:"));
             crate::combo::Combo::from_id_salt("sheet").selected_text(self.print_sheet.clone()).width(320.0).show_ui(ui, |ui| {
@@ -872,6 +873,9 @@ impl App {
                     crate::combo::selectable_value(ui, &mut self.print_sheet, name.clone(), name);
                 }
             });
+            if crate::prefs::open_button(ui, &self.lang, "Open folder").on_hover_text(self.lang.tr("Your own character sheets (*.xsl) go here; one with a bundled sheet's file name replaces it")).clicked() {
+                open_sheets = true;
+            }
         });
         ui.checkbox(&mut self.print_notes, self.lang.tr("Include notes"));
         ui.weak(self.lang.tr("The sheet opens in your browser; use its Print command for paper or PDF."));
@@ -895,6 +899,9 @@ impl App {
                     Err(e) => (e.to_string(), true),
                 })
             });
+        }
+        if open_sheets {
+            self.open_folder(chummer_core::paths::user_dir(chummer_core::paths::UserDir::Sheets));
         }
     }
 
@@ -1236,7 +1243,7 @@ fn main() -> anyhow::Result<()> {
             "--layout" => layout_arg = args.next().and_then(|t| theme::Layout::parse(&t)),
             "--new" => window = Some("new".into()),
             "-h" | "--help" => {
-                println!("usage: chummer-rs [chummer-rs://join/... invite link] [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice>] [--layout <classic|workspace>] [--theme <classic|graphite|dark|light>] [file.chumrs|file.chum5|file.chum5lz|file.chummercampaign ...]");
+                println!("usage: chummer-rs [chummer-rs://join/... invite link] [--tab <common|skills|limits|martial|spells|adept|complex|critter|initiation|cyberware|street|vehicles|character|karma|calendar|game|improvements|relationships>] [--window <sources|browser|dice|settings|prefs>] [--layout <classic|workspace>] [--theme <classic|graphite|dark|light>] [file.chumrs|file.chum5|file.chum5lz|file.chummercampaign ...]");
                 return Ok(());
             }
             // An invite link (the chummer-rs:// handler passes it as an argument).
@@ -1247,6 +1254,9 @@ fn main() -> anyhow::Result<()> {
         }
     }
     trace::init();
+    // Before anything reads or writes a user file: move files from older
+    // locations and create the user folders.
+    chummer_core::paths::init();
     safety::start();
     let engine = match trace::time("engine load", Engine::load) {
         Ok(e) => e,
@@ -1267,6 +1277,8 @@ fn main() -> anyhow::Result<()> {
         // until it is shown again and the compositor reports the app as
         // not responding. `frame_cap` paces frames instead.
         vsync: frame_cap::vsync(),
+        // The window state in the data root, so XDG_DATA_HOME moves it too.
+        persistence_path: chummer_core::paths::data_root().map(|d| d.join("app.ron")),
         ..Default::default()
     };
     if let Some(icon) = workspace::app_icon() {
@@ -1280,6 +1292,7 @@ fn main() -> anyhow::Result<()> {
             Some("dice") => app.show_dice = true,
             Some("new") => app.wizard = Some(wizard::Wizard::new()),
             Some("settings") => app.show_settings = true,
+            Some("prefs") => app.ux.show_prefs = true,
             _ => {}
         }
         Ok(Box::new(app))
