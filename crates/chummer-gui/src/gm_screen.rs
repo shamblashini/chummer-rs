@@ -19,6 +19,7 @@
 //! authority's, with Revert.
 
 mod online;
+mod rolls;
 // The Workspace layout's GM screen; a child module so it can use the
 // screen's state.
 #[path = "workspace/gm.rs"]
@@ -44,6 +45,8 @@ use crate::campaign_ui::{self, AwardForm, DamageForm, KitForm};
 use crate::doc::Doc;
 use crate::pdf_ui::Status;
 use crate::view::{cm_track, CharacterView};
+
+pub(crate) use rolls::GmRoll;
 
 /// The author of the GM's commands.
 pub const AUTHOR: &str = "GM";
@@ -89,6 +92,32 @@ impl RosterRow {
         }
     }
 }
+
+/// Where a name is being edited in place (Workspace).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RenameAt {
+    /// The member's roster row.
+    Roster(MemberId),
+    /// The card's title.
+    Card(MemberId),
+    /// A combatant's encounter row (or the card of one without a
+    /// character).
+    Combatant(CombatantId),
+}
+
+/// Where the encounter's drop zone leaves its hint for the drag chip.
+const DROP_HINT: &str = "gm_encounter_drop_hint";
+
+/// What a roster row asks for (Classic: its menu and buttons).
+enum RosterDo {
+    Open,
+    Join,
+    Rename(String),
+}
+
+/// The drag payload of a roster member being dragged onto the encounter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DragMember(pub MemberId);
 
 /// A line of the activity feed, newest first.
 #[derive(Debug, Clone, PartialEq)]
@@ -150,8 +179,15 @@ pub struct GmScreen {
     improvement_for: Option<MemberId>,
     /// Which window the dialogs show in (Workspace pop-outs).
     ws_dialogs: crate::workspace::popout::DialogHome,
-    /// Recent dice rolls (Unix ms, line), newest first.
-    rolls: Vec<(i64, String)>,
+    /// The GM's dice rolls, newest first.
+    rolls: Vec<GmRoll>,
+    /// Whose roll the Dice rolls tray shows (`None`: everyone's).
+    roll_filter: Option<String>,
+    /// The member whose next roll pushes the limit.
+    push: Option<MemberId>,
+    /// The name being edited in place (Workspace), with the text typed
+    /// so far.
+    renaming: Option<(RenameAt, String)>,
     /// The Workspace roster's filter.
     filter: String,
     /// The online side, once the campaign was hosted.
@@ -198,6 +234,9 @@ impl GmScreen {
             improvement_for: None,
             ws_dialogs: Default::default(),
             rolls: Vec::new(),
+            roll_filter: None,
+            push: None,
+            renaming: None,
             filter: String::new(),
             online: None,
             online_error: None,
@@ -400,9 +439,9 @@ impl GmScreen {
                 continue;
             }
             l.sheet = engine.sheet(doc);
-            if let Some(m) = campaign.member_mut(*id) {
-                m.name = doc.display_name();
-            }
+            // A rename (here, in the member's tab or by its player) reaches
+            // the roster and the encounters.
+            campaign.set_member_name(*id, &doc.display_name());
             // An online campaign's feed is the authority's.
             if let Some(s) = doc.session() {
                 campaign.absorb(*id, s.log(), &mut l.cursor);
@@ -484,8 +523,37 @@ impl GmScreen {
             .collect();
         let selected = self.selected.map(|s| s.to_string());
         let rows: BTreeMap<MemberId, RosterRow> = self.roster_rows(views).into_iter().flat_map(|(_, rs)| rs).map(|r| (r.id, r)).collect();
+        let joinable: Vec<MemberId> = rows.keys().copied().filter(|id| self.can_join(*id)).collect();
+        let loaded: Vec<MemberId> = rows.keys().copied().filter(|id| self.live.contains_key(id)).collect();
+        // What the row menu and the row buttons ask for, done after.
+        let mut from_menu: Option<(MemberId, RosterDo)> = None;
+        let mut from_button: Option<(MemberId, RosterDo)> = None;
+        let mut menu = |ui: &mut egui::Ui, key: &str| {
+            let Ok(id) = key.parse::<MemberId>() else { return };
+            if ui.add_enabled(loaded.contains(&id), egui::Button::new(lang.tr("Open"))).clicked() {
+                from_menu = Some((id, RosterDo::Open));
+                ui.close();
+            }
+            if ui.add_enabled(joinable.contains(&id), egui::Button::new(lang.tr("Add to encounter"))).clicked() {
+                from_menu = Some((id, RosterDo::Join));
+                ui.close();
+            }
+            ui.menu_button(lang.tr("Rename"), |ui| {
+                let buf_id = egui::Id::new(("gm_classic_rename", id));
+                let mut text: String = ui.data(|d| d.get_temp(buf_id)).unwrap_or_else(|| rows.get(&id).map(|r| r.name.clone()).unwrap_or_default());
+                let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(180.0));
+                r.request_focus();
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    from_menu = Some((id, RosterDo::Rename(text.clone())));
+                    ui.data_mut(|d| d.remove::<String>(buf_id));
+                    ui.close();
+                } else {
+                    ui.data_mut(|d| d.insert_temp(buf_id, text));
+                }
+            });
+        };
         let out = {
-            crate::tree_table::TreeTable::new("gm_roster_tree", &headers).selected(selected.as_deref()).show(
+            crate::tree_table::TreeTable::new("gm_roster_tree", &headers).selected(selected.as_deref()).drag(true).menu(&mut menu).show(
                 ui,
                 &roots,
                 |n| match n.value.and_then(|id| rows.get(&id)) {
@@ -500,8 +568,11 @@ impl GmScreen {
                 },
                 |ui, n| {
                     if let Some(id) = n.value {
-                        if self.live.contains_key(&id) && ui.small_button("↗").on_hover_text(lang.tr("Open")).clicked() {
-                            *action = Some(Action::Open(id));
+                        if joinable.contains(&id) && ui.small_button(crate::workspace::icons::SWORD).on_hover_text(lang.tr("Add to the encounter (or drag onto it)")).clicked() {
+                            from_button = Some((id, RosterDo::Join));
+                        }
+                        if loaded.contains(&id) && ui.small_button("↗").on_hover_text(lang.tr("Open")).clicked() {
+                            from_button = Some((id, RosterDo::Open));
                         }
                     }
                 },
@@ -510,6 +581,19 @@ impl GmScreen {
         if let Some(k) = out.clicked {
             if let Ok(id) = k.parse() {
                 self.select_member(id);
+            }
+        }
+        if let Some(id) = out.drag_started.and_then(|k| k.parse::<MemberId>().ok()) {
+            egui::DragAndDrop::set_payload(ui.ctx(), DragMember(id));
+        }
+        self.drag_chip(ui.ctx());
+        for (id, d) in [from_menu, from_button].into_iter().flatten() {
+            match d {
+                RosterDo::Open => *action = Some(Action::Open(id)),
+                RosterDo::Join => self.add_to_encounter(id, views, true),
+                RosterDo::Rename(name) => {
+                    self.rename_member(id, &name, views, status);
+                }
             }
         }
         if self.campaign.members.is_empty() {
@@ -603,8 +687,8 @@ impl GmScreen {
             let has_doc = doc_ref(&self.live, views, id).is_some();
             if ui.add_enabled(has_doc, egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY)).changed() {
                 if let Some(d) = doc_mut(&mut self.live, views, id) {
-                    let key = if d.field("alias").trim().is_empty() { "name" } else { "alias" };
-                    d.run(Command::SetField { key: key.into(), value: name.clone() }, status);
+                    let cmd = campaign::rename_command(d.ch(), &name);
+                    d.run(cmd, status);
                 }
             }
             ui.end_row();
@@ -658,7 +742,7 @@ impl GmScreen {
         ui.horizontal(|ui| {
             ui.add(egui::DragValue::new(&mut self.copies).range(1..=20).prefix("× "));
             if ui.add_enabled(loaded, egui::Button::new(lang.tr("Duplicate"))).on_hover_text(lang.tr("Copies with new GUIDs and numbered names")).clicked() {
-                self.duplicate(id, engine, views);
+                self.duplicate(id, engine, views, status);
             }
         });
         ui.horizontal(|ui| {
@@ -678,7 +762,7 @@ impl GmScreen {
         });
     }
 
-    fn duplicate(&mut self, id: MemberId, engine: &Arc<Engine>, views: &[CharacterView]) {
+    pub(crate) fn duplicate(&mut self, id: MemberId, engine: &Arc<Engine>, views: &mut [CharacterView], status: &mut Status) {
         let Some(template) = self.campaign.member(id).cloned() else { return };
         let Some(ch) = doc_ref(&self.live, views, id).map(|d| d.ch().clone()) else { return };
         let ids = self.campaign.add_copies(engine, &template, &ch, self.copies);
@@ -687,7 +771,112 @@ impl GmScreen {
                 self.insert(nid, c, engine);
             }
         }
+        self.number_bare(&template.name, views, status);
         self.dirty = true;
+    }
+
+    /// Rename member `id` (its character's name, through a command, so
+    /// it is undone, saved and synced as any edit). Returns whether it
+    /// was renamed.
+    pub(crate) fn rename_member(&mut self, id: MemberId, name: &str, views: &mut [CharacterView], status: &mut Status) -> bool {
+        let name = name.trim();
+        let Some(d) = doc_mut(&mut self.live, views, id) else { return false };
+        if name.is_empty() || d.display_name() == name {
+            return false;
+        }
+        let cmd = campaign::rename_command(d.ch(), name);
+        if d.run(cmd, status).is_none() {
+            return false;
+        }
+        let shown = d.display_name();
+        self.campaign.set_member_name(id, &shown);
+        self.dirty = true;
+        true
+    }
+
+    /// Start editing a name in place, with the name it has now.
+    pub(crate) fn start_rename(&mut self, at: RenameAt) {
+        let name = match at {
+            RenameAt::Roster(m) | RenameAt::Card(m) => self.campaign.member(m).map(|m| m.name.clone()),
+            RenameAt::Combatant(c) => self.campaign.encounters.get(self.encounter).and_then(|e| e.index(c).map(|i| e.combatants[i].name.clone())),
+        };
+        self.renaming = name.map(|n| (at, n));
+    }
+
+    /// The text of the name being edited at `at`, if it is.
+    pub(crate) fn renaming_at(&mut self, at: RenameAt) -> Option<&mut String> {
+        self.renaming.as_mut().filter(|(a, _)| *a == at).map(|(_, t)| t)
+    }
+
+    /// The in-place name editor finished: `commit` (Enter, clicking
+    /// away) renames, else (Esc) nothing changes.
+    pub(crate) fn finish_rename(&mut self, commit: bool, views: &mut [CharacterView], status: &mut Status) {
+        let Some((at, text)) = self.renaming.take() else { return };
+        if !commit {
+            return;
+        }
+        match at {
+            RenameAt::Roster(m) | RenameAt::Card(m) => {
+                self.rename_member(m, &text, views, status);
+            }
+            RenameAt::Combatant(c) => {
+                if let Some(i) = self.campaign.encounters.get(self.encounter).and_then(|e| e.index(c)) {
+                    self.rename_combatant(i, &text, views, status);
+                }
+            }
+        }
+    }
+
+    /// Rename combatant `i` (one without a character; a member's
+    /// combatant takes the member's name).
+    pub(crate) fn rename_combatant(&mut self, i: usize, name: &str, views: &mut [CharacterView], status: &mut Status) {
+        let Some(c) = self.campaign.encounters.get_mut(self.encounter).and_then(|e| e.combatants.get_mut(i)) else { return };
+        match c.member {
+            Some(m) => {
+                self.rename_member(m, name, views, status);
+            }
+            None if !name.trim().is_empty() => {
+                c.name = name.trim().to_owned();
+                self.dirty = true;
+            }
+            None => {}
+        }
+    }
+
+    /// Add a new character the GM made (a critter, a PACKS NPC) as a
+    /// member, numbered when its name is taken: a second "Ganger" comes
+    /// in as "Ganger 2" and the first becomes "Ganger 1". Selects it.
+    pub(crate) fn add_numbered(&mut self, kind: MemberKind, ch: Character, engine: &Arc<Engine>, views: &mut [CharacterView], status: &mut Status) -> MemberId {
+        let ch = self.unique_character(engine, ch);
+        let name = ch.display_name();
+        let id = self.add_member(Member::embedded(kind, &ch), ch, engine);
+        self.number_bare(&name, views, status);
+        id
+    }
+
+    /// A new member's character named so it can be told apart: a second
+    /// "Ganger" comes in as "Ganger 2" (and the first becomes "Ganger
+    /// 1", [`GmScreen::number_bare`]).
+    fn unique_character(&mut self, engine: &Engine, mut ch: Character) -> Character {
+        let name = ch.display_name();
+        let unique = self.campaign.unique_name(&name);
+        if unique != name {
+            let env = chummer_core::command::Envelope::new(campaign::rename_command(&ch, &unique), self.rng.next_u64(), campaign::now_ms(), AUTHOR);
+            // Setting a plain field cannot be refused.
+            let _ = chummer_core::command::apply(&mut ch, engine, &env);
+        }
+        ch
+    }
+
+    /// Once numbered copies of `name` are in, the one still named just
+    /// its base becomes "base 1" (an NPC, critter or the like in the
+    /// campaign file; players and linked files keep their names).
+    fn number_bare(&mut self, name: &str, views: &mut [CharacterView], status: &mut Status) {
+        let base = campaign::strip_number(name).to_owned();
+        let numbered = self.campaign.members.iter().any(|m| m.name.strip_prefix(base.as_str()).and_then(|r| r.strip_prefix(' ')).is_some_and(|n| n.parse::<u32>().is_ok()));
+        if let Some(id) = self.campaign.unnumbered(&base).filter(|_| numbered) {
+            self.rename_member(id, &format!("{base} 1"), views, status);
+        }
     }
 
     fn remove(&mut self, id: MemberId, views: &mut [CharacterView]) {
@@ -704,28 +893,95 @@ impl GmScreen {
     }
 
     /// Add a member to the current encounter; `select` shows its card.
-    fn add_to_encounter(&mut self, id: MemberId, views: &[CharacterView], select: bool) {
+    /// Members already in it are left out. During a round the member
+    /// rolls initiative at once.
+    pub(crate) fn add_to_encounter(&mut self, id: MemberId, views: &[CharacterView], select: bool) {
+        if !self.can_join(id) {
+            return;
+        }
         let stats = self.initiative_stats(views, id);
         let name = self.campaign.member(id).map(|m| m.name.clone()).unwrap_or_default();
         let Some(e) = self.campaign.encounters.get_mut(self.encounter) else { return };
-        let mut c = Combatant::for_member(id, name);
-        let cid = c.id;
-        if let Some(s) = stats {
-            c.base = s.base;
-            c.dice = s.dice;
-            c.edge = s.edge;
-            c.reaction = s.reaction;
-            c.intuition = s.intuition;
-        }
-        e.combatants.push(c);
-        if e.round > 0 {
-            let i = e.combatants.len() - 1;
-            e.reroll(i, &mut self.rng, stats);
-        }
+        let cid = e.join(Combatant::for_member(id, name), &mut self.rng, stats);
         if select {
             self.combatant = Some(cid);
+            self.selected = Some(id);
         }
         self.dirty = true;
+    }
+
+    /// The encounter board (`body`) as the target of a roster member
+    /// being dragged (both layouts): highlighted, with a line saying what
+    /// a drop does; a drop adds the member, as Add to encounter does.
+    pub(crate) fn encounter_drop_zone(&mut self, ui: &mut egui::Ui, lang: &Language, views: &mut [CharacterView], body: impl FnOnce(&mut GmScreen, &mut egui::Ui, &mut [CharacterView])) {
+        let Some(DragMember(id)) = egui::DragAndDrop::payload::<DragMember>(ui.ctx()).map(|p| *p) else {
+            body(self, ui, views);
+            return;
+        };
+        let th = crate::theme::current(ui.ctx());
+        let (fill, edge, bad, text) = if th.workspace_layout() { (th.ws.selection, th.ws.primary, th.ws.error, th.ws.text) } else { (th.palette.selection, th.palette.accent, th.palette.bad, th.palette.text) };
+        let name = self.campaign.member(id).map(|m| m.name.clone()).unwrap_or_default();
+        let hint: Result<String, String> = if self.can_join(id) {
+            Ok(lang.tr_fmt("Add {0} to the encounter", &[&name]))
+        } else if !self.live.contains_key(&id) {
+            Err(lang.tr("The character did not load"))
+        } else {
+            Err(lang.tr_fmt("{0} is in the encounter already", &[&name]))
+        };
+        let back = ui.painter().add(egui::Shape::Noop);
+        let inner = ui.scope(|ui| {
+            body(self, ui, views);
+            ui.add_space(4.0);
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover()).0
+        });
+        let zone = inner.response.rect.expand(4.0);
+        let over = ui.rect_contains_pointer(zone);
+        let color = if hint.is_ok() { edge } else { bad };
+        ui.painter().set(back, egui::Shape::rect_filled(zone, egui::CornerRadius::same(6), if over { fill } else { fill.gamma_multiply(0.4) }));
+        ui.painter().rect_stroke(zone, egui::CornerRadius::same(6), egui::Stroke::new(if over { 2.0_f32 } else { 1.0 }, color), egui::StrokeKind::Inside);
+        let line = match &hint {
+            Ok(t) => format!("{}  {t}", crate::workspace::icons::ARROW_BEND_DOWN_RIGHT),
+            Err(t) => format!("{}  {t}", crate::workspace::icons::PROHIBIT),
+        };
+        ui.painter().text(inner.inner.center(), egui::Align2::CENTER_CENTER, line, egui::FontId::proportional(12.5), if hint.is_ok() { text } else { bad });
+        if over {
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(DROP_HINT), hint.clone()));
+            if hint.is_ok() && ui.input(|i| i.pointer.any_released()) {
+                egui::DragAndDrop::clear_payload(ui.ctx());
+                self.add_to_encounter(id, views, true);
+            }
+        }
+    }
+
+    /// The dragged member's chip under the pointer, with what a drop on
+    /// the encounter would do. Drawn by the roster (both layouts).
+    pub(crate) fn drag_chip(&self, ctx: &egui::Context) {
+        let Some(DragMember(id)) = egui::DragAndDrop::payload::<DragMember>(ctx).map(|p| *p) else { return };
+        let Some(pos) = ctx.pointer_hover_pos() else { return };
+        let hint: Option<Result<String, String>> = ctx.data_mut(|d| {
+            let id = egui::Id::new(DROP_HINT);
+            let hint = d.get_temp(id);
+            d.remove::<Result<String, String>>(id);
+            hint
+        });
+        let name = self.campaign.member(id).map(|m| m.name.clone()).unwrap_or_default();
+        crate::workspace::table::drag_chip(ctx, &crate::theme::current(ctx).ws, pos, &name, hint.as_ref());
+    }
+
+    /// Whether member `id` can join the current encounter: loaded and not
+    /// in it yet.
+    pub(crate) fn can_join(&self, id: MemberId) -> bool {
+        self.live.contains_key(&id) && self.campaign.encounters.get(self.encounter).is_some_and(|e| !e.has_member(id))
+    }
+
+    /// Add every member of `kind` not in the encounter yet; returns how
+    /// many joined.
+    pub(crate) fn add_kind_to_encounter(&mut self, kind: &MemberKind, views: &[CharacterView]) -> usize {
+        let ids: Vec<MemberId> = self.campaign.members.iter().filter(|m| m.kind == *kind).map(|m| m.id).filter(|id| self.can_join(*id)).collect();
+        for id in &ids {
+            self.add_to_encounter(*id, views, false);
+        }
+        ids.len()
     }
 
     // ----- feed -----
@@ -740,10 +996,11 @@ impl GmScreen {
             });
         });
         ui.label(crate::theme::strong(ui, lang.tr("Activity")));
-        if !self.rolls.is_empty() {
+        if let Some((newest, older)) = self.rolls.split_first() {
             ui.label(RichText::new(lang.tr("Dice rolls")).color(crate::theme::accent(ui)));
-            for (_, r) in self.rolls.iter().take(5) {
-                ui.label(RichText::new(r).monospace().size(11.5));
+            rolls::classic_roll(ui, lang, newest);
+            for r in older.iter().take(4) {
+                ui.label(RichText::new(r.line(lang)).monospace().size(11.5));
             }
             ui.separator();
         }
@@ -800,14 +1057,6 @@ impl GmScreen {
             .collect()
     }
 
-    /// Note a dice roll of the GM's.
-    fn log_roll(&mut self, line: Option<String>) {
-        if let Some(l) = line {
-            self.rolls.insert(0, (chummer_core::campaign::now_ms(), l));
-            self.rolls.truncate(30);
-        }
-    }
-
     // ----- encounter board -----
 
     #[allow(clippy::too_many_arguments)]
@@ -841,7 +1090,7 @@ impl GmScreen {
         ui.add_space(4.0);
         self.initiative_controls(ui, lang, views);
         ui.add_space(4.0);
-        self.initiative_table(ui, lang, views);
+        self.encounter_drop_zone(ui, lang, views, |gm, ui, views| gm.initiative_table(ui, lang, views));
         ui.add_space(8.0);
         ui.separator();
         // The card: the selected combatant, or the selected member.
@@ -878,12 +1127,7 @@ impl GmScreen {
 
     /// Add every player not in the encounter yet.
     pub(crate) fn add_all_players(&mut self, views: &[CharacterView]) {
-        let players: Vec<MemberId> = self.campaign.members.iter().filter(|m| m.kind == MemberKind::Player && self.live.contains_key(&m.id)).map(|m| m.id).collect();
-        for p in players {
-            if !self.campaign.encounters[self.encounter].has_member(p) {
-                self.add_to_encounter(p, views, false);
-            }
-        }
+        self.add_kind_to_encounter(&MemberKind::Player, views);
     }
 
     /// Add the combatant without a character typed in `adhoc`.
@@ -1103,12 +1347,6 @@ impl GmScreen {
         self.improvement_for = Some(id);
     }
 
-    /// Roll a pool for the roll log.
-    pub(crate) fn roll_pool(&mut self, who: &str, label: &str, pool: i32, lang: &Language) {
-        let line = campaign_ui::roll_pool(&mut self.rng, lang, who, label, pool);
-        self.log_roll(Some(line));
-    }
-
     fn adhoc_card(&mut self, ui: &mut egui::Ui, lang: &Language, i: usize) {
         let p = crate::theme::palette(ui);
         let e = &mut self.campaign.encounters[self.encounter];
@@ -1148,7 +1386,9 @@ impl GmScreen {
         let Some(sheet) = self.live.get(&id).map(|l| l.sheet.clone()) else { return };
         let name = self.campaign.member(id).map(|m| m.name.clone()).unwrap_or_default();
         let kind = self.campaign.member(id).map(|m| m.kind.clone()).unwrap_or_default();
-        let GmScreen { live, rng, rolls, award, damage, improvements, improvement_for, .. } = self;
+        let (edge_left, edge) = self.edge_left(id, views);
+        let mut roll = None;
+        let GmScreen { live, rolls, push, award, damage, improvements, improvement_for, .. } = self;
         let Some(doc) = doc_mut(live, views, id) else { return };
         let p = crate::theme::palette(ui);
         ui.horizontal(|ui| {
@@ -1159,12 +1399,6 @@ impl GmScreen {
             }
         });
         let mut attack = None;
-        let roll_line = |rolls: &mut Vec<(i64, String)>, line: Option<String>| {
-            if let Some(l) = line {
-                rolls.insert(0, (chummer_core::campaign::now_ms(), l));
-                rolls.truncate(30);
-            }
-        };
         ui.columns(2, |cols| {
             // Left: condition monitors, Edge, matrix and vehicles.
             let ui = &mut cols[0];
@@ -1225,12 +1459,19 @@ impl GmScreen {
 
             // Right: dice pools, damage, GM tools.
             let ui = &mut cols[1];
-            ui.label(RichText::new(lang.tr("Dice pools")).strong());
-            let who = name.as_str();
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(lang.tr("Dice pools")).strong());
+                let mut on = *push == Some(id);
+                let tip = lang.tr_fmt("The next roll adds Edge ({0}) with the Rule of Six, and spends 1 Edge", &[&edge]);
+                if ui.add_enabled(edge_left > 0 || on, egui::Checkbox::new(&mut on, lang.tr("Push the Limit"))).on_hover_text(tip).changed() {
+                    *push = on.then_some(id);
+                }
+            });
             egui::Grid::new(("gm_pools", id)).num_columns(2).spacing([16.0, 2.0]).show(ui, |ui| {
                 for (k, p) in campaign_ui::quick_pools(doc, &sheet, lang, 6).into_iter().enumerate() {
-                    let line = campaign_ui::pool_roll(ui, rng, lang, who, &p.label, p.pool);
-                    roll_line(rolls, line);
+                    if campaign_ui::pool_roll(ui, lang, &p.label, p.pool) {
+                        roll = Some((p.label.clone(), p.pool));
+                    }
                     if k % 2 == 1 {
                         ui.end_row();
                     }
@@ -1243,11 +1484,20 @@ impl GmScreen {
                 for w in &weapons {
                     let st = chummer_core::items::weapon::stats(doc, &sheet, w);
                     ui.horizontal(|ui| {
-                        let line = campaign_ui::pool_roll(ui, rng, lang, who, &w.get("name"), st.dice_pool);
-                        roll_line(rolls, line);
+                        if campaign_ui::pool_roll(ui, lang, &w.get("name"), st.dice_pool) {
+                            roll = Some((w.get("name"), st.dice_pool));
+                        }
                         ui.weak(format!("{} AP {}", st.damage, st.ap));
                     });
                 }
+            }
+            // The result, next to the pools it came from.
+            if let Some(r) = rolls.iter().find(|r| r.member == Some(id)) {
+                ui.add_space(4.0);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    rolls::classic_roll(ui, lang, r);
+                });
             }
             ui.add_space(6.0);
             ui.label(RichText::new(lang.tr("Damage")).strong());
@@ -1268,6 +1518,9 @@ impl GmScreen {
         if let Some(a) = attack {
             self.damage_member(id, a, views, status);
         }
+        if let Some((label, pool)) = roll {
+            self.roll_for(Some(id), &name, &label, pool, views);
+        }
     }
 
     // ----- windows -----
@@ -1279,7 +1532,7 @@ impl GmScreen {
                 crate::gm_ui::CritterResult::Cancel => self.critter = None,
                 crate::gm_ui::CritterResult::Created(ch) => {
                     let kind = if ch.field("metatypecategory").contains("Spirit") { MemberKind::Spirit } else { MemberKind::Critter };
-                    self.add_member(Member::embedded(kind, &ch), *ch, engine);
+                    self.add_numbered(kind, *ch, engine, views, status);
                     self.critter = None;
                 }
             }
@@ -1302,9 +1555,10 @@ impl GmScreen {
                             if let Some(first) = ids.first() {
                                 self.select_member(*first);
                             }
+                            self.number_bare(&req.name, views, status);
                             self.dirty = true;
                         } else {
-                            self.add_member(m, ch, engine);
+                            self.add_numbered(MemberKind::Npc, ch, engine, views, status);
                         }
                         self.kit = None;
                     }
@@ -1322,7 +1576,6 @@ impl GmScreen {
                 self.improvement_for = None;
             }
         }
-        let _ = status;
     }
 }
 
@@ -1378,8 +1631,74 @@ mod tests {
         assert_eq!(edge(&gm), before + 1);
         gm.remove_combatant(1);
         assert_eq!(gm.card(), Card::Member(npc), "the card falls back to the selected member");
-        gm.roll_pool("Munin", "Defense", 6, &Language::default());
-        assert!(gm.rolls[0].1.starts_with("Munin: Defense 6d6 → "));
+        gm.roll_for(Some(id), "Munin", "Defense", 6, &mut views);
+        assert!(gm.rolls[0].line(&Language::default()).starts_with("Munin: Defense 6d6 → "));
+        assert_eq!(gm.last_roll(id).map(|r| r.roll.dice.len()), Some(6));
+    }
+
+    /// NPCs made from the same kit come in numbered; a rename goes
+    /// through the character (undo, the feed) and reaches the encounter;
+    /// members join the encounter once, rolling during a round.
+    #[test]
+    fn numbered_npcs_rename_and_join() {
+        let Ok(engine) = Engine::load() else { return };
+        let engine = Arc::new(engine);
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../chummer-core/tests/fixtures/Munin_Career.chum5");
+        let ganger = campaign::named_copy(&engine, &Character::load(&p).unwrap(), "Ganger");
+        let mut gm = GmScreen::new_campaign("Test");
+        let mut views: Vec<CharacterView> = Vec::new();
+        let mut status = None;
+        let a = gm.add_numbered(MemberKind::Npc, ganger.clone(), &engine, &mut views, &mut status);
+        assert_eq!(gm.campaign.member(a).unwrap().name, "Ganger", "the first keeps the kit's name");
+        let b = gm.add_numbered(MemberKind::Npc, ganger.clone(), &engine, &mut views, &mut status);
+        let c = gm.add_numbered(MemberKind::Npc, ganger, &engine, &mut views, &mut status);
+        gm.sync(&engine, &views);
+        let names: Vec<String> = [a, b, c].iter().map(|m| gm.campaign.member(*m).unwrap().name.clone()).collect();
+        assert_eq!(names, ["Ganger 1", "Ganger 2", "Ganger 3"]);
+        assert_eq!(doc_ref(&gm.live, &views, a).unwrap().display_name(), "Ganger 1", "renumbered on the character");
+        // Joining: once each; Add all NPCs adds the rest.
+        assert!(gm.can_join(a));
+        gm.add_to_encounter(a, &views, true);
+        gm.add_to_encounter(a, &views, true);
+        assert_eq!(gm.campaign.encounters[0].combatants.len(), 1, "no member twice");
+        assert_eq!(gm.card(), Card::Member(a), "a drop or a click shows the card");
+        assert!(!gm.can_join(a));
+        gm.roll_initiative(&views);
+        assert_eq!(gm.add_kind_to_encounter(&MemberKind::Npc, &views), 2);
+        assert!(gm.campaign.encounters[0].combatants.iter().all(|c| !c.rolled.is_empty()), "joining during a round rolls");
+        // Rename: the character, the roster, the encounter and the feed.
+        assert!(gm.rename_member(b, "  Ganger Boss ", &mut views, &mut status));
+        assert!(!gm.rename_member(b, "   ", &mut views, &mut status), "no empty names");
+        gm.sync(&engine, &views);
+        assert_eq!(doc_ref(&gm.live, &views, b).unwrap().display_name(), "Ganger Boss");
+        assert_eq!(gm.campaign.member(b).unwrap().name, "Ganger Boss");
+        let row = gm.campaign.encounters[0].combatants.iter().find(|x| x.member == Some(b)).unwrap();
+        assert_eq!(row.name, "Ganger Boss");
+        assert!(gm.feed_rows().iter().any(|f| f.text.contains("Ganger Boss")), "{:?}", gm.feed_rows());
+        // In place: Esc keeps the name, Enter renames.
+        gm.start_rename(RenameAt::Roster(c));
+        *gm.renaming_at(RenameAt::Roster(c)).unwrap() = "Lookout".into();
+        gm.finish_rename(false, &mut views, &mut status);
+        assert_eq!(gm.campaign.member(c).unwrap().name, "Ganger 3");
+        gm.start_rename(RenameAt::Combatant(gm.campaign.encounters[0].combatants[2].id));
+        *gm.renaming.as_mut().map(|(_, t)| t).unwrap() = "Lookout".into();
+        gm.finish_rename(true, &mut views, &mut status);
+        assert_eq!(gm.campaign.member(c).unwrap().name, "Lookout", "a member's combatant renames the member");
+        // Undo takes the rename back everywhere.
+        doc_mut(&mut gm.live, &mut views, b).unwrap().undo();
+        gm.sync(&engine, &views);
+        assert_eq!(gm.campaign.member(b).unwrap().name, "Ganger 2");
+        assert!(gm.campaign.encounters[0].combatants.iter().any(|x| x.name == "Ganger 2"));
+        // Push the Limit: Edge added with the Rule of Six, 1 Edge spent.
+        let (left, rating) = gm.edge_left(a, &views);
+        assert!(rating > 0 && left > 0);
+        gm.push = Some(a);
+        gm.roll_for(Some(a), "Ganger 1", "Pistols", 6, &mut views);
+        let r = &gm.rolls[0];
+        assert_eq!(r.edge, Some(rating));
+        assert!(r.roll.dice.len() >= (6 + rating) as usize);
+        assert_eq!(gm.push, None, "for one roll");
+        assert_eq!(gm.edge_left(a, &views).0, left - 1);
     }
 
     #[test]

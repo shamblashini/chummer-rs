@@ -297,22 +297,13 @@ pub fn damage_commands(before: &Tracks, r: &DamageResult) -> Vec<Command> {
     out
 }
 
-/// A pool as a chip; click rolls it. Returns a line for the roll log.
-pub fn pool_roll(ui: &mut egui::Ui, rng: &mut Rng, lang: &Language, who: &str, label: &str, pool: i32) -> Option<String> {
-    let mut out = None;
+/// A pool as a chip; returns whether a click asked to roll it.
+pub fn pool_roll(ui: &mut egui::Ui, lang: &Language, label: &str, pool: i32) -> bool {
     ui.horizontal(|ui| {
         ui.label(label);
-        if crate::theme::pool_chip(ui, pool.to_string()).on_hover_text(lang.tr("Roll")).clicked() {
-            out = Some(roll_pool(rng, lang, who, label, pool));
-        }
-    });
-    out
-}
-
-/// Roll a pool for the GM's roll log: "Who: Label 9d6 → 3 hits  [6 5 …]".
-pub fn roll_pool(rng: &mut Rng, lang: &Language, who: &str, label: &str, pool: i32) -> String {
-    let r = dice::roll(rng, pool.max(0) as u32, false, None);
-    roll_line(lang, who, label, pool, &r)
+        crate::theme::pool_chip(ui, pool.to_string()).on_hover_text(lang.tr("Roll")).clicked()
+    })
+    .inner
 }
 
 /// The roll log line of a roll.

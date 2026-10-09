@@ -1435,7 +1435,7 @@ fn paint_drop(ui: &Ui, ws: &WsPalette, full: Rect, ok: bool, hovered: bool) {
 
 /// The dragged row's chip under the pointer: its name and, over a
 /// target, what a drop does (or why it cannot, in the error colour).
-fn drag_chip(ctx: &egui::Context, ws: &WsPalette, pos: egui::Pos2, label: &str, hint: Option<&Result<String, String>>) {
+pub(crate) fn drag_chip(ctx: &egui::Context, ws: &WsPalette, pos: egui::Pos2, label: &str, hint: Option<&Result<String, String>>) {
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("ws_table_drag_chip")));
     let name = p.layout_no_wrap(label.to_owned(), widgets::bold(12.0), ws.text);
     let line = hint.map(|h| match h {

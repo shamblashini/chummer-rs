@@ -43,12 +43,19 @@ pub struct RowView {
 pub struct TreeOutput {
     /// Key of the item row that was clicked.
     pub clicked: Option<String>,
+    /// Key of the item row a drag started on ([`TreeTable::drag`]).
+    pub drag_started: Option<String>,
 }
+
+/// A row's context menu: the row's key and the menu's `Ui`.
+pub type RowMenu<'a> = &'a mut dyn FnMut(&mut egui::Ui, &str);
 
 pub struct TreeTable<'a> {
     id: egui::Id,
     headers: &'a [String],
     selected: Option<&'a str>,
+    drag: bool,
+    menu: Option<RowMenu<'a>>,
 }
 
 /// Width of one indentation level.
@@ -56,7 +63,19 @@ const INDENT: f32 = 16.0;
 
 impl<'a> TreeTable<'a> {
     pub fn new(id_salt: impl Hash, headers: &'a [String]) -> Self {
-        TreeTable { id: egui::Id::new(("tree_table", id_salt)), headers, selected: None }
+        TreeTable { id: egui::Id::new(("tree_table", id_salt)), headers, selected: None, drag: false, menu: None }
+    }
+
+    /// Item rows can be dragged (see [`TreeOutput::drag_started`]).
+    pub fn drag(mut self, on: bool) -> Self {
+        self.drag = on;
+        self
+    }
+
+    /// A context menu on item rows (right click).
+    pub fn menu(mut self, menu: RowMenu<'a>) -> Self {
+        self.menu = Some(menu);
+        self
     }
 
     /// Key of the selected row, highlighted and moved by Left / Right.
@@ -67,7 +86,7 @@ impl<'a> TreeTable<'a> {
 
     /// Draw the table. `view` describes a node's row; `actions` fills the
     /// last column of item rows (source link, remove button).
-    pub fn show<T>(self, ui: &mut egui::Ui, roots: &[Node<T>], view: impl Fn(&Node<T>) -> RowView, mut actions: impl FnMut(&mut egui::Ui, &Node<T>)) -> TreeOutput {
+    pub fn show<T>(mut self, ui: &mut egui::Ui, roots: &[Node<T>], view: impl Fn(&Node<T>) -> RowView, mut actions: impl FnMut(&mut egui::Ui, &Node<T>)) -> TreeOutput {
         let closed_id = self.id.with("closed");
         let mut closed: HashSet<String> = ui.data_mut(|d| d.get_persisted::<HashSet<String>>(closed_id)).unwrap_or_default();
         let mut toggled: Option<String> = None;
@@ -107,7 +126,7 @@ impl<'a> TreeTable<'a> {
                 .striped(!ws)
                 .resizable(true)
                 .vscroll(false)
-                .sense(Sense::click())
+                .sense(if self.drag { Sense::click_and_drag() } else { Sense::click() })
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(Column::auto().at_least(180.0));
             for _ in 1..n_cols {
@@ -249,6 +268,12 @@ impl<'a> TreeTable<'a> {
                         toggled = Some(r.node.key.clone());
                     } else if resp.clicked() && v.clickable {
                         out.clicked = Some(r.node.key.clone());
+                    }
+                    if !v.group && self.drag && resp.drag_started() {
+                        out.drag_started = Some(r.node.key.clone());
+                    }
+                    if let (false, Some(menu)) = (v.group, self.menu.as_mut()) {
+                        resp.context_menu(|ui| menu(ui, &r.node.key));
                     }
                     if v.clickable {
                         resp.on_hover_cursor(egui::CursorIcon::PointingHand);

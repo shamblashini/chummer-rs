@@ -20,7 +20,7 @@ use chummer_core::lang::Language;
 use chummer_core::play::{matrix, vehicle};
 use eframe::egui::{self, RichText};
 
-use super::{doc_mut, doc_ref, Action, Card, GmScreen};
+use super::{doc_mut, doc_ref, Action, Card, DragMember, GmRoll, GmScreen, RenameAt};
 use crate::pdf_ui::Status;
 use crate::theme;
 use crate::view::CharacterView;
@@ -38,6 +38,8 @@ pub enum Panel {
     Card,
     /// Online: hosting, per-player invites, the members and the mailbox.
     Players,
+    /// The GM's dice rolls.
+    Rolls,
     Award,
     Notes,
 }
@@ -49,6 +51,7 @@ impl Panel {
             Panel::Encounter => "Encounter",
             Panel::Card => "Combatant",
             Panel::Players => "Players & invites",
+            Panel::Rolls => "Dice rolls",
             Panel::Award => "GM award",
             Panel::Notes => "GM Notes",
         }
@@ -82,6 +85,8 @@ enum RowDo {
     Blitz,
     Score(i32),
     Remove,
+    /// Start renaming it in place.
+    Rename,
 }
 
 /// What the card asks for, done after drawing.
@@ -93,8 +98,24 @@ enum CardDo {
     Matrix(String, i32),
     Vehicle(String, i32),
     Roll(String, i32),
+    /// Push the Limit on the next roll, or not.
+    Push(bool),
     Open,
     Improve,
+    /// Start renaming the member on the card's title.
+    Rename,
+    /// The card title's name editor finished (commit or not).
+    Renamed(bool),
+}
+
+/// What a roster row asks for, done after drawing.
+enum RosterDo {
+    Select,
+    Open,
+    Join,
+    Rename,
+    /// The row's name editor finished (commit or not).
+    Renamed(bool),
 }
 
 impl GmScreen {
@@ -168,7 +189,14 @@ impl GmScreen {
         let used = ui.cursor().top() - start;
         let rows = self.roster_rows(env.views);
         let filter = self.filter.trim().to_lowercase();
-        let mut pick = None;
+        let mut todo: Option<(MemberId, RosterDo)> = None;
+        let mut join_kind = None;
+        // F2 renames the selected member.
+        if let Some(id) = self.selected.filter(|_| self.renaming.is_none() && !ui.ctx().wants_keyboard_input() && !ui.ctx().is_popup_open()) {
+            if ui.input(|i| i.key_pressed(egui::Key::F2)) && self.live.contains_key(&id) {
+                todo = Some((id, RosterDo::Rename));
+            }
+        }
         egui::ScrollArea::vertical().id_salt("ws_gm_roster").auto_shrink(false).max_height((height - used).max(60.0)).show(ui, |ui| {
             egui::Frame::new().inner_margin(egui::Margin::symmetric(6, 2)).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
@@ -186,21 +214,45 @@ impl GmScreen {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add_space(4.0);
                             ui.label(widgets::mono(shown.len().to_string(), 11.0, ws.muted));
+                            let joinable = shown.iter().filter(|r| self.can_join(r.id)).count();
+                            if joinable > 0 {
+                                let tip = lang.tr_fmt("Add all {0} to the encounter ({1})", &[&lang.tr(kind.plural()), &joinable]);
+                                if widgets::icon_button(ui, icons::SWORD, 20.0).on_hover_text(tip).clicked() {
+                                    join_kind = Some(kind.clone());
+                                }
+                            }
                         });
                     });
                     for r in shown {
-                        let selected = self.selected == Some(r.id);
-                        let resp = roster_row(ui, r, selected);
-                        let resp = if r.notes.is_empty() { resp } else { resp.on_hover_text(&r.notes) };
-                        if resp.clicked() {
-                            pick = Some(r.id);
+                        let look = RosterLook { selected: self.selected == Some(r.id), joinable: self.can_join(r.id), fighting: self.campaign.encounters.get(self.encounter).is_some_and(|e| e.has_member(r.id)) };
+                        let loaded = self.live.contains_key(&r.id);
+                        let out = roster_row(ui, r, look, self.renaming_at(RenameAt::Roster(r.id)), lang);
+                        let resp = if r.notes.is_empty() { out.resp } else { out.resp.on_hover_text(&r.notes) };
+                        if let Some(commit) = out.renamed {
+                            todo = Some((r.id, RosterDo::Renamed(commit)));
+                        } else if out.join {
+                            todo = Some((r.id, RosterDo::Join));
+                        } else if out.rename {
+                            todo = Some((r.id, RosterDo::Rename));
+                        } else if resp.double_clicked() && loaded {
+                            todo = Some((r.id, RosterDo::Open));
+                        } else if resp.clicked() {
+                            todo = Some((r.id, RosterDo::Select));
                         }
-                        if resp.double_clicked() && self.live.contains_key(&r.id) {
-                            action = Some(Action::Open(r.id));
+                        if resp.drag_started() {
+                            egui::DragAndDrop::set_payload(ui.ctx(), DragMember(r.id));
                         }
                         resp.context_menu(|ui| {
-                            if ui.add_enabled(self.live.contains_key(&r.id), egui::Button::new(lang.tr("Open"))).clicked() {
-                                action = Some(Action::Open(r.id));
+                            if ui.add_enabled(loaded, egui::Button::new(format!("{}  {}", icons::ARROW_SQUARE_OUT, lang.tr("Open")))).clicked() {
+                                todo = Some((r.id, RosterDo::Open));
+                            }
+                            let add = ui.add_enabled(look.joinable, egui::Button::new(format!("{}  {}", icons::SWORD, lang.tr("Add to encounter"))));
+                            let add = if look.fighting { add.on_disabled_hover_text(lang.tr("In the encounter already")) } else { add };
+                            if add.clicked() {
+                                todo = Some((r.id, RosterDo::Join));
+                            }
+                            if ui.add_enabled(loaded, egui::Button::new(format!("{}  {}", icons::PENCIL_SIMPLE, lang.tr("Rename")))).on_hover_text("F2").clicked() {
+                                todo = Some((r.id, RosterDo::Rename));
                             }
                         });
                     }
@@ -211,8 +263,20 @@ impl GmScreen {
                 }
             });
         });
-        if let Some(id) = pick {
-            self.select_member(id);
+        self.drag_chip(ui.ctx());
+        if let Some(k) = join_kind {
+            self.add_kind_to_encounter(&k, env.views);
+        }
+        match todo {
+            Some((id, RosterDo::Select)) => self.select_member(id),
+            Some((id, RosterDo::Open)) => action = Some(Action::Open(id)),
+            Some((id, RosterDo::Join)) => self.add_to_encounter(id, env.views, true),
+            Some((id, RosterDo::Rename)) => {
+                self.select_member(id);
+                self.start_rename(RenameAt::Roster(id));
+            }
+            Some((_, RosterDo::Renamed(commit))) => self.finish_rename(commit, env.views, env.status),
+            None => {}
         }
         action
     }
@@ -269,6 +333,7 @@ impl GmScreen {
         egui::SidePanel::right("ws_gm_inspector").default_width(320.0).min_width(260.0).max_width(560.0).resizable(true).frame(egui::Frame::new().fill(ws.chrome)).show(ctx, |ui| {
             egui::ScrollArea::vertical().id_salt("ws_gm_inspector_scroll").auto_shrink(false).show(ui, |ui| {
                 self.block(ui, Panel::Players, env, &mut action);
+                self.block(ui, Panel::Rolls, env, &mut action);
                 self.ws_activity_block(ui, env);
                 self.block(ui, Panel::Award, env, &mut action);
                 self.block(ui, Panel::Notes, env, &mut action);
@@ -395,6 +460,7 @@ impl GmScreen {
                 }
             }
             Panel::Players => self.ws_players(ui, env),
+            Panel::Rolls => self.ws_rolls(ui, env.lang),
             Panel::Award => self.ws_award(ui, env),
             Panel::Notes => {
                 let r = ui.add(egui::TextEdit::multiline(&mut self.campaign.gm_notes).id_salt("ws_gm_notes").desired_width(f32::INFINITY).desired_rows(10));
@@ -457,20 +523,32 @@ impl GmScreen {
         let order = self.campaign.encounters[self.encounter].order();
         let current = self.campaign.encounters[self.encounter].current();
         let mut todo: Option<(usize, RowDo)> = None;
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            if order.is_empty() {
-                ui.label(RichText::new(lang.tr("Add combatants: characters from the roster, or quick ones by name.")).size(11.5).color(ws.muted));
-            }
-            for i in order {
-                let e = &self.campaign.encounters[self.encounter];
-                let c = &e.combatants[i];
-                let kind = c.member.and_then(|m| self.campaign.member(m)).map(|m| lang.tr(m.kind.as_str())).unwrap_or_else(|| lang.tr("Other"));
-                if let Some(d) = encounter_row(ui, c, kind, current == Some(i), self.combatant == Some(c.id), e.pass, lang) {
-                    todo = Some((i, d));
+        let mut renamed = None;
+        // The list is where a member dragged from the roster drops.
+        self.encounter_drop_zone(ui, lang, env.views, |gm, ui, _| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                if order.is_empty() {
+                    ui.label(RichText::new(lang.tr("Add combatants: drag characters here from the roster, use their sword button, or add quick ones by name.")).size(11.5).color(ws.muted));
                 }
-            }
+                for i in order {
+                    let e = &gm.campaign.encounters[gm.encounter];
+                    let c = &e.combatants[i];
+                    let kind = c.member.and_then(|m| gm.campaign.member(m)).map(|m| lang.tr(m.kind.as_str())).unwrap_or_else(|| lang.tr("Other"));
+                    let roll = c.member.and_then(|m| gm.rolls.iter().find(|r| r.member == Some(m)));
+                    let look = RowLook { current: current == Some(i), selected: gm.combatant == Some(c.id), pass: e.pass };
+                    let rename = gm.renaming.as_mut().filter(|(a, _)| *a == RenameAt::Combatant(c.id)).map(|(_, t)| t);
+                    let (d, r) = encounter_row(ui, c, kind, look, roll, rename, lang);
+                    if let Some(d) = d {
+                        todo = Some((i, d));
+                    }
+                    renamed = renamed.or(r);
+                }
+            });
         });
+        if let Some(commit) = renamed {
+            self.finish_rename(commit, env.views, env.status);
+        }
         if let Some((i, d)) = todo {
             let e = &mut self.campaign.encounters[self.encounter];
             match d {
@@ -493,6 +571,10 @@ impl GmScreen {
                 RowDo::Seize => self.seize(i, env.views),
                 RowDo::Blitz => self.blitz(i, env.views),
                 RowDo::Remove => self.remove_combatant(i),
+                RowDo::Rename => {
+                    let cid = e.combatants[i].id;
+                    self.start_rename(RenameAt::Combatant(cid));
+                }
             }
         }
         // Next and next pass.
@@ -518,16 +600,30 @@ impl GmScreen {
         // Adding combatants.
         let mut all = false;
         let mut add = None;
+        let mut add_kind = None;
         let mut adhoc = false;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
             let r = widgets::button(ui, Some(icons::PLUS), &lang.tr("Add to encounter"), Look::Ghost, 24.0);
             egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                let enc = &self.campaign.encounters[self.encounter];
-                for m in self.campaign.members.iter().filter(|m| self.live.contains_key(&m.id) && !enc.has_member(m.id)) {
-                    if ui.button(&m.name).clicked() {
-                        add = Some(m.id);
-                        ui.close();
+                // By kind, each with an All entry.
+                for (kind, ms) in self.campaign.grouped() {
+                    let ms: Vec<_> = ms.into_iter().filter(|m| self.can_join(m.id)).collect();
+                    if ms.is_empty() {
+                        continue;
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label(widgets::overline(&lang.tr(kind.plural()), &ws));
+                        if ms.len() > 1 && ui.small_button(lang.tr_fmt("All {0}", &[&ms.len()])).clicked() {
+                            add_kind = Some(kind.clone());
+                            ui.close();
+                        }
+                    });
+                    for m in ms {
+                        if ui.button(&m.name).clicked() {
+                            add = Some(m.id);
+                            ui.close();
+                        }
                     }
                 }
                 ui.separator();
@@ -544,9 +640,19 @@ impl GmScreen {
             });
             let players = self.campaign.members.iter().any(|m| m.kind == MemberKind::Player && self.live.contains_key(&m.id));
             all = ui.add_enabled_ui(players, |ui| widgets::button(ui, Some(icons::USERS_THREE), &lang.tr("Add all players"), Look::Ghost, 24.0)).inner.clicked();
+            // The selected roster member, in one click.
+            if let Some(id) = self.selected.filter(|id| self.can_join(*id)) {
+                let name = self.campaign.member(id).map(|m| m.name.clone()).unwrap_or_default();
+                if widgets::button(ui, Some(icons::SWORD), &lang.tr_fmt("Add {0}", &[&name]), Look::Ghost, 24.0).on_hover_text(lang.tr("Add the selected character to the encounter")).clicked() {
+                    add = Some(id);
+                }
+            }
         });
         if let Some(m) = add {
             self.add_to_encounter(m, env.views, true);
+        }
+        if let Some(k) = add_kind {
+            self.add_kind_to_encounter(&k, env.views);
         }
         if adhoc {
             self.add_adhoc();
@@ -565,8 +671,11 @@ impl GmScreen {
         match self.card() {
             Card::AdHoc(i) => {
                 if header {
-                    let name = self.campaign.encounters[self.encounter].combatants[i].name.clone();
-                    card_title(ui, env.pops, lang, &name, &lang.tr("A combatant without a character sheet"), |_| {});
+                    let c = &self.campaign.encounters[self.encounter].combatants[i];
+                    let (name, at) = (c.name.clone(), RenameAt::Combatant(c.id));
+                    let mut text = self.renaming_at(at).cloned();
+                    let t = card_title(ui, env.pops, lang, &name, &lang.tr("A combatant without a character sheet"), text.as_mut(), |_| {});
+                    self.title_done(at, t, text, env);
                 }
                 self.ws_adhoc(ui, i, lang);
                 None
@@ -664,16 +773,18 @@ impl GmScreen {
             .collect();
         let qualities: Vec<(String, String)> = doc.items("qualities", "quality").into_iter().take(6).map(|q| (q.get("name"), String::new())).collect();
         let tag = [lang.tr(m.kind.as_str()), m.group.clone()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
+        let mut rename = self.renaming.as_ref().filter(|(a, _)| *a == RenameAt::Card(id)).map(|(_, t)| t.clone());
+        let mut title = TitleOut::default();
         if !header {
             // In its own window: who it is (the window follows the card).
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&m.name).font(widgets::bold(15.0)).color(ws.text));
+                title = name_title(ui, &m.name, 15.0, rename.as_mut(), lang);
                 widgets::tag(ui, &tag, ws.muted, ws.divider);
             });
             ui.add_space(6.0);
         }
         if header {
-            card_title(ui, env.pops, lang, &m.name, &tag, |ui| {
+            title = card_title(ui, env.pops, lang, &m.name, &tag, rename.as_mut(), |ui| {
                 if widgets::button(ui, Some(icons::ARROW_SQUARE_OUT), &lang.tr("Open"), Look::Ghost, 24.0).on_hover_text(lang.tr("Open the character in its own tab")).clicked() {
                     todo.push(CardDo::Open);
                 }
@@ -681,6 +792,12 @@ impl GmScreen {
                     todo.push(CardDo::Improve);
                 }
             });
+        }
+        if title.start {
+            todo.push(CardDo::Rename);
+        }
+        if let Some(commit) = title.renamed {
+            todo.push(CardDo::Renamed(commit));
         }
         // Condition monitors, Edge and damage.
         widgets::card_frame(&ws).show(ui, |ui| {
@@ -754,12 +871,23 @@ impl GmScreen {
         });
         ui.add_space(12.0);
         // Dice pools.
+        let (edge_left, _) = self.edge_left(id, env.views);
+        let pushing = self.push == Some(id);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.label(widgets::title(&lang.tr("Dice pools"), &ws));
             if sheet.wound_modifier != 0 {
                 ui.label(RichText::new(format!("{} {}", lang.tr("CM Penalty:"), sheet.wound_modifier)).size(11.5).color(ws.muted));
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut on = pushing;
+                let tip = lang.tr_fmt("The next roll adds Edge ({0}) with the Rule of Six, and spends 1 Edge", &[&edge_total]);
+                let r = ui.add_enabled_ui(edge_left > 0 || on, |ui| widgets::check(ui, &mut on, &format!("{} {}", icons::LIGHTNING, lang.tr("Push the Limit")))).inner;
+                let r = r.on_hover_text(tip).on_disabled_hover_text(lang.tr("No Edge left"));
+                if r.changed() {
+                    todo.push(CardDo::Push(on));
+                }
+            });
         });
         ui.add_space(4.0);
         let gap = 4.0;
@@ -777,6 +905,11 @@ impl GmScreen {
                 });
             }
         });
+        // The member's last roll, next to the pools it came from.
+        if let Some(r) = self.last_roll(id) {
+            ui.add_space(6.0);
+            super::rolls::roll_card(ui, lang, r, true);
+        }
         // Weapons.
         if !weapons.is_empty() {
             ui.add_space(12.0);
@@ -835,8 +968,14 @@ impl GmScreen {
         for d in todo {
             match d {
                 CardDo::Damage(a) => self.damage_member(id, a, env.views, env.status),
-                CardDo::Roll(label, pool) => self.roll_pool(&m.name, &label, pool, lang),
+                CardDo::Roll(label, pool) => self.roll_for(Some(id), &m.name, &label, pool, env.views),
                 CardDo::Open => action = Some(Action::Open(id)),
+                CardDo::Push(on) => self.push = on.then_some(id),
+                CardDo::Rename => self.start_rename(RenameAt::Card(id)),
+                CardDo::Renamed(commit) => {
+                    self.keep_rename(RenameAt::Card(id), rename.take());
+                    self.finish_rename(commit, env.views, env.status);
+                }
                 CardDo::Improve => self.add_improvement(id, env.engine, env.views, lang),
                 CardDo::Physical(n) => self.run_for(id, Command::SetPhysicalDamage { filled: n }, env),
                 CardDo::Stun(n) => self.run_for(id, Command::SetStunDamage { filled: n }, env),
@@ -845,7 +984,26 @@ impl GmScreen {
                 CardDo::Vehicle(g, f) => self.run_for(id, Command::SetVehicleDamage { vehicle: g, filled: f }, env),
             }
         }
+        self.keep_rename(RenameAt::Card(id), rename);
         action
+    }
+
+    /// Keep the text typed in an in-place name editor drawn from a copy.
+    fn keep_rename(&mut self, at: RenameAt, text: Option<String>) {
+        if let (Some(t), Some(cur)) = (text, self.renaming_at(at)) {
+            *cur = t;
+        }
+    }
+
+    /// After a card title: start, keep or finish renaming at `at`.
+    fn title_done(&mut self, at: RenameAt, t: TitleOut, text: Option<String>, env: &mut Env) {
+        self.keep_rename(at, text);
+        if t.start {
+            self.start_rename(at);
+        }
+        if let Some(commit) = t.renamed {
+            self.finish_rename(commit, env.views, env.status);
+        }
     }
 
     /// Run a command on member `id`'s character.
@@ -996,7 +1154,7 @@ impl GmScreen {
         let ws = theme::ws(ui);
         let lang = env.lang;
         let mut rows = self.feed_rows();
-        rows.extend(self.rolls.iter().map(|(at, l)| super::FeedRow { at: *at, who: lang.tr("Dice"), text: l.clone(), refused: false, note: true, revert: None }));
+        rows.extend(self.rolls.iter().map(|r| super::FeedRow { at: r.at, who: lang.tr("Dice"), text: r.line(lang), refused: false, note: true, revert: None }));
         rows.sort_by_key(|r| std::cmp::Reverse(r.at));
         let mut revert = None;
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -1071,34 +1229,79 @@ fn fraction(t: Option<(i32, i32)>) -> f32 {
     }
 }
 
-/// One member of the roster: name, player in small text, damage bars;
-/// struck through when the Physical track is full.
-fn roster_row(ui: &mut egui::Ui, r: &super::RosterRow, selected: bool) -> egui::Response {
+/// How a roster row looks.
+#[derive(Debug, Clone, Copy)]
+struct RosterLook {
+    selected: bool,
+    /// It can join the encounter (loaded, not in it).
+    joinable: bool,
+    /// It is in the encounter.
+    fighting: bool,
+}
+
+/// What a roster row did.
+struct RosterOut {
+    resp: egui::Response,
+    /// Its Add to encounter button was clicked.
+    join: bool,
+    /// Its Rename button was clicked.
+    rename: bool,
+    /// Its name editor finished: commit (Enter, clicking away) or not
+    /// (Esc).
+    renamed: Option<bool>,
+}
+
+/// A small icon button painted at `rect` (on a painted row).
+fn row_icon(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, glyph: &str, color: egui::Color32, tip: &str) -> bool {
     let ws = theme::ws(ui);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::click());
+    let resp = ui.interact(rect, id, egui::Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(4), ws.hover);
+    }
+    icons::paint(ui.painter(), rect, glyph, 13.0, if resp.hovered() { ws.text } else { color });
+    resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+/// The in-place name editor in `rect`: `Some(true)` on Enter or clicking
+/// away, `Some(false)` on Esc.
+fn rename_field(ui: &mut egui::Ui, rect: egui::Rect, text: &mut String, size: f32) -> Option<bool> {
+    let te = ui.put(rect, egui::TextEdit::singleline(text).font(egui::FontId::proportional(size)).margin(egui::vec2(4.0, 1.0)));
+    te.request_focus();
+    let (enter, esc) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+    if esc {
+        Some(false)
+    } else if enter || te.lost_focus() {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// One member of the roster: name, player in small text, damage bars;
+/// struck through when the Physical track is full. On hover (and when
+/// selected): Add to encounter and Rename buttons; a sword marks members
+/// in the encounter. Drag it onto the encounter to add it there.
+/// `rename`: the name being edited in place.
+fn roster_row(ui: &mut egui::Ui, r: &super::RosterRow, look: RosterLook, rename: Option<&mut String>, lang: &Language) -> RosterOut {
+    let ws = theme::ws(ui);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
+    let id = ui.id().with(("ws_gm_roster_row", r.id));
+    let resp = ui.interact(rect, id, egui::Sense::click_and_drag());
+    let hot = look.selected || ui.rect_contains_pointer(rect);
+    let mut out = RosterOut { resp: resp.clone(), join: false, rename: false, renamed: None };
+    let x = rect.left() + 26.0;
+    let bars_x = rect.right() - 8.0 - 40.0;
+    // Buttons right to left from the bars: Add to encounter, Rename.
+    let icon = |k: f32| egui::Rect::from_center_size(egui::pos2(bars_x - 14.0 - k * 24.0, rect.center().y), egui::vec2(22.0, 22.0));
+    let mut name_end = bars_x - 6.0;
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        if selected {
+        if look.selected {
             painter.rect_filled(rect, egui::CornerRadius::same(5), ws.selection);
             let bar = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() + 4.0), egui::pos2(rect.left() + 2.0, rect.bottom() - 4.0));
             painter.rect_filled(bar, egui::CornerRadius::ZERO, ws.primary);
         } else if resp.hovered() {
             painter.rect_filled(rect, egui::CornerRadius::same(5), ws.hover);
-        }
-        let down = r.physical.is_some_and(|(f, b)| b > 0 && f >= b);
-        let x = rect.left() + 26.0;
-        let bars_x = rect.right() - 8.0 - 40.0;
-        let name = painter.layout_no_wrap(r.name.clone(), egui::FontId::proportional(12.5), if down { ws.muted } else { ws.text });
-        let y = rect.center().y - name.size().y / 2.0;
-        let clip = egui::Rect::from_min_max(rect.min, egui::pos2(bars_x - 6.0, rect.bottom()));
-        let name_w = name.size().x;
-        painter.with_clip_rect(clip).galley(egui::pos2(x, y), name, ws.text);
-        if down {
-            painter.with_clip_rect(clip).hline(x..=x + name_w, rect.center().y, egui::Stroke::new(1.0_f32, ws.muted));
-        }
-        if !r.who.is_empty() {
-            let who = painter.layout_no_wrap(r.who.clone(), egui::FontId::proportional(11.0), ws.muted);
-            painter.with_clip_rect(clip).galley(egui::pos2(x + name_w + 6.0, rect.center().y - who.size().y / 2.0 + 1.0), who, ws.muted);
         }
         if r.error.is_some() {
             icons::paint(painter, egui::Rect::from_center_size(egui::pos2(rect.left() + 14.0, rect.center().y), egui::vec2(12.0, 12.0)), icons::WARNING, 12.0, ws.warning);
@@ -1115,20 +1318,74 @@ fn roster_row(ui: &mut egui::Ui, r: &super::RosterRow, selected: bool) -> egui::
             }
         }
     }
+    if let Some(text) = rename {
+        let field = egui::Rect::from_min_max(egui::pos2(x - 4.0, rect.top() + 2.0), egui::pos2(bars_x - 6.0, rect.bottom() - 2.0));
+        out.renamed = rename_field(ui, field, text, 12.5);
+        return out;
+    }
+    if hot && r.error.is_none() {
+        let mut k = 0.0;
+        if look.joinable {
+            out.join = row_icon(ui, icon(k), id.with("join"), icons::SWORD, ws.accent, &lang.tr("Add to the encounter (or drag it there)"));
+            k += 1.0;
+        }
+        out.rename = row_icon(ui, icon(k), id.with("rename"), icons::PENCIL_SIMPLE, ws.muted, &lang.tr("Rename (F2)"));
+        name_end = icon(k).left() - 4.0;
+    } else if look.fighting {
+        let at = icon(0.0);
+        icons::paint(ui.painter(), at, icons::SWORD, 12.0, ws.muted);
+        ui.interact(at, id.with("fighting"), egui::Sense::hover()).on_hover_text(lang.tr("In the encounter"));
+        name_end = at.left() - 4.0;
+    }
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let down = r.physical.is_some_and(|(f, b)| b > 0 && f >= b);
+        let name = painter.layout_no_wrap(r.name.clone(), egui::FontId::proportional(12.5), if down { ws.muted } else { ws.text });
+        let y = rect.center().y - name.size().y / 2.0;
+        let clip = egui::Rect::from_min_max(rect.min, egui::pos2(name_end, rect.bottom()));
+        let name_w = name.size().x;
+        painter.with_clip_rect(clip).galley(egui::pos2(x, y), name, ws.text);
+        if down {
+            painter.with_clip_rect(clip).hline(x..=x + name_w, rect.center().y, egui::Stroke::new(1.0_f32, ws.muted));
+        }
+        if !r.who.is_empty() {
+            let who = painter.layout_no_wrap(r.who.clone(), egui::FontId::proportional(11.0), ws.muted);
+            painter.with_clip_rect(clip).galley(egui::pos2(x + name_w + 6.0, rect.center().y - who.size().y / 2.0 + 1.0), who, ws.muted);
+        }
+    }
     let resp = match (&r.error, r.physical) {
         (Some(e), _) => resp.on_hover_text(e),
         (None, Some(_)) => resp.on_hover_text(r.condition()),
         _ => resp,
     };
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    out.resp = resp.on_hover_cursor(if resp_dragging(ui) { egui::CursorIcon::Grabbing } else { egui::CursorIcon::PointingHand });
+    out
+}
+
+/// Whether a roster member is being dragged.
+fn resp_dragging(ui: &egui::Ui) -> bool {
+    egui::DragAndDrop::has_payload_of_type::<DragMember>(ui.ctx())
 }
 
 /// One combatant of the encounter: a marker on the current one, the
 /// score, the name and roll, a tag and a menu (acted, delay, seize,
 /// blitz, interrupt, score, remove).
-fn encounter_row(ui: &mut egui::Ui, c: &chummer_core::campaign::Combatant, kind: String, current: bool, selected: bool, pass: u32, lang: &Language) -> Option<RowDo> {
+/// How an encounter row looks.
+#[derive(Debug, Clone, Copy)]
+struct RowLook {
+    current: bool,
+    selected: bool,
+    pass: u32,
+}
+
+/// `roll`: the member's last roll, shown as a chip; `rename`: the name
+/// being edited in place. Returns what the row asks for and, when its
+/// name editor finished, whether to commit.
+fn encounter_row(ui: &mut egui::Ui, c: &chummer_core::campaign::Combatant, kind: String, look: RowLook, roll: Option<&GmRoll>, rename: Option<&mut String>, lang: &Language) -> (Option<RowDo>, Option<bool>) {
+    let RowLook { current, selected, pass } = look;
     let ws = theme::ws(ui);
     let mut out = None;
+    let mut renamed = None;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::hover());
     let resp = ui.interact(rect, ui.id().with(("ws_gm_row", c.id)), egui::Sense::click());
     if resp.clicked() {
@@ -1187,6 +1444,10 @@ fn encounter_row(ui: &mut egui::Ui, c: &chummer_core::campaign::Combatant, kind:
                 }
             });
             ui.separator();
+            if ui.button(format!("{}  {}", icons::PENCIL_SIMPLE, lang.tr("Rename"))).clicked() {
+                out = Some(RowDo::Rename);
+                ui.close();
+            }
             if ui.button(lang.tr("Remove")).clicked() {
                 out = Some(RowDo::Remove);
                 ui.close();
@@ -1200,24 +1461,41 @@ fn encounter_row(ui: &mut egui::Ui, c: &chummer_core::campaign::Combatant, kind:
             kind
         };
         widgets::tag(ui, &tag, ws.muted, ws.divider);
+        if let Some(r) = roll {
+            super::rolls::roll_chip(ui, lang, r);
+        }
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            ui.add(egui::Label::new(RichText::new(&c.name).size(12.5).color(ws.text)).truncate());
+            if let Some(text) = rename {
+                let w = ui.available_width().max(60.0);
+                let (r, _) = ui.allocate_exact_size(egui::vec2(w, 22.0), egui::Sense::hover());
+                renamed = rename_field(ui, r, text, 12.5);
+                return;
+            }
+            let name = ui.add(egui::Label::new(RichText::new(&c.name).size(12.5).color(ws.text)).truncate().sense(egui::Sense::click()));
+            if name.double_clicked() {
+                out = Some(RowDo::Rename);
+            } else if name.clicked() {
+                out = Some(RowDo::Select);
+            }
+            name.on_hover_text(lang.tr("Double-click to rename"));
             let rolled = if c.rolled.is_empty() { format!("{} + {}d6", c.base, c.dice) } else { format!("{} + [{}]", c.base, c.rolled.iter().map(u8::to_string).collect::<Vec<_>>().join(" ")) };
             ui.add(egui::Label::new(widgets::mono(rolled, 10.5, ws.muted)).truncate());
         });
     });
-    out
+    (out, renamed)
 }
 
 /// The card's title row: the name, a tag, `extra` buttons and the
 /// pop-out button.
-fn card_title(ui: &mut egui::Ui, pops: &mut PopOuts, lang: &Language, name: &str, tag: &str, extra: impl FnOnce(&mut egui::Ui)) {
+/// `rename`: the name being edited in place. Click the name to rename.
+fn card_title(ui: &mut egui::Ui, pops: &mut PopOuts, lang: &Language, name: &str, tag: &str, rename: Option<&mut String>, extra: impl FnOnce(&mut egui::Ui)) -> TitleOut {
     let ws = theme::ws(ui);
     let mut toggle = false;
+    let mut out = TitleOut::default();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.label(RichText::new(name).font(widgets::bold(17.0)).color(ws.text));
+        out = name_title(ui, name, 17.0, rename, lang);
         if !tag.is_empty() {
             widgets::tag(ui, tag, ws.muted, ws.divider);
         }
@@ -1231,6 +1509,40 @@ fn card_title(ui: &mut egui::Ui, pops: &mut PopOuts, lang: &Language, name: &str
     if toggle {
         pops.toggle(key(Panel::Card), ui.ctx());
     }
+    out
+}
+
+/// What a name title did.
+#[derive(Debug, Clone, Copy, Default)]
+struct TitleOut {
+    /// The name or its pencil was clicked: start renaming.
+    start: bool,
+    /// The name editor finished: commit or not.
+    renamed: Option<bool>,
+}
+
+/// A card's name in bold `size`, with a pencil on hover; a click starts
+/// renaming it in place (`rename`: the text being edited).
+fn name_title(ui: &mut egui::Ui, name: &str, size: f32, rename: Option<&mut String>, lang: &Language) -> TitleOut {
+    let ws = theme::ws(ui);
+    let mut out = TitleOut::default();
+    if let Some(text) = rename {
+        let w = (ui.available_width() * 0.6).clamp(120.0, 320.0);
+        let (r, _) = ui.allocate_exact_size(egui::vec2(w, size + 10.0), egui::Sense::hover());
+        out.renamed = rename_field(ui, r, text, size);
+        return out;
+    }
+    let tip = lang.tr("Click to rename");
+    let label = ui.add(egui::Label::new(RichText::new(name).font(widgets::bold(size)).color(ws.text)).sense(egui::Sense::click())).on_hover_text(&tip).on_hover_cursor(egui::CursorIcon::Text);
+    let hot = ui.rect_contains_pointer(label.rect.expand2(egui::vec2(30.0, 2.0)));
+    let pencil = if hot {
+        widgets::icon_button(ui, icons::PENCIL_SIMPLE, 20.0).on_hover_text(&tip).clicked()
+    } else {
+        ui.add_space(20.0);
+        false
+    };
+    out.start = label.clicked() || pencil;
+    out
 }
 
 /// The damage entry: a code (6P, 8P AP-2, 4S), Soak roll (`soak`) and

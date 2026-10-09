@@ -257,9 +257,9 @@ const PLAY_PANELS: [crate::view::play::Panel; 10] = {
 };
 
 /// The parts of the GM screen.
-const GM_PANELS: [crate::gm_screen::workspace::Panel; 5] = {
+const GM_PANELS: [crate::gm_screen::workspace::Panel; 6] = {
     use crate::gm_screen::workspace::Panel as G;
-    [G::Encounter, G::Card, G::Players, G::Award, G::Notes]
+    [G::Encounter, G::Card, G::Players, G::Rolls, G::Award, G::Notes]
 };
 
 /// Every panel that can pop out.
