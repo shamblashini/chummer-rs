@@ -531,27 +531,68 @@ impl App {
         let after = self.views[i].ws_catalog_preview_after();
         let rules = self.views[i].rules.essence_decimals;
         egui::TopBottomPanel::top("ws_budget").exact_height(44.0).frame(egui::Frame::new().fill(ws.ground).inner_margin(Margin::symmetric(16, 0))).show(ctx, |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = 18.0;
-                for c in &chips {
-                    let next = after.as_ref().and_then(|(ess, nuyen, _)| {
-                        if c.label == self.lang.tr("Essence") && (*ess - self.views[i].sheet.essence).abs() > 1e-9 {
+            let lang = &self.lang;
+            let nexts: Vec<Option<String>> = chips
+                .iter()
+                .map(|c| {
+                    after.as_ref().and_then(|(ess, nuyen, _)| {
+                        if c.label == lang.tr("Essence") && (*ess - self.views[i].sheet.essence).abs() > 1e-9 {
                             Some(chummer_core::format::essence(*ess, rules))
-                        } else if c.label == self.lang.tr("Nuyen") {
+                        } else if c.label == lang.tr("Nuyen") {
                             Some(chummer_core::format::nuyen(*nuyen))
                         } else {
                             None
                         }
-                    });
-                    match next {
-                        Some(n) => widgets::budget_chip_after(ui, &c.label, &c.value, &n, c.fill, c.tone),
+                    })
+                })
+                .collect();
+            // What fits: Karma, Nuyen and Essence stay longest, then the
+            // strip's order; the rest goes behind "+N".
+            let gap = 18.0;
+            let widths: Vec<f32> = chips.iter().zip(&nexts).map(|(c, n)| widgets::budget_chip_width(ui, &c.label, &c.value, n.as_deref())).collect();
+            let key = [lang.tr("Karma"), lang.tr("Nuyen"), lang.tr("Essence")];
+            let n = chips.len();
+            let prio: Vec<u8> = chips.iter().enumerate().map(|(k, c)| if key.contains(&c.label) { 255 } else { (n - k).min(200) as u8 }).collect();
+            let preview_w = if after.is_some() { 170.0 } else { 0.0 };
+            let room = (ui.available_width() - preview_w).max(0.0);
+            let shown = widgets::fit_chips(&widths, &prio, room, gap, 44.0);
+            let hidden: Vec<usize> = (0..n).filter(|k| !shown[*k]).collect();
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                for (k, c) in chips.iter().enumerate().filter(|(k, _)| shown[*k]) {
+                    match &nexts[k] {
+                        Some(n) => widgets::budget_chip_after(ui, &c.label, &c.value, n, c.fill, c.tone),
                         None => widgets::budget_chip(ui, &c.label, &c.value, c.fill, c.tone),
                     };
+                }
+                if !hidden.is_empty() {
+                    let worst = hidden.iter().map(|k| chips[*k].tone).fold(widgets::Tone::Normal, |a, t| match (a, t) {
+                        (widgets::Tone::Error, _) | (_, widgets::Tone::Error) => widgets::Tone::Error,
+                        (widgets::Tone::Warning, _) | (_, widgets::Tone::Warning) => widgets::Tone::Warning,
+                        _ => widgets::Tone::Normal,
+                    });
+                    let r = widgets::button(ui, None, &format!("+{}", hidden.len()), widgets::Look::Ghost, 24.0);
+                    let tip = hidden.iter().map(|k| format!("{} {}", chips[*k].label, chips[*k].value)).collect::<Vec<_>>().join("\n");
+                    let r = r.on_hover_text(tip);
+                    if worst != widgets::Tone::Normal {
+                        let c = if worst == widgets::Tone::Error { ws.error } else { ws.warning };
+                        ui.painter().circle_filled(r.rect.right_top() + egui::vec2(-3.0, 3.0), 3.0, c);
+                    }
+                    egui::Popup::menu(&r).show(|ui| {
+                        ui.spacing_mut().item_spacing.y = 8.0;
+                        for k in &hidden {
+                            let c = &chips[*k];
+                            match &nexts[*k] {
+                                Some(n) => widgets::budget_chip_after(ui, &c.label, &c.value, n, c.fill, c.tone),
+                                None => widgets::budget_chip(ui, &c.label, &c.value, c.fill, c.tone),
+                            };
+                        }
+                    });
                 }
                 if let Some((_, _, what)) = &after {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 5.0;
-                        ui.add(egui::Label::new(RichText::new(self.lang.tr_fmt("Previewing {0}", &[what])).size(11.5).color(ws.muted)).truncate());
+                        ui.add(egui::Label::new(RichText::new(lang.tr_fmt("Previewing {0}", &[what])).size(11.5).color(ws.muted)).truncate());
                         ui.label(icons::icon(icons::EYE, 13.0, ws.muted));
                     });
                 }

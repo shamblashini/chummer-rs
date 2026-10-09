@@ -53,12 +53,12 @@ impl CharacterView {
     /// Whether the inspector's Item panel has something to show: an item,
     /// or the catalog's selected record.
     pub(crate) fn ws_inspector_has_item(&self) -> bool {
-        self.item_editor.is_some() || self.ws_catalog_has_selection()
+        self.item_editor.is_some() || self.ws_catalog_inspecting()
     }
 
     /// Close the Item panel: the item, or the catalog's selection.
     pub(crate) fn ws_inspector_close(&mut self) {
-        if self.ws_catalog_has_selection() {
+        if self.ws_catalog_inspecting() {
             self.ws_catalog_deselect();
         } else {
             self.item_editor = None;
@@ -67,7 +67,7 @@ impl CharacterView {
 
     /// The Item panel's contents. Returns true if the character changed.
     pub(crate) fn ws_inspector(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
-        if self.ws_catalog_has_selection() {
+        if self.ws_catalog_inspecting() {
             return self.ws_catalog_inspector(ui, engine, lang, pdfs, status);
         }
         let Some(guid) = self.item_editor.as_ref().map(|(g, _)| g.clone()) else { return false };

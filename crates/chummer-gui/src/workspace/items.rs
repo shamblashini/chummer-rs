@@ -60,6 +60,9 @@ pub struct GearState {
     pub(super) scroll_to: Option<String>,
     /// Keys go to the catalog (else the inventory); Tab switches.
     pub(super) focus_catalog: bool,
+    /// While a row is dragged: the inventory's drop targets
+    /// (`ws_inventory_drops`), with the key they were computed for.
+    pub(super) drops: Option<(u64, std::collections::HashMap<String, Result<String, String>>)>,
 }
 
 /// A visit of an item page: from showing it until another page shows.
@@ -125,7 +128,7 @@ impl CharacterView {
     /// open on the page shown and no owned item selected (the catalog's
     /// details strip shows its record instead).
     pub(crate) fn ws_inspector_folded(&self, window_width: f32) -> bool {
-        window_width < FOLD_INSPECTOR && self.item_editor.is_none() && self.ws_gear.catalog.as_ref().is_some_and(|c| self.ws_item_page(self.tab) == Some(c.page))
+        window_width < FOLD_INSPECTOR && (self.item_editor.is_none() || self.ws_catalog_inspecting()) && self.ws_gear.catalog.as_ref().is_some_and(|c| self.ws_item_page(self.tab) == Some(c.page))
     }
 
     /// The Workspace page for an item tab, `None` for other tabs. Returns
@@ -301,7 +304,9 @@ impl CharacterView {
         let cols = ws_inventory::columns(sec.container, self.doc.created, lang);
         let id = ws_inventory::table_id(page);
         let sort = table::sort_of(ui.ctx(), id);
-        let rows = self.ws_inventory_rows(sec, &cols, lang, sort);
+        let group = if sec.container == "drugs" { table::GroupBy::Default } else { table::group_of(ui.ctx(), id) };
+        let rows = self.ws_inventory_rows(sec, &cols, lang, sort, group);
+        self.ws_inventory_drops(ui.ctx(), page, sec, &rows, lang);
         let added: HashSet<String> = self.ws_gear.visit.as_ref().map(|v| v.adds.iter().map(|a| a.guid.clone()).filter(|g| edit::find(&self.doc, g).is_some()).collect()).unwrap_or_default();
         let events;
         let mut undo_all = false;
@@ -331,6 +336,10 @@ impl CharacterView {
         hu.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             table::columns_button(ui, id, &cols, lang);
+            if sec.container != "drugs" {
+                let default = if sec.container == "cyberwares" { lang.tr("Type") } else if sec.container == "lifestyles" { lang.tr("Chummer's groups") } else { lang.tr("Location") };
+                table::group_button(ui, id, &[(table::GroupBy::Default, default), (table::GroupBy::Category, lang.tr("Category")), (table::GroupBy::None, lang.tr("None"))], lang);
+            }
             let parents = table::parent_keys(&rows);
             if !parents.is_empty() {
                 let all_open = table::closed_of(ui.ctx(), id).is_empty();
@@ -371,7 +380,7 @@ impl CharacterView {
         let focused = !catalog_open || !self.ws_gear.focus_catalog;
         {
             let states = self.ws_inventory_states(lang, &added);
-            let t = table::Table::new(ws_inventory::table_salt(page), &cols).height(table_rect.height()).footer(footer).focused(focused);
+            let t = table::Table::new(ws_inventory::table_salt(page), &cols).height(table_rect.height()).footer(footer).focused(focused).draggable().row_menu();
             let t = t.empty(empty);
             events = t.show(&mut tu, &rows, &states, lang, |_, _| {});
         }
@@ -406,6 +415,9 @@ impl CharacterView {
                     changed |= self.ws_undo_added(sec, &g, status);
                 }
             }
+        }
+        if let Some((key, to)) = out.drop_buy {
+            changed |= self.ws_catalog_drop_buy(&key, to, lang, status);
         }
         if let Some((tag, into)) = out.buy {
             if !catalog_open || self.ws_gear.catalog.as_ref().is_some_and(|c| !c.sells(&tag)) {

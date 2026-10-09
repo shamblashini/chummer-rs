@@ -997,12 +997,13 @@ fn gear_catalog_pick(h: &mut Harness, i: usize, search: &str) {
 }
 
 /// Click the inline Undo of the row showing the "Added" chip: left of
-/// Remove, at the right end of the actions column (where the footer's
-/// note ends).
+/// Remove and the ⋯, at the right end of the actions column (where the
+/// footer's note ends).
 fn click_inline_undo(h: &mut Harness) {
     let chip = h.find_text(&h.app.lang.tr("Added")).expect("the new row has the Added chip");
     let tail = h.find_text(&h.app.lang.tr("purchase value")).expect("the inventory's footer");
-    h.click_at(Pos2::new(tail.right() - 22.0 - 2.0 - 11.0, chip.center().y));
+    // ⋯ at the right end, Remove left of it, then Undo.
+    h.click_at(Pos2::new(tail.right() - 2.0 * (22.0 + 2.0) - 11.0, chip.center().y));
     h.frames(2);
 }
 
@@ -1072,38 +1073,274 @@ fn workspace_inventory_narrow_stacks() {
     assert!(h.find_text(&cat).unwrap().bottom() < h.find_text(&inv).unwrap().top());
 }
 
-/// Workspace inventory: selecting a container makes it the catalog's
-/// target ("Adding into", the Target chip); what does not fit it is
-/// dimmed with a reason; Add puts the item inside; × adds at the top
-/// level again.
+/// Workspace inventory: the selected inventory row becomes the
+/// catalog's target when it can hold the selected record ("Adding into",
+/// the Target chip, its free capacity); when it cannot, the purchase goes
+/// to the top level and the bar says why. What does not fit a target is
+/// dimmed with the reason; Add puts the item inside; × adds at the top
+/// level again. The inspector has no "Install in" choice.
 #[test]
 fn workspace_inventory_adds_into_the_target() {
     let mut h = Harness::new(ThemeKind::WorkspaceDark);
     h.size = TALL;
     let i = h.open(&fixture("Munin.chum5"));
     gear_catalog_pick(&mut h, i, "Flashlight");
+    assert!(h.find_text(&h.app.lang.tr("Install in")).is_none(), "no Install in choice: {:?}", h.on_screen());
     let glasses = gear_guid(&h, "Glasses");
-    // The inventory's "Glasses" (right of the catalog's).
-    let row = h.texts.iter().filter(|(t, _)| t == "Glasses").map(|(_, r)| *r).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap_or_else(|| panic!("Glasses in the inventory: {:?}", h.on_screen()));
+    // Munin's glasses (rating 2) are full: a vision enhancement is
+    // refused with the reason.
+    let row = inventory_row(&h, "Glasses");
     h.click_at(row.center());
     h.frames(2);
+    catalog_search(&mut h, i, "Vision Magnification");
+    h.frames(1);
+    assert!(h.app.views[i].ws_catalog_target_guid().is_none());
+    assert!(h.find_where(|t| t.contains("Glasses is full (2/2 capacity used")).is_some(), "{:?}", h.on_screen());
+    // Rating 4 has room.
+    assert!(h.app.views[i].doc_mut().set(chummer_core::command::Command::SetItemRating { guid: glasses.clone(), rating: 4 }));
+    catalog_search(&mut h, i, "Flashlight");
+    // The inventory's "Glasses" (right of the catalog's).
+    let row = inventory_row(&h, "Glasses");
+    h.click_at(row.center());
+    h.frames(2);
+    // A flashlight does not go into glasses: top level, and why.
+    assert!(h.app.views[i].ws_catalog_target_guid().is_none(), "a flashlight cannot go into the glasses");
+    assert!(h.find_text(&h.app.lang.tr("Adding at the top level")).is_some(), "{:?}", h.on_screen());
+    assert!(h.find_where(|t| t.contains("only takes")).is_some(), "the bar says why: {:?}", h.on_screen());
+    // A vision enhancement does: the selected glasses are the target.
+    catalog_search(&mut h, i, "Vision Magnification");
+    h.frames(1);
     assert_eq!(h.app.views[i].ws_catalog_target_guid().as_deref(), Some(glasses.as_str()), "the selected container is the target");
     assert!(h.find_text(&h.app.lang.tr("Adding into")).is_some() && h.find_where(|t| t.contains(&h.app.lang.tr("Target"))).is_some(), "{:?}", h.on_screen());
-    // Glasses take vision enhancements only: a flashlight is dimmed.
-    let reason = h.app.lang.tr_fmt("Not for {0}", &[&"Glasses"]);
-    assert!(h.find_where(|t| t.contains(&reason)).is_some(), "a flashlight does not fit glasses: {:?}", h.on_screen());
+    assert!(h.find_where(|t| t.ends_with(" capacity") && t.contains('/')).is_some(), "the target's free capacity: {:?}", h.on_screen());
+    // What does not fit is dimmed with the reason.
+    catalog_search(&mut h, i, "Flashlight");
+    h.frames(1);
+    catalog_search(&mut h, i, "Vision Magnification");
     let kids = |h: &Harness| chummer_core::items::edit::children(h.app.views[i].ch(), &glasses).len();
     let before = kids(&h);
-    catalog_search(&mut h, i, "Vision Magnification");
     h.key(Key::Enter, Modifiers::NONE);
     h.frames(2);
     assert_eq!(kids(&h), before + 1, "Add puts it into the glasses ({:?})", h.app.status);
+    assert!(h.find_text(&h.app.lang.tr("Install in")).is_none());
     // × (add at the top level instead).
     let bar = h.find_text(&h.app.lang.tr("Adding into")).expect("the target bar");
     let change = h.find_text(&h.app.lang.tr("Change")).expect("Change");
     h.click_at(Pos2::new(change.right() + 4.0 + 13.0 + 8.0, bar.center().y));
     h.frames(2);
     assert!(h.app.views[i].ws_catalog_target_guid().is_none(), "× clears the target: {:?}", h.on_screen());
+}
+
+/// The inventory's row of `name`: the rightmost text (the catalog's
+/// rows are left of the inventory).
+fn inventory_row(h: &Harness, name: &str) -> Rect {
+    h.texts.iter().filter(|(t, _)| t == name).map(|(_, r)| *r).max_by(|a, b| a.left().total_cmp(&b.left())).unwrap_or_else(|| panic!("{name} in the inventory: {:?}", h.on_screen()))
+}
+
+/// The catalog's row of `name`: in the left half, below the search field
+/// (the lowest such text).
+fn catalog_row(h: &Harness, name: &str) -> Rect {
+    let mid = h.size.x / 2.0;
+    h.texts.iter().filter(|(t, r)| t == name && r.left() < mid).map(|(_, r)| *r).max_by(|a, b| a.top().total_cmp(&b.top())).unwrap_or_else(|| panic!("{name} in the catalog: {:?}", h.on_screen()))
+}
+
+/// Drag with the primary button from `from` to `to` in small steps.
+fn drag(h: &mut Harness, from: Pos2, to: Pos2) {
+    let button = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+    h.frame(vec![Event::PointerMoved(from)]);
+    h.frame(vec![button(from, true)]);
+    for k in 1..=8 {
+        let t = k as f32 / 8.0;
+        h.frame(vec![Event::PointerMoved(from + (to - from) * t)]);
+    }
+    h.frame(vec![Event::PointerMoved(to)]);
+    h.frame(vec![button(to, false)]);
+    h.frames(2);
+}
+
+/// Buy gear with a command (no catalog); returns its guid.
+fn buy_gear(h: &mut Harness, i: usize, name: &str, rating: i32, parent: Option<&str>) -> String {
+    use chummer_core::command::{Command, RecordRef};
+    let before: Vec<String> = h.app.views[i].ch().items("gears", "gear").iter().map(|g| g.get("guid")).collect();
+    let purchase = chummer_core::items::Purchase { rating, qty: 1.0, parent: parent.map(str::to_owned), cost_multiplier: 1.0, ..Default::default() };
+    h.app.views[i].doc_mut().apply(Command::AddItem { tag: "gear".into(), record: RecordRef { id: String::new(), name: name.into() }, purchase }).unwrap();
+    h.frames(2);
+    h.app.views[i].ch().items("gears", "gear").iter().map(|g| g.get("guid")).find(|g| !before.contains(g)).unwrap_or_default()
+}
+
+/// Workspace inventory: the ⋯ menu of a row that is not selected opens
+/// with a click on the ⋯ (always there, muted), with a right-click on
+/// the row and with Shift+F10 on the selected row, and stays open while
+/// the pointer goes elsewhere; its entries work.
+#[test]
+fn workspace_inventory_row_menu_is_reachable() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin.chum5"));
+    h.app.views[i].ws_go(Section::Gear(0));
+    h.frames(3);
+    let remove = h.app.lang.tr("Remove (also removes its improvements)");
+    let menu_open = |h: &Harness| h.find_where(|t| t.contains(&remove)).is_some();
+    assert!(!menu_open(&h));
+    // The ⋯ of the Trode Patch row (not selected, not hovered): at the
+    // right end of the actions column, where the footer's note ends.
+    let row = inventory_row(&h, "Trode Patch");
+    let tail = h.find_text(&h.app.lang.tr("purchase value")).expect("the inventory's footer");
+    let dots = Pos2::new(tail.right() - 11.0, row.center().y);
+    h.click_at(dots);
+    h.frames(1);
+    assert!(menu_open(&h), "the ⋯ opens the row's menu: {:?}", h.on_screen());
+    // The pointer leaves for another row and the empty page: still open.
+    let other = inventory_row(&h, "Psyche");
+    h.frame(vec![Event::PointerMoved(other.center())]);
+    h.frame(vec![Event::PointerMoved(Pos2::new(row.left(), row.center().y + 400.0))]);
+    h.frames(2);
+    assert!(menu_open(&h), "the menu stays open while the pointer moves away");
+    // Escape closes it.
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frames(1);
+    assert!(!menu_open(&h), "Escape closes it");
+    // Right-click on the row opens the same menu.
+    let pos = row.center();
+    let button = |pressed| Event::PointerButton { pos, button: PointerButton::Secondary, pressed, modifiers: Modifiers::NONE };
+    h.frame(vec![Event::PointerMoved(pos)]);
+    h.frame(vec![button(true)]);
+    h.frame(vec![button(false)]);
+    h.frames(2);
+    assert!(menu_open(&h), "right-click opens it: {:?}", h.on_screen());
+    // Edit selects the item.
+    let edit = h.app.lang.tr("Edit");
+    h.click_where("Edit in the menu", |t| t.ends_with(&format!("  {edit}")));
+    h.frames(2);
+    let trode = gear_guid(&h, "Trode Patch");
+    assert_eq!(h.app.views[i].item_editor_guid().as_deref(), Some(trode.as_str()), "Edit selected the item");
+    assert!(!menu_open(&h));
+    // Shift+F10 opens it for the selected row.
+    h.frame(vec![Event::PointerMoved(Pos2::new(5.0, 5.0))]);
+    h.key(Key::F10, Modifiers::SHIFT);
+    h.frames(2);
+    assert!(menu_open(&h), "Shift+F10 opens it: {:?}", h.on_screen());
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frames(1);
+}
+
+/// Workspace inventory: drag an owned row onto a container: it moves in
+/// (MoveItem; one undo step); a drop where it cannot go does nothing and
+/// the dragged chip says why.
+#[test]
+fn workspace_inventory_drag_into_a_container() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin.chum5"));
+    h.app.views[i].ws_go(Section::Gear(0));
+    h.frames(2);
+    let goggles = buy_gear(&mut h, i, "Goggles", 3, None);
+    h.frames(2);
+    let flare = {
+        let ch = h.app.views[i].ch();
+        let glasses = ch.items("gears", "gear").into_iter().find(|g| g.get("name") == "Glasses").unwrap();
+        glasses.child("children").unwrap().children_named("gear").find(|g| g.get("name") == "Flare Compensation").unwrap().get("guid")
+    };
+    let from = inventory_row(&h, "Flare Compensation").center();
+    let to = inventory_row(&h, "Goggles").center();
+    drag(&mut h, from, to);
+    let parent = chummer_core::items::edit::parent(h.app.views[i].ch(), &flare).map(|p| p.get("guid"));
+    assert_eq!(parent.as_deref(), Some(goggles.as_str()), "dropped into the goggles ({:?})", h.app.status);
+    assert!(h.app.views[i].doc().undo_label().unwrap_or_default().contains("Moved Flare Compensation into Goggles"));
+    // Onto the drug (no container): refused, it stays.
+    let from = inventory_row(&h, "Flare Compensation").center();
+    let to = inventory_row(&h, "Psyche").center();
+    let button = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+    h.frame(vec![Event::PointerMoved(from)]);
+    h.frame(vec![button(from, true)]);
+    for k in 1..=8 {
+        h.frame(vec![Event::PointerMoved(from + (to - from) * (k as f32 / 8.0))]);
+    }
+    h.frames(1);
+    assert!(h.find_where(|t| t.contains("Psyche only takes")).is_some(), "the chip says why: {:?}", h.on_screen());
+    // Escape cancels the drag.
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frame(vec![button(to, false)]);
+    h.frames(2);
+    let parent = chummer_core::items::edit::parent(h.app.views[i].ch(), &flare).map(|p| p.get("guid"));
+    assert_eq!(parent.as_deref(), Some(goggles.as_str()), "still in the goggles");
+}
+
+/// Workspace inventory: drag a catalog record onto a location header:
+/// bought into that location; onto a container: bought into it.
+#[test]
+fn workspace_catalog_drag_onto_a_location_and_a_container() {
+    use chummer_core::command::Command;
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin.chum5"));
+    let psyche = gear_guid(&h, "Psyche");
+    assert!(h.app.views[i].doc_mut().set(Command::AddItemLocation { guid: psyche, name: "Car".into() }));
+    gear_catalog_pick(&mut h, i, "Flashlight");
+    let car = chummer_core::items::edit::locations(h.app.views[i].ch(), &gear_guid(&h, "Psyche"))[0].0.clone();
+    let count = gear_count(&h);
+    let from = catalog_row(&h, "Flashlight").center();
+    let to = inventory_row(&h, "Car").center();
+    drag(&mut h, from, to);
+    assert_eq!(gear_count(&h), count + 1, "bought ({:?})", h.app.status);
+    let new = h.app.views[i].ch().items("gears", "gear").into_iter().rev().find(|g| g.get("name") == "Flashlight").unwrap().get("location");
+    assert_eq!(new, car, "in the Car location");
+    // A vision enhancement dropped on the glasses (with room at rating
+    // 4) goes inside.
+    let glasses = gear_guid(&h, "Glasses");
+    assert!(h.app.views[i].doc_mut().set(Command::SetItemRating { guid: glasses.clone(), rating: 4 }));
+    catalog_search(&mut h, i, "Thermographic Vision");
+    let kids = |h: &Harness| chummer_core::items::edit::children(h.app.views[i].ch(), &glasses).len();
+    let before = kids(&h);
+    let from = catalog_row(&h, "Thermographic Vision").center();
+    let to = inventory_row(&h, "Glasses").center();
+    drag(&mut h, from, to);
+    assert_eq!(kids(&h), before + 1, "bought into the glasses ({:?})", h.app.status);
+}
+
+/// Workspace inventory: "Group by" category and none; remembered.
+#[test]
+fn workspace_inventory_group_by() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin.chum5"));
+    h.app.views[i].ws_go(Section::Gear(0));
+    h.frames(2);
+    let selected = h.app.lang.tr("Selected Gear");
+    assert!(h.find_text(&selected).is_some(), "{:?}", h.on_screen());
+    let id = crate::view::ws_inventory::table_id((Tab::StreetGear, 0));
+    crate::workspace::table::set_group(&h.ctx, id, crate::workspace::table::GroupBy::Category);
+    h.frames(2);
+    assert!(h.find_text(&selected).is_none());
+    assert!(h.find_text("Vision Devices").is_some() && h.find_text("Commlinks").is_some(), "category groups: {:?}", h.on_screen());
+    assert!(h.find_text("Flare Compensation").is_some(), "children stay with their parent");
+    crate::workspace::table::set_group(&h.ctx, id, crate::workspace::table::GroupBy::None);
+    h.frames(2);
+    assert!(h.find_text("Vision Devices").is_none() && h.find_text("Glasses").is_some());
+    assert_eq!(crate::workspace::table::group_of(&h.ctx, id), crate::workspace::table::GroupBy::None);
+}
+
+/// Workspace: the budget strip never runs off the edge; at a narrow
+/// width the less important chips go behind "+N".
+#[test]
+fn workspace_budget_strip_fits() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    let i = h.open(&fixture("Munin.chum5"));
+    h.app.views[i].ws_go(Section::Gear(0));
+    for w in [1024.0, 800.0, 640.0] {
+        h.size = Vec2::new(w, 768.0);
+        h.frames(3);
+        let karma = h.app.lang.tr("Karma").to_uppercase();
+        let k = h.find_text(&karma).unwrap_or_else(|| panic!("the Karma chip at {w}: {:?}", h.on_screen()));
+        for (t, r) in &h.texts {
+            if (r.center().y - k.center().y).abs() < 12.0 {
+                assert!(r.right() <= w + 0.5, "{t:?} runs off the edge at {w}: {r:?}");
+            }
+        }
+        if w <= 800.0 {
+            assert!(h.find_where(|t| t.starts_with('+') && t[1..].parse::<u32>().is_ok()).is_some(), "+N at {w}: {:?}", h.on_screen());
+        }
+    }
 }
 
 /// Workspace inventory: a header click sorts (high to low first for

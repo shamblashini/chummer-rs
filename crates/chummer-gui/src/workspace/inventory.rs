@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use chummer_core::command::Command;
 use chummer_core::format;
-use chummer_core::items::edit;
+use chummer_core::items::{edit, place};
 use chummer_core::lang::Language;
 use chummer_core::play::ammo;
 use chummer_core::sections::Section as Sec;
@@ -35,8 +35,9 @@ use crate::workspace::table::{self, Action, Cell, Col, Edit, Event, Kind, Row, R
 /// The Drugs page's items (no tree section of their own).
 pub const DRUGS: Sec = Sec { label: "Drugs", container: "drugs", item: "drug", columns: &[], child_containers: &[], data_file: "drugs.xml" };
 
-/// What the rows are built for (besides the revision).
-pub type RowsKey = (&'static str, String, Option<(String, bool)>, bool);
+/// What the rows are built for (besides the revision): container,
+/// language, sort, career mode, grouping.
+pub type RowsKey = (&'static str, String, Option<(String, bool)>, bool, u8);
 
 /// The inventory's columns for a section's container.
 pub fn columns(container: &str, career: bool, lang: &Language) -> Vec<Col> {
@@ -160,17 +161,18 @@ struct Ctx<'a> {
 impl CharacterView {
     /// The rows of a section's inventory, from the memo when nothing
     /// changed.
-    pub(super) fn ws_inventory_rows(&self, sec: &Sec, cols: &[Col], lang: &Language, sort: Option<(String, bool)>) -> Arc<Vec<Row>> {
-        let key: RowsKey = (sec.container, lang.code.clone(), sort.clone(), self.doc.created);
+    pub(super) fn ws_inventory_rows(&self, sec: &Sec, cols: &[Col], lang: &Language, sort: Option<(String, bool)>, group: table::GroupBy) -> Arc<Vec<Row>> {
+        let key: RowsKey = (sec.container, lang.code.clone(), sort.clone(), self.doc.created, group as u8);
         self.ws_gear.rows.get(self.doc.revision(), key, || {
             let _s = crate::trace::span("inventory rows");
             let cx = Ctx { v: self, sec, cols, lang, marks: self.item_marks(lang), career: self.doc.created, shares: Default::default() };
-            let mut rows = if sec.container == "drugs" {
+            let rows = if sec.container == "drugs" {
                 self.doc.items("drugs", "drug").iter().map(|d| cx.item(d, d.get("guid"), true, &[])).collect()
             } else {
                 let tree = chummer_core::tree::section_tree(&self.doc.doc, sec);
                 tree.iter().map(|n| cx.node(n)).collect::<Vec<Row>>()
             };
+            let mut rows = table::regroup(rows, group, sec.container, &lang.tr("Other"), |n| items_note(lang, n));
             if let Some((k, asc)) = &sort {
                 if let Some(i) = cols.iter().position(|c| c.key == k) {
                     table::sort_tree(&mut rows, i, *asc);
@@ -447,12 +449,17 @@ impl Ctx<'_> {
         if selectable && el.name != "drug" {
             actions.push(Action::new("edit", icons::PENCIL_SIMPLE, lang.tr("Edit")));
         }
-        // "Move to …" entries (a button in creation, in More in career).
-        let moves: Vec<(String, String)> = if !guid.is_empty() && edit::has_location(ch, &guid) {
+        // "Move to …" entries: the locations (top-level items), out of
+        // the item it is in (nested items).
+        let mut moves: Vec<(String, String)> = if !guid.is_empty() && edit::has_location(ch, &guid) {
             std::iter::once((String::new(), lang.tr("No location"))).chain(edit::locations(ch, &guid)).map(|(g, n)| (format!("move:{g}"), lang.tr_fmt("Move to {0}", &[&n]))).collect()
         } else {
             Vec::new()
         };
+        if !top && !guid.is_empty() && !included && place::check(ch, &v.store, place::Candidate::Owned(&guid), &place::Dest::Top, false).is_ok() {
+            let from = edit::parent(ch, &guid).map(|p| display_name(self.sec, p, lang)).unwrap_or_default();
+            moves.push(("out".into(), lang.tr_fmt("Move out of {0}", &[&from])));
+        }
         if !self.career && !moves.is_empty() {
             actions.push(Action::new("more", icons::ARROWS_OUT_CARDINAL, lang.tr("Move…")).menu(moves.clone()));
         }
@@ -484,6 +491,10 @@ impl Ctx<'_> {
             "drug" => el.get("name"),
             _ => display_name(self.sec, el, lang),
         };
+        let category = match el.name.as_str() {
+            "cyberware" | "gear" | "armor" | "weapon" | "vehicle" | "drug" | "lifestyle" => lang.data_name(self.sec.data_file, "", &el.get(if el.name == "lifestyle" { "baselifestyle" } else { "category" })),
+            _ => el.get("category"),
+        };
         let mut hover = el.get("notes");
         if included {
             hover = [lang.tr("Included with its parent item."), hover].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
@@ -502,6 +513,7 @@ impl Ctx<'_> {
                 actions,
                 rename,
                 kids_label,
+                category,
                 ..Default::default()
             },
         )
@@ -557,6 +569,25 @@ pub struct Outcome {
     pub changed: bool,
     /// Open the catalog for kind `.0`, into item / location `.1`.
     pub buy: Option<(String, Option<String>)>,
+    /// A catalog row (its key) dropped on a place.
+    pub drop_buy: Option<(String, place::Dest)>,
+}
+
+/// Where a drop on row `key` puts an item: inside the item (keys of
+/// item rows are guids), in a location (`{container}/loc/{guid}`), or at
+/// the top level (the page's own top groups). Other rows are no target.
+pub fn drop_dest(key: &str, container: &str) -> Option<place::Dest> {
+    let key = key.strip_suffix("/empty").unwrap_or(key);
+    if let Some(rest) = key.strip_prefix(container).and_then(|r| r.strip_prefix('/')) {
+        if let Some(g) = rest.strip_prefix("loc/") {
+            return (!g.contains('/')).then(|| place::Dest::Location(g.to_owned()));
+        }
+        if rest.starts_with("cat/") || rest.contains('/') {
+            return None;
+        }
+        return Some(place::Dest::Top);
+    }
+    (!key.contains('/') && !key.is_empty()).then(|| place::Dest::Item(key.to_owned()))
 }
 
 impl CharacterView {
@@ -619,8 +650,10 @@ impl CharacterView {
                     ("remove", _) => self.ws_ask_remove(sec, &k, lang),
                     ("more", Some(c)) if c.starts_with("move:") => {
                         let loc = c.trim_start_matches("move:").to_owned();
-                        out.changed |= self.doc.set(Command::SetItemText { guid: k, field: "location".into(), value: loc });
+                        let to = if loc.is_empty() { place::Dest::Top } else { place::Dest::Location(loc) };
+                        out.changed |= self.doc.run(Command::MoveItem { item: k, to }, status).is_some();
                     }
+                    ("more", Some(c)) if c == "out" => out.changed |= self.doc.run(Command::MoveItem { item: k, to: place::Dest::Top }, status).is_some(),
                     ("sell", Some(p)) => {
                         let fraction = p.parse::<f64>().unwrap_or(50.0) / 100.0;
                         if let Some(r) = self.doc.run(Command::SellItem { guid: k, fraction }, status) {
@@ -648,9 +681,26 @@ impl CharacterView {
                     out.buy = Some((tag.to_owned(), loc));
                 }
                 Event::Undo(k) => out.changed |= self.ws_undo_added(sec, &k, status),
+                Event::Drop(from, onto) => {
+                    let Some(to) = drop_dest(&onto, sec.container) else { continue };
+                    if from.table == table_id(page) {
+                        if let Some(r) = self.doc.run(Command::MoveItem { item: from.key, to }, status) {
+                            *status = r.message.map(|m| (m, false));
+                            out.changed = true;
+                        }
+                    } else {
+                        out.drop_buy = Some((from.key, to));
+                    }
+                }
             }
         }
         out
+    }
+
+    /// The item the inspector shows (tests).
+    #[cfg(test)]
+    pub(crate) fn item_editor_guid(&self) -> Option<String> {
+        self.item_editor.as_ref().map(|(g, _)| g.clone())
     }
 
     /// Select an owned item: it shows in the inspector; the catalog keeps
@@ -716,7 +766,90 @@ impl CharacterView {
             };
             (g, tip, can)
         });
-        States { selected, target, added: Some(added), just_added: just, scroll_to: self.ws_gear.scroll_to.as_deref() }
+        let drops = self.ws_gear.drops.as_ref().map(|(_, d)| d);
+        States { selected, target, added: Some(added), just_added: just, scroll_to: self.ws_gear.scroll_to.as_deref(), drops }
+    }
+}
+
+/// A refusal in the user's language: the [`place::Misfit`] sentence
+/// with the item's and the place's names.
+pub fn misfit_text(lang: &Language, m: &place::Misfit, item: &str, place: &str) -> String {
+    let (t, extra) = m.template();
+    let mut args: Vec<&dyn std::fmt::Display> = vec![&item, &place];
+    for e in &extra {
+        args.push(e);
+    }
+    lang.tr_fmt(t, &args)
+}
+
+impl CharacterView {
+    /// The name of a drop's place, for the hints.
+    fn ws_place_name(&self, sec: &Sec, to: &place::Dest, lang: &Language) -> String {
+        match to {
+            place::Dest::Item(g) => edit::find(&self.doc, g).map(|e| display_name(sec, e, lang)).unwrap_or_default(),
+            place::Dest::Top => lang.tr("the top level"),
+            to => place::place_name(&self.doc, to),
+        }
+    }
+
+    /// The drop targets of the row being dragged (an inventory row or a
+    /// catalog record) among `rows`: what a drop does, or why it cannot.
+    /// Kept while the drag and the character stay the same.
+    pub(super) fn ws_inventory_drops(&mut self, ctx: &egui::Context, page: Page, sec: &Sec, rows: &[Row], lang: &Language) {
+        let Some(p) = table::dragging(ctx) else {
+            self.ws_gear.drops = None;
+            return;
+        };
+        let owned = p.table == table_id(page);
+        let record = if owned { None } else { self.ws_catalog_record_at(&p.key) };
+        if !owned && record.is_none() {
+            self.ws_gear.drops = None;
+            return;
+        }
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (p.table, &p.key, self.doc.revision(), record.as_ref().map(|r| r.2)).hash(&mut h);
+            h.finish()
+        };
+        if self.ws_gear.drops.as_ref().is_some_and(|(k, _)| *k == key) {
+            return;
+        }
+        let enforce = self.settings.as_ref().is_none_or(|s| s.flag("enforcecapacity"));
+        let here = if owned { place::current(&self.doc, &p.key) } else { None };
+        let mut keys = Vec::new();
+        fn walk(rows: &[Row], out: &mut Vec<String>) {
+            for r in rows {
+                out.push(r.key.clone());
+                walk(&r.children, out);
+            }
+        }
+        walk(rows, &mut keys);
+        let mut map = std::collections::HashMap::new();
+        for k in keys {
+            let Some(to) = drop_dest(&k, sec.container) else { continue };
+            if here.as_ref() == Some(&to) || (owned && k == p.key) {
+                continue;
+            }
+            let cand = match &record {
+                Some((tag, rec, rating, _)) => place::Candidate::Record { tag: tag.as_str(), rec, rating: *rating },
+                None => place::Candidate::Owned(&p.key),
+            };
+            let place_name = self.ws_place_name(sec, &to, lang);
+            let r = match place::check(&self.doc, &self.store, cand, &to, enforce) {
+                Ok(()) => Ok(match (&to, owned) {
+                    (place::Dest::Item(_), true) => lang.tr_fmt("Move into {0}", &[&place_name]),
+                    (place::Dest::Item(_), false) => lang.tr_fmt("Add into {0}", &[&place_name]),
+                    (place::Dest::Top, true) => lang.tr("Move to the top level"),
+                    (place::Dest::Top, false) => lang.tr("Add at the top level"),
+                    (_, true) => lang.tr_fmt("Move to {0}", &[&place_name]),
+                    (_, false) => lang.tr_fmt("Add to {0}", &[&place_name]),
+                }),
+                Err(m) => Err(misfit_text(lang, &m, &p.label, &place_name)),
+            };
+            map.insert(k, r);
+        }
+        self.ws_gear.drops = Some((key, map));
     }
 }
 
@@ -742,4 +875,22 @@ pub fn table_salt(page: Page) -> (&'static str, u8, usize) {
 /// The table id egui memory uses for a page's inventory.
 pub fn table_id(page: Page) -> egui::Id {
     table::table_id(table_salt(page))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drop_dest;
+    use chummer_core::items::place::Dest;
+
+    #[test]
+    fn drop_targets_from_row_keys() {
+        assert_eq!(drop_dest("6a4d1c2e-0000-4000-8000-000000000001", "gears"), Some(Dest::Item("6a4d1c2e-0000-4000-8000-000000000001".into())));
+        assert_eq!(drop_dest("gears/loc/abc", "gears"), Some(Dest::Location("abc".into())));
+        assert_eq!(drop_dest("gears/loc/abc/empty", "gears"), Some(Dest::Location("abc".into())), "an empty location's card");
+        assert_eq!(drop_dest("gears/Selected Gear", "gears"), Some(Dest::Top));
+        assert_eq!(drop_dest("cyberwares/Bioware", "cyberwares"), Some(Dest::Top));
+        assert_eq!(drop_dest("gears/cat/Commlinks", "gears"), None, "category groups are no place");
+        assert_eq!(drop_dest("v-guid/loc/x", "vehicles"), None, "a vehicle's own locations are not handled");
+        assert_eq!(drop_dest("v-guid/modcat/Body", "vehicles"), None);
+    }
 }

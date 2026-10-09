@@ -246,6 +246,42 @@ pub fn budget_chip(ui: &mut Ui, label: &str, value: &str, fill: Option<f32>, ton
     .response
 }
 
+/// The width a [`budget_chip`] (or [`budget_chip_after`] with `after`)
+/// takes.
+pub fn budget_chip_width(ui: &Ui, label: &str, value: &str, after: Option<&str>) -> f32 {
+    let p = ui.painter();
+    let w = |t: String, f: FontId| p.layout_no_wrap(t, f, Color32::PLACEHOLDER).size().x;
+    let cap = w(label.to_uppercase(), FontId::proportional(10.5));
+    let val = match after {
+        Some(a) => w(value.to_owned(), FontId::monospace(12.5)) + 4.0 + w(icons::ARROW_RIGHT.to_owned(), FontId::proportional(10.0)) + 4.0 + w(a.to_owned(), FontId::monospace(12.5)),
+        None => w(value.to_owned(), FontId::monospace(12.5)),
+    };
+    cap.max(val).max(78.0)
+}
+
+/// Which chips of the budget strip show in `room` points: all when they
+/// fit; else the lowest `prio` ones go first (later ones first among
+/// equals) until the rest and a "+N" button of `more` points fit, with
+/// `gap` between them. The order is kept.
+pub fn fit_chips(widths: &[f32], prio: &[u8], room: f32, gap: f32, more: f32) -> Vec<bool> {
+    let total = |on: &[bool], extra: f32| -> f32 {
+        let n = on.iter().filter(|o| **o).count();
+        widths.iter().zip(on).filter(|(_, o)| **o).map(|(w, _)| *w).sum::<f32>() + gap * n.saturating_sub(1) as f32 + extra
+    };
+    let mut on = vec![true; widths.len()];
+    if total(&on, 0.0) <= room {
+        return on;
+    }
+    while on.iter().any(|o| *o) && total(&on, gap + more) > room {
+        let victim = (0..widths.len()).filter(|i| on[*i]).min_by_key(|i| (prio.get(*i).copied().unwrap_or(0), std::cmp::Reverse(*i)));
+        match victim {
+            Some(i) => on[i] = false,
+            None => break,
+        }
+    }
+    on
+}
+
 /// A [`budget_chip`] with the value a purchase would leave: "2.35 → 2.15".
 pub fn budget_chip_after(ui: &mut Ui, label: &str, value: &str, after: &str, fill: Option<f32>, tone: Tone) -> Response {
     let ws = theme::ws(ui);
@@ -1354,5 +1390,28 @@ mod build_tests {
     fn columns_share_what_is_left() {
         assert_eq!(super::columns(500.0, &[0.0, 100.0, 50.0], 10.0), vec![330.0, 100.0, 50.0]);
         assert_eq!(super::columns(100.0, &[0.0, 100.0], 10.0)[0], 80.0, "the flexible column keeps a minimum");
+    }
+}
+
+#[cfg(test)]
+mod chip_tests {
+    use super::fit_chips;
+
+    #[test]
+    fn budget_chips_that_do_not_fit_go_lowest_priority_first() {
+        let w = [78.0; 9];
+        // 9 × 78 + 8 × 18 = 846.
+        assert_eq!(fit_chips(&w, &[1; 9], 846.0, 18.0, 44.0), vec![true; 9], "all fit");
+        // Karma, Nuyen, Essence (the last three) stay; later ones of equal
+        // priority go first.
+        let prio = [9, 8, 7, 6, 5, 4, 255, 255, 255];
+        let on = fit_chips(&w, &prio, 600.0, 18.0, 44.0);
+        assert_eq!(on, [true, true, false, false, false, false, true, true, true]);
+        let used: f32 = w.iter().zip(&on).filter(|(_, o)| **o).map(|(w, _)| w).sum::<f32>() + 18.0 * 6.0 + 18.0 + 44.0;
+        assert!(used <= 600.0, "{used}");
+        let on = fit_chips(&w, &prio, 200.0, 18.0, 44.0);
+        assert_eq!(on.iter().filter(|o| **o).count(), 1, "{on:?}");
+        assert!(on[6], "the first of the most important stays");
+        assert_eq!(fit_chips(&w, &prio, 10.0, 18.0, 44.0), vec![false; 9], "nothing fits: all behind +N");
     }
 }

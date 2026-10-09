@@ -19,17 +19,27 @@
 //! an "Added" chip and an inline Undo), added earlier this visit (the bar
 //! only), the target container (an accent outline and a "Target" chip),
 //! dimmed with a reason, an issue mark before the name. Hover shows the
-//! row's actions. Ratings and quantities get steppers on the hovered or
-//! selected row; wireless and equipped are toggle buttons. The table only
-//! reports what happened ([`Event`]); the page turns that into the same
-//! commands as the inspector.
+//! row's actions; with [`Table::row_menu`] every row with actions also
+//! has a ⋯ button (muted until hovered or selected) that opens all of
+//! them as a menu, which right-click and Shift+F10 open too and which
+//! stays open until a click elsewhere or Escape. Ratings and quantities
+//! get steppers on the hovered or selected row; wireless and equipped are
+//! toggle buttons. The table only reports what happened ([`Event`]); the
+//! page turns that into the same commands as the inspector.
+//!
+//! Drag and drop ([`Table::draggable`]): an item row dragged becomes the
+//! egui drag payload ([`DragRow`]); while one is dragged, the rows the
+//! page lists in [`States::drops`] are drop targets, outlined when valid,
+//! and the dragged chip under the pointer says what a drop does or why it
+//! cannot (Escape cancels). A drop is [`Event::Drop`].
 //!
 //! Which nodes are folded, the sort and the columns a user turned on or
 //! off are kept in egui memory per table, like `tree_table`. Columns that
 //! do not fit are hidden lowest priority first ([`layout`]); hidden
 //! rating and grade text moves into the name ("Wired Reflexes 1 Alpha").
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use chummer_core::lang::Language;
 use chummer_core::tree::{flatten, Node};
@@ -307,6 +317,8 @@ pub struct RowData {
     pub rename: Option<String>,
     /// "N mods" when folded.
     pub kids_label: String,
+    /// The category it is grouped by with [`GroupBy::Category`].
+    pub category: String,
 }
 
 pub type Row = Node<RowData>;
@@ -323,6 +335,22 @@ pub struct States<'a> {
     pub just_added: Option<(&'a str, String, bool)>,
     /// Scroll this row into view.
     pub scroll_to: Option<&'a str>,
+    /// While a row is dragged: the rows it may be dropped on (what the
+    /// drop does) or not (why), by row key.
+    pub drops: Option<&'a HashMap<String, Result<String, String>>>,
+}
+
+/// The drag payload of a row: its table, key and name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DragRow {
+    pub table: egui::Id,
+    pub key: String,
+    pub label: String,
+}
+
+/// The row being dragged, if any.
+pub fn dragging(ctx: &egui::Context) -> Option<Arc<DragRow>> {
+    egui::DragAndDrop::payload::<DragRow>(ctx)
 }
 
 /// What happened this frame.
@@ -350,6 +378,8 @@ pub enum Event {
     Space(String),
     /// F2 renaming finished: (row, new name).
     Rename(String, String),
+    /// A dragged row dropped on row `.1` (a valid target).
+    Drop(DragRow, String),
 }
 
 /// The footer: the left text (count, "Essence left 2.35"), sums of the
@@ -526,6 +556,63 @@ pub fn folded_name(row: &RowData, folded: &[usize]) -> String {
     s
 }
 
+/// How an inventory groups its top-level items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GroupBy {
+    /// Chummer's groups: locations (gear, armor, weapons, vehicles) or
+    /// types (cyberware and bioware).
+    #[default]
+    Default,
+    /// By the items' category.
+    Category,
+    /// No groups.
+    None,
+}
+
+/// Regroup a tree's top-level items (their children stay with them):
+/// `Default` keeps `nodes`; `None` lists the items without groups;
+/// `Category` puts them under one group per [`RowData::category`] (in
+/// first-seen order, "" last as `other`). Group keys are
+/// `{prefix}/cat/{category}`. `note` gives a group's "N items".
+pub fn regroup(nodes: Vec<Row>, by: GroupBy, prefix: &str, other: &str, note: impl Fn(usize) -> String) -> Vec<Row> {
+    if by == GroupBy::Default {
+        return nodes;
+    }
+    fn items(nodes: Vec<Row>, out: &mut Vec<Row>) {
+        for n in nodes {
+            match n.value.kind {
+                Kind::Item => out.push(n),
+                Kind::Group => items(n.children, out),
+                _ => {}
+            }
+        }
+    }
+    let mut flat = Vec::new();
+    items(nodes, &mut flat);
+    if by == GroupBy::None {
+        return flat;
+    }
+    let mut groups: Vec<(String, Vec<Row>)> = Vec::new();
+    for n in flat {
+        let c = n.value.category.clone();
+        match groups.iter_mut().find(|(g, _)| *g == c) {
+            Some((_, v)) => v.push(n),
+            None => groups.push((c, vec![n])),
+        }
+    }
+    groups.sort_by_key(|(c, _)| c.is_empty());
+    let width = groups.iter().flat_map(|(_, v)| v.first()).map(|n| n.value.cells.len()).next().unwrap_or(0);
+    groups
+        .into_iter()
+        .map(|(c, kids)| {
+            let name = if c.is_empty() { other.to_owned() } else { c.clone() };
+            let mut g = Node::new(format!("{prefix}/cat/{c}"), RowData { kind: Kind::Group, name, note: note(kids.len()), cells: vec![Cell::default(); width], ..Default::default() });
+            g.children = kids;
+            g
+        })
+        .collect()
+}
+
 // ----- state in egui memory -----
 
 fn closed_id(id: egui::Id) -> egui::Id {
@@ -536,6 +623,39 @@ fn sort_id(id: egui::Id) -> egui::Id {
 }
 fn cols_id(id: egui::Id) -> egui::Id {
     id.with("cols")
+}
+fn group_id(id: egui::Id) -> egui::Id {
+    id.with("groupby")
+}
+
+/// How a table groups its rows (remembered per table).
+pub fn group_of(ctx: &egui::Context, id: egui::Id) -> GroupBy {
+    match ctx.data_mut(|d| d.get_persisted::<u8>(group_id(id))) {
+        Some(1) => GroupBy::Category,
+        Some(2) => GroupBy::None,
+        _ => GroupBy::Default,
+    }
+}
+
+pub fn set_group(ctx: &egui::Context, id: egui::Id, by: GroupBy) {
+    ctx.data_mut(|d| d.insert_persisted(group_id(id), by as u8));
+}
+
+/// The "Group by" button: a menu of `choices` (grouping, label); the
+/// current one is checked.
+pub fn group_button(ui: &mut Ui, id: egui::Id, choices: &[(GroupBy, String)], lang: &Language) {
+    let cur = group_of(ui.ctx(), id);
+    let r = widgets::icon_button(ui, icons::STACK, 26.0).on_hover_text(lang.tr("Group by"));
+    egui::Popup::menu(&r).show(|ui| {
+        ui.label(egui::RichText::new(lang.tr("Group by")).size(11.0).color(theme::ws(ui).muted));
+        for (by, label) in choices {
+            let mut on = cur == *by;
+            if widgets::check(ui, &mut on, label).clicked() {
+                set_group(ui.ctx(), id, *by);
+                ui.close();
+            }
+        }
+    });
 }
 
 /// The table id for a salt (what [`Table::new`] uses).
@@ -626,6 +746,8 @@ pub struct Table<'a> {
     focused: bool,
     tree: bool,
     detail_h: f32,
+    drag: bool,
+    row_menu: bool,
 }
 
 /// A row of the flattened tree with what drawing needs.
@@ -639,7 +761,7 @@ struct Line<'n> {
 
 impl<'a> Table<'a> {
     pub fn new(salt: impl std::hash::Hash, cols: &'a [Col]) -> Table<'a> {
-        Table { id: table_id(salt), cols, height: 300.0, row_h: ROW_H, footer: None, empty: None, focused: false, tree: true, detail_h: 52.0 }
+        Table { id: table_id(salt), cols, height: 300.0, row_h: ROW_H, footer: None, empty: None, focused: false, tree: true, detail_h: 52.0, drag: false, row_menu: false }
     }
 
     /// The whole table's height (header, rows and footer).
@@ -683,6 +805,24 @@ impl<'a> Table<'a> {
         self
     }
 
+    /// Item rows can be dragged ([`DragRow`]).
+    pub fn draggable(mut self) -> Self {
+        self.drag = true;
+        self
+    }
+
+    /// Rows with actions get the ⋯ menu (also on right-click and
+    /// Shift+F10).
+    pub fn row_menu(mut self) -> Self {
+        self.row_menu = true;
+        self
+    }
+
+    /// The popup id of a row's ⋯ menu.
+    pub fn menu_id(id: egui::Id, key: &str) -> egui::Id {
+        id.with(("rowmenu", key))
+    }
+
     /// Draw the table. `detail` fills [`Kind::Detail`] rows.
     pub fn show(self, ui: &mut Ui, roots: &[Row], states: &States<'_>, lang: &Language, mut detail: impl FnMut(&mut Ui, &str)) -> Vec<Event> {
         let ws = theme::ws(ui);
@@ -707,6 +847,7 @@ impl<'a> Table<'a> {
         if self.focused && !ctx.wants_keyboard_input() && renaming.is_none() && !ctx.is_popup_open() {
             use egui::{Key, Modifiers};
             let sel = states.selected.and_then(|s| lines.iter().position(|l| l.node.key == s));
+            let menu_key = ui.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::F10));
             let (down, up, left, right, enter, del, space, plus, minus, f2) = ui.input_mut(|i| {
                 (
                     i.consume_key(Modifiers::NONE, Key::ArrowDown),
@@ -753,8 +894,12 @@ impl<'a> Table<'a> {
                 }
                 if f2 {
                     if let Some(n) = &l.node.value.rename {
-                        renaming = Some((key, n.clone()));
+                        renaming = Some((key.clone(), n.clone()));
                     }
+                }
+                if menu_key && self.row_menu && !l.node.value.actions.is_empty() {
+                    egui::Popup::open_id(&ctx, Table::menu_id(id, &key));
+                    ctx.data_mut(|d| d.insert_temp(id.with("menu_focus"), key));
                 }
             }
         }
@@ -766,6 +911,9 @@ impl<'a> Table<'a> {
         let shown_key: Vec<&str> = lay.shown.iter().map(|i| self.cols[*i].key).collect();
 
         let start = ui.cursor().min;
+        let payload = dragging(&ctx);
+        let mut hover_drop: Option<Result<String, String>> = None;
+        let mut over_table = false;
         ui.push_id(id, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
@@ -775,7 +923,7 @@ impl<'a> Table<'a> {
                 .id_salt(("t", &shown_key))
                 .striped(false)
                 .resizable(false)
-                .sense(Sense::click())
+                .sense(if self.drag { Sense::click_and_drag() } else { Sense::click() })
                 .vscroll(true)
                 .auto_shrink([false, false])
                 .min_scrolled_height(body_h)
@@ -861,6 +1009,8 @@ impl<'a> Table<'a> {
                         let is_target = states.target == Some(key);
                         let just = states.just_added.as_ref().filter(|(k, _, _)| *k == key);
                         let added = just.is_some() || states.added.is_some_and(|a| a.contains(key));
+                        // A drop target while a row is dragged (not the row itself).
+                        let drop = payload.as_ref().filter(|p| !(p.table == id && p.key == key)).and_then(|_| states.drops.and_then(|d| d.get(key)));
                         let mut hovered = false;
                         let mut toggle_hit = false;
                         let h = row_height_of(v.kind, self.row_h, self.detail_h);
@@ -872,6 +1022,9 @@ impl<'a> Table<'a> {
                                 if k == 0 {
                                     hovered = ui.rect_contains_pointer(full);
                                     paint_row_back(ui, &ws, full, v.kind, selected, hovered, added, is_target);
+                                    if let Some(d) = drop {
+                                        paint_drop(ui, &ws, full, d.is_ok(), hovered);
+                                    }
                                 }
                                 let inner = cell_inner(r, k == 0, k + 1 == n_shown, first_w, last_w);
                                 match v.kind {
@@ -919,6 +1072,25 @@ impl<'a> Table<'a> {
                             });
                         }
                         let resp = row.response();
+                        if hovered && payload.is_some() {
+                            over_table = true;
+                            hover_drop = drop.cloned();
+                        }
+                        if let (Some(p), Some(Ok(_)), true) = (&payload, drop, hovered) {
+                            if ctx.input(|i| i.pointer.any_released()) {
+                                events.push(Event::Drop((**p).clone(), key.to_owned()));
+                                egui::DragAndDrop::clear_payload(&ctx);
+                            }
+                        }
+                        if self.drag && v.kind == Kind::Item && v.selectable && resp.drag_started() {
+                            egui::DragAndDrop::set_payload(&ctx, DragRow { table: id, key: key.to_owned(), label: v.name.clone() });
+                        }
+                        if self.row_menu && v.kind == Kind::Item && !v.actions.is_empty() && resp.secondary_clicked() {
+                            if v.selectable && !selected {
+                                events.push(Event::Select(key.to_owned()));
+                            }
+                            egui::Popup::open_id(&ctx, Table::menu_id(id, key));
+                        }
                         if v.kind == Kind::Group || v.kind == Kind::Item {
                             if toggle_hit || (!l.node.children.is_empty() && v.kind == Kind::Group && resp.clicked()) {
                                 toggled = Some(key.to_owned());
@@ -935,6 +1107,7 @@ impl<'a> Table<'a> {
                     });
                 });
             ctx.data_mut(|d| d.insert_temp(header_shadow_id, out.state.offset.y > 0.5));
+            over_table |= payload.is_some() && ui.rect_contains_pointer(Rect::from_min_size(start, egui::vec2(total_w, self.height)));
 
             // The whole-table empty card.
             if lines.is_empty() {
@@ -995,6 +1168,13 @@ impl<'a> Table<'a> {
             }
         });
 
+        // The dragged row under the pointer, with what a drop here does.
+        if let (Some(p), true) = (&payload, over_table) {
+            if let Some(pos) = ctx.pointer_hover_pos() {
+                drag_chip(&ctx, &ws, pos, &p.label, hover_drop.as_ref());
+            }
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("ws_table_drop_hint"), hover_drop.clone()));
+        }
         if renaming.is_some() {
             ctx.data_mut(|d| d.insert_temp(rename_id, renaming));
         } else {
@@ -1132,7 +1312,11 @@ impl<'a> Table<'a> {
     }
 
     /// The actions cell: the just-added row's Undo and Remove, or the
-    /// row's actions while hovered or selected; groups' "+".
+    /// row's actions while hovered or selected; groups' "+". With
+    /// [`Table::row_menu`], a ⋯ at the right end on every row with
+    /// actions (muted until the row is hovered or selected) opens all of
+    /// them; its menu stays open on its own (right-click and Shift+F10
+    /// open it too), so the actions do not depend on the hover.
     #[allow(clippy::too_many_arguments)]
     fn actions_cell(&self, ui: &mut Ui, ws: &WsPalette, inner: Rect, l: &Line<'_>, v: &RowData, show: bool, selected: bool, just: Option<&(&str, String, bool)>, lang: &Language, events: &mut Vec<Event>) {
         let key = l.node.key.as_str();
@@ -1145,6 +1329,10 @@ impl<'a> Table<'a> {
                 }
             }
             return;
+        }
+        let menu = self.row_menu && !v.actions.is_empty();
+        if menu {
+            self.row_menu_button(&mut child, ws, key, v, show, lang, events);
         }
         let mut list: Vec<&Action> = Vec::new();
         if let Some((_, tip, can)) = just {
@@ -1160,14 +1348,105 @@ impl<'a> Table<'a> {
             if r.clicked() {
                 events.push(Event::Undo(key.to_owned()));
             }
-            let _ = lang;
             return;
         }
-        if show {
-            for a in v.actions.iter().rev() {
+        // A menu of a hover button keeps the row's buttons while it is open.
+        let open = v.actions.iter().any(|a| !a.menu.is_empty() && egui::Popup::is_id_open(child.ctx(), action_menu_id(&child, a, key)));
+        if show || open {
+            // With the ⋯ menu, "More" lives only there.
+            for a in v.actions.iter().rev().filter(|a| !(menu && a.id == "more")) {
                 action_button(&mut child, ws, a, key, selected, events);
             }
         }
+    }
+
+    /// The ⋯ button and the row's menu: every action, a menu's entries
+    /// as items of their own.
+    #[allow(clippy::too_many_arguments)]
+    fn row_menu_button(&self, ui: &mut Ui, ws: &WsPalette, key: &str, v: &RowData, strong: bool, lang: &Language, events: &mut Vec<Event>) {
+        let menu_id = Table::menu_id(self.id, key);
+        let open = egui::Popup::is_id_open(ui.ctx(), menu_id);
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::click());
+        if resp.hovered() || open {
+            ui.painter().rect_filled(rect, CornerRadius::same(5), ws.hover);
+        }
+        let color = if strong || open || resp.hovered() { ws.text } else { ws.muted.gamma_multiply(0.55) };
+        icons::paint(ui.painter(), rect, icons::DOTS_THREE, 14.0, color);
+        let resp = resp.on_hover_text(lang.tr("More actions (right-click, Shift+F10)")).on_hover_cursor(egui::CursorIcon::PointingHand);
+        let focus_first = ui.ctx().data(|d| d.get_temp::<String>(self.id.with("menu_focus"))).is_some_and(|k| k == key);
+        egui::Popup::menu(&resp).id(menu_id).show(|ui| {
+            ui.set_min_width(200.0);
+            let mut first = true;
+            for (n, a) in v.actions.iter().enumerate() {
+                if a.menu.is_empty() {
+                    let b = ui.button(format!("{}  {}", a.icon, a.tip));
+                    if first && focus_first {
+                        b.request_focus();
+                    }
+                    first = false;
+                    if b.clicked() {
+                        events.push(Event::Action(key.to_owned(), a.id, None));
+                    }
+                } else {
+                    if n > 0 {
+                        ui.separator();
+                    }
+                    for (eid, label) in &a.menu {
+                        let b = ui.button(label);
+                        if first && focus_first {
+                            b.request_focus();
+                        }
+                        first = false;
+                        if b.clicked() {
+                            events.push(Event::Action(key.to_owned(), a.id, Some(eid.clone())));
+                        }
+                    }
+                }
+            }
+        });
+        if focus_first {
+            ui.ctx().data_mut(|d| d.remove::<String>(self.id.with("menu_focus")));
+        }
+    }
+}
+
+/// The popup id of a hover button's menu (as `Popup::menu` makes it).
+fn action_menu_id(ui: &Ui, a: &Action, key: &str) -> egui::Id {
+    ui.id().with(("action", a.id, key)).with("popup")
+}
+
+/// A drop target's mark: an accent outline (stronger and filled while
+/// hovered) when the drop is allowed, an error outline while hovered
+/// when it is not.
+fn paint_drop(ui: &Ui, ws: &WsPalette, full: Rect, ok: bool, hovered: bool) {
+    let p = ui.painter();
+    if ok {
+        if hovered {
+            p.rect_filled(full, CornerRadius::ZERO, ws.selection);
+        }
+        p.rect_stroke(full.shrink(1.0), CornerRadius::same(3), Stroke::new(if hovered { 2.0_f32 } else { 1.0 }, ws.primary), StrokeKind::Inside);
+    } else if hovered {
+        p.rect_stroke(full.shrink(1.0), CornerRadius::same(3), Stroke::new(1.5_f32, ws.error), StrokeKind::Inside);
+    }
+}
+
+/// The dragged row's chip under the pointer: its name and, over a
+/// target, what a drop does (or why it cannot, in the error colour).
+fn drag_chip(ctx: &egui::Context, ws: &WsPalette, pos: egui::Pos2, label: &str, hint: Option<&Result<String, String>>) {
+    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("ws_table_drag_chip")));
+    let name = p.layout_no_wrap(label.to_owned(), widgets::bold(12.0), ws.text);
+    let line = hint.map(|h| match h {
+        Ok(t) => p.layout_no_wrap(format!("{} {t}", icons::ARROW_BEND_DOWN_RIGHT), FontId::proportional(11.0), ws.accent),
+        Err(t) => p.layout_no_wrap(format!("{} {t}", icons::PROHIBIT), FontId::proportional(11.0), ws.error),
+    });
+    let w = name.size().x.max(line.as_ref().map_or(0.0, |g| g.size().x)) + 16.0;
+    let h = 8.0 + name.size().y + line.as_ref().map_or(0.0, |g| g.size().y + 2.0) + 6.0;
+    let r = Rect::from_min_size(pos + egui::vec2(14.0, 10.0), egui::vec2(w, h));
+    p.rect(r, CornerRadius::same(6), ws.raised, Stroke::new(1.0_f32, if matches!(hint, Some(Err(_))) { ws.error } else { ws.primary }), StrokeKind::Inside);
+    let ny = name.size().y;
+    p.galley(r.min + egui::vec2(8.0, 6.0), name, ws.text);
+    if let Some(g) = line {
+        p.galley(r.min + egui::vec2(8.0, 8.0 + ny), g, ws.text);
     }
 }
 
@@ -1411,6 +1690,7 @@ fn outlined_icon_button(ui: &mut Ui, ws: &WsPalette, glyph: &str, color: Color32
 /// One row action: an icon button, a filled one for `primary`, or a
 /// menu.
 fn action_button(ui: &mut Ui, ws: &WsPalette, a: &Action, key: &str, selected: bool, events: &mut Vec<Event>) {
+    let menu_id = action_menu_id(ui, a, key);
     let r = if a.primary && selected {
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::click());
         ui.painter().rect_filled(rect, CornerRadius::same(5), if resp.hovered() { ws.primary.gamma_multiply(0.9) } else { ws.primary });
@@ -1425,7 +1705,7 @@ fn action_button(ui: &mut Ui, ws: &WsPalette, a: &Action, key: &str, selected: b
             events.push(Event::Action(key.to_owned(), a.id, None));
         }
     } else {
-        egui::Popup::menu(&r).show(|ui| {
+        egui::Popup::menu(&r).id(menu_id).show(|ui| {
             for (id, label) in &a.menu {
                 if ui.button(label).clicked() {
                     events.push(Event::Action(key.to_owned(), a.id, Some(id.clone())));
@@ -1590,6 +1870,33 @@ mod tests {
         let t = vec![g, item("d", "Datajack", Some(1000.0))];
         assert_eq!(total(&t, COST), Some(28000.0));
         assert_eq!(item_count(&t), 5);
+    }
+
+    fn with_cat(mut r: Row, c: &str) -> Row {
+        r.value.category = c.into();
+        r
+    }
+
+    #[test]
+    fn regrouping_by_category_and_none_keeps_children() {
+        let mut glasses = with_cat(item("g", "Glasses", Some(200.0)), "Vision Devices");
+        glasses.children = vec![with_cat(item("f", "Flare Compensation", Some(250.0)), "Vision Enhancements")];
+        let t = vec![
+            group("gears/Selected Gear", vec![with_cat(item("c", "Commlink", Some(1000.0)), "Commlinks"), glasses.clone()]),
+            group("gears/loc/car", vec![with_cat(item("k", "Medkit", Some(250.0)), "Biotech"), with_cat(item("x", "Goggles", Some(150.0)), "Vision Devices"), item("o", "Odd", None)]),
+        ];
+        let by_cat = regroup(t.clone(), GroupBy::Category, "gears", "Other", |n| format!("{n} items"));
+        assert_eq!(
+            names(&by_cat),
+            ["Commlinks", "  Commlink", "Vision Devices", "  Glasses", "    Flare Compensation", "  Goggles", "Biotech", "  Medkit", "Other", "  Odd"],
+            "first-seen order, uncategorised last, children stay"
+        );
+        assert_eq!(by_cat[1].key, "gears/cat/Vision Devices");
+        assert_eq!(by_cat[1].value.note, "2 items");
+        assert_eq!(subtotal(&by_cat[1], COST), Some(600.0), "group subtotals still work");
+        let flat = regroup(t.clone(), GroupBy::None, "gears", "Other", |n| n.to_string());
+        assert_eq!(names(&flat), ["Commlink", "Glasses", "  Flare Compensation", "Medkit", "Goggles", "Odd"]);
+        assert_eq!(names(&regroup(t.clone(), GroupBy::Default, "gears", "Other", |n| n.to_string())), names(&t), "Chummer's groups as they are");
     }
 
     #[test]

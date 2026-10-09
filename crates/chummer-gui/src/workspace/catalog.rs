@@ -26,7 +26,7 @@ use chummer_core::data::{self, Record};
 use chummer_core::engine::Engine;
 use chummer_core::expr::{self, Availability, Legality};
 use chummer_core::format;
-use chummer_core::items::{self, edit, Kind, Purchase};
+use chummer_core::items::{self, edit, place, Kind, Purchase};
 use chummer_core::lang::Language;
 use chummer_core::requirements::Check;
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
@@ -164,6 +164,18 @@ pub struct Catalog {
     show_filters: bool,
     /// The results as table rows, for the rows' key and the sort.
     table: Option<(u64, Vec<table::Row>)>,
+    /// The inventory's selected item, which becomes the target when it
+    /// can hold the selected record.
+    anchor: Option<String>,
+    /// The anchor holds a kind the catalog sells.
+    anchor_holds: bool,
+    /// Why the anchor is not the target: (refusal, record, anchor).
+    target_note: Option<(place::Misfit, String, String)>,
+    /// What the target was last worked out for.
+    retarget_key: u64,
+    /// The inspector shows the selected record (else the inventory's
+    /// selected item, while the record stays selected for the target).
+    inspect: bool,
 }
 
 impl Catalog {
@@ -202,6 +214,11 @@ impl Catalog {
             location: None,
             show_filters: false,
             table: None,
+            anchor: None,
+            anchor_holds: false,
+            target_note: None,
+            retarget_key: 0,
+            inspect: true,
         })
     }
 
@@ -258,6 +275,7 @@ impl Catalog {
     }
 
     fn select(&mut self, slot: usize, index: usize, rating: i32) {
+        self.inspect = true;
         if self.selected != Some((slot, index)) {
             self.selected = Some((slot, index));
             self.purchase.rating = rating;
@@ -401,6 +419,12 @@ impl CharacterView {
         self.ws_gear.catalog.as_ref().is_some_and(|c| c.selected.is_some() && self.ws_item_page(self.tab) == Some(c.page))
     }
 
+    /// The inspector shows the catalog's selected record (not the
+    /// inventory's selected item).
+    pub(crate) fn ws_catalog_inspecting(&self) -> bool {
+        self.ws_catalog_has_selection() && self.ws_gear.catalog.as_ref().is_some_and(|c| c.inspect)
+    }
+
     pub(crate) fn ws_catalog_deselect(&mut self) {
         if let Some(c) = &mut self.ws_gear.catalog {
             c.selected = None;
@@ -430,6 +454,7 @@ impl CharacterView {
             c.slots.iter().map(|s| s.on).collect::<Vec<_>>(),
             &c.purchase.grade,
             &c.purchase.parent,
+            &c.anchor,
             self.doc.revision(),
             &lang.code,
         ));
@@ -444,8 +469,11 @@ impl CharacterView {
         let several = c.slots.iter().filter(|s| s.on).count() > 1;
         let needle = c.search.trim().to_lowercase();
         let owned = owned_items(&self.doc, &super::ws_items::section_of(c.page));
-        let allowed: Vec<String> = c.purchase.parent.as_ref().map(|g| edit::addon_categories(&self.doc, &self.store, g)).unwrap_or_default();
-        let target_name = c.purchase.parent.as_ref().and_then(|g| edit::find(&self.doc, g)).map(|e| e.get("name")).unwrap_or_default();
+        // The target, else the inventory's selected item (what fits it
+        // sorts first even while the selected record does not).
+        let host = c.purchase.parent.as_ref().or(c.anchor.as_ref().filter(|_| c.anchor_holds)).and_then(|g| place::Host::of(&self.doc, &self.store, g));
+        let target_name = host.as_ref().map(|h| super::display_name(&super::ws_items::section_of(c.page), &h.el, lang)).unwrap_or_default();
+        let enforce = self.settings.as_ref().is_none_or(|s| s.flag("enforcecapacity"));
         let mut out = Rows { kinds: vec![0; c.slots.len()], ..Default::default() };
         for (si, slot) in c.slots.iter().enumerate() {
             let grade = c.grade(slot);
@@ -508,10 +536,15 @@ impl CharacterView {
                 if let Some(o) = over {
                     why.push(o);
                 }
-                let fits = allowed.is_empty() || slot.kind.tag != "gear" || allowed.iter().any(|a| a.eq_ignore_ascii_case(&category));
-                if !fits {
-                    why.insert(0, lang.tr_fmt("Not for {0}", &[&target_name]));
-                }
+                // What fits the target: the purchase rules, free capacity at
+                // the rating shown (`items::place`).
+                let fits = match host.as_ref().map(|h| h.takes(slot.kind.tag, r.el(), None, rating, enforce, false)) {
+                    Some(Err(m)) => {
+                        why.insert(0, super::ws_inventory::misfit_text(lang, &m, &name, &target_name));
+                        false
+                    }
+                    _ => true,
+                };
                 let owned = owned_line(owned.get(&r.id().to_lowercase()).or_else(|| owned.get(&r.name().to_lowercase())), lang);
                 let sub = if several { [kind_label.clone(), shown_category].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ") } else { shown_category };
                 let extra = cols.iter().map(|f| r.get(f)).collect();
@@ -534,6 +567,7 @@ impl CharacterView {
     /// the character changed.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn ws_catalog_panel(&mut self, ui: &mut egui::Ui, rect: egui::Rect, stacked: bool, fold: bool, engine: &Arc<Engine>, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
+        self.ws_catalog_retarget();
         self.ws_catalog_rows(lang);
         if fold {
             self.ws_catalog_preview(engine);
@@ -646,7 +680,7 @@ impl CharacterView {
             hu.add_space(6.0);
         }
         if let Some(to_inventory) = add {
-            let added = self.ws_catalog_add(engine, lang, status, to_inventory);
+            let added = self.ws_catalog_add(lang, status, to_inventory);
             if added && to_inventory {
                 // The keys go to the inventory, where the new row is.
                 ui.memory_mut(|m| m.surrender_focus(search_id));
@@ -676,7 +710,6 @@ impl CharacterView {
         let (slot, index, rating) = (r.slot, r.index, r.rating);
         c.select(slot, index, rating);
         c.scroll = true;
-        self.item_editor = None;
     }
 
     /// The filters column.
@@ -969,9 +1002,11 @@ impl CharacterView {
         let needs = c.slots.iter().filter(|s| s.on).all(|s| select::parent_of(s.kind.tag).is_some());
         let target = c.target().and_then(|g| edit::find(&self.doc, g)).cloned();
         let location = c.location.clone();
-        if target.is_none() && location.is_none() && !needs {
+        let note = c.target_note.as_ref().map(|(m, item, at)| super::ws_inventory::misfit_text(lang, m, item, at));
+        if target.is_none() && location.is_none() && !needs && note.is_none() {
             return;
         }
+        let cap = target.as_ref().and_then(|t| edit::capacity(&self.doc, &t.get("guid")));
         let sec = super::ws_items::section_of(c.page);
         let loc_name = target.as_ref().and_then(|t| {
             let top = top_ancestor(&self.doc, &t.get("guid"));
@@ -994,15 +1029,27 @@ impl CharacterView {
                         if let Some(l) = &loc_name {
                             ui.label(RichText::new(lang.tr_fmt("in {0}", &[l])).size(11.0).color(ws.muted));
                         }
+                        if let Some((used, total)) = cap {
+                            let f = chummer_core::improvement::fmt_num;
+                            let full = used >= total - 1e-9;
+                            let text = lang.tr_fmt("{0}/{1} capacity", &[&f(used), &f(total)]);
+                            widgets::tag(ui, &text, if full { ws.warning } else { ws.muted }, if full { ws.warning } else { ws.divider });
+                        }
                     }
                     (None, Some((_, name))) => {
                         ui.label(RichText::new(lang.tr("Adding into")).size(12.0).color(ws.muted));
                         ui.label(icons::icon(icons::MAP_PIN, 14.0, ws.text));
                         ui.label(RichText::new(name).font(widgets::bold(12.5)).color(ws.text));
                     }
-                    (None, None) => {
-                        ui.label(RichText::new(lang.tr("Choose where to install it")).size(12.0).color(ws.text));
-                    }
+                    (None, None) => match &note {
+                        Some(n) => {
+                            ui.label(RichText::new(lang.tr("Adding at the top level")).size(12.0).color(ws.text));
+                            ui.add(egui::Label::new(RichText::new(n).size(11.0).color(ws.warning)).truncate()).on_hover_text(n);
+                        }
+                        None => {
+                            ui.label(RichText::new(lang.tr("Choose where to install it")).size(12.0).color(ws.text));
+                        }
+                    },
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
@@ -1029,11 +1076,15 @@ impl CharacterView {
             c.purchase.parent = None;
             c.parent_locked = false;
             c.location = None;
+            c.anchor = None;
+            c.target_note = None;
         }
         if let Some(p) = pick {
             c.purchase.parent = p;
             c.parent_locked = false;
             c.location = None;
+            c.anchor = None;
+            c.target_note = None;
         }
     }
 
@@ -1064,13 +1115,19 @@ impl CharacterView {
         let mut kinds: Vec<&'static str> = edit::child_kinds(&self.doc, guid).iter().map(|k| k.tag).collect();
         // Any gear takes plugins; only containers become the target by a
         // click (Change picks any).
-        if edit::find(&self.doc, guid).is_some_and(|e| e.name == "gear") && !gear_container(&self.doc, &self.store, guid) {
+        if edit::find(&self.doc, guid).is_some_and(|e| e.name == "gear") && !edit::is_gear_container(&self.doc, &self.store, guid) {
             kinds.retain(|k| *k != "gear");
         }
         let Some(c) = self.ws_gear.catalog.as_mut().filter(|c| c.page == page) else { return };
-        c.selected = None;
+        // The record stays selected (for the target); the inspector shows
+        // the item.
+        c.inspect = false;
         c.location = None;
-        if kinds.iter().any(|k| c.sells(k)) {
+        c.anchor = Some(guid.to_owned());
+        c.target_note = None;
+        c.retarget_key = 0;
+        c.anchor_holds = kinds.iter().any(|k| c.sells(k));
+        if c.anchor_holds {
             for s in c.slots.iter_mut() {
                 s.on = kinds.contains(&s.kind.tag);
             }
@@ -1107,6 +1164,47 @@ impl CharacterView {
         if c.location.is_some() {
             c.purchase.parent = None;
             c.parent_locked = false;
+        }
+    }
+
+    /// The inventory's selected item as the target for the selected
+    /// record: the target when it can hold it (at the chosen rating),
+    /// else the top level with the reason in the target bar. Without a
+    /// selected record the target stays what selecting the item made it.
+    pub(crate) fn ws_catalog_retarget(&mut self) {
+        let enforce = self.settings.as_ref().is_none_or(|s| s.flag("enforcecapacity"));
+        let Some(c) = self.ws_gear.catalog.as_ref() else { return };
+        let Some(anchor) = c.anchor.clone() else { return };
+        let key = hash_of((&anchor, c.selected, c.purchase.rating, self.doc.revision()));
+        if c.retarget_key == key {
+            return;
+        }
+        let found = edit::find(&self.doc, &anchor).is_some();
+        let record = c.record().map(|(slot, r)| (slot.kind.tag, r.el().clone(), r.name()));
+        let rating = c.purchase.rating;
+        let holds = c.anchor_holds;
+        let fit = match (found && holds, &record) {
+            (true, Some((tag, rec, _))) => Some(place::Host::of(&self.doc, &self.store, &anchor).map_or(Err(place::Misfit::Missing), |h| h.takes(tag, rec, None, rating, enforce, false))),
+            _ => None,
+        };
+        let names = edit::find(&self.doc, &anchor).map(|e| e.get("name")).unwrap_or_default();
+        let Some(c) = self.ws_gear.catalog.as_mut() else { return };
+        c.retarget_key = key;
+        if !found {
+            c.anchor = None;
+            c.target_note = None;
+            return;
+        }
+        match fit {
+            Some(Ok(())) => {
+                c.purchase.parent = Some(anchor);
+                c.target_note = None;
+            }
+            Some(Err(m)) => {
+                c.purchase.parent = None;
+                c.target_note = record.map(|(_, _, n)| (m, n, names));
+            }
+            None => c.target_note = None,
         }
     }
 
@@ -1231,7 +1329,7 @@ impl CharacterView {
         let empty = table::EmptyCard { title: lang.tr("Nothing matches."), sub: lang.tr("Clear a filter or change the search."), button: lang.tr("Clear filters") };
         let row_h = if stacked { 30.0 } else { 36.0 };
         let mut strip_add = false;
-        let t = table::Table::new(salt, &cols).height(height).row_height(row_h).flat().empty(empty).detail_height(54.0);
+        let t = table::Table::new(salt, &cols).height(height).row_height(row_h).flat().empty(empty).detail_height(54.0).draggable();
         let events = {
             let (sheet, decimals, nuyen_now) = (&self.sheet, self.rules.essence_decimals, self.budget.as_ref().map_or(self.doc.nuyen, |b| b.nuyen_left()));
             let max_avail = (!self.doc.created).then(|| self.settings.as_ref().map_or(12, |s| s.max_availability())).filter(|m| *m > 0);
@@ -1269,9 +1367,6 @@ impl CharacterView {
                 _ => {}
             }
         }
-        if c.selected.map(|(s, i)| format!("{s}:{i}")) != selected && c.selected.is_some() {
-            self.item_editor = None;
-        }
         out
     }
 
@@ -1279,8 +1374,22 @@ impl CharacterView {
     /// dialog does). A bonus selection is asked first, in the inspector.
     /// `close` closes the catalog afterwards. Returns true if the
     /// character changed.
-    fn ws_catalog_add(&mut self, _engine: &Arc<Engine>, lang: &Language, status: &mut Status, to_inventory: bool) -> bool {
+    fn ws_catalog_add(&mut self, lang: &Language, status: &mut Status, to_inventory: bool) -> bool {
         let store = self.store.clone();
+        // The purchase rules for the place (as the rows show them).
+        if let Some(c) = self.ws_gear.catalog.as_ref() {
+            if let (Some((slot, r)), Some(pg)) = (c.record(), c.purchase.parent.as_deref()) {
+                let enforce = self.settings.as_ref().is_none_or(|s| s.flag("enforcecapacity"));
+                if let Some(h) = place::Host::of(&self.doc, &store, pg) {
+                    if let Err(m) = h.takes(slot.kind.tag, r.el(), None, c.purchase.rating, enforce, false) {
+                        let sec = super::ws_items::section_of(c.page);
+                        let name = lang.data_name(slot.kind.file, &r.id(), &r.name());
+                        *status = Some((super::ws_inventory::misfit_text(lang, &m, &name, &super::display_name(&sec, &h.el, lang)), true));
+                        return false;
+                    }
+                }
+            }
+        }
         let Some(c) = self.ws_gear.catalog.as_mut() else { return false };
         let Some((slot, r)) = c.record() else { return false };
         let tag = slot.kind.tag;
@@ -1340,6 +1449,59 @@ impl CharacterView {
         }
     }
 
+    /// The catalog record a results row key ("slot:index") names: (kind,
+    /// data element, the rating the table shows, name).
+    pub(crate) fn ws_catalog_record_at(&self, key: &str) -> Option<(String, Element, i32, String)> {
+        let c = self.ws_gear.catalog.as_ref()?;
+        let (s, i) = key.split_once(':')?;
+        let (s, i): (usize, usize) = (s.parse().ok()?, i.parse().ok()?);
+        let slot = c.slots.get(s)?;
+        let rec = *data::records(&slot.doc, slot.kind.data_container, slot.kind.data_item).get(i)?;
+        let rating = c.rows.as_ref().and_then(|(_, r)| r.list.iter().find(|r| r.slot == s && r.index == i)).map_or(0, |r| r.rating);
+        Some((slot.kind.tag.to_owned(), rec.el().clone(), rating, rec.name()))
+    }
+
+    /// A catalog row dropped on the inventory: select it and buy it
+    /// into that place (the same path as Add; a bonus question is asked
+    /// in the inspector first). Returns true if the character changed.
+    pub(crate) fn ws_catalog_drop_buy(&mut self, key: &str, to: place::Dest, lang: &Language, status: &mut Status) -> bool {
+        let Some((s, i)) = key.split_once(':').and_then(|(s, i)| Some((s.parse::<usize>().ok()?, i.parse::<usize>().ok()?))) else { return false };
+        let rating = self.ws_catalog_record_at(key).map_or(0, |r| r.2);
+        let names: Vec<(String, String)> = {
+            let Some(c) = self.ws_gear.catalog.as_ref() else { return false };
+            let container = super::ws_items::page_container(c.page);
+            let lc = match page_kinds(container).first().copied().unwrap_or("") {
+                "gear" => "gearlocations",
+                "armor" => "armorlocations",
+                "weapon" => "weaponlocations",
+                "vehicle" => "vehiclelocations",
+                _ => "",
+            };
+            self.doc.doc.child(lc).map(|l| l.children_named("location").map(|e| (e.get("guid"), e.get("name"))).collect()).unwrap_or_default()
+        };
+        let Some(c) = self.ws_gear.catalog.as_mut() else { return false };
+        c.select(s, i, rating);
+        c.anchor = None;
+        c.target_note = None;
+        c.parent_locked = false;
+        match to {
+            place::Dest::Item(g) => {
+                c.purchase.parent = Some(g);
+                c.location = None;
+            }
+            place::Dest::Top => {
+                c.purchase.parent = None;
+                c.location = None;
+            }
+            place::Dest::Location(l) => {
+                c.purchase.parent = None;
+                c.location = names.into_iter().find(|(g, _)| *g == l);
+            }
+        }
+        self.item_editor = None;
+        self.ws_catalog_add(lang, status, false)
+    }
+
     /// Compute the preview of the selected record when it changed.
     pub(crate) fn ws_catalog_preview(&mut self, engine: &Engine) {
         let Some(c) = self.ws_gear.catalog.as_ref() else { return };
@@ -1371,16 +1533,7 @@ impl CharacterView {
             let check = Check { ch: &self.doc, sheet: &self.sheet, ignore_quality: None };
             select::unavailable_reasons(slot.kind.tag, r, &check, 0)
         };
-        let parents: Vec<(String, String)> = {
-            let Some(c) = self.ws_gear.catalog.as_ref() else { return false };
-            let tag = c.record().map_or("", |(s, _)| s.kind.tag);
-            match select::parent_of(tag).or(select::optional_parent(tag)) {
-                Some((container, ptag)) if !c.parent_locked => self.doc.items(container, ptag).iter().map(|e| (e.get("guid"), e.get("name"))).collect(),
-                _ => Vec::new(),
-            }
-        };
-        let locked_parent = self.ws_gear.catalog.as_ref().and_then(|c| c.purchase.parent.clone()).and_then(|g| items::edit::find(&self.doc, &g).map(|e| e.get("name")));
-        let target_name = locked_parent.clone();
+        let target_name = self.ws_gear.catalog.as_ref().and_then(|c| c.purchase.parent.clone()).and_then(|g| items::edit::find(&self.doc, &g).map(|e| e.get("name")));
         let sheet = &self.sheet;
         let Some(c) = self.ws_gear.catalog.as_mut() else { return false };
         let Some((slot_i, index)) = c.selected else { return false };
@@ -1457,27 +1610,6 @@ impl CharacterView {
             if matches!(tag, "gear" | "drug") {
                 caption(ui, &lang.tr("Quantity"));
                 widgets::qty_stepper(ui, "ws_catalog_qty", &mut c.purchase.qty, 1.0, 1000.0, 1.0, 0, &lang.tr("Lower"), &lang.tr("Raise"));
-                ui.end_row();
-            }
-            if let Some(n) = &locked_parent {
-                caption(ui, &lang.tr("Install in"));
-                ui.label(RichText::new(n).size(12.5).color(ws.text));
-                ui.end_row();
-            } else if !parents.is_empty() || select::parent_of(tag).is_some() {
-                caption(ui, &lang.tr("Install in"));
-                let required = select::parent_of(tag).is_some();
-                let none_label = if required { lang.tr("Choose…") } else { lang.tr("Nothing (on its own)") };
-                let cur = c.purchase.parent.as_ref().and_then(|g| parents.iter().find(|(pg, _)| pg == g)).map(|(_, n)| n.clone());
-                crate::combo::Combo::from_id_salt("ws_catalog_parent").selected_text(cur.unwrap_or(none_label)).width(170.0).show_ui(ui, |ui| {
-                    if !required && crate::combo::selectable_label(ui, c.purchase.parent.is_none(), lang.tr("Nothing (on its own)")).clicked() {
-                        c.purchase.parent = None;
-                    }
-                    for (g, n) in &parents {
-                        if crate::combo::selectable_label(ui, c.purchase.parent.as_deref() == Some(g), n).clicked() {
-                            c.purchase.parent = Some(g.clone());
-                        }
-                    }
-                });
                 ui.end_row();
             }
         });
@@ -1736,7 +1868,7 @@ impl CharacterView {
         });
 
         match add {
-            Some(close) => self.ws_catalog_add(engine, lang, status, close),
+            Some(close) => self.ws_catalog_add(lang, status, close),
             None => false,
         }
     }
@@ -1838,16 +1970,6 @@ fn chip_x(ui: &mut egui::Ui, text: &str, ws: &theme::WsPalette) -> bool {
     p.galley(egui::pos2(rect.left() + 7.0, rect.center().y - galley.size().y / 2.0), galley, ws.accent);
     icons::paint(p, egui::Rect::from_min_size(egui::pos2(rect.right() - 16.0, rect.top() + 2.0), egui::vec2(12.0, 14.0)), icons::X, 10.0, ws.accent);
     resp.on_hover_text(text).on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-}
-
-/// Whether a gear item is a container: it has children, room
-/// (capacity), a list of what goes in, or is a Matrix device.
-fn gear_container(ch: &Character, store: &chummer_core::data::DataStore, guid: &str) -> bool {
-    let Some(e) = edit::find(ch, guid) else { return false };
-    e.child("children").is_some_and(|c| c.children_named("gear").next().is_some())
-        || edit::capacity(ch, guid).is_some()
-        || !edit::addon_categories(ch, store, guid).is_empty()
-        || e.get("devicerating").trim().parse::<i32>().is_ok_and(|d| d > 0)
 }
 
 /// The top-level item an item is in (itself at the top).

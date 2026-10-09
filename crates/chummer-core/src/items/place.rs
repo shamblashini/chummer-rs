@@ -286,83 +286,111 @@ pub fn check(ch: &Character, store: &DataStore, cand: Candidate<'_>, dest: &Dest
             Ok(())
         }
         Dest::Item(pg) => {
-            let parent = find(ch, pg).ok_or(Misfit::Missing)?;
+            let host = Host::of(ch, store, pg).ok_or(Misfit::Missing)?;
+            let mut here = false;
             if let Some(g) = owned {
                 let mut inside = Vec::new();
                 edit::subtree_guids(item.expect("owned"), &mut inside);
                 if inside.iter().any(|x| x.eq_ignore_ascii_case(pg)) {
                     return Err(Misfit::Itself);
                 }
-                if root_container(ch, g) != root_container(ch, pg) {
+                if root_container(ch, g) != host.root {
                     return Err(Misfit::OtherList);
                 }
+                here = edit::parent(ch, g).is_some_and(|p| p.get("guid").eq_ignore_ascii_case(pg));
             }
-            let ptag = tag_of(parent);
-            let mut kinds: Vec<&str> = edit::child_kinds(ch, pg).iter().map(|k| k.tag).collect();
-            if ptag == "vehicle" {
-                kinds.push("weaponmount");
-            }
-            if ptag == "gear" && !edit::is_gear_container(ch, store, pg) {
-                kinds.retain(|k| *k != "gear");
-            }
-            // A full weapon mount no longer lists weapons; the one already
-            // in it may stay.
-            let here = owned.and_then(|g| edit::parent(ch, g)).is_some_and(|p| p.get("guid").eq_ignore_ascii_case(pg));
-            if !kinds.contains(&tag.as_str()) && !(here && ptag == "weaponmount") {
-                return Err(Misfit::Kind);
-            }
-            let pdata = data_of(store, parent);
-            let category = data.get("category");
-            match tag.as_str() {
-                "gear" => {
-                    let cats = edit::addon_categories(ch, store, pg);
-                    if !cats.is_empty() && !cats.iter().any(|c| c.eq_ignore_ascii_case(&category)) {
-                        return Err(Misfit::Category(cats));
-                    }
-                }
-                "cyberware" | "bioware" => {
-                    if !(data.child("requireparent").is_some() || data.get("capacity").contains('[')) || data.child("mountsto").is_some() {
-                        return Err(Misfit::Kind);
-                    }
-                    let subs = list(&parent.get("subsystems"));
-                    if !subs.is_empty() && !subs.iter().any(|c| c.eq_ignore_ascii_case(&category)) {
-                        return Err(Misfit::Category(subs));
-                    }
-                }
-                "accessory" => {
-                    if weapon::mount_options(parent, Record(&data)).is_empty() {
-                        return Err(Misfit::NoMount);
-                    }
-                }
-                "weapon" if ptag == "weapon" => {
-                    if !category.eq_ignore_ascii_case("Underbarrel Weapons") {
-                        return Err(Misfit::Category(vec!["Underbarrel Weapons".into()]));
-                    }
-                }
-                "weapon" => {
-                    let cats = list(&parent.get("weaponmountcategories"));
-                    if !cats.is_empty() && !cats.iter().any(|c| c.eq_ignore_ascii_case(&category)) {
-                        return Err(Misfit::Category(cats));
-                    }
-                }
-                _ => {}
-            }
-            if !parent_rules_ok(&data, Some(&pdata)) {
-                return Err(Misfit::Required);
-            }
-            if here {
-                return Ok(());
-            }
-            if enforce {
-                if let Some((used, total)) = edit::capacity(ch, pg) {
-                    let need = need_in(parent, item.unwrap_or(&data), &tag, rating);
-                    if need > 0.0 && used + need > total + 1e-9 {
-                        return Err(Misfit::Full { used, total, need });
-                    }
-                }
-            }
-            Ok(())
+            host.takes(&tag, &data, item, rating, enforce, here)
         }
+    }
+}
+
+/// A parent item with what the checks need from it, looked up once (the
+/// catalog checks every record it lists against its target).
+#[derive(Debug, Clone)]
+pub struct Host {
+    pub el: Element,
+    tag: String,
+    kinds: Vec<&'static str>,
+    cats: Vec<String>,
+    data: Element,
+    /// (used, total).
+    pub capacity: Option<(f64, f64)>,
+    root: Option<&'static str>,
+}
+
+impl Host {
+    pub fn of(ch: &Character, store: &DataStore, guid: &str) -> Option<Host> {
+        let el = find(ch, guid)?.clone();
+        let tag = tag_of(&el).to_owned();
+        let mut kinds: Vec<&'static str> = edit::child_kinds(ch, guid).iter().map(|k| k.tag).collect();
+        if tag == "vehicle" {
+            kinds.push("weaponmount");
+        }
+        if tag == "gear" && !edit::is_gear_container(ch, store, guid) {
+            kinds.retain(|k| *k != "gear");
+        }
+        Some(Host { tag, kinds, cats: edit::addon_categories(ch, store, guid), data: data_of(store, &el), capacity: edit::capacity(ch, guid), root: root_container(ch, guid), el })
+    }
+
+    /// Whether it takes an item of kind `tag` with data element `data`
+    /// (and saved element `item`, when owned) at `rating`. `here`: the
+    /// item is in it already (no capacity check).
+    pub fn takes(&self, tag: &str, data: &Element, item: Option<&Element>, rating: i32, enforce: bool, here: bool) -> Result<(), Misfit> {
+        let ptag = self.tag.as_str();
+        // A full weapon mount no longer lists weapons; the one already in
+        // it may stay.
+        if !self.kinds.contains(&tag) && !(here && ptag == "weaponmount") {
+            return Err(Misfit::Kind);
+        }
+        let category = data.get("category");
+        match tag {
+            "gear" => {
+                if !self.cats.is_empty() && !self.cats.iter().any(|c| c.eq_ignore_ascii_case(&category)) {
+                    return Err(Misfit::Category(self.cats.clone()));
+                }
+            }
+            "cyberware" | "bioware" => {
+                if !(data.child("requireparent").is_some() || data.get("capacity").contains('[')) || data.child("mountsto").is_some() {
+                    return Err(Misfit::Kind);
+                }
+                let subs = list(&self.el.get("subsystems"));
+                if !subs.is_empty() && !subs.iter().any(|c| c.eq_ignore_ascii_case(&category)) {
+                    return Err(Misfit::Category(subs));
+                }
+            }
+            "accessory" => {
+                if weapon::mount_options(&self.el, Record(data)).is_empty() {
+                    return Err(Misfit::NoMount);
+                }
+            }
+            "weapon" if ptag == "weapon" => {
+                if !category.eq_ignore_ascii_case("Underbarrel Weapons") {
+                    return Err(Misfit::Category(vec!["Underbarrel Weapons".into()]));
+                }
+            }
+            "weapon" => {
+                let cats = list(&self.el.get("weaponmountcategories"));
+                if !cats.is_empty() && !cats.iter().any(|c| c.eq_ignore_ascii_case(&category)) {
+                    return Err(Misfit::Category(cats));
+                }
+            }
+            _ => {}
+        }
+        if !parent_rules_ok(data, Some(&self.data)) {
+            return Err(Misfit::Required);
+        }
+        if here {
+            return Ok(());
+        }
+        if enforce {
+            if let Some((used, total)) = self.capacity {
+                let need = need_in(&self.el, item.unwrap_or(data), tag, rating);
+                if need > 0.0 && used + need > total + 1e-9 {
+                    return Err(Misfit::Full { used, total, need });
+                }
+            }
+        }
+        Ok(())
     }
 }
 
