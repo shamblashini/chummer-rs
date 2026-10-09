@@ -614,12 +614,12 @@ was.
 
   ![Cyberware with the catalog beside it: two items added this visit, a record previewed](docs/screenshots/workspace-inventory-dark.png)
   ![A narrow window: the catalog above the inventory, the selected record's details under its row](docs/screenshots/workspace-inventory-stacked-dark.png)
-  ![Adding into a container: the Target, what does not fit dimmed](docs/screenshots/workspace-inventory-target-dark.png)
+  ![Adding into the selected goggles: the Target, its capacity, what does not fit dimmed with the reason](docs/screenshots/workspace-inventory-target-dark.png)
   ![The item table in career: a selected container, a hovered mod's actions](docs/screenshots/workspace-inventory-table-dark.png)
   ![A row's ⋯ menu, open on a row that is not selected](docs/screenshots/workspace-inventory-menu-dark.png)
   ![Dragging a vision enhancement onto goggles: the targets outlined, the chip says what the drop does](docs/screenshots/workspace-inventory-drag-dark.png)
   ![Weapons: dice pool, damage, ammunition and the equipped toggles](docs/screenshots/workspace-inventory-weapons-dark.png)
-  ![The same as the first, light](docs/screenshots/workspace-inventory-light.png)
+  ![Light: full glasses as the target (2/2 capacity), what does not fit dimmed with the reason, a row's ⋯ menu](docs/screenshots/workspace-inventory-light.png)
 - **Catalog beside the inventory**: "Add …" opens the game data next to
   the inventory (Classic keeps the selection dialog), and the inventory
   stays in view: side by side, or on a narrow page stacked above it

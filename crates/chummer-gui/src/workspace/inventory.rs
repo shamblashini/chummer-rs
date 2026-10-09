@@ -452,7 +452,13 @@ impl Ctx<'_> {
         // "Move to …" entries: the locations (top-level items), out of
         // the item it is in (nested items).
         let mut moves: Vec<(String, String)> = if !guid.is_empty() && edit::has_location(ch, &guid) {
-            std::iter::once((String::new(), lang.tr("No location"))).chain(edit::locations(ch, &guid)).map(|(g, n)| (format!("move:{g}"), lang.tr_fmt("Move to {0}", &[&n]))).collect()
+            // Not where it is now.
+            let here = el.get("location");
+            std::iter::once((String::new(), lang.tr("No location")))
+                .chain(edit::locations(ch, &guid))
+                .filter(|(g, _)| !g.eq_ignore_ascii_case(&here))
+                .map(|(g, n)| (format!("move:{g}"), lang.tr_fmt("Move to {0}", &[&n])))
+                .collect()
         } else {
             Vec::new()
         };
