@@ -425,7 +425,7 @@ impl GmScreen {
     /// Recompute sheets and take new log entries into the feed for
     /// members whose character changed.
     fn sync(&mut self, engine: &Engine, views: &[CharacterView]) {
-        let GmScreen { live, campaign, .. } = self;
+        let GmScreen { live, campaign, rolls, .. } = self;
         for (id, l) in live.iter_mut() {
             let doc = match l.doc.as_ref() {
                 Some(d) => d,
@@ -441,7 +441,11 @@ impl GmScreen {
             l.sheet = engine.sheet(doc);
             // A rename (here, in the member's tab or by its player) reaches
             // the roster and the encounters.
-            campaign.set_member_name(*id, &doc.display_name());
+            let name = doc.display_name();
+            campaign.set_member_name(*id, &name);
+            for r in rolls.iter_mut().filter(|r| r.member == Some(*id) && r.who != name) {
+                r.who = name.clone();
+            }
             // An online campaign's feed is the authority's.
             if let Some(s) = doc.session() {
                 campaign.absorb(*id, s.log(), &mut l.cursor);
@@ -568,7 +572,7 @@ impl GmScreen {
                 },
                 |ui, n| {
                     if let Some(id) = n.value {
-                        if joinable.contains(&id) && ui.small_button(crate::workspace::icons::SWORD).on_hover_text(lang.tr("Add to the encounter (or drag onto it)")).clicked() {
+                        if joinable.contains(&id) && ui.small_button(crate::workspace::icons::PLUS_CIRCLE).on_hover_text(lang.tr("Add to the encounter (or drag onto it)")).clicked() {
                             from_button = Some((id, RosterDo::Join));
                         }
                         if loaded.contains(&id) && ui.small_button("↗").on_hover_text(lang.tr("Open")).clicked() {
@@ -1675,6 +1679,7 @@ mod tests {
         let row = gm.campaign.encounters[0].combatants.iter().find(|x| x.member == Some(b)).unwrap();
         assert_eq!(row.name, "Ganger Boss");
         assert!(gm.feed_rows().iter().any(|f| f.text.contains("Ganger Boss")), "{:?}", gm.feed_rows());
+        gm.roll_for(Some(b), "Ganger Boss", "Defense", 4, &mut views);
         // In place: Esc keeps the name, Enter renames.
         gm.start_rename(RenameAt::Roster(c));
         *gm.renaming_at(RenameAt::Roster(c)).unwrap() = "Lookout".into();
@@ -1689,6 +1694,7 @@ mod tests {
         gm.sync(&engine, &views);
         assert_eq!(gm.campaign.member(b).unwrap().name, "Ganger 2");
         assert!(gm.campaign.encounters[0].combatants.iter().any(|x| x.name == "Ganger 2"));
+        assert_eq!(gm.last_roll(b).unwrap().who, "Ganger 2", "its rolls follow the name");
         // Push the Limit: Edge added with the Rule of Six, 1 Edge spent.
         let (left, rating) = gm.edge_left(a, &views);
         assert!(rating > 0 && left > 0);

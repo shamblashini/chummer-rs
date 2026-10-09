@@ -94,6 +94,12 @@ impl GmScreen {
         }
     }
 
+    /// The GM's rolls, newest first.
+    #[cfg(test)]
+    pub(crate) fn rolls(&self) -> &[GmRoll] {
+        &self.rolls
+    }
+
     /// The member's newest roll.
     pub(crate) fn last_roll(&self, m: MemberId) -> Option<&GmRoll> {
         self.rolls.iter().find(|r| r.member == Some(m))
@@ -215,7 +221,7 @@ fn roll_row(ui: &mut egui::Ui, lang: &Language, r: &GmRoll) {
         let hx = rect.right() - hits.size().x;
         // The dice, small, left of the hits (as many as fit).
         let die = 9.0;
-        let room = ((rect.width() - 150.0 - hits.size().x).max(0.0) / (die + 2.0)) as usize;
+        let room = ((rect.width() - 200.0 - hits.size().x).max(0.0) / (die + 2.0)) as usize;
         let n = r.roll.dice.len().min(room.min(14));
         let dx = hx - 8.0 - n as f32 * (die + 2.0);
         for (k, d) in r.roll.dice.iter().take(n).enumerate() {

@@ -217,7 +217,7 @@ impl GmScreen {
                             let joinable = shown.iter().filter(|r| self.can_join(r.id)).count();
                             if joinable > 0 {
                                 let tip = lang.tr_fmt("Add all {0} to the encounter ({1})", &[&lang.tr(kind.plural()), &joinable]);
-                                if widgets::icon_button(ui, icons::SWORD, 20.0).on_hover_text(tip).clicked() {
+                                if widgets::icon_button(ui, icons::PLUS_CIRCLE, 20.0).on_hover_text(tip).clicked() {
                                     join_kind = Some(kind.clone());
                                 }
                             }
@@ -246,7 +246,7 @@ impl GmScreen {
                             if ui.add_enabled(loaded, egui::Button::new(format!("{}  {}", icons::ARROW_SQUARE_OUT, lang.tr("Open")))).clicked() {
                                 todo = Some((r.id, RosterDo::Open));
                             }
-                            let add = ui.add_enabled(look.joinable, egui::Button::new(format!("{}  {}", icons::SWORD, lang.tr("Add to encounter"))));
+                            let add = ui.add_enabled(look.joinable, egui::Button::new(format!("{}  {}", icons::PLUS_CIRCLE, lang.tr("Add to encounter"))));
                             let add = if look.fighting { add.on_disabled_hover_text(lang.tr("In the encounter already")) } else { add };
                             if add.clicked() {
                                 todo = Some((r.id, RosterDo::Join));
@@ -529,7 +529,7 @@ impl GmScreen {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 if order.is_empty() {
-                    ui.label(RichText::new(lang.tr("Add combatants: drag characters here from the roster, use their sword button, or add quick ones by name.")).size(11.5).color(ws.muted));
+                    ui.label(RichText::new(lang.tr("Add combatants: drag characters here from the roster, use their + button, or add quick ones by name.")).size(11.5).color(ws.muted));
                 }
                 for i in order {
                     let e = &gm.campaign.encounters[gm.encounter];
@@ -643,7 +643,7 @@ impl GmScreen {
             // The selected roster member, in one click.
             if let Some(id) = self.selected.filter(|id| self.can_join(*id)) {
                 let name = self.campaign.member(id).map(|m| m.name.clone()).unwrap_or_default();
-                if widgets::button(ui, Some(icons::SWORD), &lang.tr_fmt("Add {0}", &[&name]), Look::Ghost, 24.0).on_hover_text(lang.tr("Add the selected character to the encounter")).clicked() {
+                if widgets::button(ui, Some(icons::PLUS_CIRCLE), &lang.tr_fmt("Add {0}", &[&name]), Look::Ghost, 24.0).on_hover_text(lang.tr("Add the selected character to the encounter")).clicked() {
                     add = Some(id);
                 }
             }
@@ -1279,7 +1279,7 @@ fn rename_field(ui: &mut egui::Ui, rect: egui::Rect, text: &mut String, size: f3
 
 /// One member of the roster: name, player in small text, damage bars;
 /// struck through when the Physical track is full. On hover (and when
-/// selected): Add to encounter and Rename buttons; a sword marks members
+/// selected): Add to encounter (+) and Rename buttons; a sword marks members
 /// in the encounter. Drag it onto the encounter to add it there.
 /// `rename`: the name being edited in place.
 fn roster_row(ui: &mut egui::Ui, r: &super::RosterRow, look: RosterLook, rename: Option<&mut String>, lang: &Language) -> RosterOut {
@@ -1326,7 +1326,7 @@ fn roster_row(ui: &mut egui::Ui, r: &super::RosterRow, look: RosterLook, rename:
     if hot && r.error.is_none() {
         let mut k = 0.0;
         if look.joinable {
-            out.join = row_icon(ui, icon(k), id.with("join"), icons::SWORD, ws.accent, &lang.tr("Add to the encounter (or drag it there)"));
+            out.join = row_icon(ui, icon(k), id.with("join"), icons::PLUS_CIRCLE, ws.accent, &lang.tr("Add to the encounter (or drag it there)"));
             k += 1.0;
         }
         out.rename = row_icon(ui, icon(k), id.with("rename"), icons::PENCIL_SIMPLE, ws.muted, &lang.tr("Rename (F2)"));
