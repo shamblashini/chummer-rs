@@ -62,7 +62,7 @@ pub struct GearState {
     pub(super) focus_catalog: bool,
     /// While a row is dragged: the inventory's drop targets
     /// (`ws_inventory_drops`), with the key they were computed for.
-    pub(super) drops: Option<(u64, std::collections::HashMap<String, Result<String, String>>)>,
+    pub(super) drops: Option<(u64, table::Drops)>,
 }
 
 /// A visit of an item page: from showing it until another page shows.

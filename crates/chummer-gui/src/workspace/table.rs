@@ -337,8 +337,11 @@ pub struct States<'a> {
     pub scroll_to: Option<&'a str>,
     /// While a row is dragged: the rows it may be dropped on (what the
     /// drop does) or not (why), by row key.
-    pub drops: Option<&'a HashMap<String, Result<String, String>>>,
+    pub drops: Option<&'a Drops>,
 }
+
+/// Drop targets by row key: what a drop does, or why it cannot.
+pub type Drops = HashMap<String, Result<String, String>>;
 
 /// The drag payload of a row: its table, key and name.
 #[derive(Debug, Clone, PartialEq)]

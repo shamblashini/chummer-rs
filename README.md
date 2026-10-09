@@ -492,7 +492,10 @@ was.
   dark/light switch.
 - **Budget strip**: creation budgets (attributes, special, skills, skill
   groups, knowledge, contacts, karma, nuyen, essence) with bars, or in
-  career karma, nuyen, essence, limits, initiative and armor.
+  career karma, nuyen, essence, limits, initiative and armor. When the
+  window is too narrow for all of them, karma, nuyen and essence stay
+  and the others go behind a "+N" button (a dot when one of them is over
+  or under budget) that lists them.
 - **Page**: the section, with one hint line above it in creation (the
   guide's step and what is left, or the tab's issues). The build,
   story and record pages are the Workspace's own: tables with steppers in
@@ -584,9 +587,25 @@ was.
   narrow page go lowest priority first (source, then wireless and
   equipped, availability, capacity, grade, quantity, rating; rating and
   grade then go into the name: "Wired Reflexes 1 Alpha"); the Columns
-  button turns any of them on or off. A hovered or selected row shows
-  its actions (Edit, Move to a location, Remove, or in career Sell at a
-  percentage and More); ratings and quantities get steppers on that row
+  button turns any of them on or off, and Group by shows the items by
+  Chummer's groups (locations; on the Cyberware page Cyberware and
+  Bioware), by category or without groups (remembered per page). A
+  hovered or selected row shows its actions (Edit, Remove, or in career
+  Sell at a percentage). Every row with actions also has a ⋯ at the end,
+  muted until the row is hovered or selected, that opens all of them as
+  a menu (Edit, Move to a location, Move out of the item it is in,
+  Remove, Sell, the sourcebook); a right-click on the row and Shift+F10
+  on the selected row open the same menu, which stays open until a
+  click elsewhere or Escape. Drag a row onto another item to put it
+  inside, onto a location to move it there, or onto the page's top
+  group ("Selected Gear", "Cyberware") to take it out: the same rules
+  as buying it there (what the container takes, the free capacity at
+  the item's rating, a weapon's free mounts, a cyberlimb's subsystems
+  and the ware's `parentdetails`), see `Command::MoveItem`. While a row
+  is dragged the rows it can go into are outlined, and the chip under
+  the pointer says what a drop does or why it cannot ("Glasses is full
+  (2/2 capacity used; Flare Compensation needs 1)"); Escape cancels.
+  Ratings and quantities get steppers on that row
   during creation, wireless and equipped are toggle buttons, F2 renames,
   Space toggles wireless, + and − change the rating, Del asks before
   removing. Issue marks sit before the name. Every change runs the same
@@ -597,6 +616,8 @@ was.
   ![A narrow window: the catalog above the inventory, the selected record's details under its row](docs/screenshots/workspace-inventory-stacked-dark.png)
   ![Adding into a container: the Target, what does not fit dimmed](docs/screenshots/workspace-inventory-target-dark.png)
   ![The item table in career: a selected container, a hovered mod's actions](docs/screenshots/workspace-inventory-table-dark.png)
+  ![A row's ⋯ menu, open on a row that is not selected](docs/screenshots/workspace-inventory-menu-dark.png)
+  ![Dragging a vision enhancement onto goggles: the targets outlined, the chip says what the drop does](docs/screenshots/workspace-inventory-drag-dark.png)
   ![Weapons: dice pool, damage, ammunition and the equipped toggles](docs/screenshots/workspace-inventory-weapons-dark.png)
   ![The same as the first, light](docs/screenshots/workspace-inventory-light.png)
 - **Catalog beside the inventory**: "Add …" opens the game data next to
@@ -613,9 +634,11 @@ was.
   "Installed R2"; one that cannot be added is dimmed with the reason in
   amber. ↑ ↓ move, Enter adds and hands the keys to the inventory (where
   the new row is), Shift+Enter adds and stays, Tab switches between the
-  catalog and the inventory. The budget strip shows essence and nuyen
+  catalog and the inventory. A record can also be dragged from the
+  results onto an inventory row or a location: it is bought into that
+  place, the same as Add. The budget strip shows essence and nuyen
   before → after for the selected record, and the inspector the record:
-  rating, grade, quantity, where to install it, and a preview made by
+  rating, grade, quantity, and a preview made by
   applying the purchase to a copy of the character: essence before and
   after (with a bar), cost, availability against the limit, nuyen (left)
   after, and initiative, attributes, armor, limits and condition monitor
@@ -636,12 +659,16 @@ was.
   online characters keep Undo off and Remove works), earlier ones this
   visit with the bar, and all of them in "Added since you opened this
   page" with Undo each and Undo all.
-  Selecting a container in the inventory makes it the catalog's target:
-  an accent outline and a "Target" chip on its row, an "Adding into
-  Glasses" bar over the results with Change and ×, and what does not go
-  in (gear outside the container's `addoncategory` list, as Chummer's
-  selection dialog filters it) listed last, dimmed, "Not for Glasses".
-  A location group's "+" adds into that location.
+  The selected inventory row is the catalog's target when it can hold
+  the selected record: an accent outline and a "Target" chip on its row,
+  an "Adding into Glasses" bar over the results with its capacity ("1/4
+  capacity"), Change and ×. When it cannot (a flashlight for glasses,
+  glasses that are full), the purchase goes to the top level and the bar
+  says why. What does not go into the selected container is listed last,
+  dimmed, with the reason: the purchase rules of `items::place` (the
+  container's `addoncategory` list, ware subsystems and
+  `requireparent`, `parentdetails`, free mounts, free capacity at the
+  rating shown). A location group's "+" adds into that location.
 - **Inspector**: creation issues with Finish creation, the selected
   item in the Workspace style (rating, quantity, equipped and wireless,
   custom name, location, cost, availability, essence, capacity,
@@ -1134,13 +1161,12 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   table shows essence, cost and availability from the data at the chosen
   rating and grade (the inspector's preview is exact). Item pages: the
   weapon ranges and vehicle seats are columns that a narrow page hides
-  first (turn them on with Columns), and the table has no "group by" choice (the
-  groups are Chummer's: types, locations, mod categories) and no drag
-  and drop to reorder or move (Move… picks a location). What fits a
-  target container checks the kind and gear's `addoncategory` list, not
-  its free capacity (an over-full container shows as a creation issue).
-  A group's "+ add into" a location is two changes (the add and the
-  location); the inline Undo takes both back. Home's recent
+  first (turn them on with Columns). Drag and drop moves items into
+  other items and locations but does not reorder them, and a vehicle's
+  own locations and mod categories are no drop targets. A group's "+
+  add into" a location, and a catalog record dropped on a location, is
+  two changes (the add and the location); the inline Undo takes both
+  back. Home's recent
   activity lists joined campaigns only (the GM's own feed is on the GM
   screen). Pop-outs: on Wayland the system places the windows (only
   their size is kept); with an item page popped out, the catalog's
