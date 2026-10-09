@@ -1,7 +1,8 @@
 # chummer-relay with Docker Compose. In an empty directory, next to this file:
 #   cp relay.example.toml relay.toml   # then set hostname and contact_email
 #   docker compose up -d
-# Both files are attached to every GitHub release. The image is published
+# Both files are attached to every GitHub release. On Coolify, use
+# docker-compose.coolify.yml instead (see docs/relay.md). The image is published
 # for amd64 and arm64; pin a version (ghcr.io/shamblashini/chummer-relay:0.5.0)
 # instead of :latest to update only when you choose.
 # To build the image from a source checkout instead, run from this

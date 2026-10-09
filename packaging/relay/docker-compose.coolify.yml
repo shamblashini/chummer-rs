@@ -1,0 +1,56 @@
+# chummer-relay on Coolify (https://coolify.io).
+#
+# Coolify's Traefik proxy owns TCP 80 and 443, so this file does not use
+# host networking. Instead Traefik passes the relay's HTTPS traffic through
+# untouched (TLS passthrough, matched by host name), and the relay keeps
+# its own Let's Encrypt certificate: the TLS-ALPN-01 challenge travels
+# through Traefik, and QUIC address discovery on UDP 7842 uses the same
+# certificate. The two UDP ports are published straight on the server,
+# since Traefik does not carry UDP.
+#
+# In Coolify: New resource → Docker Compose Empty, paste this file, then:
+#   - leave the service's Domain field EMPTY (a domain makes Coolify add
+#     its own HTTPS router for the host, which takes the traffic away from
+#     the passthrough below);
+#   - set RELAY_HOSTNAME and RELAY_CONTACT_EMAIL under Environment
+#     Variables (RELAY_TAG is optional: latest, edge or a version);
+#   - point RELAY_HOSTNAME's DNS at the server and open UDP 7842 and 7843
+#     in its firewall;
+#   - deploy, and read the mailbox node id from the logs.
+# Full steps: docs/relay.md, "Deploy on Coolify".
+services:
+  chummer-relay:
+    image: ghcr.io/shamblashini/chummer-relay:${RELAY_TAG:-latest}
+    restart: unless-stopped
+    # Appended to the image's entry point, which reads the built-in
+    # relay.toml (ports 80/443/7842/7843, Let's Encrypt).
+    command:
+      - --hostname
+      - ${RELAY_HOSTNAME:?set RELAY_HOSTNAME to the relay's DNS name}
+      - --contact-email
+      - ${RELAY_CONTACT_EMAIL:?set RELAY_CONTACT_EMAIL for Let's Encrypt}
+    environment:
+      RUST_LOG: info,iroh=warn
+    ports:
+      - "7842:7842/udp" # QUIC address discovery
+      - "7843:7843/udp" # direct connections to the mailbox node
+    volumes:
+      # The mailbox database, the mailbox node key (its id is the address
+      # players' apps use) and the Let's Encrypt account and certificate.
+      # Back it up.
+      - chummer-relay-data:/var/lib/chummer-relay
+    labels:
+      - traefik.enable=true
+      # HTTPS: hand the TLS stream to the relay as it is.
+      - traefik.tcp.routers.chummer-relay.entrypoints=https
+      - traefik.tcp.routers.chummer-relay.rule=HostSNI(`${RELAY_HOSTNAME}`)
+      - traefik.tcp.routers.chummer-relay.tls.passthrough=true
+      - traefik.tcp.routers.chummer-relay.service=chummer-relay-tls
+      - traefik.tcp.services.chummer-relay-tls.loadbalancer.server.port=443
+      # Plain HTTP: the captive-portal probe clients make.
+      - traefik.http.routers.chummer-relay-http.entrypoints=http
+      - traefik.http.routers.chummer-relay-http.rule=Host(`${RELAY_HOSTNAME}`)
+      - traefik.http.routers.chummer-relay-http.service=chummer-relay-http
+      - traefik.http.services.chummer-relay-http.loadbalancer.server.port=80
+volumes:
+  chummer-relay-data:

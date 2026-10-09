@@ -220,6 +220,50 @@ cp relay.example.toml relay.toml     # edit hostname and contact_email
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
+## Deploy on Coolify
+
+[Coolify](https://coolify.io) runs its own Traefik proxy on TCP 80 and 443,
+so the plain compose file (host networking, ports 80 and 443) clashes with
+it. Use `packaging/relay/docker-compose.coolify.yml` instead (also attached
+to every release). Traefik passes the relay's HTTPS connections through
+unopened (TLS passthrough, matched by host name). The relay keeps getting
+its own Let's Encrypt certificate, and QUIC address discovery uses that
+same certificate. The two UDP ports are published straight on the server,
+because Traefik does not carry UDP.
+
+1. Point a DNS name at the Coolify server, e.g.
+   `relay.example.org`, and open **UDP 7842 and 7843** in the server's
+   firewall (and the cloud provider's, if any). TCP 80 and 443 are
+   already open for Coolify.
+2. In Coolify: **New resource → Docker Compose Empty**, and paste
+   `docker-compose.coolify.yml`.
+3. **Leave the service's Domain field empty.** A domain makes Coolify add
+   its own HTTPS router and certificate for that host, which takes the
+   traffic away from the passthrough router in the file.
+4. Under **Environment Variables**, set `RELAY_HOSTNAME`
+   (`relay.example.org`) and `RELAY_CONTACT_EMAIL` (for Let's Encrypt).
+   `RELAY_TAG` is optional: `latest` (default), `edge` (to match app
+   builds from master) or a version.
+5. Deploy. The logs show `mailbox node connected to the relay` and the
+   mailbox node id, see [The mailbox node id](#the-mailbox-node-id). The
+   first start takes a few seconds longer while the certificate is issued.
+
+The data (mailbox, the mailbox node key, the certificate) lives in the
+`chummer-relay-data` volume. Back it up: a new mailbox key means a new
+mailbox node id. Behind Traefik, the relay sees Traefik's address rather
+than the client's on TCP. That does not matter: the mailbox's limits are
+per key, not per address, and address discovery runs on UDP, which goes
+directly to the relay.
+
+To check it from your machine:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://relay.example.org/ping
+```
+
+`200` means Traefik hands the connection to the relay and the
+certificate is valid.
+
 ## Deploy with systemd
 
 ```bash

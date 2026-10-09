@@ -320,7 +320,7 @@ jobs:
           merge-multiple: true
       - name: Relay files and checksums
         run: |
-          cp packaging/relay/docker-compose.yml packaging/relay/relay.example.toml dist/
+          cp packaging/relay/docker-compose.yml packaging/relay/docker-compose.coolify.yml packaging/relay/relay.example.toml dist/
           # The in-app updater checks downloads against this file.
           (cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS)
       # TODO: sign SHA256SUMS (minisign / ed25519) once a signing key is
@@ -333,6 +333,7 @@ jobs:
           path: |
             dist/SHA256SUMS
             dist/docker-compose.yml
+            dist/docker-compose.coolify.yml
             dist/relay.example.toml
       - uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
