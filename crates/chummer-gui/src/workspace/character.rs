@@ -160,6 +160,10 @@ impl CharacterView {
     /// Go to a section's tab (Play and History keep the tab).
     pub fn ws_go(&mut self, s: Section) {
         self.set_reviewing(s == Section::Review);
+        // An item opened on another page would stay in the inspector.
+        if matches!(s, Section::Page(_) | Section::Gear(_)) && s != self.ws_current(None) && self.ws_has_item() {
+            self.ws_close_item();
+        }
         match s {
             Section::Page(t) => self.tab = t,
             Section::Gear(i) => {
