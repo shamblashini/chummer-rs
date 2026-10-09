@@ -93,7 +93,8 @@ fn copies_get_fresh_guids() {
     let mut all = orig.clone();
     for (n, id) in ids.iter().enumerate() {
         let m = c.member(*id).unwrap();
-        assert_eq!(m.name, format!("Halloweener Ganger {}", n + 1));
+        // The template, named just "Halloweener Ganger", counts as 1.
+        assert_eq!(m.name, format!("Halloweener Ganger {}", n + 2));
         assert_eq!(m.group, "Halloweeners");
         assert_eq!(m.kind, MemberKind::Enemy);
         let copy = m.load_character(None).unwrap();
@@ -119,7 +120,7 @@ fn copies_get_fresh_guids() {
     // Copying a copy continues the numbers.
     let fifth = c.member(ids[3]).unwrap().clone();
     let more = c.add_copies(&engine, &fifth, &fifth.load_character(None).unwrap(), 1);
-    assert_eq!(c.member(more[0]).unwrap().name, "Halloweener Ganger 5");
+    assert_eq!(c.member(more[0]).unwrap().name, "Halloweener Ganger 6");
 }
 
 #[test]

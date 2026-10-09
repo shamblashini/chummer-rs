@@ -150,6 +150,29 @@ impl Encounter {
         }
     }
 
+    /// Add a combatant (with `stats` from its sheet, when it has one).
+    /// Before the first round it waits for Roll initiative; during a
+    /// round it rolls at once, as one joining late does. Returns its id.
+    pub fn join(&mut self, mut c: Combatant, rng: &mut Rng, stats: Option<InitStats>) -> CombatantId {
+        if let Some(s) = stats {
+            c.take(s);
+        }
+        let id = c.id;
+        self.combatants.push(c);
+        if self.round > 0 {
+            let i = self.combatants.len() - 1;
+            self.reroll(i, rng, stats);
+        }
+        id
+    }
+
+    /// Give a member's combatants its new name (after a rename).
+    pub fn rename_member(&mut self, m: MemberId, name: &str) {
+        for c in self.combatants.iter_mut().filter(|c| c.member == Some(m) && c.name != name) {
+            c.name = name.to_owned();
+        }
+    }
+
     /// Roll again for one combatant (joined late, or the GM rerolls).
     pub fn reroll(&mut self, i: usize, rng: &mut Rng, stats: Option<InitStats>) {
         let Some(c) = self.combatants.get_mut(i) else { return };
@@ -332,5 +355,30 @@ mod tests {
         assert_eq!((e.round, e.pass), (2, 1));
         assert!(!e.combatants[0].blitzed);
         assert_eq!(e.combatants[0].rolled.len(), 1);
+    }
+
+    #[test]
+    fn joining_rolls_only_during_a_round() {
+        let mut e = Encounter::new("t");
+        let mut rng = Rng::seeded(9);
+        let stats = InitStats { base: 9, dice: 2, edge: 2, reaction: 4, intuition: 5 };
+        let (a, b) = (MemberId::random(), MemberId::random());
+        let first = e.join(Combatant::for_member(a, "Ganger 1"), &mut rng, Some(stats));
+        let c = &e.combatants[0];
+        assert_eq!((c.id, c.base, c.dice, c.edge), (first, 9, 2, 2), "the sheet's stats");
+        assert!(c.rolled.is_empty() && c.score == 0, "waits for Roll initiative");
+        e.new_round(&mut rng, |_| None);
+        e.combatants[0].score = 30;
+        assert!(e.next_pass());
+        // Joining in pass 2: rolls now, and has already lost the pass's 10.
+        e.join(Combatant::for_member(b, "Ganger 2"), &mut rng, Some(stats));
+        let late = &e.combatants[1];
+        assert_eq!(late.rolled.len(), 2);
+        assert_eq!(late.score, 9 + late.rolled.iter().map(|&d| i32::from(d)).sum::<i32>() - 10);
+        assert!(e.has_member(b));
+        // A rename reaches the member's combatants only.
+        e.rename_member(a, "Boss");
+        assert_eq!(names(&e).len(), 2);
+        assert_eq!((e.combatants[0].name.as_str(), e.combatants[1].name.as_str()), ("Boss", "Ganger 2"));
     }
 }

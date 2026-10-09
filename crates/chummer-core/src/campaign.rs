@@ -560,13 +560,58 @@ impl Campaign {
             .collect()
     }
 
-    /// The next free number for copies named "`base` N".
+    /// The next free number for copies named "`base` N". A member named
+    /// just `base` counts as number 1.
     pub fn next_number(&self, base: &str) -> u32 {
         self.members
             .iter()
-            .filter_map(|m| m.name.strip_prefix(base)?.strip_prefix(' ')?.parse::<u32>().ok())
+            .filter_map(|m| if m.name == base { Some(1) } else { m.name.strip_prefix(base)?.strip_prefix(' ')?.parse::<u32>().ok() })
             .max()
             .map_or(1, |n| n.saturating_add(1))
+    }
+
+    /// The name for a new member called `name` that tells it apart from
+    /// the others: `name` while no member has it or a numbered form of
+    /// it, else the next "`base` N" ("Ganger" with a Ganger there →
+    /// "Ganger 2").
+    pub fn unique_name(&self, name: &str) -> String {
+        let base = strip_number(name);
+        let taken = self.members.iter().any(|m| m.name == name) || (base == name && self.next_number(base) > 1);
+        if taken {
+            format!("{base} {}", self.next_number(base))
+        } else {
+            name.to_owned()
+        }
+    }
+
+    /// The member to call "`base` 1" when a numbered "`base` N" joins it:
+    /// the only one named just `base`, if that is not a player and not
+    /// linked (renaming changes a linked member's own file) and "`base`
+    /// 1" is free.
+    pub fn unnumbered(&self, base: &str) -> Option<MemberId> {
+        let one = format!("{base} 1");
+        if self.members.iter().any(|m| m.name == one) {
+            return None;
+        }
+        let mut bare = self.members.iter().filter(|m| m.name == base);
+        match (bare.next(), bare.next()) {
+            (Some(m), None) if m.kind != MemberKind::Player && !m.is_linked() => Some(m.id),
+            _ => None,
+        }
+    }
+
+    /// A member's new roster name, on the member and its combatants. The
+    /// character's own name is changed by a command
+    /// ([`rename_command`]); this follows it.
+    pub fn set_member_name(&mut self, id: MemberId, name: &str) {
+        if let Some(m) = self.member_mut(id) {
+            if m.name != name {
+                m.name = name.to_owned();
+            }
+        }
+        for e in &mut self.encounters {
+            e.rename_member(id, name);
+        }
     }
 
     /// Add `count` copies of `template` (with `ch`, its character), each
@@ -592,7 +637,7 @@ impl Campaign {
 }
 
 /// "Halloweener Ganger 3" → "Halloweener Ganger".
-fn strip_number(name: &str) -> &str {
+pub fn strip_number(name: &str) -> &str {
     match name.rsplit_once(' ') {
         Some((head, n)) if !head.is_empty() && n.parse::<u32>().is_ok() => head,
         _ => name,
@@ -657,13 +702,28 @@ fn remap(e: &mut Element, map: &std::collections::HashMap<String, String>) {
     }
 }
 
+/// The field a character's shown name is in: the alias when it has one,
+/// else the name (see `Character::display_name`).
+pub fn name_key(ch: &Character) -> &'static str {
+    if ch.field("alias").trim().is_empty() {
+        "name"
+    } else {
+        "alias"
+    }
+}
+
+/// The command that renames `ch` to `name` (its [`name_key`] field), so
+/// a rename is undone, saved and synced as any edit is.
+pub fn rename_command(ch: &Character, name: &str) -> Command {
+    Command::SetField { key: name_key(ch).into(), value: name.to_owned() }
+}
+
 /// A fresh copy of `ch` renamed to `name` (the alias when it has one, else
 /// the name), through a command as any edit is.
 pub fn named_copy(engine: &Engine, ch: &Character, name: &str) -> Character {
     let mut copy = fresh_copy(ch);
-    let key = if copy.field("alias").trim().is_empty() { "name" } else { "alias" };
     let seed = random16();
-    let env = Envelope::new(Command::SetField { key: key.into(), value: name.into() }, u64::from_le_bytes(seed[..8].try_into().expect("8 bytes")), now_ms(), "GM");
+    let env = Envelope::new(rename_command(&copy, name), u64::from_le_bytes(seed[..8].try_into().expect("8 bytes")), now_ms(), "GM");
     // Setting a plain field cannot be refused.
     let _ = command::apply(&mut copy, engine, &env);
     copy.dirty = true;
@@ -787,5 +847,53 @@ mod tests {
         c.members.push(Member { name: "Ganger 4".into(), ..Default::default() });
         c.members.push(Member { name: "Gangers 9".into(), ..Default::default() });
         assert_eq!(c.next_number("Ganger"), 5);
+    }
+
+    #[test]
+    fn new_members_get_names_told_apart() {
+        let npc = |name: &str| Member { id: MemberId::random(), kind: MemberKind::Npc, name: name.into(), ..Default::default() };
+        let mut c = Campaign::new("x");
+        assert_eq!(c.unique_name("Ganger"), "Ganger", "the first keeps its name");
+        c.members.push(npc("Ganger"));
+        assert_eq!(c.next_number("Ganger"), 2, "a bare Ganger counts as 1");
+        assert_eq!(c.unique_name("Ganger"), "Ganger 2");
+        let first = c.members[0].id;
+        assert_eq!(c.unnumbered("Ganger"), Some(first), "the bare one becomes Ganger 1");
+        c.set_member_name(first, "Ganger 1");
+        c.members.push(npc("Ganger 2"));
+        assert_eq!(c.unique_name("Ganger"), "Ganger 3");
+        assert_eq!(c.unique_name("Ganger 2"), "Ganger 3", "a taken numbered name moves on");
+        assert_eq!(c.unique_name("Lone Star Officer"), "Lone Star Officer");
+        assert_eq!(c.unnumbered("Ganger"), None, "nobody unnumbered");
+        // Players and linked members keep their names.
+        let mut p = npc("Ghost");
+        p.kind = MemberKind::Player;
+        c.members.push(p);
+        assert_eq!(c.unique_name("Ghost"), "Ghost 2");
+        assert_eq!(c.unnumbered("Ghost"), None);
+        let mut l = npc("Rigger");
+        l.character = MemberCharacter::Linked { path: "rigger.chum5".into() };
+        c.members.push(l);
+        assert_eq!(c.unnumbered("Rigger"), None);
+    }
+
+    #[test]
+    fn renames_reach_combatants_and_the_character() {
+        let mut c = Campaign::new("x");
+        let m = Member { id: MemberId::random(), kind: MemberKind::Npc, name: "Ganger".into(), ..Default::default() };
+        let id = c.add(m);
+        let mut e = Encounter::new("e");
+        e.combatants.push(Combatant::for_member(id, "Ganger"));
+        e.combatants.push(Combatant::ad_hoc("Guard", 8, 1, 10, 10));
+        c.encounters.push(e);
+        c.set_member_name(id, "Ganger Boss");
+        assert_eq!(c.member(id).unwrap().name, "Ganger Boss");
+        let names: Vec<&str> = c.encounters[0].combatants.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Ganger Boss", "Guard"]);
+        // The character: the alias when it has one, else the name.
+        let mut ch = Character::from_str("<character><name>Ganger</name></character>").unwrap();
+        assert!(matches!(rename_command(&ch, "Ganger 1"), Command::SetField { key, value } if key == "name" && value == "Ganger 1"));
+        ch.set_field("alias", "Spike");
+        assert!(matches!(rename_command(&ch, "Spike 2"), Command::SetField { key, value } if key == "alias" && value == "Spike 2"));
     }
 }
