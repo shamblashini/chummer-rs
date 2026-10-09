@@ -1266,6 +1266,14 @@ fn workspace_cyberware_selected_adds_gear_into_it() {
     h.frames(2);
     let link = h.app.views[i].ws_last_added().map(str::to_owned).expect("bought");
     assert_eq!(parent_guid(&h, i, &link).as_deref(), Some(implant.as_str()), "inside the implant ({:?})", h.app.status);
+    // A row that takes nothing: the top level, the page's own kinds.
+    h.click_at(inventory_row(&h, "Perfect Eyes").center());
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["cyberware", "bioware"], Some("cyberware")));
+    assert!(h.app.views[i].ws_catalog_target_guid().is_none());
+    h.click_at(inventory_row(&h, "Commlink").center());
+    h.frames(2);
+    assert_eq!(h.app.views[i].ws_catalog_kinds(), (vec!["gear"], Some("gear")));
     // ×: back to the page's kinds.
     let bar = h.find_text(&h.app.lang.tr("Adding into")).expect("the target bar");
     let change = h.find_text(&h.app.lang.tr("Change")).expect("Change");

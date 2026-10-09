@@ -154,3 +154,25 @@ fn ware_takes_ware_by_subsystem_and_gear_by_allowgear() {
     let ikon_in = buy(&mut s, "gear", "Hermes Ikon", 0, Some(&implant), None);
     assert_eq!(edit::parent(s.ch(), &ikon_in).map(|p| p.get("guid")).as_deref(), Some(implant.as_str()));
 }
+
+#[test]
+fn a_weapon_mount_bought_in_career_costs_what_the_inspector_command_costs() {
+    let load = || {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Munin_Career.chum5");
+        let mut ch = Character::load(&p).unwrap();
+        ch.nuyen = 100_000.0;
+        Session::with_seed(ch, 3)
+    };
+    let expenses = |s: &Session| s.ch().doc.child("expenses").map_or(0, |e| e.elements().count());
+    let (mut a, mut b) = (load(), load());
+    let car_a = buy(&mut a, "vehicle", "Ford Americar (Sedan)", 0, None, None);
+    let car_b = buy(&mut b, "vehicle", "Ford Americar (Sedan)", 0, None, None);
+    let (na, ea) = (a.ch().nuyen, expenses(&a));
+    buy(&mut a, "weaponmount", "Heavy [SR5]", 0, Some(&car_a), None);
+    let size = engine().store_for_character(b.ch()).doc("vehicles.xml").unwrap().child("weaponmounts").unwrap().children_named("weaponmount").find(|m| m.get("name") == "Heavy [SR5]").unwrap().get("id");
+    b.apply(engine(), Command::AddWeaponMount { vehicle: car_b, size }).unwrap();
+    assert!(a.ch().nuyen < na, "career pays for it");
+    assert_eq!(a.ch().nuyen, b.ch().nuyen);
+    assert_eq!(expenses(&a), ea + 1);
+    assert_eq!(expenses(&a), expenses(&b));
+}

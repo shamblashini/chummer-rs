@@ -86,7 +86,11 @@ impl CharacterView {
             }
         }
         if let Some(g) = res.select.take() {
-            self.item_editor = Some((g, crate::item_editor::ItemEditor::default()));
+            // As a click on its row: the catalog adds into it when it can.
+            match self.ws_item_page(self.tab) {
+                Some(page) => self.ws_select_item(page, &g),
+                None => self.item_editor = Some((g, crate::item_editor::ItemEditor::default())),
+            }
         } else if res.removed {
             self.item_editor = None;
         }
