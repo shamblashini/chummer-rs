@@ -41,6 +41,9 @@ pub enum Cmd {
     CharacterSettings,
     Sourcebooks,
     OnlineSettings,
+    Preferences,
+    UserFolder,
+    CrashLogs,
     Dark,
     Light,
     ClassicLayout,
@@ -50,7 +53,7 @@ pub enum Cmd {
 }
 
 impl Cmd {
-    pub const ALL: [Cmd; 27] = [
+    pub const ALL: [Cmd; 30] = [
         Cmd::NewCharacter,
         Cmd::NewCritter,
         Cmd::Open,
@@ -72,6 +75,9 @@ impl Cmd {
         Cmd::CharacterSettings,
         Cmd::Sourcebooks,
         Cmd::OnlineSettings,
+        Cmd::Preferences,
+        Cmd::UserFolder,
+        Cmd::CrashLogs,
         Cmd::Dark,
         Cmd::Light,
         Cmd::ClassicLayout,
@@ -104,6 +110,9 @@ impl Cmd {
             Cmd::CharacterSettings => "Character Settings…",
             Cmd::Sourcebooks => "Sourcebooks (PDFs)…",
             Cmd::OnlineSettings => "Online Settings…",
+            Cmd::Preferences => "Preferences…",
+            Cmd::UserFolder => "Open user data folder",
+            Cmd::CrashLogs => "Show crash logs",
             Cmd::Dark => "Dark",
             Cmd::Light => "Light",
             Cmd::ClassicLayout => "Classic",
@@ -117,9 +126,9 @@ impl Cmd {
     pub fn menu(self) -> &'static str {
         match self {
             Cmd::Undo | Cmd::Redo => "Edit",
-            Cmd::DiceRoller | Cmd::Initiative | Cmd::MasterIndex | Cmd::Roster | Cmd::CharacterSettings | Cmd::Sourcebooks | Cmd::OnlineSettings => "Tools",
+            Cmd::DiceRoller | Cmd::Initiative | Cmd::MasterIndex | Cmd::Roster | Cmd::CharacterSettings | Cmd::Sourcebooks | Cmd::OnlineSettings | Cmd::Preferences | Cmd::UserFolder => "Tools",
             Cmd::Dark | Cmd::Light | Cmd::ClassicLayout | Cmd::GuidedCreation => "View",
-            Cmd::About => "Help",
+            Cmd::About | Cmd::CrashLogs => "Help",
             _ => "File",
         }
     }
@@ -157,6 +166,9 @@ impl Cmd {
             Cmd::CharacterSettings => icons::SLIDERS,
             Cmd::Sourcebooks => icons::BOOK_OPEN,
             Cmd::OnlineSettings => icons::CLOUD_CHECK,
+            Cmd::Preferences => icons::GEAR,
+            Cmd::UserFolder => icons::FOLDER_OPEN,
+            Cmd::CrashLogs => icons::BUG,
             Cmd::Dark => icons::MOON,
             Cmd::Light => icons::SUN,
             Cmd::ClassicLayout => icons::CIRCLE_HALF,

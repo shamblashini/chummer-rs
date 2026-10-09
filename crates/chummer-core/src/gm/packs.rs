@@ -20,13 +20,10 @@ use crate::xml::{self, Element, Node};
 pub const FILE: &str = "packs.xml";
 pub const CUSTOM: &str = "Custom";
 
-/// The user's PACKS folder: `$XDG_DATA_HOME/chummer-rs/packs`, next to the
-/// user custom data root.
+/// The user's PACKS folder: `kits` in the data root ([`crate::paths`]),
+/// next to the user custom data folder.
 pub fn packs_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(base.join("chummer-rs").join("packs"))
+    crate::paths::user_dir(crate::paths::UserDir::Kits)
 }
 
 /// `packs.xml` with the custom data and the PACKS folder's files merged in

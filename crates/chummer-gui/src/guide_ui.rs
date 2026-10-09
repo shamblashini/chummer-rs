@@ -13,7 +13,7 @@
 //! A child module of `view`. Where the guide is (the current step and
 //! the steps visited) is saved in the character's `.chumrs`
 //! (`guide.json`); for a Chummer5a file it is remembered per file in
-//! `$XDG_CONFIG_HOME/chummer-rs/guide.ini`, never in the .chum5.
+//! `guide.ini` in the config root, never in the .chum5.
 
 use std::path::{Path, PathBuf};
 

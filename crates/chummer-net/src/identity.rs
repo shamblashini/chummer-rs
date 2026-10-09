@@ -23,11 +23,14 @@ use iroh::SecretKey;
 /// File name of the node key inside [`config_dir`].
 pub const KEY_FILE: &str = "node.key";
 
-/// `chummer-rs` inside the user config directory.
+/// `chummer-rs` inside the user config directory. The same rule as
+/// `chummer_core::paths::config_root` (this crate does not depend on
+/// chummer-core; a test in chummer-sync checks they agree).
 pub fn config_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
         .or_else(dirs::config_dir)?;
     Some(base.join("chummer-rs"))
 }

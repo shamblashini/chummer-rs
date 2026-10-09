@@ -14,11 +14,27 @@ install -Dm755 target/release/chummer-rs "$PREFIX/bin/chummer-rs"
 install -Dm755 target/release/chummer-cli "$PREFIX/bin/chummer-cli"
 install -Dm755 target/release/chummer-authority "$PREFIX/bin/chummer-authority"
 
+# The program's resources go in share/chummer-rs/resources. In ~/.local,
+# share/chummer-rs is also the user's own data folder (custom data,
+# sheets, kits, backups...), so only the resources folder is replaced.
 share="$PREFIX/share/chummer-rs"
-rm -rf "$share"
-mkdir -p "$share"
-cp -r resources/data resources/lang resources/sheets resources/customdata resources/export "$share/"
-install -Dm644 resources/xml_license.txt "$share/xml_license.txt"
+res="$share/resources"
+if [ -d "$share/data" ]; then
+    # An older install.sh put the resources directly in $share. Remove
+    # what it installed; files the user added to sheets/ or customdata/
+    # stay.
+    rm -rf "$share/data" "$share/lang" "$share/export" "$share/xml_license.txt"
+    for d in sheets customdata; do
+        [ -d "$share/$d" ] || continue
+        for f in resources/"$d"/*; do
+            rm -rf "$share/$d/$(basename "$f")"
+        done
+    done
+fi
+rm -rf "$res"
+mkdir -p "$res"
+cp -r resources/data resources/lang resources/sheets resources/customdata resources/export "$res/"
+install -Dm644 resources/xml_license.txt "$res/xml_license.txt"
 
 install -Dm644 packaging/chummer-rs.desktop "$PREFIX/share/applications/chummer-rs.desktop"
 # Launchers may not have $PREFIX/bin on PATH.

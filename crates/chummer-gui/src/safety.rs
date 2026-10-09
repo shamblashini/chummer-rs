@@ -1,7 +1,8 @@
 //! Crash safety: crash logs, emergency saves, autosave to a recovery
 //! folder, and the "closed unexpectedly" dialog on the next start.
 //!
-//! Everything lives under `$XDG_DATA_HOME/chummer-rs` ([`data_dir`]):
+//! Everything lives in the state root ([`data_dir`], see
+//! [`chummer_core::paths`]):
 //!
 //! * `sessions/<pid>` — written at start, removed at a clean exit. A
 //!   marker whose process is gone is a session that did not exit
@@ -42,14 +43,11 @@ const MAX_ACTIONS: usize = 40;
 
 // ----- folders and time stamps -----
 
-/// `$XDG_DATA_HOME/chummer-rs` (`~/.local/share/chummer-rs`; `%APPDATA%`
-/// on Windows).
+/// The state root ([`chummer_core::paths::state_root`]):
+/// `~/.local/share/chummer-rs`, `~/Library/Application Support/chummer-rs`,
+/// `%LOCALAPPDATA%\chummer-rs`.
 pub fn data_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
-        .map(|b| b.join("chummer-rs"))
+    chummer_core::paths::state_root()
 }
 
 pub fn crashes_dir(root: &Path) -> PathBuf {

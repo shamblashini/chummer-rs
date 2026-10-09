@@ -1,5 +1,6 @@
 //! App preferences kept in gui.ini next to the appearance (see
-//! [`crate::theme::config_path`]), and the Tools → Preferences window.
+//! [`crate::theme::config_path`]), and the Tools → Preferences window
+//! (with the Folders list: where the user's files live).
 //!
 //! Keys added here:
 //!
@@ -13,8 +14,10 @@
 //! * `translation_notice_seen=de-de,fr-fr` — languages whose
 //!   incomplete-translation notice was dismissed.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use chummer_core::paths;
 use eframe::egui;
 
 use crate::theme::{self, Layout};
@@ -116,15 +119,69 @@ impl Prefs {
 }
 
 /// What the Preferences window asks the app to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrefsAction {
     RunSetup,
-    OpenRecoveryFolder,
-    OpenBackupsFolder,
+    OpenFolder(PathBuf),
 }
 
-/// Tools → Preferences: autosave, backups, updates. Returns an action
-/// and whether a value changed (the caller saves).
+/// The folders listed under Preferences → Folders: the user data root,
+/// the config root when it is elsewhere (Linux), then each user folder.
+pub fn folder_list(lang: &chummer_core::lang::Language) -> Vec<(String, PathBuf)> {
+    let Some(roots) = paths::Roots::current() else { return Vec::new() };
+    let mut out = vec![(lang.tr("User data"), roots.data.clone())];
+    if roots.config != roots.data {
+        out.push((lang.tr("Configuration"), roots.config.clone()));
+    }
+    out.extend(paths::UserDir::ALL.into_iter().map(|d| (lang.tr(d.label()), roots.dir(d))));
+    out
+}
+
+/// An "Open folder" button (a Workspace button in the Workspace layout).
+pub fn open_button(ui: &mut egui::Ui, lang: &chummer_core::lang::Language, text: &str) -> egui::Response {
+    if theme::current(ui.ctx()).kind.layout() == Layout::Workspace {
+        crate::workspace::widgets::button(ui, Some(crate::workspace::icons::FOLDER_OPEN), &lang.tr(text), crate::workspace::widgets::Look::Secondary, 24.0)
+    } else {
+        ui.button(lang.tr(text))
+    }
+}
+
+/// A "Copy path" button; copies `dir` to the clipboard.
+fn copy_button(ui: &mut egui::Ui, lang: &chummer_core::lang::Language, dir: &Path) {
+    let r = if theme::current(ui.ctx()).kind.layout() == Layout::Workspace {
+        crate::workspace::widgets::button(ui, Some(crate::workspace::icons::COPY), &lang.tr("Copy path"), crate::workspace::widgets::Look::Ghost, 24.0)
+    } else {
+        ui.button(lang.tr("Copy path"))
+    };
+    if r.clicked() {
+        ui.ctx().copy_text(dir.display().to_string());
+    }
+}
+
+/// Preferences → Folders: each folder with its path, Open and Copy path.
+fn folders_ui(ui: &mut egui::Ui, lang: &chummer_core::lang::Language) -> Option<PathBuf> {
+    let mut open = None;
+    ui.label(theme::strong(ui, lang.tr("Folders")));
+    ui.weak(lang.tr("Your own files live here; nothing in the program's folder needs editing."));
+    ui.add_space(4.0);
+    egui::Grid::new("prefs_folders").num_columns(3).spacing([12.0, 6.0]).show(ui, |ui| {
+        for (label, dir) in folder_list(lang) {
+            ui.label(label);
+            ui.add(egui::Label::new(egui::RichText::new(dir.display().to_string()).monospace().small()).wrap_mode(egui::TextWrapMode::Extend));
+            ui.horizontal(|ui| {
+                if open_button(ui, lang, "Open").clicked() {
+                    open = Some(dir.clone());
+                }
+                copy_button(ui, lang, &dir);
+            });
+            ui.end_row();
+        }
+    });
+    open
+}
+
+/// Tools → Preferences: autosave, backups, updates, folders. Returns an
+/// action and whether a value changed (the caller saves).
 pub fn prefs_ui(ui: &mut egui::Ui, p: &mut Prefs, lang: &chummer_core::lang::Language) -> (Option<PrefsAction>, bool) {
     let mut changed = false;
     let mut action = None;
@@ -154,13 +211,12 @@ pub fn prefs_ui(ui: &mut egui::Ui, p: &mut Prefs, lang: &chummer_core::lang::Lan
         if ui.button(lang.tr("Run the first-start setup again…")).clicked() {
             action = Some(PrefsAction::RunSetup);
         }
-        if ui.button(lang.tr("Open the recovery folder")).clicked() {
-            action = Some(PrefsAction::OpenRecoveryFolder);
-        }
-        if ui.button(lang.tr("Open the backups folder")).clicked() {
-            action = Some(PrefsAction::OpenBackupsFolder);
-        }
     });
+    ui.add_space(10.0);
+    ui.separator();
+    if let Some(dir) = folders_ui(ui, lang) {
+        action = Some(PrefsAction::OpenFolder(dir));
+    }
     (action, changed)
 }
 

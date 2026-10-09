@@ -9,7 +9,7 @@
 //! - Windows (installed by the installer): runs the new installer silently;
 //!   chummer-rs quits and the installer starts the new version.
 //! - macOS: replaces the chummer-rs.app it runs from, then offers a restart.
-//! - Linux, `install.sh` layout (`<prefix>/bin`, `<prefix>/share/chummer-rs`)
+//! - Linux, `install.sh` layout (`<prefix>/bin`, `<prefix>/share/chummer-rs/resources`)
 //!   or an unpacked release archive: replaces the programs and resources,
 //!   then offers a restart.
 //! - Anything else (system packages, read-only locations, a cargo build
@@ -234,7 +234,7 @@ pub enum InstallKind {
     WindowsInstaller { dir: PathBuf },
     /// A writable `chummer-rs.app`.
     MacApp { app: PathBuf },
-    /// `install.sh`: `<prefix>/bin/chummer-rs` + `<prefix>/share/chummer-rs`.
+    /// `install.sh`: `<prefix>/bin/chummer-rs` + `<prefix>/share/chummer-rs/resources`.
     LinuxPrefix { prefix: PathBuf },
     /// An unpacked Linux release archive (programs + `resources/`).
     LinuxPortable { dir: PathBuf },
@@ -300,7 +300,11 @@ pub fn detect_install(exe: &Path, os: Os, exists: &dyn Fn(&Path) -> bool, writab
             const SYSTEM: [&str; 6] = ["/usr", "/opt", "/nix", "/snap", "/app", "/gnu"];
             let system = SYSTEM.iter().any(|s| exe.starts_with(s));
             if let Some(prefix) = dir.parent().filter(|_| dir.ends_with("bin")) {
-                let share = prefix.join("share/chummer-rs");
+                // The user's data root is `share/chummer-rs` itself; an older
+                // install.sh put the resources there too (data/ directly in
+                // it): replacing that would take the user's files along, so
+                // such an install is left to install.sh.
+                let share = prefix.join("share/chummer-rs/resources");
                 if exists(&share.join("data")) {
                     return if system {
                         InstallKind::Manual(ManualReason::SystemPackage)
@@ -415,7 +419,7 @@ fn install(kind: &InstallKind, name: &str, bytes: &[u8]) -> Result<Done, String>
     match kind {
         InstallKind::WindowsInstaller { dir } => run_installer(dir, name, bytes),
         InstallKind::MacApp { app } => replace_app(app, name, bytes),
-        InstallKind::LinuxPrefix { prefix } => replace_unix(&prefix.join("bin"), &prefix.join("share/chummer-rs"), name, bytes),
+        InstallKind::LinuxPrefix { prefix } => replace_unix(&prefix.join("bin"), &prefix.join("share/chummer-rs/resources"), name, bytes),
         InstallKind::LinuxPortable { dir } => replace_unix(dir, &dir.join("resources"), name, bytes),
         InstallKind::Manual(r) => Err(r.explain().to_owned()),
     }
@@ -1005,9 +1009,12 @@ mod tests {
         assert_eq!(det("/home/u/src/chummer-rs/target/release/chummer-rs", Os::Linux, &all, &all), InstallKind::Manual(ManualReason::Development));
         assert_eq!(det("/w/target/x86_64-pc-windows-msvc/debug/chummer-rs.exe", Os::Windows, &all, &all), InstallKind::Manual(ManualReason::Development));
         // install.sh in ~/.local
-        let local = |p: &Path| p.ends_with("share/chummer-rs/data");
+        let local = |p: &Path| p.ends_with("share/chummer-rs/resources/data");
         assert_eq!(det("/home/u/.local/bin/chummer-rs", Os::Linux, &local, &all), InstallKind::LinuxPrefix { prefix: "/home/u/.local".into() });
         assert_eq!(det("/home/u/.local/bin/chummer-rs", Os::Linux, &local, &none), InstallKind::Manual(ManualReason::ReadOnly));
+        // The old layout (resources in the user's data root) is not replaced.
+        let old_layout = |p: &Path| p.ends_with("share/chummer-rs/data");
+        assert_eq!(det("/home/u/.local/bin/chummer-rs", Os::Linux, &old_layout, &all), InstallKind::Manual(ManualReason::Unknown));
         // system installs
         assert_eq!(det("/usr/bin/chummer-rs", Os::Linux, &local, &all), InstallKind::Manual(ManualReason::SystemPackage));
         assert_eq!(det("/usr/local/bin/chummer-rs", Os::Linux, &local, &all), InstallKind::Manual(ManualReason::SystemPackage));
@@ -1035,8 +1042,12 @@ mod tests {
         let root = std::env::temp_dir().join(format!("chummer-rs-update-test-{}", std::process::id()));
         std::fs::remove_dir_all(&root).ok();
         let prefix = root.join("prefix");
-        let (bin, share) = (prefix.join("bin"), prefix.join("share/chummer-rs"));
+        let (bin, share) = (prefix.join("bin"), prefix.join("share/chummer-rs/resources"));
         std::fs::create_dir_all(share.join("data")).unwrap();
+        // The user's own files next to the resources survive.
+        let user_kit = prefix.join("share/chummer-rs/kits/custom_mine_packs.xml");
+        std::fs::create_dir_all(user_kit.parent().unwrap()).unwrap();
+        std::fs::write(&user_kit, "mine").unwrap();
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("chummer-rs"), "old").unwrap();
         std::fs::write(bin.join("chummer-cli"), "old").unwrap();
@@ -1065,8 +1076,10 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(std::fs::metadata(bin.join("chummer-rs")).unwrap().permissions().mode() & 0o777, 0o755);
         // No leftovers.
-        let left: Vec<_> = std::fs::read_dir(prefix.join("share")).unwrap().flatten().map(|e| e.file_name()).collect();
-        assert_eq!(left, vec![std::ffi::OsString::from("chummer-rs")]);
+        let mut left: Vec<_> = std::fs::read_dir(prefix.join("share/chummer-rs")).unwrap().flatten().map(|e| e.file_name()).collect();
+        left.sort();
+        assert_eq!(left, vec![std::ffi::OsString::from("kits"), std::ffi::OsString::from("resources")]);
+        assert_eq!(std::fs::read_to_string(&user_kit).unwrap(), "mine");
         let hidden: Vec<_> = std::fs::read_dir(&bin).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with('.')).collect();
         assert!(hidden.is_empty());
         // A damaged package changes nothing.

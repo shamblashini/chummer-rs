@@ -1,5 +1,5 @@
 //! Backups: saving over an existing file first keeps its previous
-//! version in `$XDG_DATA_HOME/chummer-rs/backups/<file>-<hash>/`, the
+//! version in `backups/<file>-<hash>/` in the state root, the
 //! newest [`crate::prefs::backup_count`] per file. File → Restore
 //! backup… lists them and opens one as a modified copy of its file.
 //!
@@ -16,9 +16,9 @@ use crate::App;
 /// The file in each backup folder naming the file it backs up.
 const SOURCE: &str = "source.txt";
 
-/// `$XDG_DATA_HOME/chummer-rs/backups`.
+/// The backups folder ([`chummer_core::paths::UserDir::Backups`]).
 pub fn backups_dir() -> Option<PathBuf> {
-    crate::safety::data_dir().map(|d| d.join("backups"))
+    chummer_core::paths::user_dir(chummer_core::paths::UserDir::Backups)
 }
 
 /// A save job that first keeps the file it is about to replace. A backup

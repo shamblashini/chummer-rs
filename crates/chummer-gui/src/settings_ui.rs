@@ -333,9 +333,31 @@ fn build_method_label(m: &str, lang: &Language) -> String {
     }
 }
 
+/// "Open folder" for the user's custom data folder, with its path; a
+/// failure to open it shows under the button.
+fn user_folder_row(ui: &mut egui::Ui, lang: &Language) {
+    let dir = chummer_core::paths::user_dir(chummer_core::paths::UserDir::CustomData);
+    let err_id = egui::Id::new("custom_data_folder_error");
+    ui.horizontal_wrapped(|ui| {
+        if crate::prefs::open_button(ui, lang, "Open folder").on_hover_text(lang.tr("Put your own custom data folders here; they are listed at the next start")).clicked() {
+            let res = dir.as_deref().map_or_else(|| Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no home folder")), crate::prefs::open_folder);
+            let msg = res.err().map(|e| format!("{e}"));
+            ui.ctx().data_mut(|d| d.insert_temp(err_id, msg));
+        }
+        if let Some(d) = &dir {
+            ui.weak(d.display().to_string());
+        }
+    });
+    if let Some(msg) = ui.ctx().data(|d| d.get_temp::<Option<String>>(err_id)).flatten() {
+        ui.colored_label(ui.visuals().warn_fg_color, msg);
+    }
+    ui.add_space(4.0);
+}
+
 fn custom_data_ui(ui: &mut egui::Ui, el: &mut Element, engine: &Engine, lang: &Language) -> bool {
     use chummer_core::custom_data;
     let dirs = engine.custom_data_directories();
+    user_folder_row(ui, lang);
     if dirs.is_empty() {
         ui.weak(lang.tr("No custom data directories found."));
         return false;

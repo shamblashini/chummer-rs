@@ -64,7 +64,8 @@ pub fn render_report(xml: &Element, xsl_path: &Path, out: &Path) -> Result<Rende
         return Err(RenderError::NoSheet(xsl_path.to_owned()));
     }
     let dir = TempDir::new()?;
-    let main_xsl = copy_stylesheet(xsl_path, dir.path())?;
+    let fallback = bundled_twin(xsl_path, crate::paths::user_dir(crate::paths::UserDir::Sheets).as_deref(), crate::data::resource_dir("sheets").as_deref());
+    let main_xsl = copy_stylesheet(xsl_path, dir.path(), fallback.as_deref())?;
     debug_assert_eq!(main_xsl, dir.path().join("sheet0.xslt"));
     write(&dir.path().join("print.xml"), xml.to_xml_string().as_bytes())?;
     let report = run_xsltproc(dir.path(), xsl_path)?;
@@ -133,10 +134,21 @@ fn run_xsltproc(dir: &Path, shown: &Path) -> Result<RenderReport, RenderError> {
 // Stylesheet copy
 // ---------------------------------------------------------------------------
 
+/// For a sheet in the user's sheets folder, the matching bundled folder
+/// (`<user>/de-de/x.xsl` -> `<bundled>/de-de`): imports not found next to
+/// the user's sheet are taken from there.
+fn bundled_twin(xsl: &Path, user: Option<&Path>, bundled: Option<&Path>) -> Option<PathBuf> {
+    let user = user?.canonicalize().ok()?;
+    let parent = xsl.canonicalize().ok()?.parent()?.to_owned();
+    let rel = parent.strip_prefix(&user).ok()?;
+    Some(bundled?.join(rel))
+}
+
 /// Copy `xsl` and everything it imports or includes into `dir` as
-/// `sheet0.xslt`, `sheet1.xslt`, ..., rewriting the hrefs to match.
-/// Returns the path of the copied main sheet.
-fn copy_stylesheet(xsl: &Path, dir: &Path) -> Result<PathBuf, RenderError> {
+/// `sheet0.xslt`, `sheet1.xslt`, ..., rewriting the hrefs to match. An
+/// href that does not resolve is looked up in `fallback` (the bundled
+/// sheets, for a user sheet). Returns the path of the copied main sheet.
+fn copy_stylesheet(xsl: &Path, dir: &Path, fallback: Option<&Path>) -> Result<PathBuf, RenderError> {
     let mut names: HashMap<PathBuf, String> = HashMap::new();
     let mut queue = vec![canonical(xsl)?];
     names.insert(queue[0].clone(), "sheet0.xslt".into());
@@ -144,7 +156,7 @@ fn copy_stylesheet(xsl: &Path, dir: &Path) -> Result<PathBuf, RenderError> {
         let text = std::fs::read_to_string(&src).map_err(|e| RenderError::Io(src.clone(), e))?;
         let base = src.parent().unwrap_or(Path::new("."));
         let rewritten = rewrite_hrefs(&text, |href| {
-            let target = canonical(&base.join(href)).ok()?;
+            let target = canonical(&base.join(href)).ok().or_else(|| canonical(&fallback?.join(href)).ok())?;
             let next = names.len();
             let name = names.entry(target.clone()).or_insert_with(|| {
                 queue.push(target);
@@ -278,24 +290,75 @@ pub fn html_to_pdf(html: &Path, pdf: &Path) -> Result<(), RenderError> {
 // ---------------------------------------------------------------------------
 
 /// Sheets offered for a language, as `(display name, .xsl path)`, from
-/// `data/sheets.xml` (`XmlManager.GetXslFilesFromLocalDirectoryAsync`).
-/// English sheets live in `sheets/`; others in `sheets/<lang>/`.
+/// `data/sheets.xml` (`XmlManager.GetXslFilesFromLocalDirectoryAsync`),
+/// then the user's own from the sheets folder in the data root
+/// ([`crate::paths`]). English sheets live in `sheets/`; others in
+/// `sheets/<lang>/`.
 pub fn available_sheets(lang_code: &str) -> Vec<(String, PathBuf)> {
+    let user = crate::paths::user_dir(crate::paths::UserDir::Sheets);
     match (crate::data::resource_dir("data"), crate::data::resource_dir("sheets")) {
-        (Some(data), Some(sheets)) => available_sheets_in(&data, &sheets, lang_code),
-        _ => Vec::new(),
+        (Some(data), Some(sheets)) => available_sheets_with(&data, &sheets, user.as_deref(), lang_code),
+        _ => user.map(|u| user_sheets(Vec::new(), &u, lang_code)).unwrap_or_default(),
     }
 }
 
-/// As [`available_sheets`], with explicit `data` and `sheets` directories.
+/// As [`available_sheets`], with explicit `data` and `sheets` directories
+/// and no user sheets.
 pub fn available_sheets_in(data_dir: &Path, sheets_dir: &Path, lang_code: &str) -> Vec<(String, PathBuf)> {
+    available_sheets_with(data_dir, sheets_dir, None, lang_code)
+}
+
+/// The bundled sheets, then every `*.xsl` in the user's sheets folder
+/// (`user_dir`, or its `<lang>` subfolder). A user sheet whose file name
+/// matches a bundled one replaces it (keeping its place and name); the
+/// others follow, named after their file and sorted.
+pub fn available_sheets_with(data_dir: &Path, sheets_dir: &Path, user_dir: Option<&Path>, lang_code: &str) -> Vec<(String, PathBuf)> {
+    let bundled = bundled_sheets(data_dir, sheets_dir, lang_code);
+    match user_dir {
+        // Never list the bundled folder twice (CHUMMER_RESOURCES or
+        // XDG_DATA_HOME pointing at it).
+        Some(u) if !same_dir(u, sheets_dir) => user_sheets(bundled, u, lang_code),
+        _ => bundled,
+    }
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+fn lang_dir(root: &Path, lang_code: &str) -> PathBuf {
+    if lang_code.eq_ignore_ascii_case("en-us") {
+        root.to_owned()
+    } else {
+        root.join(lang_code)
+    }
+}
+
+fn user_sheets(mut out: Vec<(String, PathBuf)>, user_root: &Path, lang_code: &str) -> Vec<(String, PathBuf)> {
+    let Ok(rd) = std::fs::read_dir(lang_dir(user_root, lang_code)) else { return out };
+    let mut mine: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("xsl"))).collect();
+    mine.sort_by_key(|p| p.file_stem().map(|s| s.to_string_lossy().to_lowercase()));
+    for p in mine {
+        let Some(stem) = p.file_stem().and_then(|s| s.to_str()).map(str::to_owned) else { continue };
+        match out.iter_mut().find(|(_, b)| stem_is(b, &stem)) {
+            Some(entry) => entry.1 = p,
+            None => out.push((stem, p)),
+        }
+    }
+    out
+}
+
+fn bundled_sheets(data_dir: &Path, sheets_dir: &Path, lang_code: &str) -> Vec<(String, PathBuf)> {
     let Some(root) = std::fs::read_to_string(data_dir.join("sheets.xml")).ok().and_then(|s| xml::parse(&s).ok()) else {
         return Vec::new();
     };
     let Some(list) = root.children_named("sheets").find(|s| s.attr("lang").is_some_and(|l| l.eq_ignore_ascii_case(lang_code))) else {
         return Vec::new();
     };
-    let dir = if lang_code.eq_ignore_ascii_case("en-us") { sheets_dir.to_owned() } else { sheets_dir.join(lang_code) };
+    let dir = lang_dir(sheets_dir, lang_code);
     let mut seen = Vec::new();
     let mut out = Vec::new();
     for sheet in list.children_named("sheet").filter(|s| s.child("hide").is_none()) {
@@ -342,5 +405,65 @@ mod tests {
         assert!(out.contains(r#"href="s1.xslt" />"#));
         assert!(out.contains(r#"href="s2.xslt"/>"#));
         assert!(out.contains("href='s3.xslt'/>"));
+    }
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("chummer-sheets-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn user_sheets_are_listed_and_override() {
+        let res = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources");
+        let (data, sheets) = (res.join("data"), res.join("sheets"));
+        let user = tmp("user");
+        std::fs::write(user.join("Shadowrun 5 (Core).xsl"), "<x/>").unwrap();
+        std::fs::write(user.join("My Sheet.XSL"), "<x/>").unwrap();
+        std::fs::write(user.join("helper.xslt"), "<x/>").unwrap();
+        std::fs::write(user.join("README.txt"), "").unwrap();
+        std::fs::create_dir_all(user.join("de-de")).unwrap();
+        std::fs::write(user.join("de-de/Mein Bogen.xsl"), "<x/>").unwrap();
+
+        let bundled = available_sheets_in(&data, &sheets, "en-us");
+        let all = available_sheets_with(&data, &sheets, Some(&user), "en-us");
+        assert_eq!(all.len(), bundled.len() + 1);
+        let core = bundled.iter().position(|(_, p)| stem_is(p, "Shadowrun 5 (Core)")).unwrap();
+        assert_eq!(all[core].0, bundled[core].0, "keeps the bundled name and place");
+        assert_eq!(all[core].1, user.join("Shadowrun 5 (Core).xsl"));
+        assert_eq!(all.last().unwrap(), &("My Sheet".to_owned(), user.join("My Sheet.XSL")));
+        // Per-language subfolders.
+        let de = available_sheets_with(&data, &sheets, Some(&user), "de-de");
+        assert!(de.iter().any(|(n, p)| n == "Mein Bogen" && *p == user.join("de-de/Mein Bogen.xsl")));
+        assert!(!de.iter().any(|(n, _)| n == "My Sheet"));
+        // The bundled folder as the user folder: listed once.
+        assert_eq!(available_sheets_with(&data, &sheets, Some(&sheets), "en-us"), bundled);
+        // No user folder: just the bundled ones.
+        assert_eq!(available_sheets_with(&data, &sheets, Some(&user.join("missing")), "en-us"), bundled);
+        let _ = std::fs::remove_dir_all(&user);
+    }
+
+    #[test]
+    fn user_sheet_imports_fall_back_to_the_bundled_ones() {
+        let t = tmp("fallback");
+        let (user, bundled, out) = (t.join("user"), t.join("bundled"), t.join("out"));
+        for d in [user.join("de-de"), bundled.join("de-de"), out.clone()] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(user.join("de-de/Mine.xsl"), r#"<xsl:import href="Base set.xslt"/><xsl:include href="local.xslt"/>"#).unwrap();
+        std::fs::write(user.join("de-de/local.xslt"), "local").unwrap();
+        std::fs::write(bundled.join("de-de/Base set.xslt"), "base").unwrap();
+        let xsl = user.join("de-de/Mine.xsl");
+        let twin = bundled_twin(&xsl, Some(&user), Some(&bundled)).unwrap();
+        assert_eq!(twin, bundled.join("de-de"));
+        // A bundled sheet has no twin.
+        assert_eq!(bundled_twin(&bundled.join("de-de/Base set.xslt"), Some(&user), Some(&bundled)), None);
+        copy_stylesheet(&xsl, &out, Some(&twin)).unwrap();
+        let main = std::fs::read_to_string(out.join("sheet0.xslt")).unwrap();
+        assert!(main.contains(r#"href="sheet1.xslt""#) && main.contains(r#"href="sheet2.xslt""#), "{main}");
+        let copied: Vec<String> = (1..=2).map(|i| std::fs::read_to_string(out.join(format!("sheet{i}.xslt"))).unwrap()).collect();
+        assert!(copied.contains(&"base".to_owned()) && copied.contains(&"local".to_owned()));
+        let _ = std::fs::remove_dir_all(&t);
     }
 }

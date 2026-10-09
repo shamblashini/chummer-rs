@@ -108,7 +108,7 @@ pub struct SourcebookLibrary {
 
 impl SourcebookLibrary {
     pub fn config_path() -> Option<PathBuf> {
-        crate::settings::user_settings_dir().and_then(|d| d.parent().map(|p| p.join("sourcebooks.xml")))
+        crate::paths::config_root().map(|p| p.join("sourcebooks.xml"))
     }
 
     /// Load the user's library. Picks an installed viewer if none is set.
