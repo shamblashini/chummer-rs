@@ -29,8 +29,9 @@ use chummer_net::{EndpointId, PublicKey, SecretKey, Signature};
 use serde::{Deserialize, Serialize};
 
 /// Version of the sync messages. 2: member keys (claims by mail,
-/// refusals, the GM's campaign keys in the membership).
-pub const SYNC_VERSION: u8 = 2;
+/// refusals, the GM's campaign keys in the membership). 3: commands
+/// changed (`MoveItem`, `Purchase::location`).
+pub const SYNC_VERSION: u8 = 3;
 
 /// A BLAKE3 hash of a character's canonical form ([`chummer_core::command::state_hash`]).
 pub type Hash = [u8; 32];

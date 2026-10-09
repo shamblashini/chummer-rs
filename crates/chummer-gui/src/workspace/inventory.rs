@@ -733,10 +733,7 @@ impl CharacterView {
     /// its add is still the latest change, else a Remove of that item.
     pub(super) fn ws_undo_added(&mut self, sec: &Sec, guid: &str, status: &mut Status) -> bool {
         if self.ws_added_is_latest(guid) {
-            let steps = self.ws_gear.visit.as_ref().and_then(|v| v.adds.iter().find(|a| a.guid == guid)).map_or(1, |a| a.steps);
-            for _ in 0..steps {
-                self.doc.undo();
-            }
+            self.doc.undo();
             return true;
         }
         let top = self.doc.doc.child(sec.container).is_some_and(|c| c.children_named(sec.item).any(|e| e.get("guid") == guid));

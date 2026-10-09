@@ -1163,10 +1163,7 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   weapon ranges and vehicle seats are columns that a narrow page hides
   first (turn them on with Columns). Drag and drop moves items into
   other items and locations but does not reorder them, and a vehicle's
-  own locations and mod categories are no drop targets. A group's "+
-  add into" a location, and a catalog record dropped on a location, is
-  two changes (the add and the location); the inline Undo takes both
-  back. Home's recent
+  own locations and mod categories are no drop targets. Home's recent
   activity lists joined campaigns only (the GM's own feed is on the GM
   screen). Pop-outs: on Wayland the system places the windows (only
   their size is kept); with an item page popped out, the catalog's

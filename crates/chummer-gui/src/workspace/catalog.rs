@@ -1412,7 +1412,8 @@ impl CharacterView {
             }
         }
         let sec = super::ws_items::section_of(c.page);
-        let location = c.location.clone();
+        // A location's "+": one command (the add puts it there).
+        purchase.location = c.location.as_ref().filter(|_| purchase.parent.is_none()).map(|(g, _)| g.clone());
         let before = super::ws_items::section_guids(&self.doc, &sec);
         match self.doc.apply(Command::AddItem { tag: tag.to_owned(), record: RecordRef::of(Record(&rec)), purchase }) {
             Ok(rep) => {
@@ -1426,13 +1427,7 @@ impl CharacterView {
                 let new: Vec<&String> = after.difference(&before).collect();
                 let top = new.iter().find(|g| edit::parent(&self.doc, g).is_none_or(|p| !new.contains(&&p.get("guid")))).map(|g| (*g).clone());
                 if let Some(g) = top {
-                    let mut steps = 1;
-                    if let Some((loc, _)) = location {
-                        if edit::has_location(&self.doc, &g) && self.doc.set(Command::SetItemText { guid: g.clone(), field: "location".into(), value: loc }) {
-                            steps = 2;
-                        }
-                    }
-                    self.ws_record_add(g, steps);
+                    self.ws_record_add(g);
                 }
                 if to_inventory {
                     self.ws_gear.focus_catalog = false;

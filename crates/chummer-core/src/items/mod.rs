@@ -53,6 +53,10 @@ pub struct Purchase {
     pub free: bool,
     /// Black-market discount and similar, as a cost multiplier (1 = none).
     pub cost_multiplier: f64,
+    /// The location (its guid) a top-level gear, armor, weapon or vehicle
+    /// goes into: one command for the Workspace's "+ add into" a location.
+    #[serde(default)]
+    pub location: Option<String>,
 }
 
 impl Purchase {

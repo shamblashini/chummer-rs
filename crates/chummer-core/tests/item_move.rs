@@ -387,3 +387,25 @@ fn underbarrel_weapons_move_out_and_into_another_weapon() {
     assert!(edit::find(s.ch(), &colt).unwrap().child("underbarrel").is_none());
     assert_eq!(edit::find(s.ch(), &ak).unwrap().children_named("underbarrel").count(), 1);
 }
+
+#[test]
+fn buying_into_a_location_is_one_command() {
+    let mut s = session();
+    let flash = buy(&mut s, "gear", "Flashlight", 0, None, None);
+    s.apply(engine(), Command::AddItemLocation { guid: flash.clone(), name: "Car".into() }).unwrap();
+    let car = edit::locations(s.ch(), &flash)[0].0.clone();
+    let h0 = s.state_hash();
+    let v = s.version();
+    let purchase = Purchase { qty: 1.0, cost_multiplier: 1.0, location: Some(car.clone()), ..Default::default() };
+    s.apply(engine(), Command::AddItem { tag: "gear".into(), record: RecordRef { id: String::new(), name: "Medkit".into() }, purchase }).unwrap();
+    assert_eq!(s.version(), v + 1, "one command");
+    let medkit = s.ch().items("gears", "gear").iter().find(|g| g.get("name") == "Medkit").unwrap().get("guid");
+    assert_eq!(place::current(s.ch(), &medkit), Some(Dest::Location(car)));
+    s.undo().unwrap();
+    assert_eq!(s.state_hash(), h0, "one undo takes it back");
+    // A location that is not there: refused, nothing changes.
+    let purchase = Purchase { qty: 1.0, cost_multiplier: 1.0, location: Some("gone".into()), ..Default::default() };
+    let e = s.apply(engine(), Command::AddItem { tag: "gear".into(), record: RecordRef { id: String::new(), name: "Medkit".into() }, purchase }).unwrap_err();
+    assert!(e.reason.contains("can't be put in that location"), "{}", e.reason);
+    assert_eq!(s.state_hash(), h0);
+}

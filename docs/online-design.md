@@ -222,7 +222,7 @@ Implemented (local part):
 
 Work-order steps 5 and 7 and the messages for step 6.
 
-- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`, 2
+- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`, 3 since the item commands changed (`MoveItem`, `Purchase::location`); 2
   since member keys: `Join` carries an optional `ClaimProof`, the
   membership names the invite's label and the GM's campaign keys, and
   `ServerMessage::Denied` tells a mailed join why it was refused), then

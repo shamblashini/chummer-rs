@@ -335,7 +335,7 @@ impl Command {
             RefreshEdge,
             BurnStreetCred,
             SetGroupMember { member: true },
-            AddItem { tag: s("weapon"), record: record.clone(), purchase: Purchase { rating: 2, qty: 1.0, grade: Some(s("Alphaware")), answer: Some(s("Pistols")), parent: Some(g.clone()), free: false, cost_multiplier: 0.9 } },
+            AddItem { tag: s("weapon"), record: record.clone(), purchase: Purchase { rating: 2, qty: 1.0, grade: Some(s("Alphaware")), answer: Some(s("Pistols")), parent: Some(g.clone()), free: false, cost_multiplier: 0.9, location: Some(g.clone()) } },
             RemoveItem { container: s("gears"), guid: g.clone() },
             DeleteItem { guid: g.clone() },
             SellItem { guid: g.clone(), fraction: 0.5 },

@@ -78,8 +78,6 @@ pub struct Added {
     pub guid: String,
     /// The session log's length right after it.
     pub log_len: usize,
-    /// Commands it took (an add, and a location for "+ add into").
-    pub steps: usize,
 }
 
 /// An item page: its tab and, on Street Gear, the sub-tab.
@@ -502,11 +500,11 @@ impl CharacterView {
     }
 
     /// Record an item bought on the page (for the marks, the inline Undo
-    /// and the tray). `steps`: the commands it took.
-    pub(super) fn ws_record_add(&mut self, guid: String, steps: usize) {
+    /// and the tray).
+    pub(super) fn ws_record_add(&mut self, guid: String) {
         let log_len = self.doc.session().map_or(0, |s| s.log().len());
         if let Some(v) = &mut self.ws_gear.visit {
-            v.adds.push(Added { guid: guid.clone(), log_len, steps });
+            v.adds.push(Added { guid: guid.clone(), log_len });
         }
         self.ws_gear.scroll_to = Some(guid);
     }

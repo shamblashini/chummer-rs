@@ -1285,6 +1285,12 @@ fn workspace_catalog_drag_onto_a_location_and_a_container() {
     assert_eq!(gear_count(&h), count + 1, "bought ({:?})", h.app.status);
     let new = h.app.views[i].ch().items("gears", "gear").into_iter().rev().find(|g| g.get("name") == "Flashlight").unwrap().get("location");
     assert_eq!(new, car, "in the Car location");
+    assert!(h.app.views[i].doc().undo_label().unwrap_or_default().starts_with("Added Flashlight"), "one command: {:?}", h.app.views[i].doc().undo_label());
+    h.app.undo();
+    h.frames(2);
+    assert_eq!(gear_count(&h), count, "one undo takes it back");
+    h.app.redo();
+    h.frames(2);
     // A vision enhancement dropped on the glasses (with room at rating
     // 4) goes inside.
     let glasses = gear_guid(&h, "Glasses");

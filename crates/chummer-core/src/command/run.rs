@@ -510,6 +510,13 @@ fn add_item(ch: &mut Character, engine: &Engine, store: &DataStore, tag: &str, r
         }
         let guid = items::add(tag, ch, store, rec, purchase).map_err(|e| Rejected::new(format!("Could not add {name}: {e}")))?;
         edit::settle_new_item(ch, &guid);
+        // Into a location: a top-level item of a kind with locations.
+        if let Some(loc) = purchase.location.as_deref().filter(|l| !l.is_empty()) {
+            if !edit::has_location(ch, &guid) || !edit::locations(ch, &guid).iter().any(|(g, _)| g.eq_ignore_ascii_case(loc)) {
+                return Err(Rejected::new(format!("{name} can't be put in that location")));
+            }
+            edit::set_text(ch, &guid, "location", loc);
+        }
         let mut msg = format!("Added {name}");
         let nuyen_kind = matches!(tag, "gear" | "cyberware" | "bioware" | "armor" | "armormod" | "weapon" | "accessory" | "vehicle" | "mod" | "weaponmount" | "lifestyle" | "drug");
         if ch.created && nuyen_kind {
