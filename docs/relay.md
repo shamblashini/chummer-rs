@@ -1,5 +1,36 @@
 # The chummer-rs relay
 
+## In short: what is a relay?
+
+When a GM hosts an online campaign, the GM's own copy of chummer-rs is the
+"server": players' apps connect straight to it. Home internet connections
+usually sit behind a router, which makes a direct connection hard, so the
+apps first ask a **relay** for help:
+
+- **Finding each other.** Both apps check in with the relay. It tells them
+  how to reach each other, and most of the time they then talk directly,
+  without the relay in between.
+- **When a direct line is impossible** (some mobile, campus or office
+  networks), the relay passes the traffic along. It is encrypted end to
+  end, so the relay cannot read it.
+- **The mailbox, for play-by-post.** If the GM's app is closed, a player's
+  changes wait in the relay's mailbox, sealed so that only the GM can open
+  them, and the GM's app picks them up the next time it runs. Changes for
+  offline players wait the same way.
+
+You need no port forwarding, VPN or account. The relay stores no personal
+data: only sealed messages (deleted once collected, or after 30 days) and
+the public keys allowed to post into each mailbox.
+
+**Which relay does the app use?** The project's public relay,
+`chummerrs-default-relay.shambla.com`, is the default. You can run your own
+relay instead (on a home server, a small VPS or a Raspberry Pi) and enter it
+in the app under Tools → Online Settings → Relays. Everyone in a campaign
+should use the same relay. The rest of this page explains how to host one;
+the quickest way is [Deploy with Docker](#deploy-with-docker).
+
+## Details
+
 `chummer-relay` is one small binary with two jobs:
 
 1. **Relay.** An [iroh relay server](https://docs.rs/iroh-relay) (iroh-relay
@@ -19,7 +50,8 @@ blobs, keyed by the recipient's node id, until they are collected or
 expire, and for each mailbox the public keys that may put mail into it.
 
 The project's public relay is the default in the app
-(`chummer_net::config::DEFAULT_RELAY_URL`). Anyone can run their own one and
+(`chummer_net::config::DEFAULT_RELAY_URL`,
+`https://chummerrs-default-relay.shambla.com`). Anyone can run their own one and
 point their app at it. How GMs host and players join is in the README's
 [Online campaigns](../README.md#online-campaigns); the design is in
 [online-design.md](online-design.md).

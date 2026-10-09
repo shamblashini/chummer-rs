@@ -670,6 +670,7 @@ fn phosphor_for(emoji: &'static str) -> &'static str {
     use egui_phosphor::regular as ph;
     match emoji {
         "➕" => ph::PLUS,
+        "ℹ" => ph::INFO,
         "🗑" => ph::TRASH,
         "📖" => ph::BOOK_OPEN,
         "🎲" => ph::DICE_FIVE,

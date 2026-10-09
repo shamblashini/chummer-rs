@@ -11,13 +11,17 @@ use std::str::FromStr;
 use iroh::{EndpointId, RelayUrl};
 use serde::{Deserialize, Serialize};
 
-/// The project's public relay.
-///
-/// Placeholder until the owner's server is set up; see `docs/relay.md`.
-pub const DEFAULT_RELAY_URL: &str = "https://relay.chummer-rs.example";
+/// The project's public relay (run by the project owner; anyone can run
+/// their own, see `docs/relay.md`).
+pub const DEFAULT_RELAY_URL: &str = "https://chummerrs-default-relay.shambla.com";
+
+/// The plain-language guide to relays (what one is, how it works, how to
+/// host one), opened from the app's online settings.
+pub const RELAY_GUIDE_URL: &str = "https://github.com/shamblashini/chummer-rs/blob/master/docs/relay.md";
 
 /// Node id of the mailbox on [`DEFAULT_RELAY_URL`] (printed by
-/// `chummer-relay` on start-up). `None` until the owner's server is set up.
+/// `chummer-relay` on start-up). `None` until the public relay has run once
+/// and its id is filled in here.
 pub const DEFAULT_MAILBOX_ID: Option<&str> = None;
 
 /// iroh's default port for QUIC address discovery on a relay.
@@ -176,7 +180,7 @@ mod tests {
         assert_eq!(cfg.relays.len(), 1);
         assert_eq!(
             cfg.relays[0].url.as_str(),
-            "https://relay.chummer-rs.example/"
+            "https://chummerrs-default-relay.shambla.com/"
         );
         cfg.add_relays([
             "https://mine.example".parse().unwrap(),

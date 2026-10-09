@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
-use chummer_net::config::{OnlineSettings, DEFAULT_MAILBOX_ID, DEFAULT_RELAY_URL};
+use chummer_net::config::{OnlineSettings, DEFAULT_MAILBOX_ID, DEFAULT_RELAY_URL, RELAY_GUIDE_URL};
 use chummer_net::invite::InviteLink;
 use chummer_net::SecretKey;
 use chummer_sync::joined::{Joined, JoinedList};
@@ -384,7 +384,15 @@ impl Online {
             ui.end_row();
         });
         ui.add_space(6.0);
-        ui.label(RichText::new(lang.tr("Relays")).strong());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(lang.tr("Relays")).strong());
+            let info = ui.add(egui::Button::new(crate::theme::glyph("ℹ")).frame(false)).on_hover_text(lang.tr("What is a relay, how it works and how to host your own (opens the guide in your browser)"));
+            if info.clicked() {
+                if let Err(e) = crate::open::open(RELAY_GUIDE_URL) {
+                    self.error = Some(format!("{RELAY_GUIDE_URL}: {e}"));
+                }
+            }
+        });
         ui.weak(lang.tr("One per line: https://relay.example.org#<mailbox node id>, as chummer-relay prints it. The first one with a mailbox is used for play-by-post."));
         ui.add(egui::TextEdit::multiline(&mut self.form.relays).desired_rows(3).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
         ui.horizontal(|ui| {
