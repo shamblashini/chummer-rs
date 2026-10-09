@@ -691,7 +691,7 @@ was.
   free capacity at the rating shown). A location group's "+" adds into
   that location.
 
-  ![A vehicle selected: the catalog adds into it, on Mods, with Weapon mounts and Gear beside](docs/screenshots/workspace-add-into-vehicle-dark.png)
+  ![A vehicle selected: the catalog adds into it, on Weapon mounts (beside Mods and Gear); a mod bought onto it shows in the inventory](docs/screenshots/workspace-add-into-vehicle-dark.png)
   ![A commlink implant selected on the Cyberware page: the catalog sells the commlinks it takes](docs/screenshots/workspace-add-into-cyberware-dark.png)
 - **Inspector**: creation issues with Finish creation, the selected
   item in the Workspace style (rating, quantity, equipped and wireless,
