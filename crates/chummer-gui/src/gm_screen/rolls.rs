@@ -149,9 +149,19 @@ fn tone(r: &GmRoll, ws: &theme::WsPalette, ok: Color32) -> Color32 {
 pub(crate) const PLAYER_DICE: &str = "Players roll on their own machines: these are the dice their app sent. The hits are worked out from the dice.";
 
 /// "12:03" of Unix ms.
+/// "21:01" for a roll today, "10-08 21:01" for an older one.
 fn clock(at: i64) -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
+    clock_at(at, now)
+}
+
+fn clock_at(at: i64, now: i64) -> String {
     let t = crate::history_ui::short_time(at);
-    t.get(t.len().saturating_sub(5)..).unwrap_or("").to_owned()
+    if t.get(..5) == crate::history_ui::short_time(now).get(..5) {
+        t.get(t.len().saturating_sub(5)..).unwrap_or("").to_owned()
+    } else {
+        t
+    }
 }
 
 impl GmScreen {
@@ -180,10 +190,10 @@ impl GmScreen {
         }
     }
 
-    /// Keeps a roll (newest first, by when it was rolled).
+    /// Keeps a roll, newest arrival first: a play-by-post roll made
+    /// yesterday comes in at the top (its card shows its date).
     fn add_roll(&mut self, r: GmRoll) {
-        let at = self.rolls.partition_point(|x| x.at() > r.at());
-        self.rolls.insert(at, r);
+        self.rolls.insert(0, r);
         self.rolls.truncate(KEPT);
     }
 
@@ -552,6 +562,15 @@ pub(crate) fn classic_roll(ui: &mut egui::Ui, lang: &Language, r: &GmRoll) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn older_rolls_show_their_date() {
+        // 2026-10-09 21:01 UTC and the next day.
+        let at = 1_791_579_660_000;
+        let day = 24 * 60 * 60 * 1000;
+        assert_eq!(clock_at(at, at + 60_000), "21:01");
+        assert_eq!(clock_at(at, at + day), "10-09 21:01");
+    }
 
     #[test]
     fn roll_lines_name_the_edge() {
