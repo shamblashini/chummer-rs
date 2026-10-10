@@ -251,18 +251,28 @@ impl CharacterView {
     /// Rolls made since the last call go to the GM's app when the
     /// character is in an online campaign (a log next to the character:
     /// nothing about it changes). Made here, so the GM takes them on
-    /// trust; the hits are worked out from the dice.
+    /// trust; the hits are worked out from the dice. On the GM's own app
+    /// (a member's tab) they join the campaign's roll log as the GM's.
     pub fn report_rolls(&mut self) {
         let new = self.play.roller.take_new();
         if new.is_empty() {
             return;
         }
-        let Some((session, id)) = self.player_session() else { return };
-        for e in new {
-            if let Some(rec) = e.record() {
-                if let Err(err) = session.roll_now(&id, rec) {
-                    eprintln!("could not report the roll to the GM: {err}");
+        let name = self.doc.display_name();
+        for rec in new.iter().filter_map(|e| e.record()) {
+            match self.doc.backend() {
+                Some(Backend::Player { session, id }) => {
+                    if let Err(err) = session.roll_now(id, rec) {
+                        eprintln!("could not report the roll to the GM: {err}");
+                    }
                 }
+                // The GM rolling on a member's own tab: into the
+                // campaign's roll log like the GM screen's rolls.
+                Some(Backend::Gm { host, id }) => {
+                    let open = host.authority().roll_settings().show_gm_rolls;
+                    host.gm_roll(Some(id.clone()), &name, open, rec);
+                }
+                None => {}
             }
         }
     }
