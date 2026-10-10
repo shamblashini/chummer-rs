@@ -19,10 +19,16 @@
 //! 3. The host sends [`ServerMessage::Push`] on its own when another member
 //!    (usually the GM) changed a character the client sees.
 //! 4. [`ClientMessage::Resync`] asks for a snapshot after a hash mismatch.
+//! 5. [`ClientMessage::Rolls`] reports dice rolls (a log, not changes:
+//!    no versions, no conflicts); the answer [`ServerMessage::RollsTaken`]
+//!    names the ones the authority has, so the client stops resending
+//!    them. The authority sends members the rolls they may see as
+//!    [`ServerMessage::Rolls`], live or by mail, like pushes.
 
 use std::fmt;
 
 use chummer_core::command::Envelope;
+use chummer_core::dice::RollRecord;
 use chummer_net::campaign::DenyReason;
 use chummer_net::invite::{CampaignId, Role};
 use chummer_net::{EndpointId, PublicKey, SecretKey, Signature};
@@ -30,8 +36,8 @@ use serde::{Deserialize, Serialize};
 
 /// Version of the sync messages. 2: member keys (claims by mail,
 /// refusals, the GM's campaign keys in the membership). 3: commands
-/// changed (`MoveItem`, `Purchase::location`).
-pub const SYNC_VERSION: u8 = 3;
+/// changed (`MoveItem`, `Purchase::location`). 4: dice rolls.
+pub const SYNC_VERSION: u8 = 4;
 
 /// A BLAKE3 hash of a character's canonical form ([`chummer_core::command::state_hash`]).
 pub type Hash = [u8; 32];
@@ -73,6 +79,64 @@ impl fmt::Debug for OpId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "OpId({:02x}{:02x}{:02x}{:02x}:{})", self.origin[0], self.origin[1], self.origin[2], self.origin[3], self.seq)
     }
+}
+
+/// A unique id for one dice roll, so a roll delivered twice (resent
+/// before its answer came, mailed and then sent live) is logged once.
+/// `origin` is random per replica (or authority), `seq` counts up.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct RollId {
+    pub origin: [u8; 16],
+    pub seq: u64,
+}
+
+impl fmt::Display for RollId {
+    /// `<origin hex>:<seq>` (the campaign file's roll ids).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for b in self.origin {
+            write!(f, "{b:02x}")?;
+        }
+        write!(f, ":{}", self.seq)
+    }
+}
+
+impl fmt::Debug for RollId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "RollId({:02x}{:02x}{:02x}{:02x}:{})", self.origin[0], self.origin[1], self.origin[2], self.origin[3], self.seq)
+    }
+}
+
+/// A dice roll a member made, as reported to the authority. Rolls are
+/// made on the member's machine; the authority only checks that the
+/// dice fit the pool, and works the hits out from the dice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RollReport {
+    pub id: RollId,
+    /// The character it was rolled for (a player's own).
+    pub character: Option<CharacterId>,
+    pub roll: RollRecord,
+}
+
+/// A roll in the campaign's roll log, as the authority keeps it and
+/// sends it to members who may see it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableRoll {
+    /// The order the authority took it in.
+    pub seq: u64,
+    pub id: RollId,
+    /// Who rolled (the proven sender).
+    pub author: EndpointId,
+    pub author_name: String,
+    pub author_role: Role,
+    /// The character it was rolled for, when the receiver sees that
+    /// character.
+    pub character: Option<CharacterId>,
+    /// Whose roll it is: the character's name as the GM calls it (or the
+    /// GM's name for an NPC or combatant).
+    pub who: String,
+    /// A GM's roll shown to players.
+    pub open: bool,
+    pub roll: RollRecord,
 }
 
 /// A command as submitted: its id and its envelope.
@@ -260,6 +324,8 @@ pub enum ClientMessage {
     Join { name: String, have: Vec<Have>, claim: Option<ClaimProof> },
     Submit(SubmitBatch),
     Resync(ResyncRequest),
+    /// Dice rolls not answered yet (oldest first).
+    Rolls(Vec<RollReport>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +341,12 @@ pub enum ServerMessage {
     Error(String),
     /// A mailed join was refused (the invite was claimed, revoked, ...).
     Denied(DenyReason),
+    /// The answer to [`ClientMessage::Rolls`]: the rolls the authority
+    /// has (logged now or before; a roll it could not take is named too,
+    /// so it is not sent forever).
+    RollsTaken(Vec<RollId>),
+    /// Rolls of others this member may see, oldest first.
+    Rolls(Vec<TableRoll>),
 }
 
 /// The proof, in a mailed [`ClientMessage::Join`], that the joining node

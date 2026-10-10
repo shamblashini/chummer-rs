@@ -15,15 +15,28 @@
 //! commands are deterministic, so this gives exactly the state that was
 //! acknowledged.
 //!
-//! Each record is a 4-byte big-endian length and the postcard form of
-//! `(CharacterId, Entry)`. A torn last record (a crash while appending) is
-//! ignored: its answer was never sent.
+//! Dice rolls the authority took are journaled the same way (a player
+//! drops a roll once it is answered, so the answer must not outrun the
+//! disk either), and taken again with [`crate::Authority::replay_roll`].
+//!
+//! Each record is a 4-byte big-endian length and the postcard form of a
+//! [`Record`]. A torn last record (a crash while appending) is ignored:
+//! its answer was never sent.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use crate::msg::{CharacterId, Entry};
+use serde::{Deserialize, Serialize};
+
+use crate::msg::{CharacterId, Entry, TableRoll};
+
+/// One journal record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Record {
+    Entry(CharacterId, Entry),
+    Roll(TableRoll),
+}
 
 /// A record larger than this is taken to be damage.
 const MAX_RECORD: usize = 64 * 1024 * 1024;
@@ -53,14 +66,15 @@ impl Journal {
         Journal { sidecar: sidecar.to_owned(), file: None }
     }
 
-    /// Appends `records` and syncs them to disk.
-    pub fn append(&mut self, records: &[(CharacterId, Entry)]) -> io::Result<()> {
-        if records.is_empty() {
+    /// Appends `entries` and `rolls` and syncs them to disk.
+    pub fn append(&mut self, entries: &[(CharacterId, Entry)], rolls: &[TableRoll]) -> io::Result<()> {
+        if entries.is_empty() && rolls.is_empty() {
             return Ok(());
         }
         let mut buf = Vec::new();
+        let records = entries.iter().map(|(c, e)| Record::Entry(c.clone(), e.clone())).chain(rolls.iter().map(|r| Record::Roll(r.clone())));
         for r in records {
-            let bytes = postcard::to_stdvec(r).map_err(io::Error::other)?;
+            let bytes = postcard::to_stdvec(&r).map_err(io::Error::other)?;
             buf.extend((bytes.len() as u32).to_be_bytes());
             buf.extend(bytes);
         }
@@ -104,11 +118,12 @@ impl Journal {
         }
     }
 
-    /// Every record of both files, in version order per character
-    /// (records are appended outside the authority's lock, so two
-    /// answers may land in either order).
-    pub fn read(sidecar: &Path) -> Vec<(CharacterId, Entry)> {
+    /// Every record of both files: the entries in version order per
+    /// character (records are appended outside the authority's lock, so
+    /// two answers may land in either order), the rolls in `seq` order.
+    pub fn read(sidecar: &Path) -> (Vec<(CharacterId, Entry)>, Vec<TableRoll>) {
         let mut out: Vec<(CharacterId, Entry)> = Vec::new();
+        let mut rolls: Vec<TableRoll> = Vec::new();
         for p in [saving_path(sidecar), path_for(sidecar)] {
             let Ok(mut f) = File::open(&p) else { continue };
             let mut bytes = Vec::new();
@@ -122,13 +137,15 @@ impl Journal {
                     break;
                 }
                 match postcard::from_bytes(&rest[4..4 + len]) {
-                    Ok(r) => out.push(r),
+                    Ok(Record::Entry(c, e)) => out.push((c, e)),
+                    Ok(Record::Roll(r)) => rolls.push(r),
                     Err(_) => break,
                 }
                 rest = &rest[4 + len..];
             }
         }
         out.sort_by(|a, b| (&a.0, a.1.version).cmp(&(&b.0, b.1.version)));
-        out
+        rolls.sort_by_key(|r| r.seq);
+        (out, rolls)
     }
 }

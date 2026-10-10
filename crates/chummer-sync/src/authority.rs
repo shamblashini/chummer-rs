@@ -21,13 +21,21 @@
 //! engine refuses (not enough karma any more) is rejected with the reason.
 //! Nothing is refused for being "not allowed": the only access rule is
 //! that a player submits for their own characters.
+//!
+//! Dice rolls ([`Authority::submit_rolls`], [`Authority::add_gm_roll`])
+//! are a log next to the characters, not changes to them: the last
+//! [`ROLL_LOG`] are kept, each logged once by its id. Who sees which
+//! follows the campaign's [`RollSettings`]: the GM sees every roll, a
+//! player sees the GM's open rolls and (when the GM allows it) the other
+//! players'. Players keep their own rolls themselves.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::Path;
 
+use chummer_core::campaign::RollSettings;
 use chummer_core::character::Character;
 use chummer_core::command::{self, Command, Envelope, Rejected};
-use chummer_core::dice::Rng;
+use chummer_core::dice::{RollRecord, Rng};
 use chummer_core::engine::Engine;
 use std::collections::BTreeSet;
 
@@ -42,7 +50,7 @@ use crate::invites::{Claim, Invite, InviteOp};
 use crate::mail::Inbox;
 use crate::msg::{
     Accepted, Ack, CharacterId, CharacterInfo, ClaimProof, Entry, FeedEntry, Hash, Have, MemberInfo, Membership, Op, OpId, Push, PushBody, RejectedOp, ResyncRequest,
-    ServerMessage, SubmitBatch,
+    RollId, RollReport, ServerMessage, SubmitBatch, TableRoll,
 };
 use crate::persist::{self, PersistError};
 
@@ -58,6 +66,13 @@ const MAX_VERSION_JUMP: u64 = 1 << 32;
 
 /// Entries carried in a snapshot push for the feed.
 const RECENT_IN_SNAPSHOT: usize = 20;
+
+/// Dice rolls kept in the roll log (the campaign file keeps as many).
+pub const ROLL_LOG: usize = chummer_core::campaign::ROLLS_KEPT;
+
+/// Roll ids remembered for de-duplication. A client resends a roll only
+/// until it is answered, so this is far more than ever in flight.
+pub const ROLL_SEEN_LIMIT: usize = 10_000;
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
@@ -332,6 +347,20 @@ pub struct Authority {
     /// Log entries made since [`Authority::take_applied`] (for the
     /// journal; not saved).
     applied: Vec<(CharacterId, Entry)>,
+    /// The roll log, in the order taken (oldest first), and the last
+    /// `seq` given out.
+    rolls: VecDeque<TableRoll>,
+    roll_seq: u64,
+    /// The GM's own roll ids count up from here.
+    next_roll: u64,
+    /// Ids of rolls taken (oldest first), so none is logged twice.
+    roll_seen: VecDeque<RollId>,
+    roll_seen_set: std::collections::HashSet<RollId>,
+    /// The last roll `seq` each member has been sent.
+    roll_cursor: BTreeMap<EndpointId, u64>,
+    roll_settings: RollSettings,
+    /// Rolls taken since [`Authority::take_rolled`] (for the journal).
+    rolled: Vec<TableRoll>,
 }
 
 impl std::fmt::Debug for Authority {
@@ -368,6 +397,14 @@ impl Authority {
             inbox: Inbox::default(),
             mail_out: Vec::new(),
             applied: Vec::new(),
+            rolls: VecDeque::new(),
+            roll_seq: 0,
+            next_roll: 0,
+            roll_seen: VecDeque::new(),
+            roll_seen_set: Default::default(),
+            roll_cursor: BTreeMap::new(),
+            roll_settings: RollSettings::default(),
+            rolled: Vec::new(),
         }
     }
 
@@ -451,6 +488,7 @@ impl Authority {
         self.retired.insert(*peer);
         self.delivered.retain(|(p, _), _| p != peer);
         self.membership_sent.remove(peer);
+        self.roll_cursor.remove(peer);
         self.mail_out.retain(|(p, _)| p != peer);
         self.membership_rev += 1;
     }
@@ -1061,6 +1099,156 @@ impl Authority {
         }
     }
 
+    // ----- dice rolls -----
+
+    /// The roll log, oldest first.
+    pub fn rolls(&self) -> &VecDeque<TableRoll> {
+        &self.rolls
+    }
+
+    /// The `seq` of the newest roll taken (0 before the first).
+    pub fn roll_seq(&self) -> u64 {
+        self.roll_seq
+    }
+
+    pub fn roll_settings(&self) -> RollSettings {
+        self.roll_settings
+    }
+
+    /// Who sees which rolls from now on (the campaign file's settings).
+    pub fn set_roll_settings(&mut self, s: RollSettings) {
+        self.roll_settings = s;
+    }
+
+    fn roll_seen(&self, id: &RollId) -> bool {
+        self.roll_seen_set.contains(id)
+    }
+
+    /// Logs a roll: newest last, the oldest dropped past [`ROLL_LOG`].
+    fn log_roll(&mut self, mut r: TableRoll) -> TableRoll {
+        self.roll_seq += 1;
+        r.seq = self.roll_seq;
+        self.rolls.push_back(r.clone());
+        while self.rolls.len() > ROLL_LOG {
+            self.rolls.pop_front();
+        }
+        if self.roll_seen_set.insert(r.id) {
+            self.roll_seen.push_back(r.id);
+        }
+        while self.roll_seen.len() > ROLL_SEEN_LIMIT {
+            if let Some(old) = self.roll_seen.pop_front() {
+                self.roll_seen_set.remove(&old);
+            }
+        }
+        self.rolled.push(r.clone());
+        r
+    }
+
+    /// A member's rolls. Each is logged once (one delivered again is only
+    /// answered), with the character's name as the GM has it; one whose
+    /// dice do not fit its pool, or for a character that is not theirs,
+    /// is dropped (and answered, so it is not sent forever). Returns the
+    /// answer and the members to tell.
+    pub fn submit_rolls(&mut self, peer: EndpointId, reports: Vec<RollReport>) -> Result<(Vec<RollId>, Vec<EndpointId>), String> {
+        let role = self.role(&peer).ok_or("not a member of this campaign")?;
+        let (author_name, _) = feed::member_label(&self.member_infos(), &peer);
+        let mut taken = Vec::new();
+        let mut any = false;
+        for rep in reports {
+            taken.push(rep.id);
+            if self.roll_seen(&rep.id) {
+                continue;
+            }
+            if let Err(e) = rep.roll.check() {
+                tracing::warn!("{}: dropped a roll whose dice do not add up ({e})", peer.fmt_short());
+                continue;
+            }
+            let who = match &rep.character {
+                Some(c) if self.can_see(&peer, c) => self.chars[c].name.clone(),
+                Some(c) => {
+                    tracing::warn!("{}: dropped a roll for character {c}, which is not theirs", peer.fmt_short());
+                    continue;
+                }
+                None => author_name.clone(),
+            };
+            self.log_roll(TableRoll { seq: 0, id: rep.id, author: peer, author_name: author_name.clone(), author_role: role, character: rep.character, who, open: false, roll: rep.roll });
+            any = true;
+        }
+        let notify = if any { self.members.keys().copied().filter(|p| *p != peer && *p != self.me).collect() } else { Vec::new() };
+        Ok((taken, notify))
+    }
+
+    /// A roll of the GM's at this authority: for `character` (an NPC or a
+    /// player's character; `None` for a combatant without one), shown as
+    /// `who`; `open` shows it to players. Returns it as logged and the
+    /// members to tell.
+    pub fn add_gm_roll(&mut self, character: Option<CharacterId>, who: &str, open: bool, roll: RollRecord) -> (TableRoll, Vec<EndpointId>) {
+        self.next_roll += 1;
+        let id = RollId { origin: self.origin, seq: self.next_roll };
+        let (author_name, _) = feed::member_label(&self.member_infos(), &self.me);
+        let character = character.filter(|c| self.chars.contains_key(c));
+        let r = self.log_roll(TableRoll { seq: 0, id, author: self.me, author_name, author_role: Role::Gm, character, who: who.to_owned(), open, roll });
+        let notify = if open { self.members.keys().copied().filter(|p| *p != self.me).collect() } else { Vec::new() };
+        (r, notify)
+    }
+
+    /// Whether `peer` (with `role`) is sent `r`: a GM every roll but their
+    /// own, a player the GM's open rolls and, when the settings allow it,
+    /// the other players'. Nobody is sent their own rolls back.
+    fn sees_roll(&self, peer: &EndpointId, role: Role, r: &TableRoll) -> bool {
+        if r.author == *peer {
+            return false;
+        }
+        match (role, r.author_role) {
+            (Role::Gm, _) => true,
+            (_, Role::Gm) => r.open,
+            _ => self.roll_settings.players_see_each_other,
+        }
+    }
+
+    /// The rolls `peer` may see and was not sent yet, as it may see them
+    /// (without the id of a character it does not see).
+    pub fn rolls_for(&self, peer: &EndpointId) -> Vec<TableRoll> {
+        let Some(role) = self.role(peer) else { return Vec::new() };
+        let from = self.roll_cursor.get(peer).copied().unwrap_or(0);
+        self.rolls
+            .iter()
+            .filter(|r| r.seq > from && self.sees_roll(peer, role, r))
+            .map(|r| {
+                let mut r = r.clone();
+                if r.character.as_ref().is_some_and(|c| !self.can_see(peer, c)) {
+                    r.character = None;
+                }
+                r
+            })
+            .collect()
+    }
+
+    fn has_rolls_for(&self, peer: &EndpointId) -> bool {
+        let Some(role) = self.role(peer) else { return false };
+        let from = self.roll_cursor.get(peer).copied().unwrap_or(0);
+        self.rolls.iter().rev().take_while(|r| r.seq > from).any(|r| self.sees_roll(peer, role, r))
+    }
+
+    /// The rolls taken since the last call, oldest first (what
+    /// [`crate::journal`] keeps until the next save).
+    pub fn take_rolled(&mut self) -> Vec<TableRoll> {
+        std::mem::take(&mut self.rolled)
+    }
+
+    /// Takes a journaled roll again after a restart: `true` when the
+    /// saved state did not have it.
+    pub fn replay_roll(&mut self, r: &TableRoll) -> bool {
+        if self.roll_seen(&r.id) {
+            return false;
+        }
+        if r.id.origin == self.origin {
+            self.next_roll = self.next_roll.max(r.id.seq);
+        }
+        self.log_roll(r.clone());
+        true
+    }
+
     // ----- what members are sent -----
 
     /// A member joined (or rejoined) with what they have. Returns the
@@ -1160,6 +1348,10 @@ impl Authority {
                 out.push(ServerMessage::Push(p));
             }
         }
+        let rolls = self.rolls_for(peer);
+        if !rolls.is_empty() {
+            out.push(ServerMessage::Rolls(rolls));
+        }
         out
     }
 
@@ -1171,6 +1363,7 @@ impl Authority {
         self.membership_stale(peer)
             || self.mail_out.iter().any(|(p, _)| p == peer)
             || self.visible(peer).iter().any(|id| self.delivered.get(&(*peer, id.clone())).is_none_or(|v| *v < self.chars[id].version))
+            || self.has_rolls_for(peer)
     }
 
     /// `msg` reached `peer` (live or by mail): count what it carried as
@@ -1180,15 +1373,21 @@ impl Authority {
             ServerMessage::Membership(_) | ServerMessage::Joined { .. } => self.mark_membership_sent(peer),
             ServerMessage::Push(p) => self.mark_delivered(peer, &p.character, p.version),
             ServerMessage::Ack(a) => self.mark_delivered(peer, &a.character, a.update.version),
-            ServerMessage::Error(_) | ServerMessage::Denied(_) => {}
+            ServerMessage::Rolls(rolls) => {
+                if let Some(last) = rolls.iter().map(|r| r.seq).max() {
+                    let c = self.roll_cursor.entry(peer).or_insert(0);
+                    *c = (*c).max(last);
+                }
+            }
+            ServerMessage::Error(_) | ServerMessage::Denied(_) | ServerMessage::RollsTaken(_) => {}
         }
     }
 
     /// `msg` from [`Authority::outgoing_for`] could not be delivered.
-    /// Answers go back in the queue; pushes and memberships are made
-    /// again next time anyway.
+    /// Answers go back in the queue; pushes, memberships and rolls are
+    /// made again next time anyway.
     pub fn requeue(&mut self, peer: EndpointId, msg: ServerMessage) {
-        if matches!(msg, ServerMessage::Ack(_) | ServerMessage::Error(_) | ServerMessage::Denied(_)) {
+        if matches!(msg, ServerMessage::Ack(_) | ServerMessage::Error(_) | ServerMessage::Denied(_) | ServerMessage::RollsTaken(_)) {
             self.mail_out.push((peer, msg));
         }
     }
@@ -1317,6 +1516,12 @@ impl Authority {
             feed: self.feed.iter().cloned().collect(),
             inbox: self.inbox.clone(),
             mail_out: self.mail_out.clone(),
+            rolls: self.rolls.iter().cloned().collect(),
+            roll_seq: self.roll_seq,
+            next_roll: self.next_roll,
+            roll_seen: self.roll_seen.iter().copied().collect(),
+            roll_cursor: self.roll_cursor.iter().map(|(k, v)| (*k, *v)).collect(),
+            roll_settings: self.roll_settings,
         };
         persist::to_bytes(MAGIC, FORMAT, &file)
     }
@@ -1371,6 +1576,14 @@ impl Authority {
             inbox: f.inbox,
             mail_out: f.mail_out,
             applied: Vec::new(),
+            rolls: f.rolls.into(),
+            roll_seq: f.roll_seq,
+            next_roll: f.next_roll,
+            roll_seen_set: f.roll_seen.iter().copied().collect(),
+            roll_seen: f.roll_seen.into(),
+            roll_cursor: f.roll_cursor.into_iter().collect(),
+            roll_settings: f.roll_settings,
+            rolled: Vec::new(),
         })
     }
 
@@ -1393,8 +1606,8 @@ pub(crate) fn describe_intent(env: &Envelope) -> String {
 const MAGIC: &[u8; 4] = b"CRSA";
 /// 2: the log window's base state is stored (for reverts).
 /// 3: per-player invites with member keys, retired nodes, the campaign
-/// key generation.
-const FORMAT: u16 = 3;
+/// key generation. 4: the roll log.
+const FORMAT: u16 = 4;
 
 /// The authority file: everything above, characters as snapshots.
 #[derive(Serialize, Deserialize)]
@@ -1417,6 +1630,12 @@ struct AuthorityFile {
     feed: Vec<FeedEntry>,
     inbox: Inbox,
     mail_out: Vec<(EndpointId, ServerMessage)>,
+    rolls: Vec<TableRoll>,
+    roll_seq: u64,
+    next_roll: u64,
+    roll_seen: Vec<RollId>,
+    roll_cursor: Vec<(EndpointId, u64)>,
+    roll_settings: RollSettings,
 }
 
 #[derive(Serialize, Deserialize)]

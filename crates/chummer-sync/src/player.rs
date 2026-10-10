@@ -7,6 +7,14 @@
 //! every so often (it connects when it can, sends the outbox, and
 //! otherwise mails it and collects mail). Edits go through
 //! [`PlayerSession::edit`]; [`PlayerSession::events`] says what changed.
+//!
+//! Dice rolls ([`PlayerSession::roll_now`]) travel the way edits do, on
+//! a path of their own: kept in the replica's roll outbox (and journaled
+//! until a save has them), sent live when the GM's app is reachable and
+//! mailed when it is not, mailed again when unanswered for
+//! [`PlayerConfig::remail_after`], and dropped only once the authority
+//! names them in its answer. The authority logs each roll once by its id,
+//! so a roll sent twice is no harm. They never touch a character.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -22,9 +30,9 @@ use chummer_net::{Endpoint, EndpointId, NetError, PublicKey, SecretKey};
 use tokio::sync::mpsc;
 
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
-use crate::msg::{self, CharacterId, ClaimProof, ClientMessage, MailMessage, OpId, ServerMessage};
+use crate::msg::{self, CharacterId, ClaimProof, ClientMessage, MailMessage, OpId, RollId, RollReport, ServerMessage};
 use crate::lockwatch::{self, Guard};
-use crate::replica::{Event, Pending, Replica};
+use crate::replica::{Event, Replica};
 
 /// How a player reaches their campaign.
 #[derive(Debug, Clone)]
@@ -87,6 +95,8 @@ struct Inner {
     /// When each mailed command was (last) mailed, as far as this run
     /// knows; and when we last mailed a join message.
     mailed_at: Mutex<std::collections::HashMap<OpId, Instant>>,
+    /// The same for mailed rolls.
+    rolls_mailed_at: Mutex<std::collections::HashMap<RollId, Instant>>,
     joined_by_mail: Mutex<Instant>,
     /// A join was mailed in this run (a first join by mail is sent once,
     /// then again after `remail_after`).
@@ -107,10 +117,13 @@ struct Inner {
     saving: Mutex<()>,
     /// The outbox journal (see [`PlayerSession::edit_now`]).
     outbox_log: Mutex<OutboxLog>,
+    /// The roll journal (see [`PlayerSession::roll_now`]).
+    roll_log: Mutex<OutboxLog>,
 }
 
 /// `<replica>.outbox`: every command made, appended as it is made, until
-/// a save has it. Saves run in the background, so without it an app that
+/// a save has it (and `<replica>.rolls` the same for rolls, records of
+/// [`RollReport`]). Saves run in the background, so without it an app that
 /// crashed right after an edit lost the edit (found by the e2e
 /// `player-crash` scenario). Each record is a 4-byte big-endian length and
 /// the postcard form of `(CharacterId, Pending)`; a torn last record is
@@ -129,7 +142,13 @@ fn outbox_log_path(replica: &std::path::Path) -> PathBuf {
     PathBuf::from(p)
 }
 
-fn read_outbox_log(path: &std::path::Path) -> Vec<(CharacterId, Pending)> {
+fn roll_log_path(replica: &std::path::Path) -> PathBuf {
+    let mut p = replica.as_os_str().to_owned();
+    p.push(".rolls");
+    PathBuf::from(p)
+}
+
+fn read_outbox_log<T: for<'de> serde::Deserialize<'de>>(path: &std::path::Path) -> Vec<T> {
     let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
     let mut out = Vec::new();
     let mut rest = &bytes[..];
@@ -179,6 +198,17 @@ impl PlayerSession {
                     r.save(p)?;
                 }
                 let _ = std::fs::remove_file(&log);
+                // Rolls made after the last save.
+                let log = roll_log_path(p);
+                let rolled = read_outbox_log(&log);
+                if !rolled.is_empty() {
+                    let n = r.recover_rolls(rolled);
+                    if n > 0 {
+                        tracing::info!("took back {n} roll(s) made after the last save");
+                    }
+                    r.save(p)?;
+                }
+                let _ = std::fs::remove_file(&log);
                 r
             }
             _ => Replica::new(),
@@ -211,6 +241,7 @@ impl PlayerSession {
                 last_mode: Mutex::new(None),
                 closed: std::sync::atomic::AtomicBool::new(false),
                 mailed_at: Mutex::default(),
+                rolls_mailed_at: Mutex::default(),
                 joined_by_mail: Mutex::new(Instant::now()),
                 mailed_join: std::sync::atomic::AtomicBool::new(false),
                 registered: tokio::sync::Mutex::new(None),
@@ -220,6 +251,7 @@ impl PlayerSession {
                 save_queued: std::sync::atomic::AtomicBool::new(false),
                 saving: Mutex::new(()),
                 outbox_log: Mutex::default(),
+                roll_log: Mutex::default(),
             }),
             events: Arc::new(tokio::sync::Mutex::new(rx)),
         }
@@ -329,34 +361,31 @@ impl PlayerSession {
         Ok(report)
     }
 
-    fn append_outbox_log(&self, replica: &std::path::Path, id: &CharacterId, p: &Pending) -> std::io::Result<()> {
-        use std::io::Write;
-        let bytes = postcard::to_stdvec(&(id, p)).map_err(std::io::Error::other)?;
-        let mut rec = (bytes.len() as u32).to_be_bytes().to_vec();
-        rec.extend(bytes);
-        let mut log = self.inner.outbox_log.lock().unwrap_or_else(|e| e.into_inner());
-        if log.file.is_none() {
-            log.file = Some(std::fs::OpenOptions::new().create(true).append(true).open(outbox_log_path(replica))?);
-        }
-        log.file.as_mut().expect("opened").write_all(&rec)?;
-        log.max_seq = log.max_seq.max(p.op.id.seq);
-        Ok(())
+    fn append_outbox_log(&self, replica: &std::path::Path, id: &CharacterId, p: &crate::replica::Pending) -> std::io::Result<()> {
+        append_log(&self.inner.outbox_log, &outbox_log_path(replica), &(id, p), p.op.id.seq)
     }
 
     /// A save with commands up to `seq` is on disk: empty the journal
     /// when it holds nothing newer.
     fn trim_outbox_log(&self, replica: &std::path::Path, seq: u64) {
-        let mut log = self.inner.outbox_log.lock().unwrap_or_else(|e| e.into_inner());
-        if log.max_seq > seq || (log.file.is_none() && log.max_seq == 0) {
-            return;
-        }
-        log.file = None;
-        log.max_seq = 0;
-        if let Err(e) = std::fs::remove_file(outbox_log_path(replica)) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                tracing::warn!("could not empty the outbox journal: {e}");
+        trim_log(&self.inner.outbox_log, &outbox_log_path(replica), seq);
+    }
+
+    /// Rolls `roll` (made for `id`, our character) into the replica's roll
+    /// outbox and the roll journal, and sends it as an edit would be: at
+    /// once when online, else with the next [`PlayerSession::sync`]
+    /// (mailed when the GM's app is not reachable). For a UI thread, as
+    /// [`PlayerSession::edit_now`].
+    pub fn roll_now(&self, id: &CharacterId, roll: chummer_core::dice::RollRecord) -> Result<RollReport, String> {
+        let report = self.replica().roll(id, roll)?;
+        if let Some(path) = &self.inner.cfg.path {
+            if let Err(e) = append_log(&self.inner.roll_log, &roll_log_path(path), &report, report.id.seq) {
+                tracing::warn!("could not write the roll journal (a crash before the next save would lose this roll): {e}");
             }
         }
+        self.save_soon();
+        self.inner.flush.notify_one();
+        Ok(report)
     }
 
     /// Takes the refused commands out of the list (the player saw them).
@@ -515,12 +544,13 @@ impl PlayerSession {
                     let made = work.into_iter().map(|(id, at, ch)| (id, at, chummer_core::command::snapshot(&ch))).collect();
                     self.replica().put_snapshots(made);
                 }
-                let (bytes, seq) = {
+                let (bytes, seq, roll_seq) = {
                     let r = self.replica();
-                    (r.to_bytes(), r.last_seq())
+                    (r.to_bytes(), r.last_seq(), r.last_roll_seq())
                 };
                 crate::persist::write_atomic(p, &bytes)?;
                 self.trim_outbox_log(p, seq);
+                trim_log(&self.inner.roll_log, &roll_log_path(p), roll_seq);
                 Ok(())
             }
             None => Ok(()),
@@ -647,6 +677,12 @@ impl PlayerSession {
             self.save_logged();
             self.resync_live(client, resync).await?;
         }
+        // Rolls after the edits they may have been made after.
+        let rolls = self.replica().rolls_message();
+        if let Some(m) = rolls {
+            let reply = request(client, &m).await?;
+            let _ = self.handle(reply);
+        }
         Ok(())
     }
 
@@ -736,10 +772,16 @@ impl PlayerSession {
             tracing::info!("{} command(s) mailed long ago are still not answered; mailing them again", stale.len());
             self.replica().mark_unmailed(&stale);
         }
+        let stale_rolls = self.stale_rolls();
+        if !stale_rolls.is_empty() {
+            tracing::info!("{} roll(s) mailed long ago are still not answered; mailing them again", stale_rolls.len());
+            self.replica().mark_rolls_unmailed(&stale_rolls);
+        }
+        let stale = !stale.is_empty() || !stale_rolls.is_empty();
         // Never joined (the GM has been offline since we got the link): a
         // mailed join with the claim goes first, or the GM drops our mail.
         let first = self.replica().membership().is_none() && !self.inner.mailed_join.load(std::sync::atomic::Ordering::Acquire);
-        let rejoin = first || !stale.is_empty() || self.inner.joined_by_mail.lock().expect("poisoned").elapsed() >= self.inner.cfg.remail_after;
+        let rejoin = first || stale || self.inner.joined_by_mail.lock().expect("poisoned").elapsed() >= self.inner.cfg.remail_after;
         if rejoin {
             let join = self.replica().join_message(&self.inner.cfg.name, self.claim());
             let mut limit = *self.inner.blob_limit.lock().expect("poisoned");
@@ -761,6 +803,18 @@ impl PlayerSession {
                 self.save_logged();
             }
         }
+        let rolls = self.replica().unmailed_rolls();
+        if !rolls.is_empty() {
+            let ids: Vec<RollId> = rolls.iter().map(|r| r.id).collect();
+            let mut limit = *self.inner.blob_limit.lock().expect("poisoned");
+            let r = mail::send(&mb, &self.inner.secret, &signer, host, &MailMessage::Client(ClientMessage::Rolls(rolls)), &mut limit).await;
+            *self.inner.blob_limit.lock().expect("poisoned") = limit;
+            sent += r?;
+            self.replica().mark_rolls_mailed(&ids);
+            let now = Instant::now();
+            self.inner.rolls_mailed_at.lock().expect("poisoned").extend(ids.iter().map(|id| (*id, now)));
+            self.save_logged();
+        }
         let resync = self.replica().resync_requests();
         for r in resync {
             let mut limit = *self.inner.blob_limit.lock().expect("poisoned");
@@ -777,6 +831,17 @@ impl PlayerSession {
         let r = self.replica();
         let mut at = self.inner.mailed_at.lock().expect("poisoned");
         let pending: Vec<OpId> = r.characters().flat_map(|c| r.outbox(c).iter().filter(|p| p.mailed).map(|p| p.op.id)).collect();
+        at.retain(|id, _| pending.contains(id));
+        pending.into_iter().filter(|id| now.duration_since(*at.entry(*id).or_insert(now)) >= self.inner.cfg.remail_after).collect()
+    }
+
+    /// Rolls marked mailed and still unanswered after
+    /// [`PlayerConfig::remail_after`] (as [`PlayerSession::stale_mail`]).
+    fn stale_rolls(&self) -> Vec<RollId> {
+        let now = Instant::now();
+        let r = self.replica();
+        let mut at = self.inner.rolls_mailed_at.lock().expect("poisoned");
+        let pending: Vec<RollId> = r.roll_outbox().iter().filter(|p| p.mailed).map(|p| p.report.id).collect();
         at.retain(|id, _| pending.contains(id));
         pending.into_iter().filter(|id| now.duration_since(*at.entry(*id).or_insert(now)) >= self.inner.cfg.remail_after).collect()
     }
@@ -885,6 +950,38 @@ impl PlayerSession {
     }
 }
 
+/// Appends one record (length, postcard) to a journal, opened on first
+/// use; `seq` is the newest sequence number it holds.
+fn append_log<T: serde::Serialize>(log: &Mutex<OutboxLog>, path: &std::path::Path, record: &T, seq: u64) -> std::io::Result<()> {
+    use std::io::Write;
+    let bytes = postcard::to_stdvec(record).map_err(std::io::Error::other)?;
+    let mut rec = (bytes.len() as u32).to_be_bytes().to_vec();
+    rec.extend(bytes);
+    let mut log = log.lock().unwrap_or_else(|e| e.into_inner());
+    if log.file.is_none() {
+        log.file = Some(std::fs::OpenOptions::new().create(true).append(true).open(path)?);
+    }
+    log.file.as_mut().expect("opened").write_all(&rec)?;
+    log.max_seq = log.max_seq.max(seq);
+    Ok(())
+}
+
+/// A save with records up to `seq` is on disk: empty the journal when it
+/// holds nothing newer.
+fn trim_log(log: &Mutex<OutboxLog>, path: &std::path::Path, seq: u64) {
+    let mut log = log.lock().unwrap_or_else(|e| e.into_inner());
+    if log.max_seq > seq || (log.file.is_none() && log.max_seq == 0) {
+        return;
+    }
+    log.file = None;
+    log.max_seq = 0;
+    if let Err(e) = std::fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("could not empty the journal {}: {e}", path.display());
+        }
+    }
+}
+
 async fn request(client: &CampaignClient, msg: &ClientMessage) -> Result<ServerMessage, NetError> {
     let bytes = client.submit(msg::encode(msg)).await?;
     msg::decode(&bytes).map_err(|e| NetError::Protocol(e.to_string()))
@@ -937,6 +1034,8 @@ mod tests {
             // The background save has not run when the app is killed.
             let _hold = s.inner.saving.lock().unwrap();
             s.edit_now(&c, gain(3.0)).unwrap();
+            // A roll right after, the same way.
+            s.roll_now(&c, chummer_core::dice::RollRecord { label: "Soak".into(), pool: 2, dice: vec![5, 1], ..Default::default() }).unwrap();
             for f in std::fs::read_dir(&dir).unwrap().flatten().filter(|f| f.path().is_file()) {
                 std::fs::copy(f.path(), crash.join(f.file_name())).unwrap();
             }
@@ -949,13 +1048,16 @@ mod tests {
         cfg2.path = Some(crash.join("campaign.replica"));
         let back = PlayerSession::new(ep.clone(), key.clone(), engine.clone(), cfg2.clone()).unwrap();
         assert_eq!(back.replica().outbox(&c).len(), 1, "the edit is back in the outbox");
+        assert_eq!(back.replica().roll_outbox().len(), 1, "so is the roll");
         assert_eq!(back.replica().character(&c).unwrap().karma, karma);
         // It was saved; the journal is empty, and a further restart does
         // not add it twice.
         assert!(!outbox_log_path(&crash.join("campaign.replica")).exists());
+        assert!(!roll_log_path(&crash.join("campaign.replica")).exists());
         back.close();
         let again = PlayerSession::new(ep.clone(), key, engine, cfg2).unwrap();
         assert_eq!(again.replica().outbox(&c).len(), 1);
+        assert_eq!(again.replica().roll_outbox().len(), 1);
         // New commands go on from there (no sequence number reused).
         again.edit_now(&c, gain(1.0)).unwrap();
         let seqs: Vec<u64> = again.replica().outbox(&c).iter().map(|p| p.op.id.seq).collect();

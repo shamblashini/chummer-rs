@@ -406,3 +406,94 @@ async fn hosted_campaign_file_with_offline_player_edits() -> Result<()> {
     gm.shutdown().await;
     relay.shutdown().await
 }
+
+/// Dice rolls over real connections: a player's roll reaches the GM live,
+/// and by mail while the GM's app is away, each logged once; the GM's
+/// rolls reach the player only when rolled openly; the log survives the
+/// GM's app restarting.
+#[tokio::test(flavor = "multi_thread")]
+async fn player_rolls_reach_the_gm_live_and_by_mail() -> Result<()> {
+    use chummer_core::campaign::{Campaign, Member, MemberKind};
+    use chummer_core::dice::RollRecord;
+    use chummer_sync::{hosted, HostedCampaign, Node};
+
+    let relay = relay("rolls", |_| {}).await?;
+    let engine = engine();
+    let dir = tmp("rolls-gm");
+    std::fs::create_dir_all(&dir)?;
+    let file = dir.join("Seattle.chummercampaign");
+    let mut campaign = Campaign::new("Seattle");
+    let pc = campaign.add(Member::embedded(MemberKind::Player, &munin(10)));
+    campaign.save(&file)?;
+    let gm_key = SecretKey::generate();
+    let gm = Node::start(gm_key.clone(), relay.client_config()).await?;
+    let (h, _) = HostedCampaign::open(&campaign, &file, engine.clone(), gm_key.clone(), "GM", |_| None)?;
+    gm.serve(&h.host);
+    gm.sync_mail(&h.host).await?;
+    let (_, link) = h.create_invite("Anna", None, None, Some(&gm));
+    gm.sync_mail(&h.host).await?;
+
+    let p_key = SecretKey::generate();
+    let p_node = Node::start(p_key.clone(), relay.client_config()).await?;
+    let mut cfg = PlayerConfig::new("Anna", link);
+    cfg.mailbox = p_node.mailbox_id();
+    cfg.path = Some(tmp("rolls-p").join("campaign.replica"));
+    cfg.connect_timeout = Duration::from_secs(5);
+    let player = PlayerSession::new(p_node.endpoint().clone(), p_key.clone(), engine.clone(), cfg)?;
+    assert_eq!(player.sync().await, SyncMode::Online);
+    campaign.member_mut(pc).unwrap().owner = Some(p_node.id().to_string());
+    h.reconcile(&campaign, |_| None);
+    let c = hosted::character_id(pc);
+    wait_for(&player, |e| *e == Event::Updated(c.clone())).await?;
+    let player_rolls = || h.host.authority().rolls().iter().filter(|r| r.author == p_node.id()).count();
+
+    // Live: the roll reaches the GM at once and leaves the outbox.
+    let roll = |label: &str, dice: Vec<u8>| RollRecord { at: chummer_core::campaign::now_ms(), label: label.into(), pool: dice.len() as u32, dice, ..Default::default() };
+    player.roll_now(&c, roll("Longarms + Agility", vec![6, 5, 2, 1, 3])).map_err(anyhow::Error::msg)?;
+    until(|| player_rolls() == 1 && player.replica().roll_outbox().is_empty()).await?;
+    {
+        let a = h.host.authority();
+        let r = a.rolls().back().unwrap();
+        assert_eq!((r.who.as_str(), r.roll.label.as_str(), r.roll.outcome().hits), (munin(10).display_name().as_str(), "Longarms + Agility", 2));
+    }
+
+    // The GM's private roll stays with the GM; an open one is pushed.
+    h.host.gm_roll(None, "Ganger 1", false, roll("Defense", vec![4, 4]));
+    let open = h.host.gm_roll(None, "Ganger 1", true, roll("Pistols", vec![6, 6, 1]));
+    until(|| player.replica().table_rolls().iter().any(|r| r.id == open.id)).await?;
+    assert_eq!(player.replica().table_rolls().len(), 2, "their own roll and the open one, not the private one");
+    assert!(!h.host.authority().has_outgoing(&p_node.id()));
+
+    // The GM's app goes away: a roll goes to the mailbox, once.
+    gm.stop_serving();
+    until(|| !player.is_online()).await?;
+    player.roll_now(&c, roll("Soak", vec![1, 1, 2])).map_err(anyhow::Error::msg)?;
+    assert_eq!(player.sync().await, SyncMode::Mailbox);
+    assert!(player.replica().roll_outbox().iter().all(|p| p.mailed));
+    assert_eq!(player.send_mail().await?, 0, "nothing new to mail");
+
+    // The GM's app restarts from its files and reads its mail.
+    h.host.save()?;
+    drop(h);
+    let campaign = Campaign::load(&file)?;
+    let (h, _) = HostedCampaign::open(&campaign, &file, engine.clone(), gm_key.clone(), "GM", |_| None)?;
+    assert_eq!(h.host.authority().rolls().len(), 3, "the roll log survived the restart");
+    let r = gm.sync_mail(&h.host).await?;
+    assert_eq!(r.handled, 1, "{r:?}");
+    assert_eq!(h.host.authority().rolls().iter().filter(|r| r.author == p_node.id()).count(), 2);
+    assert_eq!(h.host.authority().rolls().back().unwrap().roll.label, "Soak");
+    // The answer comes back by mail; the roll leaves the outbox.
+    assert_eq!(player.sync().await, SyncMode::Mailbox);
+    assert!(player.replica().roll_outbox().is_empty());
+    assert_eq!(player.replica().table_rolls().back().unwrap().roll.label, "Soak");
+    // Nothing is mailed again, and nothing is logged twice.
+    let r = gm.sync_mail(&h.host).await?;
+    assert_eq!(r.handled, 0, "{r:?}");
+    assert_eq!(h.host.authority().rolls().len(), 4);
+    assert_eq!(h.host.authority().version(&c), Some(0), "rolls change no character");
+
+    player.close();
+    p_node.shutdown().await;
+    gm.shutdown().await;
+    relay.shutdown().await
+}

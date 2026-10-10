@@ -25,7 +25,7 @@ use crate::invites::{Invite, InviteOp};
 use crate::journal::Journal;
 use crate::lockwatch::{self, Guard};
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
-use crate::msg::{self, CharacterId, ClientMessage, MailMessage, ServerMessage};
+use crate::msg::{self, CharacterId, ClientMessage, MailMessage, ServerMessage, TableRoll};
 
 /// How long one push to a connected member may take before the member is
 /// taken to be stuck.
@@ -41,6 +41,8 @@ pub enum HostEvent {
     Changed(CharacterId),
     /// Someone joined, or members/characters changed.
     Membership,
+    /// A dice roll was logged.
+    Rolled,
 }
 
 fn now_secs() -> u64 {
@@ -92,16 +94,17 @@ impl Shared {
         lockwatch::lock(&self.authority, "authority")
     }
 
-    /// Writes changes taken with [`Authority::take_applied`] to the journal
-    /// (synced), before anyone is told about them. Called after the
-    /// authority lock is released, so the GUI is not kept waiting for the
-    /// disk; replay sorts by version.
-    fn journal(&self, applied: Vec<(CharacterId, crate::msg::Entry)>) {
-        if applied.is_empty() {
+    /// Writes changes taken with [`Authority::take_applied`] (and rolls
+    /// with [`Authority::take_rolled`]) to the journal (synced), before
+    /// anyone is told about them. Called after the authority lock is
+    /// released, so the GUI is not kept waiting for the disk; replay
+    /// sorts by version.
+    fn journal(&self, applied: Vec<(CharacterId, crate::msg::Entry)>, rolled: Vec<TableRoll>) {
+        if applied.is_empty() && rolled.is_empty() {
             return;
         }
         if let Some(j) = self.journal.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-            if let Err(e) = j.append(&applied) {
+            if let Err(e) = j.append(&applied, &rolled) {
                 tracing::warn!("could not write the campaign journal (a crash now would lose the last changes): {e}");
             }
         }
@@ -131,7 +134,7 @@ impl Shared {
         let jobs = match msg {
             ClientMessage::Join { have, .. } => self.lock().push_snapshot_work(peer, None, Some(have), false),
             ClientMessage::Resync(r) => self.lock().push_snapshot_work(peer, Some(&r.character), None, true),
-            ClientMessage::Submit(_) => Vec::new(),
+            ClientMessage::Submit(_) | ClientMessage::Rolls(_) => Vec::new(),
         };
         self.warm(jobs);
     }
@@ -163,7 +166,7 @@ impl Shared {
             let mut a = self.lock();
             // Changes since the last journal write are in `bytes`; they
             // go into the journal first in case this save fails.
-            self.journal(a.take_applied());
+            self.journal(a.take_applied(), a.take_rolled());
             let bytes = a.to_bytes();
             // The journal so far is in `bytes`; set it aside until they
             // are on disk.
@@ -198,10 +201,19 @@ impl Shared {
                 Ok(p) => (ServerMessage::Push(p), Vec::new(), None),
                 Err(e) => (ServerMessage::Error(e), Vec::new(), None),
             },
+            ClientMessage::Rolls(reports) => match a.submit_rolls(peer, reports) {
+                Ok((taken, notify)) => {
+                    if !notify.is_empty() {
+                        let _ = self.events.send(HostEvent::Rolled);
+                    }
+                    (ServerMessage::RollsTaken(taken), notify, None)
+                }
+                Err(e) => (ServerMessage::Error(e), Vec::new(), None),
+            },
         };
-        let applied = a.take_applied();
+        let (applied, rolled) = (a.take_applied(), a.take_rolled());
         drop(a);
-        self.journal(applied);
+        self.journal(applied, rolled);
         self.touch();
         (reply, notify, changed)
     }
@@ -245,6 +257,8 @@ impl CampaignHandler for Handler {
         if joined {
             let _ = self.shared.events.send(HostEvent::Membership);
         }
+        // A member who joined gets the rolls it may see next.
+        let notify = if joined { vec![peer] } else { notify };
         if !notify.is_empty() {
             let _ = self.sweep.send(notify);
         }
@@ -288,18 +302,22 @@ impl AuthorityHost {
         let mut replayed = 0;
         if let Some(p) = &path {
             // Changes acknowledged after the last save (a crash).
-            for (id, entry) in Journal::read(p) {
+            let (entries, rolls) = Journal::read(p);
+            for (id, entry) in entries {
                 match authority.replay(&engine, &id, &entry) {
                     Ok(true) => replayed += 1,
                     Ok(false) => {}
                     Err(e) => tracing::warn!("campaign journal: {e}"),
                 }
             }
-            if replayed > 0 {
-                tracing::info!("took back {replayed} change(s) made after the last save from the journal");
+            let rolls = rolls.iter().filter(|r| authority.replay_roll(r)).count();
+            if replayed + rolls > 0 {
+                tracing::info!("took back {replayed} change(s) and {rolls} roll(s) made after the last save from the journal");
             }
+            replayed += rolls;
             // They are journaled already.
             authority.take_applied();
+            authority.take_rolled();
         }
         authority.set_gm_keys(gm_keys(&secret, authority.campaign(), authority.key_generation()));
         let me_id = authority.gm();
@@ -522,7 +540,7 @@ impl AuthorityHost {
             let r = a.apply_local(&self.shared.engine, id, cmd);
             let applied = a.take_applied();
             drop(a);
-            self.shared.journal(applied);
+            self.shared.journal(applied, Vec::new());
             r?
         };
         self.shared.touch();
@@ -535,6 +553,26 @@ impl AuthorityHost {
         Ok(r)
     }
 
+    /// The GM rolled (for `character`, shown as `who`): logged, and with
+    /// `open` sent to the players (live, or mailed by the next
+    /// [`AuthorityHost::sync_mail`]).
+    pub fn gm_roll(&self, character: Option<CharacterId>, who: &str, open: bool, roll: chummer_core::dice::RollRecord) -> TableRoll {
+        let (r, notify) = {
+            let mut a = self.shared.lock();
+            let r = a.add_gm_roll(character, who, open, roll);
+            let rolled = a.take_rolled();
+            drop(a);
+            self.shared.journal(Vec::new(), rolled);
+            r
+        };
+        self.shared.touch();
+        let _ = self.shared.events.send(HostEvent::Rolled);
+        if !notify.is_empty() {
+            let _ = self.sweep.send(notify);
+        }
+        r
+    }
+
     /// The GM reverts the change that made `version` of `id`
     /// ([`Authority::revert`]); pushed or mailed like any GM edit.
     pub fn gm_revert(&self, id: &CharacterId, version: u64) -> Result<crate::authority::Reverted, String> {
@@ -543,7 +581,7 @@ impl AuthorityHost {
             let r = a.revert(&self.shared.engine, id, version);
             let applied = a.take_applied();
             drop(a);
-            self.shared.journal(applied);
+            self.shared.journal(applied, Vec::new());
             r?
         };
         self.shared.touch();

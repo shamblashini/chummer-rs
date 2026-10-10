@@ -221,7 +221,7 @@ async fn acknowledged_changes_survive_an_authority_crash() {
     assert_eq!(back.authority().version(&c), Some(5));
     // After a save the journal is empty, and loading needs nothing from it.
     back.save().unwrap();
-    assert!(chummer_sync::journal::Journal::read(&side).is_empty());
+    assert!(chummer_sync::journal::Journal::read(&side).0.is_empty());
     let again = Authority::load(&side).unwrap();
     assert_eq!(again.version(&c), Some(5));
     std::fs::remove_dir_all(&dir).unwrap();
@@ -279,10 +279,10 @@ fn journal_records_written_out_of_order_replay_in_order() {
     applied.reverse();
     let mut j = chummer_sync::journal::Journal::new(&side);
     for rec in applied {
-        j.append(&[rec]).unwrap();
+        j.append(&[rec], &[]).unwrap();
     }
     let mut back = Authority::from_bytes(&saved).unwrap();
-    for (id, e) in chummer_sync::journal::Journal::read(&side) {
+    for (id, e) in chummer_sync::journal::Journal::read(&side).0 {
         assert_eq!(back.replay(engine(), &id, &e), Ok(true));
     }
     assert_eq!(back.hash(&c), auth.hash(&c));

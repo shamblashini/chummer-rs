@@ -17,23 +17,33 @@
 //! merges bursts of typing into one undo step, but every envelope it
 //! applies must be handed to [`Replica::edit_envelope`] as it happens.
 //!
+//! Dice rolls ([`Replica::roll`]) are not commands: they wait in a roll
+//! outbox of their own until the authority names them in
+//! [`ServerMessage::RollsTaken`], then join the table's roll log
+//! ([`Replica::table_rolls`]) with the rolls of others the authority
+//! sends ([`ServerMessage::Rolls`]).
+//!
 //! Persistence ([`Replica::save`]): the confirmed state as a snapshot, its
 //! version and hash, the outbox, refused commands not yet dismissed, the
-//! feed and the partial mail, so offline work survives a restart.
+//! feed, the rolls and the partial mail, so offline work survives a
+//! restart.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 
 use chummer_core::character::Character;
 use chummer_core::command::{self, Command, Envelope, Rejected, Report};
-use chummer_core::dice::Rng;
+use chummer_core::dice::{RollRecord, Rng};
 use chummer_core::engine::Engine;
 use chummer_net::EndpointId;
 use serde::{Deserialize, Serialize};
 
 use crate::feed;
 use crate::mail::Inbox;
-use crate::msg::{Ack, CharacterId, ClientMessage, Entry, FeedEntry, Hash, Have, Membership, Op, OpId, Push, PushBody, ResyncRequest, ServerMessage, SubmitBatch};
+use crate::msg::{Ack, CharacterId, ClientMessage, Entry, FeedEntry, Hash, Have, Membership, Op, OpId, Push, PushBody, ResyncRequest, RollId, RollReport, ServerMessage, SubmitBatch, TableRoll};
+
+/// Rolls kept in the table's roll log.
+pub const ROLL_LOG: usize = crate::authority::ROLL_LOG;
 use crate::persist::{self, PersistError};
 
 fn now_ms() -> i64 {
@@ -48,6 +58,14 @@ pub struct Pending {
     pub description: String,
     /// Already sent through the mailbox (it is not mailed again; a live
     /// connection still resubmits it, which is harmless).
+    pub mailed: bool,
+}
+
+/// A roll of ours the authority has not answered yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingRoll {
+    pub report: RollReport,
+    /// Already sent through the mailbox (as [`Pending::mailed`]).
     pub mailed: bool,
 }
 
@@ -79,6 +97,8 @@ pub enum Event {
     Error(String),
     /// The GM's app refused to let us join (by mail).
     Denied(chummer_net::campaign::DenyReason),
+    /// Rolls were answered or arrived ([`Replica::table_rolls`]).
+    Rolls,
 }
 
 struct Copy {
@@ -115,6 +135,14 @@ pub struct Replica {
     pub inbox: Inbox,
     /// Why the GM's app last refused us, until a join works.
     denied: Option<chummer_net::campaign::DenyReason>,
+    /// Our roll ids count up from here.
+    next_roll: u64,
+    roll_outbox: Vec<PendingRoll>,
+    /// Rolls at the table (ours once answered, and the others' we may
+    /// see), in the order taken, oldest first.
+    rolls: VecDeque<TableRoll>,
+    /// Counts changes to the rolls (not saved), for a UI's cache.
+    rolls_rev: u64,
 }
 
 impl std::fmt::Debug for Replica {
@@ -143,6 +171,10 @@ impl Replica {
             feed_last: BTreeMap::new(),
             inbox: Inbox::default(),
             denied: None,
+            next_roll: 0,
+            roll_outbox: Vec::new(),
+            rolls: VecDeque::new(),
+            rolls_rev: 0,
         }
     }
 
@@ -232,6 +264,119 @@ impl Replica {
             c.outbox.push(Pending { op, description: applied.description, mailed: false });
         }
         Ok(report)
+    }
+
+    // ----- dice rolls -----
+
+    /// Queues a roll made for `id` (our character) to be sent to the
+    /// authority; returns it as reported.
+    pub fn roll(&mut self, id: &CharacterId, roll: RollRecord) -> Result<RollReport, String> {
+        if !self.copies.contains_key(id) {
+            return Err(format!("no character {id} here"));
+        }
+        self.next_roll += 1;
+        let report = RollReport { id: RollId { origin: self.origin, seq: self.next_roll }, character: Some(id.clone()), roll };
+        self.roll_outbox.push(PendingRoll { report: report.clone(), mailed: false });
+        self.rolls_rev += 1;
+        Ok(report)
+    }
+
+    /// Our rolls not answered yet, oldest first.
+    pub fn roll_outbox(&self) -> &[PendingRoll] {
+        &self.roll_outbox
+    }
+
+    /// The table's rolls we have (ours once the authority took them, and
+    /// the others' it sent), in the order taken, oldest first. Ours still
+    /// waiting are in [`Replica::roll_outbox`].
+    pub fn table_rolls(&self) -> &VecDeque<TableRoll> {
+        &self.rolls
+    }
+
+    /// Changes whenever the rolls do.
+    pub fn rolls_rev(&self) -> u64 {
+        self.rolls_rev
+    }
+
+    /// The last roll sequence number made here.
+    pub fn last_roll_seq(&self) -> u64 {
+        self.next_roll
+    }
+
+    /// Every roll not answered yet, as one message (live connections).
+    pub fn rolls_message(&self) -> Option<ClientMessage> {
+        (!self.roll_outbox.is_empty()).then(|| ClientMessage::Rolls(self.roll_outbox.iter().map(|p| p.report.clone()).collect()))
+    }
+
+    /// The rolls not mailed yet. Call [`Replica::mark_rolls_mailed`] once
+    /// they are stored.
+    pub fn unmailed_rolls(&self) -> Vec<RollReport> {
+        self.roll_outbox.iter().filter(|p| !p.mailed).map(|p| p.report.clone()).collect()
+    }
+
+    pub fn mark_rolls_mailed(&mut self, ids: &[RollId]) {
+        for p in &mut self.roll_outbox {
+            if ids.contains(&p.report.id) {
+                p.mailed = true;
+            }
+        }
+    }
+
+    /// Marks rolls to be mailed again (their mail was lost).
+    pub fn mark_rolls_unmailed(&mut self, ids: &[RollId]) {
+        for p in &mut self.roll_outbox {
+            if ids.contains(&p.report.id) {
+                p.mailed = false;
+            }
+        }
+    }
+
+    /// Puts back rolls made after this replica was saved (from the
+    /// session's roll journal, after a crash). Returns how many.
+    pub fn recover_rolls(&mut self, mut made: Vec<RollReport>) -> usize {
+        made.sort_by_key(|r| r.id.seq);
+        let mut n = 0;
+        for r in made {
+            if r.id.origin != self.origin || r.id.seq <= self.next_roll {
+                continue;
+            }
+            self.next_roll = r.id.seq;
+            self.roll_outbox.push(PendingRoll { report: r, mailed: false });
+            n += 1;
+        }
+        self.rolls_rev += 1;
+        n
+    }
+
+    fn add_table_roll(&mut self, r: TableRoll) {
+        if self.rolls.iter().any(|x| x.id == r.id) {
+            return;
+        }
+        self.rolls.push_back(r);
+        while self.rolls.len() > ROLL_LOG {
+            self.rolls.pop_front();
+        }
+    }
+
+    /// The authority has these rolls of ours: they join the table's log.
+    fn rolls_taken(&mut self, ids: &[RollId]) -> Vec<Event> {
+        let (taken, rest): (Vec<PendingRoll>, Vec<PendingRoll>) = std::mem::take(&mut self.roll_outbox).into_iter().partition(|p| ids.contains(&p.report.id));
+        self.roll_outbox = rest;
+        if taken.is_empty() {
+            return Vec::new();
+        }
+        let m = self.membership.as_ref();
+        let me = m.map(|m| m.you);
+        let role = m.map_or(chummer_net::invite::Role::Player, |m| m.role);
+        let my_name = m.and_then(|m| m.members.iter().find(|x| x.id == m.you)).map(|x| x.name.clone()).unwrap_or_default();
+        for p in taken {
+            let Some(author) = me else { continue };
+            let who = p.report.character.as_ref().and_then(|c| self.name(c)).unwrap_or(&my_name).to_owned();
+            let r = p.report;
+            self.add_table_roll(TableRoll { seq: 0, id: r.id, author, author_name: my_name.clone(), author_role: role, character: r.character, who, open: false, roll: r.roll });
+        }
+        self.rolls_rev += 1;
+        vec![Event::Rolls]
     }
 
     /// The sequence number of the last command made here (commands made
@@ -345,6 +490,14 @@ impl Replica {
             ServerMessage::Denied(d) => {
                 self.denied = Some(d.clone());
                 vec![Event::Denied(d)]
+            }
+            ServerMessage::RollsTaken(ids) => self.rolls_taken(&ids),
+            ServerMessage::Rolls(rolls) => {
+                for r in rolls {
+                    self.add_table_roll(r);
+                }
+                self.rolls_rev += 1;
+                vec![Event::Rolls]
             }
         }
     }
@@ -544,6 +697,9 @@ impl Replica {
             feed: self.feed.iter().cloned().collect(),
             inbox: self.inbox.clone(),
             denied: self.denied.clone(),
+            next_roll: self.next_roll,
+            roll_outbox: self.roll_outbox.clone(),
+            rolls: self.rolls.iter().cloned().collect(),
         };
         persist::to_bytes(MAGIC, FORMAT, &file)
     }
@@ -571,6 +727,10 @@ impl Replica {
             feed_last: BTreeMap::new(),
             inbox: f.inbox,
             denied: f.denied,
+            next_roll: f.next_roll,
+            roll_outbox: f.roll_outbox,
+            rolls: f.rolls.into(),
+            rolls_rev: 0,
         })
     }
 
@@ -601,7 +761,8 @@ fn rebuild(engine: &Engine, c: &mut Copy) {
 
 const MAGIC: &[u8; 4] = b"CRSR";
 /// 2: member keys (the membership's label and GM keys, refusals).
-const FORMAT: u16 = 2;
+/// 3: dice rolls (the roll outbox and the table's rolls).
+const FORMAT: u16 = 3;
 
 #[derive(Serialize, Deserialize)]
 struct ReplicaFile {
@@ -613,6 +774,9 @@ struct ReplicaFile {
     feed: Vec<FeedEntry>,
     inbox: Inbox,
     denied: Option<chummer_net::campaign::DenyReason>,
+    next_roll: u64,
+    roll_outbox: Vec<PendingRoll>,
+    rolls: Vec<TableRoll>,
 }
 
 #[derive(Serialize, Deserialize)]

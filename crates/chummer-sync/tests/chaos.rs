@@ -179,6 +179,10 @@ impl World {
                 Ok(push) => (ServerMessage::Push(push), vec![]),
                 Err(e) => (ServerMessage::Error(e), vec![]),
             },
+            ClientMessage::Rolls(rolls) => match self.auth.submit_rolls(peer, rolls) {
+                Ok((taken, notify)) => (ServerMessage::RollsTaken(taken), notify),
+                Err(e) => (ServerMessage::Error(e), vec![]),
+            },
         };
         self.notify(notify);
         wire(&reply)
@@ -444,6 +448,8 @@ fn kind(m: &ServerMessage) -> String {
         ServerMessage::Membership(_) => "membership".into(),
         ServerMessage::Error(e) => format!("error {e}"),
         ServerMessage::Denied(d) => format!("denied {d}"),
+        ServerMessage::RollsTaken(r) => format!("{} rolls taken", r.len()),
+        ServerMessage::Rolls(r) => format!("{} rolls", r.len()),
     }
 }
 

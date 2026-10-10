@@ -130,9 +130,10 @@ pub struct Reconciled {
 /// Brings the authority in line with the campaign file. New members are
 /// added with their character from `current` (the GM's open copy) or, if
 /// that gives none, from the file; existing characters keep the
-/// authority's state. The campaign name follows the file, and so does an
-/// owner the file names ([`explicit_owner`]); a member without one keeps
-/// the authority's owner ([`write_back`] then writes it into the file).
+/// authority's state. The campaign name and roll settings follow the
+/// file, and so does an owner the file names ([`explicit_owner`]); a
+/// member without one keeps the authority's owner ([`write_back`] then
+/// writes it into the file).
 /// The authority's owner also stands when a claim changed it and the
 /// file has not taken that yet ([`adopt_owner_changes`]), and when the
 /// file names a node that was revoked or replaced. A member's owner who
@@ -142,6 +143,7 @@ pub struct Reconciled {
 pub fn reconcile(auth: &mut Authority, campaign: &Campaign, base: Option<&Path>, mut current: impl FnMut(MemberId) -> Option<Character>) -> Reconciled {
     let mut out = Reconciled::default();
     auth.set_name(&campaign.name);
+    auth.set_roll_settings(campaign.roll_settings);
     for m in &campaign.members {
         let id = character_id(m.id);
         let explicit = explicit_owner(m);
