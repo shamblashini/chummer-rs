@@ -1182,6 +1182,25 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
     burst back together).
   - NPCs marked "Visible to players" are not shown to players yet, and
     players see only their own characters' activity.
+  - Dice rolls (see [docs/online-design.md](docs/online-design.md),
+    "Dice rolls"):
+    - Not sent to the table: the Tools → Dice Roller window (not tied
+      to a character), rolls in the Classic layout (it has no
+      per-character roller), and the GM's soak rolls from the GM
+      screen's damage entry.
+    - The GM's rolls made on a member's own tab follow the "Show my
+      rolls to players" setting; there is no per-roll "Roll openly"
+      there.
+    - A co-GM's rolls are logged as hidden and never shown to players.
+    - Rolling does not mark the campaign unsaved. A campaign that was
+      never hosted loses its rolls on close unless it is saved; a hosted
+      one also keeps them in the authority's file.
+    - The roll settings are part of the campaign file: a change not
+      saved is gone on reopen.
+    - Players' rolls are made on their own machines; there is no
+      anti-cheat beyond checking that the dice fit the roll.
+    - The player's Table rolls panel has no GUI test (the sync under it
+      is tested).
   - The authority file keeps a compressed copy of each character plus
     the state 256 changes back, so characters with large mugshots make
     it large.
