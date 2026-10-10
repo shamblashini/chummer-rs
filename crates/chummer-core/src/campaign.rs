@@ -17,7 +17,11 @@
 //!                  "player": "...", "owner": null, "group": "...", "notes": "...",
 //!                  "visible_to_players": false } ],
 //!   "encounters": [ ... ], "log": [ { "at": 1759750000000, "author": "GM",
-//!                  "member": "<32 hex>", "description": "..." } ] }
+//!                  "member": "<32 hex>", "description": "..." } ],
+//!   "roll_settings": { "show_gm_rolls": false, "players_see_each_other": true },
+//!   "rolls": [ { "id": "...", "who": "...", "member": "<32 hex>", "player": "",
+//!                "open": false, "roll": { "at": ..., "label": "Pistols",
+//!                "pool": 9, "dice": [6, 5, ...], ... } } ] }
 //! ```
 //!
 //! - `members/<id>.xml`: an embedded character, its canonical XML
@@ -382,6 +386,49 @@ pub struct Campaign {
     pub encounters: Vec<Encounter>,
     /// The activity feed, oldest first.
     pub log: Vec<LogItem>,
+    /// Who sees which dice rolls (online campaigns).
+    pub roll_settings: RollSettings,
+    /// The last [`ROLLS_KEPT`] dice rolls at the table, the GM's and (online)
+    /// the players', newest first.
+    pub rolls: Vec<LoggedRoll>,
+}
+
+/// Rolls a campaign file keeps.
+pub const ROLLS_KEPT: usize = 200;
+
+/// Who sees which dice rolls in an online campaign. The GM sees every
+/// roll; a player sees their own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RollSettings {
+    /// The GM's rolls are shown to players (off: only those the GM rolls
+    /// openly one by one).
+    pub show_gm_rolls: bool,
+    /// Players see each other's rolls.
+    pub players_see_each_other: bool,
+}
+
+impl Default for RollSettings {
+    fn default() -> Self {
+        RollSettings { show_gm_rolls: false, players_see_each_other: true }
+    }
+}
+
+/// A dice roll in the campaign's roll log.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LoggedRoll {
+    /// The online campaign's id for it (`<origin hex>:<seq>`), to merge
+    /// with the authority's roll log; empty for a roll made offline.
+    pub id: String,
+    /// Whose roll it is (the member's or character's name).
+    pub who: String,
+    pub member: Option<MemberId>,
+    /// A player's roll: the player ("Anna"); empty for the GM's.
+    pub player: String,
+    /// The GM's roll was shown to players.
+    pub open: bool,
+    pub roll: crate::dice::RollRecord,
 }
 
 /// The file's envelope around a [`Campaign`].
@@ -835,6 +882,18 @@ mod tests {
         let back = Campaign::from_json(&c.to_json()).unwrap();
         assert_eq!(back.members[0].kind.as_str(), "Mech");
         assert!(matches!(Campaign::from_json(r#"{"format":"other"}"#), Err(CampaignError::NotACampaign)));
+    }
+
+    #[test]
+    fn roll_settings_and_the_roll_log_round_trip() {
+        let c = Campaign::from_json(r#"{"format":"chummer-rs campaign","version":1,"name":"Seattle"}"#).unwrap();
+        assert_eq!(c.roll_settings, RollSettings { show_gm_rolls: false, players_see_each_other: true }, "an older file gets the defaults");
+        let mut c = Campaign::new("x");
+        c.roll_settings.show_gm_rolls = true;
+        let roll = crate::dice::RollRecord { at: 5, label: "Soak".into(), pool: 3, dice: vec![6, 1, 2], ..Default::default() };
+        c.rolls.push(LoggedRoll { id: "ab:1".into(), who: "Raven".into(), player: "Anna".into(), roll, ..Default::default() });
+        let back = Campaign::from_json(&c.to_json()).unwrap();
+        assert_eq!((back.roll_settings, &back.rolls), (c.roll_settings, &c.rolls));
     }
 
     #[test]

@@ -135,6 +135,70 @@ pub fn roll(rng: &mut Rng, pool: u32, rule_of_six: bool, limit: Option<u32>) -> 
     r
 }
 
+/// A roll as it is logged and sent (the GM's roll log, a player's roll
+/// reaching the GM): the dice and how they were rolled. The result is
+/// worked out from the dice ([`RollRecord::outcome`]), never taken from
+/// whoever made the roll, so the two always agree.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct RollRecord {
+    /// Unix ms, on the machine that rolled.
+    pub at: i64,
+    /// What it was rolled for ("Pistols · Ares Predator V", "Soak",
+    /// "Initiative"); empty for a free roll.
+    pub label: String,
+    /// The dice asked for, before Edge (initiative: the d6 count).
+    pub pool: u32,
+    /// Push the Limit: the Edge dice added.
+    pub edge: Option<u32>,
+    /// Every 6 rolled added a die (Edge).
+    pub rule_of_six: bool,
+    /// The limit on hits, when one applied.
+    pub limit: Option<u32>,
+    /// An initiative roll: its base (the score is base + the dice).
+    pub initiative: Option<i32>,
+    pub dice: Vec<u8>,
+}
+
+impl RollRecord {
+    /// The hits, ones and glitch of the dice (hits capped by the limit).
+    pub fn outcome(&self) -> Roll {
+        let mut r = evaluate(self.dice.clone(), 5);
+        if let Some(l) = self.limit {
+            r.hits = r.hits.min(l);
+        }
+        r
+    }
+
+    /// An initiative roll's score.
+    pub fn score(&self) -> Option<i32> {
+        self.initiative.map(|b| b.saturating_add(self.dice.iter().map(|&d| i32::from(d)).sum::<i32>()))
+    }
+
+    /// The dice rolled, with Edge.
+    pub fn dice_count(&self) -> u32 {
+        self.pool + self.edge.unwrap_or(0)
+    }
+
+    /// Whether the dice fit how they were rolled: faces 1 to 6, as many
+    /// as the pool and Edge (and one more per 6 with the Rule of Six).
+    pub fn check(&self) -> Result<(), String> {
+        if self.dice.iter().any(|&d| !(1..=6).contains(&d)) {
+            return Err("a die shows no face of a d6".into());
+        }
+        let asked = self.dice_count() as usize;
+        let sixes = if self.rule_of_six { self.dice.iter().filter(|&&d| d == 6).count() } else { 0 };
+        // `roll` stops at 1000 dice.
+        if self.dice.len() != (asked + sixes).min(1000) {
+            return Err(format!("{} dice for a pool of {asked}", self.dice.len()));
+        }
+        if self.initiative.is_some() && (self.rule_of_six || self.limit.is_some()) {
+            return Err("an initiative roll has no limit or Rule of Six".into());
+        }
+        Ok(())
+    }
+}
+
 /// Initiative: base + Nd6.
 pub fn initiative(rng: &mut Rng, base: i32, dice: u32) -> (i32, Vec<u8>) {
     let rolled: Vec<u8> = (0..dice).map(|_| rng.d6()).collect();
@@ -164,6 +228,20 @@ mod tests {
         }
         assert_eq!(seen[0], 0);
         assert!(seen[1..].iter().all(|&n| n > 800), "{seen:?}");
+    }
+
+    #[test]
+    fn records_work_out_their_result_from_the_dice() {
+        let r = RollRecord { label: "Pistols".into(), pool: 4, limit: Some(1), dice: vec![6, 5, 1, 2], ..Default::default() };
+        assert_eq!(r.outcome().hits, 1, "capped by the limit");
+        assert_eq!(r.check(), Ok(()));
+        assert!(RollRecord { dice: vec![6, 5, 1], ..r.clone() }.check().is_err(), "a die short");
+        assert!(RollRecord { dice: vec![6, 5, 1, 7], ..r.clone() }.check().is_err());
+        // Push the Limit: Edge dice, and one more for each 6.
+        let p = RollRecord { pool: 2, edge: Some(1), rule_of_six: true, dice: vec![6, 3, 2, 5], ..Default::default() };
+        assert_eq!(p.check(), Ok(()));
+        let i = RollRecord { label: "Initiative".into(), pool: 2, initiative: Some(9), dice: vec![3, 4], ..Default::default() };
+        assert_eq!((i.score(), i.check()), (Some(16), Ok(())));
     }
 
     #[test]
