@@ -239,10 +239,19 @@ is resolved against the campaign file's folder):
                  "player": "Anna", "owner": null, "group": "", "notes": "",
                  "visible_to_players": false } ],
   "encounters": [ ... ],
-  "log": [ { "at": 1759750000000, "author": "GM", "member": "<32 hex>", "description": "..." } ] }
+  "log": [ { "at": 1759750000000, "author": "GM", "member": "<32 hex>", "description": "..." } ],
+  "roll_settings": { "show_gm_rolls": false, "players_see_each_other": true },
+  "rolls": [ { "id": "<32 hex>:<n>", "who": "Ghost", "member": "<32 hex>", "player": "Anna",
+               "open": false, "roll": { "at": 1759750000000, "label": "Pistols · Ares Predator V",
+               "pool": 9, "edge": null, "rule_of_six": false, "limit": 5, "initiative": null,
+               "dice": [6, 5, 1, 2, 3, 4, 6, 2, 5] } } ] }
 ```
 
-Every field has a default and unknown fields are ignored. The full field
+`roll_settings` says who sees which dice rolls in an online campaign;
+`rolls` are the last 200 rolls at the table, newest first (the GM's, and
+online the players'; `player` is empty for the GM's). A roll's hits are
+worked out from its dice, never stored. Every field has a default and
+unknown fields are ignored. The full field
 list is the `Campaign` type in `crates/chummer-core/src/campaign.rs`.
 
 Older campaign files (before the container) were one LZMA stream (as

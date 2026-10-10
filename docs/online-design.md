@@ -222,7 +222,9 @@ Implemented (local part):
 
 Work-order steps 5 and 7 and the messages for step 6.
 
-- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`, 3 since the item commands changed (`MoveItem`, `Purchase::location`); 2
+- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`, 4
+  since dice rolls (`ClientMessage::Rolls`, `ServerMessage::RollsTaken`
+  and `Rolls`, see "Dice rolls" below); 3 since the item commands changed (`MoveItem`, `Purchase::location`); 2
   since member keys: `Join` carries an optional `ClaimProof`, the
   membership names the invite's label and the GM's campaign keys, and
   `ServerMessage::Denied` tells a mailed join why it was refused), then
@@ -310,6 +312,66 @@ last 256): `Authority::revert(engine, id, version)`.
   replayed as its snapshot.
 - Dedup is unaffected: a replayed copy of a reverted op is answered from
   the seen set and does not run again.
+
+### Dice rolls (implemented)
+
+Rolls at the table are a log next to the characters, not changes to
+them: no versions, no rebase, no conflicts, nothing in a character's
+log.
+
+- A roll is a `dice::RollRecord`: when, what it was rolled for
+  ("Pistols · Ares Predator V", "Soak", "Initiative"; empty for a free
+  roll), the pool, the Edge dice of Push the Limit, the Rule of Six, the
+  limit, an initiative base, and the dice. Hits, ones and glitches are
+  always worked out from the dice (`outcome`), never sent, so the dice and
+  the result agree. `check` refuses dice that do not fit the pool.
+- **Players' rolls are made on the player's machine.** The GM's app
+  takes the dice as sent; there is no anti-cheat. The GM screen says so
+  under the tray.
+- A player's roll (`PlayerSession::roll_now`, from every roll of the
+  Play screen of an online campaign's character) gets a `RollId` (the
+  replica's origin and a counter of its own) and waits in the replica's
+  roll outbox, journaled to `<replica>.rolls` until a save has it (as
+  edits are to `.outbox`). It travels the way edits do, on a path of its
+  own: live with the outbox flush, by mail otherwise
+  (`ClientMessage::Rolls`), mailed again after `remail_after`. The answer
+  `RollsTaken` names every roll the authority has (also those it
+  dropped as not fitting, or for a character not theirs, so none is sent
+  forever); only then does the roll leave the outbox and join the
+  replica's table rolls. The authority remembers the last 10000 roll ids,
+  so a roll sent live and by mail, or resent after a lost answer, is
+  logged once. It writes the rolls it took to its journal (records of
+  `journal::Record`) before answering, as it does changes.
+- Why not the command outbox: a roll has no base version or hash and
+  must not make a log entry or a refusal; putting it in a `SubmitBatch`
+  would tie it to a character's versions and the rebase. A separate
+  outbox keeps every delivery guarantee of edits (persisted, journaled,
+  resent until answered, deduplicated by id) without that.
+- The authority keeps the last 200 rolls (`ROLL_LOG`) with who rolled,
+  the character (its name as the GM has it), and for the GM's rolls
+  whether they were shown (`open`). The GM's rolls go in through
+  `AuthorityHost::gm_roll`. Members are sent the rolls they may see with
+  everything else they were not sent (`outgoing_for`, live or by mail,
+  a cursor per member): a GM every roll, a player the GM's open rolls
+  and, with the campaign's `players_see_each_other` (on by default), the
+  other players' (without the id of a character they do not see).
+  Nobody is sent their own rolls back.
+- Settings (`campaign::RollSettings`, in the `.chummercampaign` file and
+  copied into the authority by `reconcile`): `show_gm_rolls` (off by
+  default) and `players_see_each_other` (on). The GM screen has both
+  (the tray's "Who sees rolls", the Classic Online panel's "Dice rolls")
+  and "Roll openly" next to the card's dice pools, which flips the
+  setting for the next roll only.
+- The GM screen shows the players' rolls like its own (card, tray rows
+  with the filter by person, the chip on the encounter row, the
+  activity), marked with the player's name. The campaign file keeps the
+  last 200 rolls (`Campaign::rolls`) when saved; the authority's log
+  (saved every couple of seconds) fills in what came after.
+- The Play screen's inspector shows the table's rolls (Table rolls): the
+  player's own (those not at the GM's app yet marked), the GM's open
+  rolls and the other players'.
+- Formats: authority file 4 (the roll log, the ids taken, the cursors,
+  the settings), replica file 3 (the roll outbox and the table's rolls).
 
 ### The hosted campaign (implemented: `chummer_sync::hosted`)
 
