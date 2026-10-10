@@ -13,9 +13,9 @@
 # Full steps: docs/relay.md, "Deploy on Coolify".
 services:
   chummer-relay:
-    # `edge` follows master; switch to `latest` or a version (0.5.0) once a
-    # release has cert_mode "proxy".
-    image: ghcr.io/shamblashini/chummer-relay:${RELAY_TAG:-edge}
+    # `latest` is the newest release; `edge` follows master (for app builds
+    # from master); a version (0.5.0) stays put until you change it.
+    image: ghcr.io/shamblashini/chummer-relay:${RELAY_TAG:-latest}
     restart: unless-stopped
     environment:
       RELAY_CERT_MODE: proxy

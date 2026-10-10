@@ -261,8 +261,8 @@ Steps:
    port 80 and gets the certificate.
 4. Optional, under **Environment Variables**: `RELAY_HOSTNAME`
    (`relay.example.org`) so the log prints the complete relay entry, and
-   `RELAY_TAG` (`edge` by default, which follows master; `latest` or a
-   version once a release has proxy mode).
+   `RELAY_TAG` (`latest` by default, the newest release; `edge` follows
+   master, for app builds from master; or a version such as `0.5.0`).
 5. Deploy. The logs show `mailbox node connected to the relay` and the
    mailbox node id. The relay entry for the app is
    `https://relay.example.org#<mailbox node id>`; see
