@@ -278,7 +278,13 @@ To check it from your machine:
 curl -s -o /dev/null -w "%{http_code}\n" https://relay.example.org/ping
 ```
 
-`200` means the proxy reaches the relay.
+`200` means the proxy reaches the relay. For a full check (two nodes
+on the relay, mail left and collected), from a source checkout:
+
+```bash
+CHUMMER_LIVE_RELAY='https://relay.example.org#<mailbox node id>' \
+  cargo test -p chummer-relay --test live -- --ignored
+```
 
 Any other TLS-terminating reverse proxy (Caddy, nginx) works the same
 way. Set `cert_mode = "proxy"` in `relay.toml`, and forward the domain,

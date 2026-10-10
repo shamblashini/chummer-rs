@@ -41,7 +41,10 @@ COPY --from=build /usr/local/bin/chummer-relay /usr/local/bin/chummer-relay
 # Ports 80 and 443 as a non-root user, also with host networking (where the
 # host's unprivileged-port limit applies).
 RUN setcap 'cap_net_bind_service=+ep' /usr/local/bin/chummer-relay
+# The example's settings, without its example hostname: give the real one
+# in a mounted relay.toml or as RELAY_HOSTNAME.
 COPY packaging/relay/relay.example.toml /etc/chummer-relay/relay.toml
+RUN sed -i 's/^hostname = .*/hostname = ""/' /etc/chummer-relay/relay.toml
 USER chummer-relay
 VOLUME /var/lib/chummer-relay
 EXPOSE 80/tcp 443/tcp 7842/udp 7843/udp

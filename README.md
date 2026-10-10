@@ -1166,8 +1166,10 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
   Windows on arm64 have no packages yet (the updater links to the
   release page there).
 - Online campaigns:
-  - The project's public relay is not running yet; its URL and mailbox
-    id in `chummer_net::config` are placeholders.
+  - The project's public relay (`chummerrs-default-relay.shambla.com`)
+    runs behind a TLS proxy, so it has no QUIC address discovery: fewer
+    live connections go direct than with a relay of your own
+    ([docs/relay.md](docs/relay.md)).
   - Only the last 256 changes of a character can be reverted, and only
     by the GM. Undo is off for online characters.
   - One GM per campaign; the GM's node key is the campaign's address, so

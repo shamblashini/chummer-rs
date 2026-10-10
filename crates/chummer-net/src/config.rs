@@ -20,9 +20,10 @@ pub const DEFAULT_RELAY_URL: &str = "https://chummerrs-default-relay.shambla.com
 pub const RELAY_GUIDE_URL: &str = "https://github.com/shamblashini/chummer-rs/blob/master/docs/relay.md";
 
 /// Node id of the mailbox on [`DEFAULT_RELAY_URL`] (printed by
-/// `chummer-relay` on start-up). `None` until the public relay has run once
-/// and its id is filled in here.
-pub const DEFAULT_MAILBOX_ID: Option<&str> = None;
+/// `chummer-relay` on start-up; it comes from the relay's `mailbox.key`, so
+/// it changes only if that key is lost).
+pub const DEFAULT_MAILBOX_ID: Option<&str> =
+    Some("8a559160027e8b88bb83692c22bcaab20d5b5ea283aac7efe82072125048ceb2");
 
 /// iroh's default port for QUIC address discovery on a relay.
 pub const DEFAULT_QAD_PORT: u16 = 7842;
@@ -192,6 +193,7 @@ mod tests {
             cfg.relays[0].url.as_str(),
             "https://chummerrs-default-relay.shambla.com/"
         );
+        assert!(cfg.relays[0].mailbox.is_some(), "the default mailbox id parses");
         cfg.add_relays([
             "https://mine.example".parse().unwrap(),
             DEFAULT_RELAY_URL.parse().unwrap(),
