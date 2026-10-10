@@ -243,8 +243,7 @@ mod tests {
 
     #[test]
     fn new_rolls_are_taken_once_as_records() {
-        let mut d = DiceRoller::default();
-        d.rule_of_six = true;
+        let mut d = DiceRoller { rule_of_six: true, ..Default::default() };
         d.roll_as("Longarms + Agility", 8, Some(4));
         d.rule_of_six = false;
         let (score, dice) = d.initiative("Initiative", 9, 2);
