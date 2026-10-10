@@ -11,6 +11,7 @@
 //! See `docs/relay.md` for deployment.
 
 pub mod config;
+pub mod log;
 pub mod server;
 pub mod service;
 pub mod store;

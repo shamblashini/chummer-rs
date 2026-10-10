@@ -38,12 +38,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,iroh=warn,iroh_relay=info".into()),
-        )
-        .init();
+    chummer_relay::log::init("info,iroh=warn,iroh_relay=info");
     let args = Args::parse();
 
     let mut cfg = match &args.config {
