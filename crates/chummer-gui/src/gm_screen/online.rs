@@ -359,6 +359,7 @@ impl GmScreen {
         for v in views.iter_mut().filter(|v| v.campaign_member.is_some()) {
             v.doc_mut().refresh();
         }
+        self.take_table_rolls();
     }
 
     pub fn serving(&self, net: &Online) -> bool {
@@ -434,6 +435,7 @@ impl GmScreen {
             }
         }
         self.online = None;
+        self.rolls_seq = 0;
     }
 
     /// What the online section shows.
@@ -883,6 +885,10 @@ impl GmScreen {
                 Err(e) => ui.colored_label(ui.visuals().error_fg_color, format!("{when}: {e}")),
             };
         }
+        egui::CollapsingHeader::new(RichText::new(lang.tr("Dice rolls")).strong()).id_salt("gm_roll_settings").show(ui, |ui| {
+            self.roll_settings_ui(ui, lang, false);
+            ui.weak(lang.tr(super::rolls::PLAYER_DICE));
+        });
         egui::CollapsingHeader::new(RichText::new(lang.tr("Players & invites")).strong()).id_salt("gm_players_invites").default_open(true).show(ui, |ui| {
             // Its own scroll area: the activity feed below keeps its room.
             egui::ScrollArea::vertical().id_salt("gm_players_invites_scroll").max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {

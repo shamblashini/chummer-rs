@@ -19,7 +19,7 @@
 //! authority's, with Revert.
 
 mod online;
-mod rolls;
+pub(crate) mod rolls;
 // The Workspace layout's GM screen; a child module so it can use the
 // screen's state.
 #[path = "workspace/gm.rs"]
@@ -179,8 +179,14 @@ pub struct GmScreen {
     improvement_for: Option<MemberId>,
     /// Which window the dialogs show in (Workspace pop-outs).
     ws_dialogs: crate::workspace::popout::DialogHome,
-    /// The GM's dice rolls, newest first.
+    /// The dice rolls at the table (the GM's, and online the players'),
+    /// newest first.
     rolls: Vec<GmRoll>,
+    /// The last of the authority's rolls taken into `rolls`.
+    rolls_seq: u64,
+    /// The GM's next roll is shown to players (`Some`) or not, against
+    /// the campaign's setting.
+    next_open: Option<bool>,
     /// Whose roll the Dice rolls tray shows (`None`: everyone's).
     roll_filter: Option<String>,
     /// The member whose next roll pushes the limit.
@@ -234,6 +240,8 @@ impl GmScreen {
             improvement_for: None,
             ws_dialogs: Default::default(),
             rolls: Vec::new(),
+            rolls_seq: 0,
+            next_open: None,
             roll_filter: None,
             push: None,
             renaming: None,
@@ -272,6 +280,7 @@ impl GmScreen {
     fn open_local(path: &Path, engine: &Arc<Engine>) -> Result<GmScreen, String> {
         let c = Campaign::load(path).map_err(|e| e.to_string())?;
         let mut s = GmScreen::with(c, Some(path.to_owned()));
+        s.rolls = s.campaign.rolls.iter().map(GmRoll::from_logged).collect();
         let base = path.parent().map(Path::to_owned);
         for m in s.campaign.members.clone() {
             match m.load_character(base.as_deref()) {
@@ -330,6 +339,7 @@ impl GmScreen {
     /// another thread. Hand its answer to [`GmScreen::saved`].
     pub fn save_job(&mut self, path: &Path, views: &mut [CharacterView]) -> SaveJob {
         let file = path.to_owned();
+        self.campaign.rolls = self.rolls.iter().take(rolls::KEPT).map(GmRoll::to_logged).collect();
         if self.path.as_deref() == Some(path) {
             if let Some(o) = &self.online {
                 let linked = o.hosted.write_back_embedded(&mut self.campaign);
@@ -1392,6 +1402,8 @@ impl GmScreen {
         let kind = self.campaign.member(id).map(|m| m.kind.clone()).unwrap_or_default();
         let (edge_left, edge) = self.edge_left(id, views);
         let mut roll = None;
+        let open = self.open_state();
+        let mut set_open = None;
         let GmScreen { live, rolls, push, award, damage, improvements, improvement_for, .. } = self;
         let Some(doc) = doc_mut(live, views, id) else { return };
         let p = crate::theme::palette(ui);
@@ -1470,6 +1482,9 @@ impl GmScreen {
                 if ui.add_enabled(edge_left > 0 || on, egui::Checkbox::new(&mut on, lang.tr("Push the Limit"))).on_hover_text(tip).changed() {
                     *push = on.then_some(id);
                 }
+                if let Some(o) = open {
+                    set_open = rolls::open_check(ui, lang, false, o);
+                }
             });
             egui::Grid::new(("gm_pools", id)).num_columns(2).spacing([16.0, 2.0]).show(ui, |ui| {
                 for (k, p) in campaign_ui::quick_pools(doc, &sheet, lang, 6).into_iter().enumerate() {
@@ -1521,6 +1536,9 @@ impl GmScreen {
         });
         if let Some(a) = attack {
             self.damage_member(id, a, views, status);
+        }
+        if let Some(o) = set_open {
+            self.set_next_open(o);
         }
         if let Some((label, pool)) = roll {
             self.roll_for(Some(id), &name, &label, pool, views);
@@ -1701,7 +1719,7 @@ mod tests {
         gm.push = Some(a);
         gm.roll_for(Some(a), "Ganger 1", "Pistols", 6, &mut views);
         let r = &gm.rolls[0];
-        assert_eq!(r.edge, Some(rating));
+        assert_eq!(r.rec.edge, Some(rating as u32));
         assert!(r.roll.dice.len() >= (6 + rating) as usize);
         assert_eq!(gm.push, None, "for one roll");
         assert_eq!(gm.edge_left(a, &views).0, left - 1);
@@ -1729,9 +1747,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("t.chummercampaign");
         // The files are written by the job (another thread in the app).
+        gm.roll_for(Some(id), "Munin", "Defense", 6, &mut views);
         let written = gm.save_job(&path, &mut views)();
         gm.saved(&mut views, written).unwrap();
         assert!(!gm.is_dirty(&views));
+        // The roll log is saved with the campaign and comes back.
+        let reopened = GmScreen::open_local(&path, &engine).unwrap();
+        assert_eq!(reopened.rolls(), gm.rolls());
         let hash = views[0].doc().session().unwrap().state_hash();
         gm.give_back(id, views.pop().unwrap().into_doc());
         let back = Campaign::load(&path).unwrap();

@@ -773,6 +773,99 @@ fn players_and_invites_panel() {
     }
 }
 
+/// An online campaign (not served): a player's roll, as it arrives from
+/// their app, shows on the GM's Dice rolls tray with what it was rolled
+/// for and the player's name, on the encounter row and in the activity;
+/// the GM's own rolls stay private unless rolled openly ("Roll openly"
+/// next to the dice pools) or the campaign shows them.
+#[test]
+fn workspace_gm_sees_player_rolls_and_shares_its_own() {
+    use chummer_core::dice::RollRecord;
+    use chummer_sync::msg::{RollId, RollReport};
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = WIDE;
+    crate::bg::wait("save:authority", std::time::Duration::from_secs(60));
+    let file = campaign_file();
+    for ext in ["authority", "authority.journal", "invites"] {
+        let _ = std::fs::remove_file(file.with_extension(ext));
+    }
+    h.app.open_campaign(&file);
+    {
+        let App { gm, online, engine, views, .. } = &mut h.app;
+        gm.as_mut().unwrap().go_online(online, engine, views, false).unwrap();
+    }
+    crate::bg::wait("gm-go-online", std::time::Duration::from_secs(120));
+    for _ in 0..200 {
+        h.frames(1);
+        if h.app.gm.as_ref().unwrap().is_online() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(h.app.gm.as_ref().unwrap().is_online(), "{:?}", h.app.status);
+    let (pc, pc_name) = {
+        let m = &h.app.gm.as_ref().unwrap().campaign.members[0];
+        (m.id, m.name.clone())
+    };
+    {
+        let App { gm, views, .. } = &mut h.app;
+        gm.as_mut().unwrap().add_to_encounter(pc, views, true);
+    }
+    h.frames(2);
+
+    // Anna plays the first member and rolls on her Play screen.
+    let anna = chummer_net::SecretKey::generate().public();
+    let c = chummer_sync::hosted::character_id(pc);
+    let roll = RollRecord { at: chummer_core::campaign::now_ms(), label: "Longarms + Agility".into(), pool: 6, limit: Some(5), dice: vec![6, 5, 5, 2, 1, 3], ..Default::default() };
+    {
+        let host = &h.app.gm.as_ref().unwrap().hosted().unwrap().host;
+        let mut a = host.authority();
+        a.add_member(anna, chummer_net::invite::Role::Player, "Anna");
+        a.set_owner(&c, Some(anna));
+        let rep = RollReport { id: RollId { origin: [7; 16], seq: 1 }, character: Some(c.clone()), roll };
+        assert_eq!(a.submit_rolls(anna, vec![rep]).unwrap().0.len(), 1);
+    }
+    h.frames(3);
+    let gm = h.app.gm.as_ref().unwrap();
+    let got = gm.rolls().first().cloned().expect("the player's roll reached the GM screen");
+    assert_eq!((got.player.as_deref(), got.member, got.who.as_str()), (Some("Anna"), Some(pc), pc_name.as_str()));
+    assert_eq!(gm.last_roll(pc).map(|r| r.id.clone()), Some(got.id.clone()), "the encounter row's chip");
+    assert!(h.find_text("Longarms + Agility").is_some(), "the card says what it was rolled for: {:?}", h.on_screen());
+    assert!(h.find_where(|t| t.contains("rolled by Anna")).is_some(), "the card says whose roll: {:?}", h.on_screen());
+    let line = format!("{pc_name} (Anna): Longarms + Agility 6d6 → 3 hits");
+    assert!(h.find_where(|t| t.contains(&line)).is_some(), "the activity notes it: {:?}", h.on_screen());
+    assert!(h.find_where(|t| t.starts_with("Players roll on their own machines")).is_some(), "{:?}", h.on_screen());
+
+    // The GM's roll is private by default; "Roll openly" shares one.
+    let gm_rolls = |h: &Harness| h.app.gm.as_ref().unwrap().hosted().unwrap().host.authority().rolls().iter().filter(|r| r.author_role == chummer_net::invite::Role::Gm).map(|r| r.open).collect::<Vec<_>>();
+    // The card's Defense tile: left of the tray, above the result card.
+    let defense = |h: &mut Harness| {
+        let tray = h.find_text("Dice rolls").unwrap().left();
+        let tile = h.texts.iter().filter(|(t, r)| t == "Defense" && r.left() < tray).map(|(_, r)| *r).min_by(|a, b| a.top().total_cmp(&b.top())).expect("the Defense tile");
+        h.click_at(tile.center());
+        h.frames(2);
+    };
+    defense(&mut h);
+    assert_eq!(gm_rolls(&h), [false]);
+    h.click_where("Roll openly", |t| t.ends_with("Roll openly"));
+    h.frames(1);
+    assert!(h.app.gm.as_ref().unwrap().next_open());
+    defense(&mut h);
+    assert_eq!(gm_rolls(&h), [false, true], "the one rolled openly is shown to players");
+    assert!(!h.app.gm.as_ref().unwrap().next_open(), "for one roll");
+    // The setting: every roll shown.
+    h.click_text("Who sees rolls");
+    h.frames(2);
+    h.click_text("Show my rolls to players");
+    h.frames(1);
+    let gm = h.app.gm.as_ref().unwrap();
+    assert!(gm.campaign.roll_settings.show_gm_rolls);
+    assert!(gm.hosted().unwrap().host.authority().roll_settings().show_gm_rolls, "the authority goes by it at once");
+    assert!(gm.next_open());
+    sizes(&mut h, FRAMES);
+    assert!(h.app.close_campaign(true));
+}
+
 /// The GM screen's campaign (`campaign_file`), opened; returns the
 /// members' ids and names.
 fn gm_with_campaign(kind: ThemeKind) -> (Harness, Vec<(chummer_core::campaign::MemberId, String)>) {

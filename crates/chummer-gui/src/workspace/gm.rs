@@ -100,6 +100,8 @@ enum CardDo {
     Roll(String, i32),
     /// Push the Limit on the next roll, or not.
     Push(bool),
+    /// Show the next roll to players, or not.
+    RollOpenly(bool),
     Open,
     Improve,
     /// Start renaming the member on the card's title.
@@ -873,6 +875,7 @@ impl GmScreen {
         // Dice pools.
         let (edge_left, _) = self.edge_left(id, env.views);
         let pushing = self.push == Some(id);
+        let open = self.open_state();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.label(widgets::title(&lang.tr("Dice pools"), &ws));
@@ -886,6 +889,9 @@ impl GmScreen {
                 let r = r.on_hover_text(tip).on_disabled_hover_text(lang.tr("No Edge left"));
                 if r.changed() {
                     todo.push(CardDo::Push(on));
+                }
+                if let Some(o) = open.and_then(|o| super::rolls::open_check(ui, lang, true, o)) {
+                    todo.push(CardDo::RollOpenly(o));
                 }
             });
         });
@@ -971,6 +977,7 @@ impl GmScreen {
                 CardDo::Roll(label, pool) => self.roll_for(Some(id), &m.name, &label, pool, env.views),
                 CardDo::Open => action = Some(Action::Open(id)),
                 CardDo::Push(on) => self.push = on.then_some(id),
+                CardDo::RollOpenly(on) => self.set_next_open(on),
                 CardDo::Rename => self.start_rename(RenameAt::Card(id)),
                 CardDo::Renamed(commit) => {
                     self.keep_rename(RenameAt::Card(id), rename.take());
@@ -1154,7 +1161,7 @@ impl GmScreen {
         let ws = theme::ws(ui);
         let lang = env.lang;
         let mut rows = self.feed_rows();
-        rows.extend(self.rolls.iter().map(|r| super::FeedRow { at: r.at, who: lang.tr("Dice"), text: r.line(lang), refused: false, note: true, revert: None }));
+        rows.extend(self.rolls.iter().map(|r| super::FeedRow { at: r.at(), who: lang.tr("Dice"), text: r.line(lang), refused: false, note: true, revert: None }));
         rows.sort_by_key(|r| std::cmp::Reverse(r.at));
         let mut revert = None;
         ui.spacing_mut().item_spacing.y = 0.0;
