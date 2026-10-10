@@ -1,5 +1,7 @@
 //! Dice roller window, and the roller and roll log of the Workspace's
-//! Play screen (`workspace/play.rs`), which keeps one per character.
+//! Play screen (`workspace/play.rs`), which keeps one per character (and,
+//! for a character of an online campaign, reports each roll to the GM:
+//! [`DiceRoller::take_new`]).
 
 use chummer_core::dice::{self, Glitch, Rng};
 use chummer_core::lang::Language;
@@ -24,12 +26,27 @@ pub struct Entry {
     pub label: String,
     pub pool: u32,
     pub limit: Option<u32>,
+    /// Rolled with the Rule of Six (Edge).
+    pub rule_of_six: bool,
     pub outcome: Outcome,
     /// Unix ms.
     pub at: i64,
 }
 
 impl Entry {
+    /// The roll as the campaign logs it; `None` for a note.
+    pub fn record(&self) -> Option<dice::RollRecord> {
+        let base = dice::RollRecord { at: self.at, label: self.label.clone(), pool: self.pool, limit: self.limit, rule_of_six: self.rule_of_six, ..Default::default() };
+        match &self.outcome {
+            Outcome::Hits(r) => Some(dice::RollRecord { dice: r.dice.clone(), ..base }),
+            Outcome::Initiative { score, dice } => {
+                let sum: i32 = dice.iter().map(|&d| i32::from(d)).sum();
+                Some(dice::RollRecord { pool: dice.len() as u32, initiative: Some(score - sum), dice: dice.clone(), limit: None, rule_of_six: false, ..base })
+            }
+            Outcome::Note(_) => None,
+        }
+    }
+
     /// The result: "3 hits", "1 hits — GLITCH", the initiative score.
     pub fn result(&self, lang: &Language) -> String {
         match &self.outcome {
@@ -68,11 +85,13 @@ pub struct DiceRoller {
     pub rule_of_six: bool,
     rng: Rng,
     history: Vec<Entry>,
+    /// Rolls made since [`DiceRoller::take_new`].
+    new: Vec<Entry>,
 }
 
 impl Default for DiceRoller {
     fn default() -> Self {
-        Self { pool: 6, limit: 6, use_limit: false, rule_of_six: false, rng: Rng::from_time(), history: Vec::new() }
+        Self { pool: 6, limit: 6, use_limit: false, rule_of_six: false, rng: Rng::from_time(), history: Vec::new(), new: Vec::new() }
     }
 }
 
@@ -91,8 +110,22 @@ impl DiceRoller {
     }
 
     fn push(&mut self, e: Entry) {
+        if !matches!(e.outcome, Outcome::Note(_)) {
+            self.new.push(e.clone());
+        }
         self.history.insert(0, e);
         self.history.truncate(HISTORY);
+    }
+
+    /// The rolls made since the last call, oldest first (notes are not
+    /// rolls).
+    pub fn take_new(&mut self) -> Vec<Entry> {
+        std::mem::take(&mut self.new)
+    }
+
+    /// Log a roll made another way (a soak roll).
+    pub fn logged(&mut self, label: &str, pool: u32, r: dice::Roll) {
+        self.push(Entry { label: label.to_owned(), pool, limit: None, rule_of_six: false, outcome: Outcome::Hits(r), at: chummer_core::campaign::now_ms() });
     }
 
     /// Roll the pool, limit and Rule of Six set in the roller.
@@ -110,20 +143,20 @@ impl DiceRoller {
             self.limit = l;
         }
         let r = dice::roll(&mut self.rng, pool, self.rule_of_six, limit);
-        self.push(Entry { label: label.to_owned(), pool, limit, outcome: Outcome::Hits(r), at: chummer_core::campaign::now_ms() });
+        self.push(Entry { label: label.to_owned(), pool, limit, rule_of_six: self.rule_of_six, outcome: Outcome::Hits(r), at: chummer_core::campaign::now_ms() });
     }
 
     /// Roll initiative (`base` + `dice`d6) for the log; returns the score
     /// and the dice.
     pub fn initiative(&mut self, label: &str, base: i32, dice: u32) -> (i32, Vec<u8>) {
         let (score, rolled) = dice::initiative(&mut self.rng, base, dice);
-        self.push(Entry { label: label.to_owned(), pool: dice, limit: None, outcome: Outcome::Initiative { score, dice: rolled.clone() }, at: chummer_core::campaign::now_ms() });
+        self.push(Entry { label: label.to_owned(), pool: dice, limit: None, rule_of_six: false, outcome: Outcome::Initiative { score, dice: rolled.clone() }, at: chummer_core::campaign::now_ms() });
         (score, rolled)
     }
 
     /// Log something that is not a roll (damage taken).
     pub fn note(&mut self, label: &str, text: String) {
-        self.push(Entry { label: label.to_owned(), pool: 0, limit: None, outcome: Outcome::Note(text), at: chummer_core::campaign::now_ms() });
+        self.push(Entry { label: label.to_owned(), pool: 0, limit: None, rule_of_six: false, outcome: Outcome::Note(text), at: chummer_core::campaign::now_ms() });
     }
 
     /// The random source, for rolls logged another way (a soak roll).
@@ -206,5 +239,23 @@ mod tests {
             d.roll();
         }
         assert_eq!(d.history().len(), HISTORY);
+    }
+
+    #[test]
+    fn new_rolls_are_taken_once_as_records() {
+        let mut d = DiceRoller::default();
+        d.rule_of_six = true;
+        d.roll_as("Longarms + Agility", 8, Some(4));
+        d.rule_of_six = false;
+        let (score, dice) = d.initiative("Initiative", 9, 2);
+        d.note("Damage", "took 6P: 2 Physical".into());
+        let new = d.take_new();
+        assert_eq!(new.len(), 2, "notes are not rolls");
+        assert!(d.take_new().is_empty(), "taken once");
+        let r = new[0].record().unwrap();
+        assert_eq!((r.label.as_str(), r.pool, r.limit, r.rule_of_six), ("Longarms + Agility", 8, Some(4), true));
+        assert_eq!(r.check(), Ok(()), "the dice fit the pool: {r:?}");
+        let i = new[1].record().unwrap();
+        assert_eq!((i.score(), i.dice.clone(), i.check()), (Some(score), dice, Ok(())));
     }
 }

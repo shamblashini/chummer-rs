@@ -228,6 +228,8 @@ pub struct DamageResult {
     pub stun_filled: i32,
     /// For the feed: "took 8P AP-2: soaked 3 (14 dice), 5 Stun".
     pub text: String,
+    /// The soak roll, when rolled: the pool and the dice.
+    pub soak: Option<(u32, dice::Roll)>,
 }
 
 impl DamageForm {
@@ -254,11 +256,12 @@ impl DamageForm {
 /// not), conversion to Stun, overflow.
 pub fn resolve(rng: &mut Rng, a: Attack, d: Defender, t: Tracks, roll_soak: bool) -> DamageResult {
     let inc = damage::incoming(a, d);
-    let (hits, soak) = if roll_soak {
-        let r = dice::roll(rng, inc.soak_pool.max(0) as u32, false, None);
-        (r.hits, format!(", soaked {} of {} dice", r.hits, inc.soak_pool))
+    let (hits, soak, roll) = if roll_soak {
+        let pool = inc.soak_pool.max(0) as u32;
+        let r = dice::roll(rng, pool, false, None);
+        (r.hits, format!(", soaked {} of {} dice", r.hits, inc.soak_pool), Some((pool, r)))
     } else {
-        (0, String::new())
+        (0, String::new(), None)
     };
     let boxes = damage::after_soak(inc, hits);
     let (p, s) = damage::apply(t, boxes, inc.physical);
@@ -266,7 +269,7 @@ pub fn resolve(rng: &mut Rng, a: Attack, d: Defender, t: Tracks, roll_soak: bool
     let ap = if a.ap != 0 { format!(" AP{:+}", a.ap) } else { String::new() };
     let conv = if inc.converted { ", Stun (DV below armor)" } else { "" };
     let result = if boxes == 0 { "no damage".to_owned() } else { format!("{boxes} {kind}") };
-    DamageResult { physical_filled: p, stun_filled: s, text: format!("took {}{}{ap}{conv}{soak}: {result}", a.dv, if a.physical { "P" } else { "S" }) }
+    DamageResult { physical_filled: p, stun_filled: s, text: format!("took {}{}{ap}{conv}{soak}: {result}", a.dv, if a.physical { "P" } else { "S" }), soak: roll }
 }
 
 /// Damage to a character: soaked with its Body (an A.I.'s home node)

@@ -8,6 +8,12 @@
 //! use the view's state. It only draws: changes are the commands the
 //! Classic tabs and the item pane run (`play_ui` for ammunition), rolls
 //! go to the character's own [`DiceRoller`].
+//!
+//! A character of an online campaign reports every roll to the GM's app
+//! ([`CharacterView::report_rolls`]: with what it was rolled for, the
+//! dice, the limit and the Rule of Six), and its inspector shows the
+//! table's rolls ([`Panel::Table`]): the player's own, the GM's open ones
+//! and, when the GM allows it, the other players'.
 
 use std::collections::HashMap;
 
@@ -22,6 +28,8 @@ use eframe::egui::{self, RichText};
 use super::{CharacterView, Tab};
 use crate::campaign_ui::{self, DamageForm};
 use crate::dice_ui::{DiceRoller, Outcome};
+use crate::doc::Backend;
+use crate::gm_screen::rolls::{self, GmRoll};
 use crate::pdf_ui::Status;
 use crate::theme;
 use crate::workspace::popout::{Panel as Block, PopKey, PopOuts};
@@ -47,6 +55,8 @@ pub enum Panel {
     Roller,
     /// Inspector: the recent rolls.
     Log,
+    /// Inspector, online campaigns: the rolls at the table.
+    Table,
 }
 
 impl Panel {
@@ -63,6 +73,7 @@ impl Panel {
             Panel::Notes => "Session notes",
             Panel::Roller => "Dice Roller",
             Panel::Log => "Recent rolls",
+            Panel::Table => "Table rolls",
         }
     }
 
@@ -114,6 +125,9 @@ pub struct PlayState {
     /// What the weapon cards show of each weapon's ammunition, by guid,
     /// once per revision.
     ammo_info: crate::memo::Memo<String, AmmoInfo>,
+    /// The table's rolls as last read from the campaign replica, with the
+    /// replica's roll revision.
+    table: Option<(u64, Vec<GmRoll>)>,
 }
 
 /// A weapon's ammunition as its card shows it.
@@ -222,7 +236,35 @@ impl CharacterView {
             let height = l.min_rect().bottom().max(r.min_rect().bottom()) - top.y;
             ui.allocate_space(egui::vec2(total, height));
         });
+        self.report_rolls();
         changed
+    }
+
+    /// The session of the character's online campaign, for a player.
+    fn player_session(&self) -> Option<(chummer_sync::PlayerSession, chummer_sync::CharacterId)> {
+        match self.doc.backend() {
+            Some(Backend::Player { session, id }) => Some((session.clone(), id.clone())),
+            _ => None,
+        }
+    }
+
+    /// Rolls made since the last call go to the GM's app when the
+    /// character is in an online campaign (a log next to the character:
+    /// nothing about it changes). Made here, so the GM takes them on
+    /// trust; the hits are worked out from the dice.
+    pub fn report_rolls(&mut self) {
+        let new = self.play.roller.take_new();
+        if new.is_empty() {
+            return;
+        }
+        let Some((session, id)) = self.player_session() else { return };
+        for e in new {
+            if let Some(rec) = e.record() {
+                if let Err(err) = session.roll_now(&id, rec) {
+                    eprintln!("could not report the roll to the GM: {err}");
+                }
+            }
+        }
     }
 
     /// Whether a block has something to show.
@@ -231,6 +273,7 @@ impl CharacterView {
             Panel::AtHand => !self.at_hand(lang).is_empty(),
             Panel::Matrix => self.play_device().is_some(),
             Panel::Vehicles => !self.doc.items("vehicles", "vehicle").is_empty(),
+            Panel::Table => self.player_session().is_some(),
             _ => true,
         }
     }
@@ -242,7 +285,7 @@ impl CharacterView {
         let title = lang.tr(p.title());
         let block = match p {
             Panel::Rolls | Panel::Notes | Panel::Weapons | Panel::Vehicles => Block::bare(key, &title),
-            Panel::Roller | Panel::Log => Block::inspector(key, &title),
+            Panel::Roller | Panel::Log | Panel::Table => Block::inspector(key, &title),
             _ => Block::card(key, &title),
         };
         // Header contents, worked out before the body borrows the view.
@@ -329,6 +372,10 @@ impl CharacterView {
                 self.play_log(ui, lang);
                 false
             }
+            Panel::Table => {
+                self.play_table(ui, lang);
+                false
+            }
         }
     }
 
@@ -336,6 +383,7 @@ impl CharacterView {
     pub fn ws_play_panel(&mut self, ui: &mut egui::Ui, p: Panel, lang: &Language, status: &mut Status) -> bool {
         let mut ask = None;
         let changed = self.ws_play_body(ui, p, lang, status, &mut ask);
+        self.report_rolls();
         match ask {
             Some(Ask::ResetEdge) => self.doc.set(Command::RefreshEdge) || changed,
             Some(Ask::ClearLog) => {
@@ -349,9 +397,12 @@ impl CharacterView {
     /// The Play screen's inspector: the dice roller and the recent rolls.
     pub fn ws_play_inspector(&mut self, ui: &mut egui::Ui, lang: &Language, status: &mut Status, pops: &mut PopOuts) -> bool {
         let mut changed = false;
-        for p in [Panel::Roller, Panel::Log] {
-            changed |= self.play_block(ui, p, lang, status, pops);
+        for p in [Panel::Roller, Panel::Log, Panel::Table] {
+            if self.play_has(p, lang) {
+                changed |= self.play_block(ui, p, lang, status, pops);
+            }
         }
+        self.report_rolls();
         changed
     }
 
@@ -429,6 +480,9 @@ impl CharacterView {
                 let apply = ui.add_enabled_ui(parsed.is_some(), |ui| widgets::button(ui, None, &lang.tr("Apply"), Look::Secondary, 26.0)).inner.clicked();
                 if let (true, Some(a)) = (apply, parsed) {
                     let (t, r) = campaign_ui::damage_character(self.play.roller.rng(), a, &self.doc, &self.sheet, self.play.damage.soak_roll);
+                    if let Some((pool, roll)) = r.soak.clone() {
+                        self.play.roller.logged(&lang.tr("Soak"), pool, roll);
+                    }
                     self.play.roller.note(&lang.tr("Damage"), r.text.clone());
                     for c in campaign_ui::damage_commands(&t, &r) {
                         changed |= self.doc.set(c);
@@ -956,6 +1010,42 @@ impl CharacterView {
         let label = lang.tr_fmt("Roll {0} dice", &[&roller.pool]);
         if widgets::wide_button(ui, Some(icons::DICE_FIVE), &label, Look::Primary, 28.0).clicked() {
             roller.roll();
+        }
+    }
+
+    /// The rolls at the table (online campaigns): ours (those not at the
+    /// GM's app yet marked), the GM's open ones and, when the GM allows
+    /// it, the other players', newest first.
+    fn play_table(&mut self, ui: &mut egui::Ui, lang: &Language) {
+        let ws = theme::ws(ui);
+        let Some((session, _)) = self.player_session() else { return };
+        if let Some(r) = session.try_replica() {
+            let rev = r.rolls_rev();
+            if self.play.table.as_ref().map(|t| t.0) != Some(rev) {
+                let me = r.me();
+                let mut list: Vec<GmRoll> = r
+                    .table_rolls()
+                    .iter()
+                    .map(|t| {
+                        let player = (t.author_role == chummer_net::invite::Role::Player && Some(t.author) != me).then(|| t.author_name.clone());
+                        GmRoll::from_table(t, player)
+                    })
+                    .collect();
+                list.extend(r.roll_outbox().iter().map(|p| {
+                    let who = p.report.character.as_ref().and_then(|c| r.name(c)).unwrap_or_default();
+                    GmRoll { waiting: true, ..GmRoll::new(who, None, p.report.roll.clone()) }
+                }));
+                list.sort_by_key(|g| std::cmp::Reverse(g.at()));
+                self.play.table = Some((rev, list));
+            }
+        }
+        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.label(RichText::new(lang.tr("Your rolls go to the GM. Here: yours, the GM's open rolls, and the other players' when the GM allows it.")).size(11.5).color(ws.muted));
+        match self.play.table.as_ref().map(|t| t.1.as_slice()) {
+            Some(list) if !list.is_empty() => rolls::rolls_list(ui, lang, list),
+            _ => {
+                ui.label(RichText::new(lang.tr("No rolls at the table yet.")).size(11.5).color(ws.muted));
+            }
         }
     }
 
