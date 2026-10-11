@@ -443,7 +443,10 @@ impl CharacterView {
                 let mut raise = false;
                 let row = widgets::table_row(ui, name, selected, 34.0, |ui| {
                     widgets::cell(ui, next(), 34.0, |ui| {
-                        ui.label(RichText::new(&long).size(13.0).color(ws.text));
+                        let r = ui.label(RichText::new(&long).size(13.0).color(ws.text));
+                        if let Some(h) = crate::view::mystic_magic_hint(lang, name) {
+                            r.on_hover_text(h);
+                        }
                         ui.label(RichText::new(name).size(11.0).color(ws.muted));
                     });
                     if career_mode {

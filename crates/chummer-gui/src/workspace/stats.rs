@@ -76,6 +76,9 @@ impl CharacterView {
         if v.value >= v.total_max {
             ui.label(RichText::new(lang.tr("At its natural maximum.")).size(12.0).color(ws.warning));
         }
+        if let Some(h) = crate::view::mystic_magic_hint(lang, name).filter(|_| self.shown_attributes().contains(&"MAGAdept")) {
+            ui.label(RichText::new(h).size(12.0).color(ws.muted));
+        }
         let sources = self.attribute_sources(name);
         if !sources.is_empty() {
             ui.add_space(2.0);

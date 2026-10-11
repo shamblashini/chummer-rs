@@ -273,8 +273,10 @@ fn apply_talent(ch: &mut Character, engine: &Engine, talent: &TalentOption, node
     for (g, _) in old.iter().filter(|(g, _)| !keep.contains(g)) {
         remove_quality(ch, g);
     }
-    // MAG (and MAGAdept), RES, DEP: the talent's value as the minimum.
-    for (key, names) in [("magic", &["MAG", "MAGAdept"][..]), ("resonance", &["RES"][..]), ("depth", &["DEP"][..])] {
+    // MAG, RES, DEP: the talent's value as the minimum. Not MAGAdept:
+    // `SelectMetatypePriority` assigns the talent's Magic to MAG only, and
+    // MAGAdept keeps the metatype's magmin/magmax/magaug.
+    for (key, names) in [("magic", &["MAG"][..]), ("resonance", &["RES"][..]), ("depth", &["DEP"][..])] {
         let min = talent.node.get_i32(key).unwrap_or(1);
         let short = &key[..3];
         let node_max = crate::gm::expression_to_int(node.child_text(&format!("{short}max")).as_deref(), 0, 0, 0);

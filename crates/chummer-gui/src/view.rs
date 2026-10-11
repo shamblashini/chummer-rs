@@ -933,7 +933,10 @@ impl CharacterView {
                         row.col(|ui| {
                             let key = format!("String_Attribute{name}Long");
                             let long = if lang.has(&key) { lang.s(&key) } else { lang.tr(attributes::long_name(name)) };
-                            ui.label(format!("{long} ({name})"));
+                            let r = ui.label(format!("{long} ({name})"));
+                            if let Some(h) = mystic_magic_hint(lang, name) {
+                                r.on_hover_text(h);
+                            }
                         });
                         row.col(|ui| {
                             if let Some(a) = self.doc.attribute(name) {
@@ -1858,21 +1861,15 @@ impl CharacterView {
     }
 
     /// The attributes the attribute table lists: the special ones only
-    /// when the character has them, Essence never.
+    /// when the character has them (MAG (Adept) only under the second-MAG
+    /// house rule), Essence never.
     fn shown_attributes(&self) -> Vec<&'static str> {
         attributes::PHYSICAL
             .iter()
             .chain(attributes::MENTAL)
             .chain(attributes::SPECIAL)
             .copied()
-            .filter(|n| match *n {
-                "ESS" => false,
-                "MAG" => self.doc.mag_enabled(),
-                "MAGAdept" => self.doc.mag_enabled() && self.doc.is_adept() && self.doc.is_magician(),
-                "RES" => self.doc.res_enabled(),
-                "DEP" => self.doc.dep_enabled(),
-                _ => true,
-            })
+            .filter(|n| attributes::shown(&self.doc, n, self.rules.mys_adept_second_mag_attribute))
             .collect()
     }
 
@@ -1952,6 +1949,17 @@ fn fmt_opt(v: f64) -> String {
         String::new()
     } else {
         chummer_core::improvement::fmt_num(v)
+    }
+}
+
+/// How MAG and MAG (Adept) relate, for the attribute rows of a mystic
+/// adept under the second-MAG house rule (the only case both rows show).
+pub(crate) fn mystic_magic_hint(lang: &Language, name: &str) -> Option<String> {
+    let rule = lang.s("Checkbox_Options_MysAdeptSecondMAGAttribute");
+    match name {
+        "MAG" => Some(lang.tr_fmt("Magic for spells, spirits and initiation. This character's settings file has the house rule “{0}”, so Magic (Adept) is a separate attribute: raising Magic does not raise it.", &[&rule])),
+        "MAGAdept" => Some(lang.tr_fmt("Magic for adept powers: the power points equal it. This character's settings file has the house rule “{0}”, so it is separate from Magic: it starts at the metatype minimum, has its own maximum, and is bought with its own points or karma. Without the house rule there is one Magic and power points are bought with karma.", &[&rule])),
+        _ => None,
     }
 }
 

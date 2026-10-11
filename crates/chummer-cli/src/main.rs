@@ -340,15 +340,7 @@ fn info(engine: &Engine, path: &Path) -> Result<()> {
     println!();
     for group in [attributes::PHYSICAL, attributes::MENTAL, attributes::SPECIAL] {
         for name in group {
-            let shown = match *name {
-                "ESS" => false,
-                "MAG" => ch.mag_enabled(),
-                "MAGAdept" => ch.mag_enabled() && ch.is_adept() && ch.is_magician(),
-                "RES" => ch.res_enabled(),
-                "DEP" => ch.dep_enabled(),
-                _ => true,
-            };
-            if !shown {
+            if !attributes::shown(&ch, name, engine.rules_for(&ch).mys_adept_second_mag_attribute) {
                 continue;
             }
             if let Some(a) = s.attr_values(name) {

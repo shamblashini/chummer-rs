@@ -432,7 +432,10 @@ pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String>
         let special = matches!(*name, "MAG" | "MAGAdept" | "RES" | "DEP");
         if special {
             let tl = match *name {
-                "MAG" | "MAGAdept" => talent_limit("magic"),
+                // Only MAG: Chummer's `SelectMetatypePriority` assigns the
+                // talent's Magic to MAG; MAGAdept keeps the metatype's limits.
+                "MAG" => talent_limit("magic"),
+                "MAGAdept" => None,
                 "RES" => talent_limit("resonance"),
                 _ => talent_limit("depth"),
             };
