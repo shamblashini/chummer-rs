@@ -79,3 +79,40 @@ fn big_gear_tree_is_cheap() {
     // Generous even for unoptimised test builds.
     assert!(per_frame.as_millis() < 20, "{per_frame:?} per build");
 }
+
+/// `edit::with_index` answers `find` and `parent` exactly as the search
+/// does: the same element (by address) for every item of every fixture,
+/// unknown guids too.
+#[test]
+fn indexed_lookups_match_the_search() {
+    use chummer_core::items::edit;
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let mut checked = 0;
+    for f in std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "chum5")) {
+        let ch = chummer_core::character::Character::load(&f).unwrap();
+        let mut guids = Vec::new();
+        fn collect(e: &Element, out: &mut Vec<String>) {
+            if edit::is_item(e) {
+                out.push(e.get("guid"));
+            }
+            e.elements().for_each(|c| collect(c, out));
+        }
+        collect(&ch.doc, &mut guids);
+        guids.push("00000000-0000-0000-0000-000000000000".into());
+        let plain: Vec<_> = guids.iter().map(|g| (edit::find(&ch, g).map(|e| e as *const Element), edit::parent(&ch, g).map(|e| e as *const Element))).collect();
+        let indexed: Vec<_> = edit::with_index(&ch, || guids.iter().map(|g| (edit::find(&ch, g).map(|e| e as *const Element), edit::parent(&ch, g).map(|e| e as *const Element))).collect());
+        assert_eq!(plain, indexed, "{}", f.display());
+        // Upper-case guids find the same items.
+        let upper = edit::with_index(&ch, || guids.iter().map(|g| edit::find(&ch, &g.to_ascii_uppercase()).map(|e| e as *const Element)).collect::<Vec<_>>());
+        assert_eq!(plain.iter().map(|p| p.0).collect::<Vec<_>>(), upper);
+        checked += guids.len();
+    }
+    assert!(checked > 1000, "{checked}");
+    // Outside the call the index is gone: another character's lookups search.
+    let ch = fixture_doc_character();
+    assert!(edit::find(&ch, "nope").is_none());
+}
+
+fn fixture_doc_character() -> chummer_core::character::Character {
+    chummer_core::character::Character::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Serpent.chum5")).unwrap()
+}

@@ -165,6 +165,9 @@ impl CharacterView {
         let key: RowsKey = (sec.container, lang.code.clone(), sort.clone(), self.doc.created, group as u8);
         self.ws_gear.rows.get(self.doc.revision(), key, || {
             let _s = crate::trace::span("inventory rows");
+            // Every row looks its item up by guid (cost, rating range,
+            // included): from an index, not a search each (quadratic).
+            chummer_core::items::edit::with_index(&self.doc, || {
             let cx = Ctx { v: self, sec, cols, lang, marks: self.item_marks(lang), career: self.doc.created, shares: Default::default() };
             let rows = if sec.container == "drugs" {
                 self.doc.items("drugs", "drug").iter().map(|d| cx.item(d, d.get("guid"), true, &[])).collect()
@@ -179,6 +182,7 @@ impl CharacterView {
                 }
             }
             Arc::new(rows)
+            })
         })
     }
 }

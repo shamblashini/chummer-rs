@@ -53,6 +53,84 @@ pub fn is_item(e: &Element) -> bool {
     ITEM_TAGS.contains(&e.name.as_str()) && !e.get("guid").is_empty()
 }
 
+// ---------------------------------------------------------------------------
+// Lookup index
+// ---------------------------------------------------------------------------
+
+/// Where each item sits in one character's document: its path of indexes
+/// into `children`, by lowercase guid (the first in document order, as
+/// [`find`] finds it).
+struct Index {
+    doc: *const Element,
+    paths: std::collections::HashMap<String, Vec<usize>>,
+}
+
+thread_local! {
+    static INDEX: std::cell::RefCell<Option<Index>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with [`find`] and [`parent`] answering from an index of `ch`
+/// built once, instead of searching the whole document each time. For
+/// code that looks up many items of one character in a row, e.g. building
+/// an item table: with a search per lookup that was quadratic in the
+/// number of items (2 s for a table of 800 items). `ch` stays borrowed for
+/// the call, so the document cannot change under the index; each answer is
+/// still checked against the guid, and anything else falls back to the
+/// search.
+pub fn with_index<T>(ch: &Character, f: impl FnOnce() -> T) -> T {
+    fn walk(e: &Element, path: &mut Vec<usize>, out: &mut std::collections::HashMap<String, Vec<usize>>) {
+        for (i, n) in e.children.iter().enumerate() {
+            if let Node::Element(c) = n {
+                path.push(i);
+                if ITEM_TAGS.contains(&c.name.as_str()) {
+                    let g = c.get("guid");
+                    if !g.is_empty() {
+                        out.entry(g.to_ascii_lowercase()).or_insert_with(|| path.clone());
+                    }
+                }
+                walk(c, path, out);
+                path.pop();
+            }
+        }
+    }
+    let mut paths = std::collections::HashMap::new();
+    walk(&ch.doc, &mut Vec::new(), &mut paths);
+    let index = Index { doc: &ch.doc as *const Element, paths };
+    let before = INDEX.with(|i| i.borrow_mut().replace(index));
+    struct Restore(Option<Index>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let before = self.0.take();
+            INDEX.with(|i| *i.borrow_mut() = before);
+        }
+    }
+    let _restore = Restore(before);
+    f()
+}
+
+/// The elements on the indexed path to `guid` in `doc` (the item last),
+/// when an index of `doc` is active and still matches.
+fn indexed<'a>(doc: &'a Element, guid: &str) -> Option<Option<Vec<&'a Element>>> {
+    INDEX.with(|i| {
+        let i = i.borrow();
+        let i = i.as_ref().filter(|i| std::ptr::eq(i.doc, doc))?;
+        let Some(path) = i.paths.get(&guid.to_ascii_lowercase()) else { return Some(None) };
+        let mut chain = Vec::with_capacity(path.len());
+        let mut e = doc;
+        for &k in path {
+            match e.children.get(k) {
+                Some(Node::Element(c)) => {
+                    chain.push(c);
+                    e = c;
+                }
+                _ => return None,
+            }
+        }
+        let ok = ITEM_TAGS.contains(&e.name.as_str()) && e.get("guid").eq_ignore_ascii_case(guid);
+        ok.then_some(Some(chain))
+    })
+}
+
 fn find_in<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
     if ITEM_TAGS.contains(&e.name.as_str()) && e.get("guid").eq_ignore_ascii_case(guid) {
         return Some(e);
@@ -71,6 +149,9 @@ fn find_in_mut<'a>(e: &'a mut Element, guid: &str) -> Option<&'a mut Element> {
 pub fn find<'a>(ch: &'a Character, guid: &str) -> Option<&'a Element> {
     if guid.is_empty() {
         return None;
+    }
+    if let Some(hit) = indexed(&ch.doc, guid) {
+        return hit.and_then(|c| c.last().copied());
     }
     find_in(&ch.doc, guid)
 }
@@ -96,6 +177,10 @@ pub fn parent<'a>(ch: &'a Character, guid: &str) -> Option<&'a Element> {
             }
         }
         None
+    }
+    if let Some(hit) = indexed(&ch.doc, guid) {
+        // The nearest item above it on the path.
+        return hit.and_then(|c| c.iter().rev().skip(1).find(|e| ITEM_TAGS.contains(&e.name.as_str())).copied());
     }
     walk(&ch.doc, guid, None)
 }
