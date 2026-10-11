@@ -1,0 +1,100 @@
+# Budgets for the performance suite (scripts/perf.sh, docs/testing.md
+# "Performance tests"). A benchmark fails when its median is over its
+# budget. Keys are benchmark names, or prefixes ending in `*`; the
+# longest matching key wins. A benchmark without a budget only warns.
+#
+# Set on 2026-10-11 from a quick run (3 samples; GUI: 5 frames) of commit
+# cd3d047 on an Intel i5-10400F, at about 4x the local median, rounded
+# up, for GitHub's slower and noisier runners. The local medians are in
+# the comments. Raise a budget only with a reason in the commit message.
+
+[policy]
+# Against the previous successful run (its baseline, while a slowdown
+# lasts): +25 % warns; +50 % in two runs in a row fails.
+warn_pct = 25
+fail_pct = 50
+
+# Smallest change, in the benchmark's unit, that counts at all: smaller
+# ones are noise whatever their percent.
+[min_delta]
+"*" = 1.0
+"gui.*" = 0.5
+"core.engine.*" = 5            # a process start per sample
+"core.save.write_chum5.*" = 10 # disk
+"core.save.write_chum5lz.*" = 250
+"core.print.xslt.*" = 25       # runs xsltproc
+"core.memory.*" = 16           # MiB
+"sync.snapshot.*" = 250
+
+[budgets]
+# Engine start in a fresh process (6.6 ms) and the first sheet after it (17 ms).
+"core.engine.load_cold" = 30
+"core.engine.first_sheet_cold.*" = 75
+# Character files (Serpent 5.9 / 9.5 ms, Ghile Mear 7.3 / 10.7 ms).
+"core.load.chum5.*" = 30
+"core.load.chumrs.*" = 45
+# A full compute (0.65 ms; sub-millisecond, so more headroom).
+"core.compute.*" = 5
+# Commands and undo, on Serpent (up to 4.6 ms) and Munin_Career (up to 2.5 ms).
+"core.command.*" = 20
+# Save phases on Ghile Mear (save_timing.rs): clone, stamp, to_document ~1 ms,
+# to_xml_string 12.8 ms, write 2-8 ms, write .chum5lz 1.28 s, .chumrs bytes 62 ms.
+"core.save.clone.*" = 5
+"core.save.stamp.*" = 2
+"core.save.to_document.*" = 5
+"core.save.to_xml_string.*" = 55
+"core.save.write_chum5.*" = 40
+"core.save.write_chum5lz.*" = 5000
+"core.save.chumrs_bytes.*" = 250
+# Whole saves (Engine::save): .chum5 11.6 / 28 ms, .chumrs 28 / 75 ms.
+"core.save.full_chum5.serpent" = 50
+"core.save.full_chum5.ghile_mear" = 120
+"core.save.full_chumrs.serpent" = 120
+"core.save.full_chumrs.ghile_mear" = 300
+# Print XML (Serpent 39 ms, Ghile Mear 13 ms) and xsltproc (49 / 61 ms).
+"core.print.xml.serpent" = 160
+"core.print.xml.ghile_mear" = 60
+"core.print.xslt.*" = 250
+# Peak RSS with the engine and 10 characters (64.5 MiB). Memory does not
+# depend on the runner's speed: 2.5x.
+"core.memory.engine_plus_10" = 160
+
+# Sync: hash (6.9 / 16 ms), snapshot (0.40 / 1.27 s), restore (55 / 172 ms).
+"sync.state_hash.serpent" = 30
+"sync.state_hash.ghile_mear" = 65
+"sync.snapshot.serpent" = 1600
+"sync.snapshot.ghile_mear" = 5000
+"sync.restore.serpent" = 220
+"sync.restore.ghile_mear" = 700
+# A player's edit round trip: replica edit 1.2 ms, authority submit 8.5 ms, ack 11.7 ms.
+"sync.replica.edit.*" = 6
+"sync.authority.submit.*" = 35
+"sync.replica.ack.*" = 50
+# A GM edit at the authority (10.8 ms).
+"sync.authority.apply_local.*" = 45
+# Catch-up: per change replayed (3.0 ms), and by snapshot (71 ms).
+"sync.catchup.entries.*" = 12
+"sync.catchup.snapshot.*" = 300
+# Mail: a batch of 20 edits (0.17 ms each way), a snapshot (11-12.5 ms).
+"sync.mail.*" = 50
+"sync.mail.encode_batch20.*" = 2
+"sync.mail.decode_batch20.*" = 2
+
+# GUI frames, headless, Serpent at 1600x1000. Most pages are 0.4-1.2 ms;
+# the heavy ones get their own budget.
+"gui.frame.*" = 5
+"gui.frame.workspace.serpent.at_the_table" = 12          # 2.8 ms
+"gui.frame.workspace.serpent.attributes_qualities" = 10  # 2.4 ms
+"gui.frame.workspace.serpent.skills" = 10                # 2.2 ms
+"gui.frame.classic.serpent.attributes_qualities" = 8     # 1.8 ms
+"gui.frame.classic.serpent.skills" = 8                   # 1.8 ms
+"gui.frame.workspace.gm_screen" = 8                      # 2.0 ms
+"gui.frame.classic.gm_screen" = 8                        # 1.8 ms
+# The first frame after switching to a page: 0.5-4 ms.
+"gui.switch.*" = 8
+"gui.switch.workspace.serpent.attributes_qualities" = 16 # 4.0 ms
+"gui.switch.workspace.serpent.skills" = 12               # 3.0 ms
+"gui.switch.classic.serpent.attributes_qualities" = 12   # 2.9 ms
+"gui.switch.classic.serpent.skills" = 12                 # 2.7 ms
+# The catalog: frames with a search shown (1.0 ms), typing a search (1.4 ms).
+"gui.catalog.*" = 6
