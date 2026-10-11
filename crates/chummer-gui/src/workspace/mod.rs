@@ -222,6 +222,15 @@ pub struct Workspace {
     home_page: home::HomeState,
 }
 
+impl Workspace {
+    /// Leave Play or History for character `id` (as going to a tab page
+    /// from the sidebar does), for tests that go to pages directly.
+    #[cfg(test)]
+    pub(crate) fn leave_special(&mut self, id: u64) {
+        self.special.remove(&id);
+    }
+}
+
 /// The app icon (the logo at 256px), for the window and the pop-outs.
 pub fn app_icon() -> Option<std::sync::Arc<egui::IconData>> {
     use std::sync::OnceLock;
