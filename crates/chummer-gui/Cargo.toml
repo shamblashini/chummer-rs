@@ -26,6 +26,10 @@ sha2 = "0.11"
 serde_json.workspace = true
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
 
+[dev-dependencies]
+# The performance suite's report format (src/ui_tests/perf.rs).
+chummer-bench = { path = "../chummer-bench" }
+
 # Windows: the app icon and version info in chummer-rs.exe (build.rs).
 [target.'cfg(windows)'.build-dependencies]
 winresource = { version = "0.1", default-features = false }

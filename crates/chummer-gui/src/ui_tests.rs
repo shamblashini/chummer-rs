@@ -3144,3 +3144,6 @@ fn campaign_default_preset_starts_the_wizards() {
     let back: chummer_core::campaign::Campaign = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
     assert_eq!(back.default_settings, p.key(), "kept in the campaign file");
 }
+
+// GUI frame times for the performance suite (ignored here).
+mod perf;
