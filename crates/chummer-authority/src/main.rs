@@ -188,6 +188,14 @@ fn mtime(p: &Path) -> Option<SystemTime> {
     std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
+/// The settings folder's files and their times, to notice a preset being
+/// saved or imported (by the GM's app on this machine).
+fn settings_stamp(dir: Option<&Path>) -> Vec<(std::ffi::OsString, Option<SystemTime>)> {
+    let mut v: Vec<_> = dir.and_then(|d| std::fs::read_dir(d).ok()).into_iter().flatten().flatten().map(|e| (e.file_name(), mtime(&e.path()))).collect();
+    v.sort();
+    v
+}
+
 async fn run(path: &Path, key: SecretKey, name: &str, settings: &OnlineSettings, mail_every: Duration, write_back_every: Duration) -> Result<()> {
     let engine = Arc::new(Engine::load().context("loading the game data (is the resources folder next to the program?)")?);
     let mut campaign = load_campaign(path)?;
@@ -209,6 +217,7 @@ async fn run(path: &Path, key: SecretKey, name: &str, settings: &OnlineSettings,
     print_summary(&h.host.authority(), &campaign);
 
     let mut seen = mtime(path);
+    let mut presets_seen = settings_stamp(h.host.engine().settings_dir().as_deref());
     let mut written = versions(&h.host.authority());
     let mut mail = tokio::time::interval(mail_every);
     let mut back = tokio::time::interval(write_back_every);
@@ -253,6 +262,19 @@ async fn run(path: &Path, key: SecretKey, name: &str, settings: &OnlineSettings,
                     // The relay learns the new set of keys now.
                     if let Err(e) = node.register_mail_keys(&h.host).await {
                         tracing::warn!("mailbox: {e}");
+                    }
+                }
+                // A settings preset was saved or imported: players whose
+                // characters use a changed one get it.
+                let stamp = settings_stamp(h.host.engine().settings_dir().as_deref());
+                if stamp != presets_seen {
+                    presets_seen = stamp;
+                    match h.host.engine().reload_settings() {
+                        Ok(()) => {
+                            tracing::info!("settings presets changed; sending them to the players who use them");
+                            h.host.settings_changed();
+                        }
+                        Err(e) => tracing::warn!("could not read the settings presets: {e}"),
                     }
                 }
                 // The campaign file changed (`assign`, or the GM edited it).
