@@ -25,6 +25,7 @@ fail_pct = 50
 "core.print.xslt.*" = 25       # runs xsltproc
 "core.memory.*" = 16           # MiB
 "sync.snapshot.*" = 250
+"core.save.disk_*" = 500       # the disk's sync latency varies a lot
 
 [budgets]
 # Engine start in a fresh process (6.6 ms) and the first sheet after it (17 ms).
@@ -46,11 +47,16 @@ fail_pct = 50
 "core.save.write_chum5.*" = 40
 "core.save.write_chum5lz.*" = 5000
 "core.save.chumrs_bytes.*" = 250
+# The writes and whole saves go to a tmpfs (/dev/shm): the work of saving,
+# not the disk's sync latency.
 # Whole saves (Engine::save): .chum5 11.6 / 28 ms, .chumrs 28 / 75 ms.
 "core.save.full_chum5.serpent" = 50
 "core.save.full_chum5.ghile_mear" = 120
 "core.save.full_chumrs.serpent" = 120
 "core.save.full_chumrs.ghile_mear" = 300
+# A whole .chum5 save to the disk, synced (20-100 ms here, depending on
+# what else uses the disk): for the trend, with a wide budget.
+"core.save.disk_*" = 2000
 # Print XML (Serpent 39 ms, Ghile Mear 13 ms) and xsltproc (49 / 61 ms).
 "core.print.xml.serpent" = 160
 "core.print.xml.ghile_mear" = 60

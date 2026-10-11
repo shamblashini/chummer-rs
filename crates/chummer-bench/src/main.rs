@@ -46,6 +46,22 @@ pub fn work_dir() -> PathBuf {
     std::env::var_os("CHUMMER_BENCH_DIR").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join(format!("chummer-bench-{}", std::process::id())))
 }
 
+/// Where saves and sheets are written: a tmpfs when there is one, so
+/// that the numbers are the work of saving and not the disk's latency
+/// (each save syncs the file and its folder). `core.save.disk_*` saves
+/// to the work directory instead.
+pub fn files_dir() -> PathBuf {
+    let shm = Path::new("/dev/shm");
+    let base = if shm.is_dir() && std::fs::create_dir_all(shm.join(format!("chummer-bench-{}", std::process::id()))).is_ok() { shm.join(format!("chummer-bench-{}", std::process::id())) } else { work_dir().join("files") };
+    let _ = std::fs::create_dir_all(&base);
+    base
+}
+
+/// Whether [`files_dir`] is a tmpfs.
+pub fn files_in_memory() -> bool {
+    files_dir().starts_with("/dev/shm")
+}
+
 fn isolate() {
     let dir = work_dir();
     for (var, sub) in [("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state"), ("XDG_CACHE_HOME", "cache")] {
@@ -54,7 +70,6 @@ fn isolate() {
         // Edition 2021, before any thread: safe.
         std::env::set_var(var, d);
     }
-    let _ = std::fs::create_dir_all(dir.join("files"));
 }
 
 pub fn engine() -> Result<Engine> {
@@ -130,7 +145,7 @@ fn run(args: &[String]) -> Result<()> {
     eprintln!("done in {:.0} s", t.elapsed().as_secs_f64());
     r.report.write(&out)?;
     eprintln!("wrote {}", out.display());
-    let _ = std::fs::remove_dir_all(work_dir().join("files"));
+    let _ = std::fs::remove_dir_all(files_dir());
     Ok(())
 }
 

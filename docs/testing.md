@@ -78,7 +78,7 @@ to `target/perf/work`, not to your own folders. The results are in
 | `core.engine` | `Engine::load` in a fresh process; the first sheet after it |
 | `core.load`, `core.compute` | loading a `.chum5` and a `.chumrs`; a full compute (`Engine::sheet`) |
 | `core.command` | `SetField`, `AddItem` (a Medkit), `RaiseAttribute`, `RaiseSkill` and undo, on a fresh session each sample |
-| `core.save` | the phases of `save_timing.rs` (clone, stamp, `to_document`, XML text, write, `.chum5lz`, `.chumrs` bytes) and whole saves to `.chum5` and `.chumrs` |
+| `core.save` | the phases of `save_timing.rs` (clone, stamp, `to_document`, XML text, write, `.chum5lz`, `.chumrs` bytes) and whole saves to `.chum5` and `.chumrs`, written to a tmpfs (`/dev/shm`) so the disk's sync latency does not count; `disk_chum5` is one save to the disk, for the trend |
 | `core.print` | the print XML; the default sheet through `xsltproc` (skipped with a note if there is none) |
 | `core.memory` | peak RSS (VmHWM, Linux only) of a process with the engine and the 10 biggest fixtures |
 | `sync.state_hash`, `sync.snapshot`, `sync.restore` | what the authority does per change and per resync |

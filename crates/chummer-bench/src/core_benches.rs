@@ -13,7 +13,7 @@ use chummer_core::items::Purchase;
 use chummer_core::lang::Language;
 use chummer_core::{data, print};
 
-use crate::{child, child_record, engine, fixture, load, slug, work_dir, BIG, HEAVY};
+use crate::{child, child_record, engine, files_dir, files_in_memory, fixture, load, slug, work_dir, BIG, HEAVY};
 
 /// A second career character (Serpent is one too): smaller, but its GUI
 /// pages are among the slowest (ui_tests.rs `frame_times`).
@@ -22,8 +22,7 @@ const CAREER: &str = "Munin_Career";
 pub fn run(r: &mut Runner) -> Result<()> {
     cold(r)?;
     let engine = engine()?;
-    let files = work_dir().join("files");
-    std::fs::create_dir_all(&files)?;
+    let files = files_dir();
     for name in [HEAVY, BIG] {
         let s = slug(name);
         let path = fixture(name);
@@ -115,7 +114,7 @@ fn save(r: &mut Runner, engine: &Engine) -> Result<()> {
     if !r.wants("core.save.") {
         return Ok(());
     }
-    let files = work_dir().join("files");
+    let files = files_dir();
     let s = slug(BIG);
     let ch = load(BIG)?;
     r.bench(&format!("core.save.clone.{s}"), 15, || {
@@ -151,6 +150,18 @@ fn save(r: &mut Runner, engine: &Engine) -> Result<()> {
             r.bench_setup(&format!("core.save.full_{ext}.{s}"), 10, || ch.clone(), |mut c| engine.save(&mut c, &path).expect("save"));
         }
     }
+    let place = if files_in_memory() { "to a tmpfs (/dev/shm), so without the disk's sync latency" } else { "to the work directory (no tmpfs here)" };
+    for b in r.report.benches.iter_mut().filter(|b| b.name.starts_with("core.save.write_") || b.name.starts_with("core.save.full_")) {
+        b.note = Some(format!("written {place}"));
+    }
+    // The same on the disk, with its sync: for the trend, with a wide budget.
+    let disk = work_dir().join("disk");
+    std::fs::create_dir_all(&disk)?;
+    let path = disk.join("saved.chum5");
+    r.bench_setup(&format!("core.save.disk_chum5.{s}"), 7, || ch.clone(), |mut c| engine.save(&mut c, &path).expect("save"));
+    if let Some(b) = r.report.benches.last_mut().filter(|b| b.name.starts_with("core.save.disk_")) {
+        b.note = Some("a whole .chum5 save to the disk (target/perf/work), synced: depends on the disk and what else uses it".into());
+    }
     Ok(())
 }
 
@@ -161,7 +172,7 @@ fn printing(r: &mut Runner, engine: &Engine) -> Result<()> {
     let lang = Language::load(&data::resource_dir("lang").context("lang directory")?, "en-us");
     let xsl = print::find_sheet("en-us", print::DEFAULT_SHEET).context("the default sheet")?;
     let xsltproc = print::xsltproc_path().filter(|p| std::process::Command::new(p).arg("--version").output().is_ok());
-    let files = work_dir().join("files");
+    let files = files_dir();
     for name in [HEAVY, BIG] {
         let s = slug(name);
         let ch = load(name)?;
