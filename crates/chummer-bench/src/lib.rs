@@ -193,7 +193,7 @@ impl Runner {
         if self.quick { full.min(3) } else { full }
     }
 
-    /// Times `f` after one warm-up call.
+    /// Times `f` after a warm-up.
     pub fn bench(&mut self, name: &str, full: usize, mut f: impl FnMut()) {
         self.bench_setup(name, full, || (), |()| f());
     }
@@ -203,7 +203,15 @@ impl Runner {
         if !self.wants(name) {
             return;
         }
-        f(setup());
+        // Warm up for at least 100 ms (at most 50 calls): one call is not
+        // enough for sub-millisecond benchmarks (caches, CPU clock).
+        let start = Instant::now();
+        for _ in 0..50 {
+            f(setup());
+            if start.elapsed().as_millis() >= 100 {
+                break;
+            }
+        }
         let n = self.samples(full);
         let mut out = Vec::with_capacity(n);
         for _ in 0..n {

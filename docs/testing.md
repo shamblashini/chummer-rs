@@ -89,7 +89,7 @@ to `target/perf/work`, not to your own folders. The results are in
 | `gui.switch` | the first frame after going to a page; each page's first visit |
 | `gui.catalog` | the gear catalog with a search shown, and the frame that takes a typed search |
 
-Each benchmark has one warm-up run and then several samples (3 in quick
+Each benchmark has a warm-up (at least 100 ms, at most 50 calls) and then several samples (3 in quick
 mode). The report gives the median, mean, p95, minimum, maximum and the
 median absolute deviation, and keeps the samples.
 
