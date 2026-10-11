@@ -1613,7 +1613,7 @@ impl GmScreen {
             let GmScreen { live, improvements, .. } = self;
             if let Some(doc) = doc_mut(live, views, id) {
                 let store = engine.store_for_character(doc);
-                let settings = engine.settings().resolve_for(&doc).cloned();
+                let settings = engine.settings().resolve_for(doc).cloned();
                 improvements.window(ctx, doc, &store, settings.as_ref(), lang);
             } else {
                 self.improvement_for = None;

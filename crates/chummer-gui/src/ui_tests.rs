@@ -2894,8 +2894,7 @@ fn campaign_default_preset_starts_the_wizards() {
     // By name too (what older files hold), and the first for none.
     assert_eq!(crate::wizard::preset_index(engine, &p.name()), i);
     assert_eq!(crate::wizard::preset_index(engine, ""), 0);
-    let mut c = chummer_core::campaign::Campaign::default();
-    c.default_settings = p.key();
+    let c = chummer_core::campaign::Campaign { default_settings: p.key(), ..Default::default() };
     let back: chummer_core::campaign::Campaign = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
     assert_eq!(back.default_settings, p.key(), "kept in the campaign file");
 }
