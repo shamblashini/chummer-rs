@@ -4,7 +4,7 @@
 mod common;
 
 use chummer_core::campaign::damage::{self, Attack, Tracks};
-use chummer_core::campaign::{Campaign, Combatant, Encounter, Member, MemberKind};
+use chummer_core::campaign::{Campaign, Combatant, Encounter, InitAdjust, Lasts, Member, MemberKind};
 use chummer_core::character::Character;
 use chummer_core::dice::Rng;
 use common::{iters, no_panic, Prng};
@@ -20,6 +20,8 @@ fn sample() -> Campaign {
     e.combatants.push(Combatant::for_member(a, "Davis"));
     e.combatants.push(Combatant::ad_hoc("Guard 2", 8, 1, 10, 10));
     e.new_round(&mut Rng::seeded(3), |_| None);
+    e.adjust(1, InitAdjust::new("Jazz", 1, 2, Lasts::Removed).from_source("gear:x"), &mut Rng::seeded(4));
+    e.adjust(0, InitAdjust::new("Adrenaline Boost 2", 4, 0, Lasts::Pass), &mut Rng::seeded(4));
     c.encounters.push(e);
     c
 }
@@ -50,6 +52,9 @@ fn exercise(c: &Campaign) {
             e.reroll(i, &mut rng, None);
             e.blitz(i, &mut rng);
             e.seize(i);
+            e.adjust(i, InitAdjust::new("x", 3, 2, Lasts::Turns(2)), &mut rng);
+            let _ = e.combatants[i].dice_plan();
+            let _ = e.unadjust(i, 0);
             if let Some(t) = e.combatants[i].track.clone() {
                 let tracks = Tracks { physical: t.physical, stun: t.stun, overflow: 3, physical_filled: t.physical_filled, stun_filled: t.stun_filled };
                 let _ = damage::apply(tracks, 6, false);
@@ -194,6 +199,9 @@ fn extreme_encounter_values() {
             x.base = base;
             x.dice = dice;
             x.track = Some(chummer_core::campaign::initiative::AdHocTrack { physical: i32::MAX, stun: i32::MIN, physical_filled: i32::MAX, stun_filled: i32::MAX });
+            for a in &mut x.adjust {
+                (a.score, a.dice, a.round, a.applied, a.lasts) = (score, base, round, score, Lasts::Turns(pass));
+            }
         }
         let text = c.to_json();
         let label = format!("round {round} pass {pass} score {score} base {base} dice {dice}");

@@ -1003,6 +1003,88 @@ fn classic_gm_drag_and_button_add() {
     assert!(h.app.close_campaign(true));
 }
 
+/// A campaign with one player, an adept with Adrenaline Boost.
+fn boost_campaign_file() -> PathBuf {
+    use chummer_core::campaign::{Campaign, Encounter, Member, MemberKind};
+    use chummer_core::character::Character;
+    let path = scratch().join(format!("ui-boost-{:?}.chummercampaign", std::thread::current().id()).replace(['(', ')'], ""));
+    let mut c = Campaign::new("UI boosts");
+    c.encounters.push(Encounter::new("Encounter 1"));
+    c.add(Member::embedded(MemberKind::Player, &Character::load(&fixture("Ocelot2.0.chum5")).unwrap()));
+    c.save(&path).unwrap();
+    path
+}
+
+/// The encounter board, in both layouts: the adjust menu offers the
+/// character's Adrenaline Boost; a click adds it as a chip and raises the
+/// score; the chip's × takes it away again.
+#[test]
+fn gm_board_initiative_adjustments() {
+    use crate::workspace::icons;
+    for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark] {
+        let mut h = Harness::new(kind);
+        h.size = WIDE;
+        h.app.open_campaign(&boost_campaign_file());
+        assert!(h.app.gm.is_some(), "{:?}", h.app.status);
+        h.frames(3);
+        {
+            let App { gm, views, .. } = &mut h.app;
+            let gm = gm.as_mut().unwrap();
+            gm.add_all_players(views);
+            gm.roll_initiative(views);
+        }
+        h.frames(3);
+        let gm = h.app.gm.as_ref().unwrap();
+        let boost = gm.boosts_of(0).iter().find(|s| s.adjust.label.starts_with("Adrenaline Boost")).cloned().expect("the adept's Adrenaline Boost is suggested");
+        let before = gm.campaign.encounters[0].combatants[0].score;
+        // Open the row's adjust menu.
+        if kind.layout() == crate::theme::Layout::Workspace {
+            h.click_text(icons::LIGHTNING);
+        } else {
+            h.click_text("± Adjust");
+        }
+        h.frames(2);
+        let offer = format!("{}: {} this turn", boost.adjust.label, boost.adjust.effect());
+        assert!(h.find_text(&offer).is_some(), "{kind:?}: the suggestion button {offer:?}: {:?}", h.on_screen());
+        h.click_text(&offer);
+        h.frames(2);
+        let c = &h.app.gm.as_ref().unwrap().campaign.encounters[0].combatants[0];
+        assert_eq!(c.adjust.len(), 1);
+        assert_eq!(c.score, before + boost.adjust.score, "{kind:?}: the score goes up at once");
+        let chip = format!("{} {} · this turn", boost.adjust.label, boost.adjust.effect());
+        let at = h.find_text(&chip).unwrap_or_else(|| panic!("{kind:?}: the chip {chip:?}: {:?}", h.on_screen()));
+        // Its × is just right of it.
+        let x = h.texts.iter().filter(|(t, r)| t == icons::X && (r.center().y - at.center().y).abs() < 8.0 && r.left() >= at.right() - 1.0).map(|(_, r)| *r).min_by(|a, b| a.left().total_cmp(&b.left())).unwrap_or_else(|| panic!("the chip's ×: {:?}", h.on_screen()));
+        h.click_at(x.center());
+        h.frames(2);
+        let c = &h.app.gm.as_ref().unwrap().campaign.encounters[0].combatants[0];
+        assert!(c.adjust.is_empty());
+        assert_eq!(c.score, before, "{kind:?}: removing takes it back");
+        assert!(h.find_text(&chip).is_none());
+        assert!(h.app.close_campaign(true));
+    }
+}
+
+/// Tools → Initiative tracker: an open adept joins with its suggested
+/// Adrenaline Boost, which adds a chip.
+#[test]
+fn tracker_suggests_adrenaline_boost() {
+    let mut h = Harness::new(ThemeKind::Graphite);
+    h.size = WIDE;
+    h.open(&fixture("Ocelot2.0.chum5"));
+    let name = h.app.views[0].ch().display_name();
+    h.app.show_initiative = true;
+    h.frames(3);
+    h.click_text(&format!("+ {name}"));
+    h.frames(1);
+    h.click_text("± Adjust");
+    h.frames(2);
+    let offer = h.find_where(|t| t.starts_with("Adrenaline Boost ") && t.ends_with(" this turn")).unwrap_or_else(|| panic!("the suggestion: {:?}", h.on_screen()));
+    h.click_at(offer.center());
+    h.frames(2);
+    assert!(h.find_where(|t| t.starts_with("Adrenaline Boost ") && t.ends_with("· this turn")).is_some(), "the chip: {:?}", h.on_screen());
+}
+
 /// The tool windows and dialogs over a character, in both layouts.
 #[test]
 fn tool_windows_and_dialogs() {

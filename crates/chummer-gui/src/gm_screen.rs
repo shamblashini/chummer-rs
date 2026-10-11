@@ -31,7 +31,8 @@ use std::sync::Arc;
 
 use chummer_core::calc::Sheet;
 use chummer_core::campaign::damage::{Attack, Defender, Tracks};
-use chummer_core::campaign::{self, Campaign, Combatant, CombatantId, Encounter, FeedCursor, InitStats, Member, MemberId, MemberKind};
+use chummer_core::campaign::boosts::{self, Suggestion};
+use chummer_core::campaign::{self, Campaign, Combatant, CombatantId, Encounter, FeedCursor, InitAdjust, InitStats, Member, MemberId, MemberKind};
 use chummer_core::character::Character;
 use chummer_core::command::Command;
 use chummer_core::dice::Rng;
@@ -59,6 +60,8 @@ struct Live {
     /// The session revision `sheet` and the feed were taken at.
     seen: Option<u64>,
     cursor: FeedCursor,
+    /// The character's conditional initiative bonuses, taken with `sheet`.
+    boosts: Vec<Suggestion>,
 }
 
 /// What the app should do for the GM screen.
@@ -203,6 +206,8 @@ pub struct GmScreen {
     check_mail_later: bool,
     /// Start hosting once going online is done (`go_online`).
     serve_when_online: bool,
+    /// The encounter's typed-in initiative adjustment.
+    adjust_form: crate::init_adjust::AdjustForm,
 }
 
 /// The member's document, wherever it is.
@@ -250,6 +255,7 @@ impl GmScreen {
             online_error: None,
             check_mail_later: false,
             serve_when_online: false,
+            adjust_form: Default::default(),
         }
     }
 
@@ -295,7 +301,7 @@ impl GmScreen {
 
     fn insert(&mut self, id: MemberId, ch: Character, engine: &Arc<Engine>) {
         let sheet = engine.sheet(&ch);
-        self.live.insert(id, Live { doc: Some(Doc::with_author(ch, engine.clone(), AUTHOR)), sheet, seen: None, cursor: FeedCursor::default() });
+        self.live.insert(id, Live { doc: Some(Doc::with_author(ch, engine.clone(), AUTHOR)), sheet, seen: None, cursor: FeedCursor::default(), boosts: Vec::new() });
     }
 
     /// Add a member with its character; selects it.
@@ -457,6 +463,7 @@ impl GmScreen {
                 continue;
             }
             l.sheet = engine.sheet(doc);
+            l.boosts = boosts::suggestions(doc, &l.sheet, &engine.store_for_character(doc));
             // A rename (here, in the member's tab or by its player) reaches
             // the roster and the encounters.
             let name = doc.display_name();
@@ -692,7 +699,7 @@ impl GmScreen {
         };
         let sheet = v.sheet.clone();
         let id = self.campaign.add(m);
-        self.live.insert(id, Live { doc: None, sheet, seen: None, cursor: FeedCursor::default() });
+        self.live.insert(id, Live { doc: None, sheet, seen: None, cursor: FeedCursor::default(), boosts: Vec::new() });
         v.campaign_member = Some(id);
         self.select_member(id);
         self.dirty = true;
@@ -1193,6 +1200,27 @@ impl GmScreen {
         self.dirty = true;
     }
 
+    /// The conditional initiative bonuses of combatant `i`'s character.
+    #[cfg(test)]
+    pub(crate) fn boosts_of(&self, i: usize) -> &[Suggestion] {
+        let m = self.campaign.encounters.get(self.encounter).and_then(|e| e.combatants.get(i)).and_then(|c| c.member);
+        m.and_then(|m| self.live.get(&m)).map_or(&[], |l| l.boosts.as_slice())
+    }
+
+    /// Add an initiative adjustment to combatant `i` (the order follows).
+    pub(crate) fn adjust(&mut self, i: usize, a: InitAdjust) {
+        let Some(e) = self.campaign.encounters.get_mut(self.encounter) else { return };
+        e.adjust(i, a, &mut self.rng);
+        self.dirty = true;
+    }
+
+    /// Take combatant `i`'s adjustment `k` away.
+    pub(crate) fn unadjust(&mut self, i: usize, k: usize) {
+        if self.campaign.encounters.get_mut(self.encounter).and_then(|e| e.unadjust(i, k)).is_some() {
+            self.dirty = true;
+        }
+    }
+
     /// Show combatant `cid` on the card (and its member in the roster).
     pub(crate) fn select_combatant(&mut self, cid: CombatantId, member: Option<MemberId>) {
         self.combatant = Some(cid);
@@ -1266,8 +1294,10 @@ impl GmScreen {
         let mut select = None;
         let mut seize = None;
         let mut blitz = None;
-        egui::Grid::new("gm_init").striped(true).num_columns(11).spacing([8.0, 4.0]).show(ui, |ui| {
-            for h in lang.tr_all(["", "Score", "Name", "Roll", "Acted", "Delay", "Seize", "Blitz", "", "", ""]) {
+        let mut adjust = None;
+        let mut unadjust = None;
+        egui::Grid::new("gm_init").striped(true).num_columns(12).spacing([8.0, 4.0]).show(ui, |ui| {
+            for h in lang.tr_all(["", "Score", "Name", "Roll", "Acted", "Delay", "Seize", "Blitz", "Initiative", "", "", ""]) {
                 ui.strong(h);
             }
             ui.end_row();
@@ -1299,6 +1329,22 @@ impl GmScreen {
                 if ui.add_enabled(pass > 0, egui::Checkbox::new(&mut blitzed, "")).on_hover_text(lang.tr("Blitz: roll 5d6 (spends 1 Edge)")).changed() && blitzed {
                     blitz = Some(i);
                 }
+                let c = &e.combatants[i];
+                ui.horizontal(|ui| {
+                    // A grid cell is as narrow as last frame's: grow it.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 2.0);
+                    if let Some(k) = crate::init_adjust::chips(ui, lang, &c.adjust) {
+                        unadjust = Some((i, k));
+                    }
+                    let boosts = c.member.and_then(|m| self.live.get(&m)).map_or(&[][..], |l| l.boosts.as_slice());
+                    ui.push_id(("gm_adjust", c.id), |ui| {
+                        if let Some(a) = crate::init_adjust::button(ui, lang, &mut self.adjust_form, boosts, &c.adjust, format!("± {}", lang.tr("Adjust"))) {
+                            adjust = Some((i, a));
+                        }
+                    });
+                });
+                let c = &mut self.campaign.encounters[enc_i].combatants[i];
                 if ui.small_button("−5").on_hover_text(lang.tr("Interrupt action")).clicked() {
                     c.score -= 5;
                     self.dirty = true;
@@ -1318,6 +1364,12 @@ impl GmScreen {
         }
         if let Some(i) = blitz {
             self.blitz(i, views);
+        }
+        if let Some((i, a)) = adjust {
+            self.adjust(i, a);
+        }
+        if let Some((i, k)) = unadjust {
+            self.unadjust(i, k);
         }
         if let Some((cid, m)) = select {
             self.select_combatant(cid, m);
@@ -1731,6 +1783,42 @@ mod tests {
         assert!(r.roll.dice.len() >= (6 + rating) as usize);
         assert_eq!(gm.push, None, "for one roll");
         assert_eq!(gm.edge_left(a, &views).0, left - 1);
+    }
+
+    /// Initiative adjustments: suggested from the character, on the
+    /// board, saved with the campaign.
+    #[test]
+    fn initiative_adjustments_save_with_the_campaign() {
+        let Ok(engine) = Engine::load() else { return };
+        let engine = Arc::new(engine);
+        let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../chummer-core/tests/fixtures/Ocelot2.0.chum5");
+        let ch = Character::load(&p).unwrap();
+        let mut gm = GmScreen::new_campaign("Test");
+        let views: Vec<CharacterView> = Vec::new();
+        gm.add_member(Member::embedded(MemberKind::Player, &ch), ch, &engine);
+        gm.sync(&engine, &views);
+        gm.add_all_players(&views);
+        gm.adhoc = ("Guard".into(), 8, 1);
+        gm.add_adhoc();
+        gm.roll_initiative(&views);
+        assert!(gm.boosts_of(1).is_empty(), "no character, no suggestions");
+        let boost = gm.boosts_of(0).iter().find(|s| s.adjust.label.starts_with("Adrenaline Boost")).cloned().unwrap();
+        let before = gm.campaign.encounters[0].combatants[0].score;
+        gm.dirty = false;
+        gm.adjust(0, boost.adjust.clone());
+        assert!(gm.dirty);
+        assert_eq!(gm.campaign.encounters[0].combatants[0].score, before + boost.adjust.score);
+        let dir = std::env::temp_dir().join(format!("chummer-rs-gm-adjust-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.chummercampaign");
+        let mut views = views;
+        let written = gm.save_job(&path, &mut views)();
+        gm.saved(&mut views, written).unwrap();
+        let back = Campaign::load(&path).unwrap();
+        assert_eq!(back.encounters[0].combatants[0].adjust, gm.campaign.encounters[0].combatants[0].adjust);
+        gm.unadjust(0, 0);
+        assert_eq!(gm.campaign.encounters[0].combatants[0].score, before);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

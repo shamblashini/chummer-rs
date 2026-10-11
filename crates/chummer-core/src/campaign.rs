@@ -41,6 +41,7 @@
 //! `chummer_net::invite::CampaignId` uses, so the two convert through
 //! `to_string()` / `parse()`.
 
+pub mod boosts;
 pub mod damage;
 pub mod initiative;
 
@@ -55,7 +56,7 @@ use crate::command::{self, Command, Envelope};
 use crate::engine::Engine;
 use crate::xml::{Element, Node};
 
-pub use initiative::{Combatant, Encounter, InitStats};
+pub use initiative::{Combatant, Encounter, InitAdjust, InitStats, Lasts};
 
 /// The `format` value of a campaign file.
 pub const FORMAT: &str = "chummer-rs campaign";

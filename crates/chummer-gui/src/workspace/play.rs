@@ -17,7 +17,9 @@
 
 use std::collections::HashMap;
 
+use chummer_core::campaign::boosts::{self, Suggestion};
 use chummer_core::campaign::damage::Attack;
+use chummer_core::campaign::Combatant;
 use chummer_core::command::Command;
 use chummer_core::lang::Language;
 use chummer_core::play::{ammo, matrix, vehicle};
@@ -86,24 +88,38 @@ impl Panel {
     }
 }
 
-/// Initiative rolled at the table.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Initiative rolled at the table: the character as a combatant (its
+/// score, dice and initiative adjustments), the combat turn and the pass.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Init {
-    /// The score now (−10 each pass).
-    score: i32,
-    rolled: Vec<u8>,
+    c: Combatant,
+    /// Combat turns rolled; 0 before the first roll.
+    round: u32,
     pass: u32,
 }
 
 impl Init {
     /// Whether there is another pass.
     fn has_next(&self) -> bool {
-        self.score - 10 > 0
+        self.round > 0 && self.c.score - 10 > 0
     }
 
     fn next_pass(&mut self) {
-        self.score -= 10;
+        self.c.next_pass();
         self.pass += 1;
+    }
+
+    /// A new combat turn with the sheet's `base` and `dice`: adjustments
+    /// that ran out go. Returns the score bonus of those left and the
+    /// dice to roll (the character's, then the adjustments').
+    fn start_turn(&mut self, base: i32, dice: u32) -> (i32, u32) {
+        self.round += 1;
+        self.pass = 1;
+        self.c.base = base;
+        self.c.dice = dice;
+        self.c.start_round(self.round);
+        let (own, extra) = self.c.dice_plan();
+        (self.c.adjust.iter().map(|a| a.score).sum(), own + extra.iter().sum::<u32>())
     }
 }
 
@@ -112,7 +128,11 @@ impl Init {
 pub struct PlayState {
     /// The character's own roller and roll log.
     pub roller: DiceRoller,
-    init: Option<Init>,
+    init: Init,
+    /// The typed-in initiative adjustment.
+    adjust_form: crate::init_adjust::AdjustForm,
+    /// The character's conditional initiative bonuses, per revision.
+    boosts: crate::memo::Memo<(), Vec<Suggestion>>,
     /// The weapon last rolled or fired (highlighted).
     weapon: Option<String>,
     /// Fire mode picked per weapon.
@@ -302,7 +322,7 @@ impl CharacterView {
         let s = &self.sheet;
         let note = match p {
             Panel::Condition => Some(lang.tr("Click a box to mark it; click again to clear.")),
-            Panel::Initiative => self.play.init.as_ref().map(|i| lang.tr_fmt("Pass {0}", &[&i.pass])),
+            Panel::Initiative => (self.play.init.round > 0).then(|| lang.tr_fmt("Pass {0}", &[&self.play.init.pass])),
             Panel::Rolls => Some(if s.wound_modifier != 0 { format!("{} · {} {}", lang.tr("click to roll"), lang.tr("CM Penalty:"), s.wound_modifier) } else { lang.tr("click to roll") }),
             _ => None,
         };
@@ -513,29 +533,29 @@ impl CharacterView {
         let mut reset = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            match &self.play.init {
-                Some(i) => {
-                    ui.label(widgets::mono(i.score.to_string(), 28.0, ws.accent));
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        let d: Vec<String> = i.rolled.iter().map(u8::to_string).collect();
-                        ui.label(RichText::new(format!("{base} + [{}]", d.join(" "))).size(11.5).color(ws.muted));
-                        let after = if i.has_next() { lang.tr_fmt("next pass at {0}", &[&(i.score - 10)]) } else { lang.tr("last pass") };
-                        ui.label(RichText::new(after).size(11.5).color(ws.muted));
-                    });
-                }
-                None => {
-                    ui.label(widgets::mono("—", 28.0, ws.muted));
-                    ui.label(RichText::new(lang.tr("Roll at the start of each combat turn.")).size(11.5).color(ws.muted));
-                }
+            let i = &self.play.init;
+            if i.round > 0 {
+                ui.label(widgets::mono(i.c.score.to_string(), 28.0, ws.accent));
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let d: Vec<String> = i.c.rolled.iter().map(u8::to_string).collect();
+                    let extra: i32 = i.c.adjust.iter().map(|a| a.applied).sum();
+                    let shown = if extra == 0 { format!("{} + [{}]", i.c.base, d.join(" ")) } else { format!("{} + [{}] {:+}", i.c.base, d.join(" "), extra) };
+                    ui.label(RichText::new(shown).size(11.5).color(ws.muted));
+                    let after = if i.has_next() { lang.tr_fmt("next pass at {0}", &[&(i.c.score - 10)]) } else { lang.tr("last pass") };
+                    ui.label(RichText::new(after).size(11.5).color(ws.muted));
+                });
+            } else {
+                ui.label(widgets::mono("—", 28.0, ws.muted));
+                ui.label(RichText::new(lang.tr("Roll at the start of each combat turn.")).size(11.5).color(ws.muted));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let any = self.play.init.is_some();
+                let any = self.play.init.round > 0;
                 if ui.add_enabled_ui(any, |ui| widgets::icon_button(ui, icons::ARROW_COUNTER_CLOCKWISE, 26.0)).inner.on_hover_text(lang.tr("Reset")).clicked() {
                     reset = true;
                 }
-                let can_next = self.play.init.as_ref().is_some_and(Init::has_next);
+                let can_next = self.play.init.has_next();
                 if ui.add_enabled_ui(can_next, |ui| widgets::button(ui, None, &format!("{} −10", lang.tr("Next pass")), Look::Secondary, 26.0)).inner.on_hover_text(lang.tr("Everyone loses 10")).clicked() {
                     next = true;
                 }
@@ -544,17 +564,47 @@ impl CharacterView {
                 }
             });
         });
+        // The bonuses the sheet does not count: chips, and the menu that
+        // adds one (the character's own, or typed in).
+        let boosts = self.play.boosts.get(self.doc.revision(), (), || boosts::suggestions(&self.doc, &self.sheet, &self.store));
+        let mut add = None;
+        let mut remove = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+            remove = crate::init_adjust::chips(ui, lang, &self.play.init.c.adjust);
+            ui.push_id("play_adjust", |ui| {
+                add = crate::init_adjust::button(ui, lang, &mut self.play.adjust_form, &boosts, &self.play.init.c.adjust, format!("{} {}", icons::LIGHTNING, lang.tr("Adjust")));
+            });
+        });
         if roll {
-            let (score, rolled) = self.play.roller.initiative(&lang.tr("Initiative"), base, dice);
-            self.play.init = Some(Init { score, rolled, pass: 1 });
+            let i = &mut self.play.init;
+            let (bonus, n) = i.start_turn(base, dice);
+            let label = if i.c.adjust.is_empty() { lang.tr("Initiative") } else { format!("{} ({})", lang.tr("Initiative"), i.c.adjust.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")) };
+            // One roll for the log (and the GM): every die, every bonus.
+            let (_, rolled) = self.play.roller.initiative(&label, base.saturating_add(bonus), n);
+            self.play.init.c.take_roll(rolled);
         }
         if next {
-            if let Some(i) = &mut self.play.init {
-                i.next_pass();
-            }
+            self.play.init.next_pass();
         }
         if reset {
-            self.play.init = None;
+            self.play.init.round = 0;
+            self.play.init.pass = 0;
+            // As the GM's Reset: those until removed stay (× takes them).
+            self.play.init.c.reset();
+        }
+        if let Some(k) = remove {
+            self.play.init.c.remove_adjust(k);
+        }
+        if let Some(a) = add {
+            let i = &mut self.play.init;
+            let before = i.c.score;
+            let text = crate::init_adjust::chip_text(&a, lang);
+            i.c.add_adjust(a, i.round, i.pass, self.play.roller.rng());
+            if i.round > 0 {
+                let after = i.c.score;
+                self.play.roller.note(&lang.tr("Initiative"), format!("{text}: {before} → {after}"));
+            }
         }
     }
 
@@ -1101,13 +1151,35 @@ mod tests {
 
     #[test]
     fn passes_lose_ten() {
-        let mut i = Init { score: 23, rolled: vec![6, 4, 3], pass: 1 };
+        let mut i = Init::default();
+        assert!(!i.has_next(), "nothing rolled yet");
+        assert_eq!(i.start_turn(5, 3), (0, 3));
+        i.c.take_roll(vec![6, 6, 6]);
+        assert_eq!(i.c.score, 23);
         assert!(i.has_next());
         i.next_pass();
-        assert_eq!((i.score, i.pass), (13, 2));
+        assert_eq!((i.c.score, i.pass), (13, 2));
         i.next_pass();
-        assert_eq!(i.score, 3);
+        assert_eq!(i.c.score, 3);
         assert!(!i.has_next(), "no pass at 0 or less");
+    }
+
+    #[test]
+    fn play_adjustments_join_the_roll() {
+        use chummer_core::campaign::{InitAdjust, Lasts};
+        let mut rng = chummer_core::dice::Rng::seeded(1);
+        let mut i = Init::default();
+        // Added before the roll: counted by it, its dice rolled with it.
+        i.c.add_adjust(InitAdjust::new("Adrenaline Boost 2", 4, 0, Lasts::Turn), i.round, i.pass, &mut rng);
+        i.c.add_adjust(InitAdjust::new("Jazz", 1, 2, Lasts::Removed), i.round, i.pass, &mut rng);
+        let (bonus, n) = i.start_turn(10, 1);
+        assert_eq!((bonus, n), (5, 3));
+        i.c.take_roll(vec![2, 3, 4]);
+        assert_eq!(i.c.score, 10 + 2 + 4 + 3 + 1 + 4, "the score the roller logged: base + bonus + dice");
+        // Turn 2: the boost is over, Jazz goes on.
+        let (bonus, n) = i.start_turn(10, 1);
+        assert_eq!((bonus, n), (1, 3));
+        assert_eq!(i.c.adjust.len(), 1);
     }
 
     #[test]

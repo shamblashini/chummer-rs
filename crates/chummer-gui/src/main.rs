@@ -17,6 +17,7 @@ mod gm_screen;
 mod gm_ui;
 mod history_ui;
 mod improvement_ui;
+mod init_adjust;
 mod initiative;
 mod lifestyle_ui;
 mod magic_ui;
@@ -1137,7 +1138,8 @@ impl App {
         if !self.ws_out(initiative) {
             let mut open = self.show_initiative;
             let mut pop = false;
-            let chars = self.initiative_characters();
+            // Only while it shows: the suggestions read every open character.
+            let chars = if open { self.initiative_characters() } else { Vec::new() };
             crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Initiative tracker")).id(egui::Id::new("initiative_tracker")).open(&mut open), egui::vec2(480.0, 420.0), egui::vec2(320.0, 200.0), true).show(ctx, |ui| {
                 pop = self.ws_pop_button(ui);
                 self.initiative.ui(ui, &self.lang, &chars)
@@ -1201,8 +1203,16 @@ impl App {
     }
 
     /// The open characters' initiative, for the tracker.
-    fn initiative_characters(&self) -> Vec<(String, i32, u32)> {
-        self.views.iter().map(|v| (v.ch().display_name(), v.sheet.initiative, v.sheet.initiative_dice.max(1) as u32)).collect()
+    fn initiative_characters(&self) -> Vec<initiative::OpenCharacter> {
+        self.views
+            .iter()
+            .map(|v| initiative::OpenCharacter {
+                name: v.ch().display_name(),
+                base: v.sheet.initiative,
+                dice: v.sheet.initiative_dice.max(1) as u32,
+                boosts: chummer_core::campaign::boosts::suggestions(v.ch(), &v.sheet, &self.engine.store_for_character(v.ch())),
+            })
+            .collect()
     }
 }
 
