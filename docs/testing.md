@@ -60,7 +60,8 @@ The script builds in release (the shipped profile), then runs two parts:
 
 - `chummer-bench run` (`crates/chummer-bench`): the engine, character
   files, commands, saves, print and online sync, on Serpent (the most
-  items) and Ghile Mear (the biggest file, mostly mugshots). Engine start
+  items) and Ghile Mear (the biggest file, mostly mugshots), and a large
+  synthetic character. Engine start
   and peak memory are measured in a fresh child process.
 - `cargo test --release -p chummer-gui perf_frames -- --ignored`
   (`chummer-gui/src/ui_tests/perf.rs`): headless frame times, as the
@@ -88,9 +89,10 @@ to `target/perf/work`, not to your own folders. The results are in
 | `gui.frame` | the mean, median and p95 frame of every page in Workspace and Classic, and the GM screen with six members |
 | `gui.switch` | the first frame after going to a page; each page's first visit |
 | `gui.catalog` | the gear catalog with a search shown, and the frame that takes a typed search |
+| `core.large`, `gui.large` | a large synthetic character: Serpent plus about 400 items bought for free from the game data in a seeded order (`chummer_bench::synth`; built at run time, no file is checked in). Load and compute, `AddItem` and `SetField`; the Workspace Gear, Vehicles and Cyberware tables built cold (`ws_inventory_rows`), the first frame with the table to build, and steady frames. The table budgets fail on the quadratic lookups that commit 4125244 removed |
 
-Each benchmark has a warm-up (at least 100 ms, at most 50 calls) and then several samples (3 in quick
-mode). The report gives the median, mean, p95, minimum, maximum and the
+Each benchmark has a warm-up (at least 100 ms, at most 50 calls) and
+then several samples (3 in quick mode). The report gives the median, mean, p95, minimum, maximum and the
 median absolute deviation, and keeps the samples.
 
 ### Budgets

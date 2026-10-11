@@ -168,6 +168,76 @@ pub fn peak_rss_mib() -> Option<f64> {
     Some(kb / 1024.0)
 }
 
+// ----- a large character -----
+
+/// A character with many more items than any fixture, built at run time
+/// from the game data: Serpent (149 items) plus about 400 bought for free
+/// (gear 320, weapons 45, armor 15, cyberware 25 at Standard grade,
+/// vehicles 8). The records are drawn in a seeded order, so every run
+/// builds the same character; a purchase that is refused is skipped.
+pub mod synth {
+    use chummer_core::character::Character;
+    use chummer_core::command::{self, Command, Envelope, RecordRef};
+    use chummer_core::engine::Engine;
+    use chummer_core::items::Purchase;
+
+    /// AddItem tag, data file, container, item, how many, grade.
+    type Kind = (&'static str, &'static str, &'static str, &'static str, usize, Option<&'static str>);
+
+    const KINDS: &[Kind] = &[
+        ("gear", "gear.xml", "gears", "gear", 320, None),
+        ("weapon", "weapons.xml", "weapons", "weapon", 45, None),
+        ("armor", "armor.xml", "armors", "armor", 15, None),
+        ("cyberware", "cyberware.xml", "cyberwares", "cyberware", 25, Some("Standard")),
+        ("vehicle", "vehicles.xml", "vehicles", "vehicle", 8, None),
+    ];
+
+    /// xorshift64*.
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            (self.0.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 33) as usize % n.max(1)
+        }
+    }
+
+    /// `base` with the items above added; returns it and how many were
+    /// added.
+    pub fn large(engine: &Engine, mut base: Character) -> (Character, usize) {
+        let mut rng = Rng(0x5eed_c0ff_ee15_600d);
+        let mut added = 0;
+        let mut seed = 1u64;
+        for &(tag, file, container, item, want, grade) in KINDS {
+            let Ok(doc) = engine.store.doc(file) else { continue };
+            let Some(list) = doc.child(container) else { continue };
+            let mut records: Vec<(String, String, bool)> = list.elements().filter(|e| e.name == item).map(|e| (e.child_text("id").unwrap_or_default(), e.child_text("name").unwrap_or_default(), e.child_text("rating").is_some_and(|r| r.trim() != "0" && !r.trim().is_empty()))).filter(|r| !r.1.is_empty()).collect();
+            // Fisher-Yates with the seeded generator.
+            for i in (1..records.len()).rev() {
+                let j = rng.below(i + 1);
+                records.swap(i, j);
+            }
+            let mut got = 0;
+            for (id, name, rated) in records.into_iter().take(want * 3) {
+                if got == want {
+                    break;
+                }
+                let purchase = Purchase { rating: i32::from(rated), qty: 1.0, grade: grade.map(str::to_owned), free: true, cost_multiplier: 1.0, ..Default::default() };
+                let cmd = Command::AddItem { tag: tag.into(), record: RecordRef { id, name }, purchase };
+                seed += 1;
+                // A fixed time: the same envelope, the same result.
+                if command::apply(&mut base, engine, &Envelope::new(cmd, seed, 1_790_000_000_000, "bench")).is_ok_and(|a| a.changed) {
+                    got += 1;
+                }
+            }
+            added += got;
+        }
+        (base, added)
+    }
+}
+
 // ----- the runner -----
 
 /// Times benchmarks and collects their records.

@@ -116,6 +116,23 @@ pub(crate) fn page_container(page: Page) -> &'static str {
 }
 
 impl CharacterView {
+    /// Builds the inventory rows of an item page (Gear for Street Gear) as
+    /// on a new revision, with the default sort and grouping; returns the
+    /// rows. For the performance suite (`ui_tests/perf.rs`).
+    #[cfg(test)]
+    pub(crate) fn ws_inventory_rows_cold(&self, tab: Tab, lang: &Language) -> usize {
+        let sec = page_section((tab, 0)).unwrap_or(DRUGS);
+        let cols = ws_inventory::columns(sec.container, self.doc.created, lang);
+        self.ws_inventory_forget();
+        self.ws_inventory_rows(&sec, &cols, lang, None, table::GroupBy::Default).len()
+    }
+
+    /// Drops the built inventory rows, as a new revision would.
+    #[cfg(test)]
+    pub(crate) fn ws_inventory_forget(&self) {
+        self.ws_gear.rows.clear();
+    }
+
     /// The page the view shows, when it is an item page.
     pub(crate) fn ws_item_page(&self, tab: Tab) -> Option<Page> {
         match tab {

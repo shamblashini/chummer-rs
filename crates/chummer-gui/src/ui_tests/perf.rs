@@ -1,8 +1,9 @@
 //! GUI frame times for the performance suite (docs/testing.md,
 //! "Performance tests"): every page of the heavy character in both
 //! layouts (steady frames, and the first frame after switching to the
-//! page), the catalog with a search typed, and the GM screen with a
-//! campaign of six members. Headless, as the other UI tests.
+//! page), the catalog with a search typed, the GM screen with a campaign
+//! of six members, and the item tables of a large synthetic character
+//! (`chummer_bench::synth`). Headless, as the other UI tests.
 //!
 //! Each frame is timed on its own (`Context::run` plus tessellation, as
 //! in [`Harness::frame`]; no GPU), after a few warm-up frames, and a page
@@ -171,6 +172,9 @@ fn perf_frames() {
             assert!(h.app.close_campaign(true));
         }
     }
+    if r.wants("gui.large.") {
+        large(&mut r, warm, n);
+    }
     r.report.write(&out).expect("write the report");
     eprintln!("wrote {}", out.display());
 }
@@ -204,4 +208,56 @@ fn catalog(r: &mut Runner, h: &mut Harness, i: usize, heavy: &str, warm: usize, 
     // Back to a plain page for what follows.
     h.app.views[i].ws_go(Section::Page(Tab::Common));
     h.frames(2);
+}
+
+/// The large synthetic character: building the Workspace Gear, Vehicles
+/// and Cyberware tables cold (as after each edit), the first frame of
+/// each page with its table to build, and steady frames.
+fn large(r: &mut Runner, warm: usize, n: usize) {
+    let engine = chummer_core::engine::Engine::load().expect("game data");
+    let ch = chummer_core::character::Character::load(&fixture(HEAVY)).unwrap();
+    let (mut ch, added) = chummer_bench::synth::large(&engine, ch);
+    let path = scratch().join("perf-large.chum5");
+    engine.save(&mut ch, &path).expect("save the large character");
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = WIDE;
+    let i = h.open(&path);
+    h.frames(2);
+    let about = format!("Serpent with {added} items added (chummer_bench::synth)");
+    let rows_n = if r.quick { 3 } else { 10 };
+    for (tab, page) in [(Tab::StreetGear, "gear"), (Tab::Vehicles, "vehicles"), (Tab::Cyberware, "cyberware")] {
+        let s = if tab == Tab::StreetGear { Section::Gear(0) } else { Section::Page(tab) };
+        h.app.views[i].ws_go(s);
+        h.frames(warm);
+        let rows = format!("gui.large.rows.{page}");
+        if r.wants(&rows) {
+            let lang = h.app.lang.clone();
+            let mut count = 0;
+            let samples: Vec<f64> = (0..rows_n)
+                .map(|_| {
+                    let t = Instant::now();
+                    count = h.app.views[i].ws_inventory_rows_cold(tab, &lang);
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            r.push(Record::from_samples(&rows, "ms", samples).with_note(format!("{about}: the Workspace table's {count} top rows built cold (ws_inventory_rows, as on a new revision)")));
+        }
+        let first = format!("gui.large.first_frame.{page}");
+        if r.wants(&first) {
+            let samples: Vec<f64> = (0..rows_n)
+                .map(|_| {
+                    h.app.views[i].ws_inventory_forget();
+                    let t = Instant::now();
+                    h.frame(Vec::new());
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            r.push(Record::from_samples(&first, "ms", samples).with_note(format!("{about}: a frame of the page whose table is rebuilt (as after an edit)")));
+        }
+        let frame = format!("gui.large.frame.{page}");
+        if r.wants(&frame) {
+            let samples = timed_frames(&mut h, warm, n);
+            r.push(Record::from_samples(&frame, "ms", samples).with_note(about.clone()));
+        }
+    }
 }

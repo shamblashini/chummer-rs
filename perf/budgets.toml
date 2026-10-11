@@ -65,6 +65,13 @@ fail_pct = 50
 # depend on the runner's speed: 2.5x.
 "core.memory.engine_plus_10" = 160
 
+# The large synthetic character (Serpent + 413 items, chummer_bench::synth):
+# load + compute 24 ms, compute 2.5 ms, AddItem 14.7 ms, SetField 7.5 ms.
+"core.large.load_compute" = 100
+"core.large.compute" = 10
+"core.large.add_gear" = 60
+"core.large.set_field" = 30
+
 # Sync: hash (6.9 / 16 ms), snapshot (0.40 / 1.27 s), restore (55 / 172 ms).
 "sync.state_hash.serpent" = 30
 "sync.state_hash.ghile_mear" = 65
@@ -104,3 +111,16 @@ fail_pct = 50
 "gui.switch.classic.serpent.skills" = 12                 # 2.7 ms
 # The catalog: frames with a search shown (1.0 ms), typing a search (1.4 ms).
 "gui.catalog.*" = 6
+# The large character's Workspace tables built cold (ws_inventory_rows):
+# Gear 29 ms, Vehicles 25 ms, Cyberware 22 ms; the first frame with the
+# table to build is 1-2 ms more. Before the item index (4125244) the
+# lookups were quadratic: 1700, 885 and 110 ms here. These budgets fail
+# on that.
+"gui.large.rows.gear" = 150
+"gui.large.rows.vehicles" = 150
+"gui.large.rows.cyberware" = 100
+"gui.large.first_frame.gear" = 150
+"gui.large.first_frame.vehicles" = 150
+"gui.large.first_frame.cyberware" = 100
+# Its steady frames (0.9 ms).
+"gui.large.frame.*" = 5

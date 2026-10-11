@@ -41,6 +41,7 @@ pub fn run(r: &mut Runner) -> Result<()> {
             let _ = engine.sheet(&ch);
         });
     }
+    large(r, &engine)?;
     commands(r, &engine)?;
     save(r, &engine)?;
     printing(r, &engine)?;
@@ -215,5 +216,51 @@ fn memory(r: &mut Runner) -> Result<()> {
     let peak = v["peak_mib"].as_f64().unwrap_or(0.0);
     let engine = v["engine_mib"].as_f64().unwrap_or(0.0);
     r.push(Record::from_samples(name, "MiB", vec![peak]).with_note(format!("peak RSS (VmHWM) of a process with the engine ({engine:.0} MiB after Engine::load) and the 10 biggest fixtures with their sheets; took {took:.0} ms")));
+    Ok(())
+}
+
+/// Items (elements with a guid) in a character.
+pub fn item_count(ch: &Character) -> usize {
+    fn walk(e: &chummer_core::xml::Element) -> usize {
+        usize::from(e.child("guid").is_some()) + e.elements().map(walk).sum::<usize>()
+    }
+    walk(&ch.doc)
+}
+
+/// The large synthetic character ([`chummer_bench::synth`]): load and
+/// compute, and edits.
+fn large(r: &mut Runner, engine: &Engine) -> Result<()> {
+    if !r.wants("core.large.") {
+        return Ok(());
+    }
+    let t = Instant::now();
+    let (ch, added) = chummer_bench::synth::large(engine, load(HEAVY)?);
+    let built = ms(t);
+    let items = item_count(&ch);
+    eprintln!("  large character: {added} items added to {HEAVY} ({items} in all) in {built:.0} ms");
+    let path = files_dir().join("large.chum5");
+    engine.save(&mut ch.clone(), &path)?;
+    let about = format!("{HEAVY} with {added} items added ({items} in all)");
+    r.bench("core.large.load_compute", 10, || {
+        let c = Character::load(&path).expect("load");
+        let _ = engine.sheet(&c);
+    });
+    r.bench("core.large.compute", 15, || {
+        let _ = engine.sheet(&ch);
+    });
+    let mut base = ch.clone();
+    base.karma = 10_000;
+    base.nuyen = 10_000_000.0;
+    let fresh = || Session::new(base.clone());
+    let medkit = Command::AddItem { tag: "gear".into(), record: RecordRef { id: String::new(), name: "Medkit".into() }, purchase: Purchase { rating: 3, qty: 1.0, cost_multiplier: 1.0, ..Default::default() } };
+    r.bench_setup("core.large.add_gear", 15, fresh, |mut ses| {
+        ses.apply(engine, medkit.clone()).expect("AddItem");
+    });
+    r.bench_setup("core.large.set_field", 15, fresh, |mut ses| {
+        ses.apply(engine, Command::SetField { key: "alias".into(), value: "Bench".into() }).expect("SetField");
+    });
+    for b in r.report.benches.iter_mut().filter(|b| b.name.starts_with("core.large.")) {
+        b.note = Some(about.clone());
+    }
     Ok(())
 }
