@@ -97,7 +97,7 @@ impl Engine {
     /// `scope`). Returns false when nothing changed.
     pub fn set_campaign_presets(&self, scope: &str, presets: Vec<CharacterSettings>) -> bool {
         let mut cur = self.settings.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let ids = |ps: &mut dyn Iterator<Item = &CharacterSettings>| ps.map(|p| (p.key(), p.campaign.as_ref().map(|c| c.hash))).collect::<Vec<_>>();
+        let ids = |ps: &mut dyn Iterator<Item = &CharacterSettings>| ps.map(|p| (p.key(), p.campaign.as_ref().map(|c| (c.hash, c.campaign.clone())))).collect::<Vec<_>>();
         if ids(&mut cur.campaign_presets(scope)) == ids(&mut presets.iter()) {
             return false;
         }
