@@ -44,12 +44,14 @@ struct State {
 pub struct Combo {
     inner: egui::ComboBox,
     salt: Id,
+    /// The list's height when set with [`Combo::height`].
+    height: Option<f32>,
 }
 
 impl Combo {
     pub fn from_id_salt(salt: impl Hash) -> Self {
         let salt = Id::new(salt);
-        Combo { inner: egui::ComboBox::from_id_salt(salt), salt }
+        Combo { inner: egui::ComboBox::from_id_salt(salt), salt, height: None }
     }
 
     pub fn selected_text(self, text: impl Into<WidgetText>) -> Self {
@@ -61,10 +63,16 @@ impl Combo {
     }
 
     pub fn height(self, height: f32) -> Self {
-        Combo { inner: self.inner.height(height), ..self }
+        Combo { inner: self.inner.height(height), height: Some(height), ..self }
     }
 
-    pub fn show_ui<R>(self, ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<Option<R>> {
+    pub fn show_ui<R>(mut self, ui: &mut Ui, contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<Option<R>> {
+        if self.height.is_none() {
+            // The list may be as tall as the app window has room above or
+            // below the button, not egui's 200 points: a long list in a
+            // small window is not squeezed.
+            self.inner = self.inner.height(list_height(ui.ctx().content_rect(), ui.cursor()));
+        }
         let key = ui.make_persistent_id(self.salt).with("search");
         let mut state: State = ui.data(|d| d.get_temp(key)).unwrap_or_default();
         // Clicks inside the list must not close it (the search field);
@@ -99,6 +107,17 @@ impl Combo {
         ui.data_mut(|d| d.insert_temp(key, state));
         r
     }
+}
+
+/// How tall a list opened from a button at `button` may be on `screen`:
+/// the larger room above or below it, less the search field and margins.
+pub(crate) fn list_height(screen: egui::Rect, button: egui::Rect) -> f32 {
+    const MARGIN: f32 = 16.0;
+    const BUTTON: f32 = 24.0;
+    const SEARCH: f32 = 40.0;
+    let below = screen.bottom() - button.top() - BUTTON - MARGIN;
+    let above = button.top() - screen.top() - MARGIN;
+    (below.max(above) - SEARCH).max(120.0)
 }
 
 /// `Ui::selectable_label` that takes part in the surrounding [`Combo`]'s search.
@@ -155,6 +174,19 @@ pub(crate) fn matches(text: &str, needle: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_uses_the_room_of_the_app_window() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 650.0));
+        // Near the top: the room below.
+        let h = list_height(screen, egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(200.0, 20.0)));
+        assert!(h > 400.0 && h < 650.0 - 100.0, "{h}");
+        // Near the bottom: the room above.
+        let h = list_height(screen, egui::Rect::from_min_size(egui::pos2(100.0, 600.0), egui::vec2(200.0, 20.0)));
+        assert!(h > 500.0 && h < 600.0, "{h}");
+        // Never below a usable minimum.
+        assert_eq!(list_height(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)), egui::Rect::from_min_size(egui::pos2(0.0, 40.0), egui::vec2(10.0, 10.0))), 120.0);
+    }
 
     #[test]
     fn words_in_any_order() {
