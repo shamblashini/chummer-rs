@@ -234,3 +234,43 @@ fn reload_settings_picks_up_new_and_edited_presets() {
     assert_eq!(engine.settings().find(&done.key).map(|p| p.name()).as_deref(), Some("Shared Rules"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A campaign's shared preset is found for that campaign's characters
+/// only, ahead of the user's own file of the same name, and survives a
+/// reload of the user's presets.
+#[test]
+fn campaign_presets_are_scoped() {
+    use chummer_core::settings::{CampaignSource, CharacterSettings};
+    use std::sync::Arc;
+    let dir = temp_dir("scoped");
+    let engine = chummer_core::engine::Engine::load().unwrap().with_settings_dir(Some(dir.clone())).unwrap();
+    let standard = engine.settings().find(STANDARD_ID).unwrap().clone();
+    settings::duplicate(&standard, "House", &dir).unwrap();
+    engine.reload_settings().unwrap();
+    let mut gm = standard.raw.clone();
+    gm.set_child_text("name", "GM House");
+    gm.child_or_insert("karmacost").set_child_text("karmaattribute", "9");
+    let hash = CharacterSettings { raw: gm.clone(), file: None, campaign: None }.content_hash();
+    let shared = |scope: &str| CharacterSettings { raw: gm.clone(), file: None, campaign: Some(Arc::new(CampaignSource { scope: scope.into(), campaign: "Seattle".into(), key: "House.xml".into(), hash })) };
+    let rev = engine.settings_rev();
+    assert!(engine.set_campaign_presets("c1", vec![shared("c1")]));
+    assert!(!engine.set_campaign_presets("c1", vec![shared("c1")]), "the same again changes nothing");
+    assert!(engine.settings_rev() > rev);
+
+    let mut ch = Character::from_str("<character><settings>House.xml</settings></character>").unwrap();
+    let lib = engine.settings();
+    assert_eq!(lib.find_for(&ch).unwrap().name(), "House", "outside a campaign: the user's own");
+    assert!(lib.find_for(&ch).unwrap().is_user());
+    ch.settings_scope = Some("c1".into());
+    assert_eq!(lib.find_for(&ch).unwrap().name(), "GM House");
+    assert_eq!(lib.find_for(&ch).unwrap().key(), "House.xml");
+    ch.settings_scope = Some("c2".into());
+    assert_eq!(lib.missing_for(&ch).as_deref(), Some("House"), "another campaign does not see it, nor the user's file");
+    ch.set_field("settings", STANDARD_ID);
+    assert!(lib.find_for(&ch).unwrap().is_builtin(), "built-ins count in every campaign");
+
+    engine.reload_settings().unwrap();
+    assert_eq!(engine.settings().campaign_presets("c1").count(), 1, "kept across a reload");
+    assert!(engine.remove_campaign_presets("c1"));
+    assert_eq!(engine.settings().campaign.len(), 0);
+}
