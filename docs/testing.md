@@ -1,6 +1,6 @@
 # Testing
 
-There are two layers:
+There are three layers:
 
 1. **`cargo test --workspace`**: everything that runs in one process, with
    no Docker and no internet. CI runs it on every push.
@@ -8,6 +8,10 @@ There are two layers:
    players as separate programs in Docker, with network faults, crashes
    and hostile traffic. It takes about an hour, so it is run by hand or
    from the manual GitHub workflow "E2E".
+3. **`scripts/perf.sh`**: the performance suite. Release builds, timings
+   of the main operations, budgets and a comparison with the previous
+   run. The GitHub workflow "Performance" runs it every night
+   ([Performance tests](#performance-tests)).
 
 ## In-process tests
 
@@ -43,7 +47,99 @@ Tuning knobs (environment variables):
 
 Tests marked `#[ignore = "BUG: ..."]` reproduce known bugs that are not
 fixed yet (there are none at the moment; the remaining ignored tests are
-timing benchmarks). Run them with `cargo test -- --ignored`.
+timing benchmarks, and `perf_frames`, the performance suite's GUI part).
+Run them with `cargo test -- --ignored`.
+
+## Performance tests
+
+    scripts/perf.sh --quick          # a quick check: 3 samples, short backlogs
+    scripts/perf.sh                  # the full suite, as the workflow runs it
+    scripts/perf.sh --only core,sync # a subset: core, sync, gui, or name prefixes
+
+The script builds in release (the shipped profile), then runs two parts:
+
+- `chummer-bench run` (`crates/chummer-bench`): the engine, character
+  files, commands, saves, print and online sync, on Serpent (the most
+  items) and Ghile Mear (the biggest file, mostly mugshots). Engine start
+  and peak memory are measured in a fresh child process.
+- `cargo test --release -p chummer-gui perf_frames -- --ignored`
+  (`chummer-gui/src/ui_tests/perf.rs`): headless frame times, as the
+  other UI tests. No window opens.
+
+The quick run takes about a minute after the build (the release build of
+the GUI tests takes 5-10 minutes the first time). It uses `nice -n 19`
+and 4 cargo jobs (`PERF_NICE`, `PERF_JOBS`). Settings and saved files go
+to `target/perf/work`, not to your own folders. The results are in
+`target/perf/`: `core.json` and `gui.json` from the two parts, and
+`results.json`, which merges them and adds the check.
+
+| Group | What is timed |
+|---|---|
+| `core.engine` | `Engine::load` in a fresh process; the first sheet after it |
+| `core.load`, `core.compute` | loading a `.chum5` and a `.chumrs`; a full compute (`Engine::sheet`) |
+| `core.command` | `SetField`, `AddItem` (a Medkit), `RaiseAttribute`, `RaiseSkill` and undo, on a fresh session each sample |
+| `core.save` | the phases of `save_timing.rs` (clone, stamp, `to_document`, XML text, write, `.chum5lz`, `.chumrs` bytes) and whole saves to `.chum5` and `.chumrs` |
+| `core.print` | the print XML; the default sheet through `xsltproc` (skipped with a note if there is none) |
+| `core.memory` | peak RSS (VmHWM, Linux only) of a process with the engine and the 10 biggest fixtures |
+| `sync.state_hash`, `sync.snapshot`, `sync.restore` | what the authority does per change and per resync |
+| `sync.replica`, `sync.authority` | a player's edit, its submit and ack; a GM edit at the authority |
+| `sync.catchup` | a replica that comes back after 200 changes (replayed, per change) and after 500 (beyond the log window, so a snapshot) |
+| `sync.mail` | sealing and opening 20 offline edits, and a snapshot push |
+| `gui.frame` | the mean, median and p95 frame of every page in Workspace and Classic, and the GM screen with six members |
+| `gui.switch` | the first frame after going to a page; each page's first visit |
+| `gui.catalog` | the gear catalog with a search shown, and the frame that takes a typed search |
+
+Each benchmark has one warm-up run and then several samples (3 in quick
+mode). The report gives the median, mean, p95, minimum, maximum and the
+median absolute deviation, and keeps the samples.
+
+### Budgets
+
+`perf/budgets.toml` gives each benchmark an absolute budget: the largest
+median allowed. A key is a benchmark name or a prefix that ends in `*`;
+the longest key that matches wins. A median over its budget fails the
+run. A benchmark without a budget gives a warning only. The first
+budgets are about 4 times the medians of a quick local run (the file
+says which), because GitHub's runners are slower and noisier. Change a
+budget only for a reason, and give the reason in the commit message.
+
+### Regression check
+
+`chummer-bench check` compares each median with the previous successful
+run on master (the workflow downloads its `perf-results` artifact):
+
+- A change smaller than the benchmark's `min_delta` (in its unit, from
+  the budgets file) is noise and is ignored.
+- +25 % or more (`warn_pct`): a warning.
+- +50 % or more (`fail_pct`): marked "slow". When the next run is also
+  +50 % or more, it fails.
+- While a benchmark is flagged, the next run is compared with the
+  baseline from before the slowdown, not with the slow run. So a lasting
+  slowdown cannot become the new normal by itself, and a single slow run
+  (a noisy runner) only warns.
+
+A failed run is not used as a baseline. To accept a slowdown on purpose,
+run the workflow by hand with `baseline: reset`; that run is then the
+baseline. Locally, `--previous target/perf/results.json` (copied
+somewhere first) compares with an earlier run.
+
+### The workflow
+
+`.github/workflows/perf.yml` runs every night at 03:23 UTC and by hand
+(Actions → Performance → Run workflow, with a subset and the baseline
+choice). It never runs twice at the same time. It does not run on
+pushes, so the normal CI stays as fast as before.
+
+The job summary has a table: each benchmark's median, p95, budget, the
+previous median, the change in percent, the trend over the last five
+successful runs (oldest first, this run in bold), and the status
+(passed, warning, slow, failed, new or skipped). Failures are listed
+above the table, notes on what a benchmark measures below it. The JSON
+files are kept as the artifact `perf-results` for 90 days; they are the
+history.
+
+On the first run there is no previous artifact. The summary says so,
+only the budgets are checked, and that run becomes the baseline.
 
 ## End-to-end tests in Docker
 

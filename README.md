@@ -1133,7 +1133,10 @@ and settings files; random command sequences (determinism, round trips,
 undo/redo); a headless run of the GUI over every fixture, layout and
 page; randomised sync with a lossy, reordering network and crashes; and
 `tests/e2e/run.sh`, which runs the relay, a GM and players in Docker
-under packet loss, partitions, kills, a full disk and hostile mail. See
+under packet loss, partitions, kills, a full disk and hostile mail. A
+performance suite (`scripts/perf.sh`, run nightly by the "Performance"
+workflow) times loading, edits, saves, printing, sync and GUI frames
+against budgets and the previous run. See
 [docs/testing.md](docs/testing.md).
 
 ## Not done yet
