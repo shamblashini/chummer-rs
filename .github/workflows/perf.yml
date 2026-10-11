@@ -1,0 +1,79 @@
+name: Performance
+# The performance suite (docs/testing.md, "Performance tests"): nightly
+# and by hand. Not on pushes: the release build alone takes about 10
+# minutes, and the nightly run catches a slowdown by the next morning.
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Subset: all, core, sync, gui, or benchmark name prefixes (comma-separated)"
+        required: false
+        default: all
+      baseline:
+        description: "compare: with the last successful runs on master. reset: compare with nothing (after an accepted slowdown); this run becomes the baseline."
+        type: choice
+        options: [compare, reset]
+        default: compare
+  schedule:
+    - cron: "23 3 * * *"
+
+# One run at a time; a second one waits instead of cancelling the first.
+concurrency:
+  group: perf
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev xsltproc
+      - uses: Swatinem/rust-cache@v2
+      - name: Previous results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE: ${{ inputs.baseline }}
+        run: |
+          mkdir -p prev
+          if [ "$BASELINE" = reset ]; then
+            echo "Baseline reset: nothing to compare with."
+            exit 0
+          fi
+          # The last five successful runs on master: the newest is the
+          # baseline, all of them make the trend column.
+          ids=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow perf.yml --branch master --status success --limit 5 --json databaseId --jq '.[].databaseId') || ids=""
+          for id in $ids; do
+            gh run download "$id" --repo "$GITHUB_REPOSITORY" --name perf-results --dir "prev/$id" || echo "run $id has no results"
+          done
+          find prev -name results.json
+      - name: Run the suite
+        env:
+          ONLY: ${{ inputs.only }}
+          PERF_JOBS: "4"
+          PERF_NICE: "0"
+        run: |
+          args=()
+          for f in prev/*/results.json; do
+            [ -f "$f" ] && args+=(--previous "$f")
+          done
+          scripts/perf.sh --only "${ONLY:-all}" "${args[@]}"
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results
+          path: |
+            target/perf/results.json
+            target/perf/core.json
+            target/perf/gui.json
+          retention-days: 90
+          if-no-files-found: warn
