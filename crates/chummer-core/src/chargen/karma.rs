@@ -367,7 +367,7 @@ fn mystic_adept_power_points(ch: &Character, settings: &CharacterSettings) -> Po
 }
 
 fn find_guid<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
-    if e.get("guid").eq_ignore_ascii_case(guid) {
+    if e.get_eq_ignore_case("guid", guid) {
         return Some(e);
     }
     e.elements().find_map(|c| find_guid(c, guid))

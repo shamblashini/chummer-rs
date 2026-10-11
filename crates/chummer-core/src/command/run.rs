@@ -573,7 +573,7 @@ fn add_custom_drug(ch: &mut Character, store: &DataStore, name: &str, grade: &st
 /// The guids of every level of the quality `guid`: `guid` itself first
 /// when `selected_first`, else last (removed after its copies).
 fn quality_levels_of(ch: &Character, guid: &str, selected_first: bool) -> Vec<String> {
-    let Some(q) = ch.items("qualities", "quality").into_iter().find(|q| q.get("guid").eq_ignore_ascii_case(guid)).cloned() else {
+    let Some(q) = ch.items("qualities", "quality").into_iter().find(|q| q.get_eq_ignore_case("guid", guid)).cloned() else {
         return vec![guid.to_owned()];
     };
     let mut v: Vec<String> = items::quality::level_guids(ch, &q).into_iter().filter(|g| !g.eq_ignore_ascii_case(guid)).collect();
@@ -591,7 +591,7 @@ fn quality_levels_of(ch: &Character, guid: &str, selected_first: bool) -> Vec<St
 /// each removed level is bought off; a level that cannot be paid for ends
 /// the change.
 fn set_quality_level(ch: &mut Character, engine: &Engine, store: &DataStore, guid: &str, level: i32) -> R {
-    let q = ch.items("qualities", "quality").into_iter().find(|q| q.get("guid").eq_ignore_ascii_case(guid)).cloned().ok_or_else(|| Rejected::new("no such quality"))?;
+    let q = ch.items("qualities", "quality").into_iter().find(|q| q.get_eq_ignore_case("guid", guid)).cloned().ok_or_else(|| Rejected::new("no such quality"))?;
     let doc = store.doc("qualities.xml").map_err(reject)?;
     let key = q.child_text("sourceid").filter(|s| !s.is_empty()).unwrap_or_else(|| q.get("name"));
     let rec = data::find(&doc, "qualities", "quality", &key).ok_or_else(|| Rejected::new(format!("{} is not in the game data", q.get("name"))))?;

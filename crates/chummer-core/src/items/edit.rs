@@ -63,6 +63,11 @@ pub fn is_item(e: &Element) -> bool {
 struct Index {
     doc: *const Element,
     paths: std::collections::HashMap<String, Vec<usize>>,
+    /// [`attribute_values`] of the character, once asked for, and the
+    /// store it was worked out with.
+    attrs: Option<(*const DataStore, Vec<crate::calc::AttributeValues>)>,
+    /// Other values of the whole document, by name ([`scoped`]).
+    memo: std::collections::HashMap<&'static str, Box<dyn std::any::Any>>,
 }
 
 thread_local! {
@@ -95,7 +100,7 @@ pub fn with_index<T>(ch: &Character, f: impl FnOnce() -> T) -> T {
     }
     let mut paths = std::collections::HashMap::new();
     walk(&ch.doc, &mut Vec::new(), &mut paths);
-    let index = Index { doc: &ch.doc as *const Element, paths };
+    let index = Index { doc: &ch.doc as *const Element, paths, attrs: None, memo: Default::default() };
     let before = INDEX.with(|i| i.borrow_mut().replace(index));
     struct Restore(Option<Index>);
     impl Drop for Restore {
@@ -108,9 +113,67 @@ pub fn with_index<T>(ch: &Character, f: impl FnOnce() -> T) -> T {
     f()
 }
 
+/// Every attribute's values (`calc::attribute_values_with`, default
+/// rules): what ware and gear rating, cost and essence expressions read.
+/// Worked out once inside [`with_index`] (each row of an item table asks
+/// for them several times), else each time.
+pub(crate) fn attribute_values(ch: &Character, store: &DataStore) -> Vec<crate::calc::AttributeValues> {
+    let compute = || {
+        let rules = crate::calc::Rules::default();
+        ch.attributes.iter().map(|a| crate::calc::attribute_values_with(ch, &a.name, &rules, Some(store))).collect::<Vec<_>>()
+    };
+    let doc = &ch.doc as *const Element;
+    let store_ptr = store as *const DataStore;
+    let active = INDEX.with(|i| {
+        let i = i.borrow();
+        let i = i.as_ref().filter(|i| std::ptr::eq(i.doc, doc))?;
+        Some(i.attrs.as_ref().filter(|(s, _)| std::ptr::eq(*s, store_ptr)).map(|(_, v)| v.clone()))
+    });
+    match active {
+        None => compute(),
+        Some(Some(v)) => v,
+        Some(None) => {
+            // Outside the borrow: the computation may look items up.
+            let v = compute();
+            INDEX.with(|i| {
+                if let Some(i) = i.borrow_mut().as_mut().filter(|i| std::ptr::eq(i.doc, doc)) {
+                    i.attrs = Some((store_ptr, v.clone()));
+                }
+            });
+            v
+        }
+    }
+}
+
+/// A value worked out from the whole of `doc` (`compute`), kept under
+/// `key` while an index of `doc` is active ([`with_index`]); else worked
+/// out each time.
+pub(crate) fn scoped<T: Clone + 'static>(doc: &Element, key: &'static str, compute: impl FnOnce() -> T) -> T {
+    let ptr = doc as *const Element;
+    let active = INDEX.with(|i| {
+        let i = i.borrow();
+        let i = i.as_ref().filter(|i| std::ptr::eq(i.doc, ptr))?;
+        Some(i.memo.get(key).and_then(|v| v.downcast_ref::<T>()).cloned())
+    });
+    match active {
+        None => compute(),
+        Some(Some(v)) => v,
+        Some(None) => {
+            let v = compute();
+            INDEX.with(|i| {
+                if let Some(i) = i.borrow_mut().as_mut().filter(|i| std::ptr::eq(i.doc, ptr)) {
+                    i.memo.insert(key, Box::new(v.clone()));
+                }
+            });
+            v
+        }
+    }
+}
+
 /// The elements on the indexed path to `guid` in `doc` (the item last),
-/// when an index of `doc` is active and still matches.
-fn indexed<'a>(doc: &'a Element, guid: &str) -> Option<Option<Vec<&'a Element>>> {
+/// when an index of `doc` is active and still matches: `Some(None)` when
+/// no item has that guid.
+pub(crate) fn indexed<'a>(doc: &'a Element, guid: &str) -> Option<Option<Vec<&'a Element>>> {
     INDEX.with(|i| {
         let i = i.borrow();
         let i = i.as_ref().filter(|i| std::ptr::eq(i.doc, doc))?;
@@ -126,20 +189,27 @@ fn indexed<'a>(doc: &'a Element, guid: &str) -> Option<Option<Vec<&'a Element>>>
                 _ => return None,
             }
         }
-        let ok = ITEM_TAGS.contains(&e.name.as_str()) && e.get("guid").eq_ignore_ascii_case(guid);
+        let ok = ITEM_TAGS.contains(&e.name.as_str()) && e.get_eq_ignore_case("guid", guid);
         ok.then_some(Some(chain))
     })
 }
 
+/// The child of the document root that holds item `guid` (its list:
+/// `gears`, `vehicles`…), from the active index; `None` without an index
+/// or when the item is not indexed.
+pub(crate) fn indexed_top<'a>(doc: &'a Element, guid: &str) -> Option<&'a Element> {
+    indexed(doc, guid).flatten().and_then(|c| c.first().copied())
+}
+
 fn find_in<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
-    if ITEM_TAGS.contains(&e.name.as_str()) && e.get("guid").eq_ignore_ascii_case(guid) {
+    if ITEM_TAGS.contains(&e.name.as_str()) && e.get_eq_ignore_case("guid", guid) {
         return Some(e);
     }
     e.elements().find_map(|c| find_in(c, guid))
 }
 
 fn find_in_mut<'a>(e: &'a mut Element, guid: &str) -> Option<&'a mut Element> {
-    if ITEM_TAGS.contains(&e.name.as_str()) && e.get("guid").eq_ignore_ascii_case(guid) {
+    if ITEM_TAGS.contains(&e.name.as_str()) && e.get_eq_ignore_case("guid", guid) {
         return Some(e);
     }
     e.elements_mut().find_map(|c| find_in_mut(c, guid))
@@ -169,7 +239,7 @@ pub fn parent<'a>(ch: &'a Character, guid: &str) -> Option<&'a Element> {
     fn walk<'a>(e: &'a Element, guid: &str, owner: Option<&'a Element>) -> Option<&'a Element> {
         let here = if ITEM_TAGS.contains(&e.name.as_str()) { Some(e) } else { owner };
         for c in e.elements() {
-            if ITEM_TAGS.contains(&c.name.as_str()) && c.get("guid").eq_ignore_ascii_case(guid) {
+            if ITEM_TAGS.contains(&c.name.as_str()) && c.get_eq_ignore_case("guid", guid) {
                 return here;
             }
             if let Some(p) = walk(c, guid, here) {
@@ -199,17 +269,17 @@ pub(crate) fn subtree_guids(e: &Element, out: &mut Vec<String>) {
 }
 
 /// The data record of a saved item: by `sourceid`, else by name.
-fn record_in<'a>(doc: &'a Element, container: &str, item: &'a str, saved: &Element) -> Option<Record<'a>> {
+fn record_in<'a>(ix: &'a data::RecordIndex, saved: &Element) -> Option<Record<'a>> {
     let id = saved.child_text("sourceid").filter(|s| !s.trim().is_empty()).or_else(|| saved.child_text("id")).unwrap_or_default();
-    (!id.is_empty()).then(|| data::find(doc, container, item, &id)).flatten().or_else(|| data::find(doc, container, item, &saved.get("name")))
+    (!id.is_empty()).then(|| ix.find(&id)).flatten().or_else(|| ix.find(&saved.get("name")))
 }
 
 /// Run `f` with the data record of a saved item, if it has one.
 pub(crate) fn with_record<T>(store: &DataStore, e: &Element, f: impl FnOnce(Record<'_>) -> T) -> Option<T> {
     let (file, container, item) = match tag_of(e) {
         "gear" => {
-            let doc = store.doc("gear.xml").ok()?;
-            return gear::record_of(&doc, e).map(f);
+            let ix = store.index("gear.xml", "gears", "gear").ok()?;
+            return gear::record_of_indexed(&ix, e).map(f);
         }
         "cyberware" | "bioware" => {
             let (file, container, item, _) = cyberware::data_source(cyberware::is_bioware(e));
@@ -224,8 +294,8 @@ pub(crate) fn with_record<T>(store: &DataStore, e: &Element, f: impl FnOnce(Reco
         "lifestyle" => ("lifestyles.xml", "lifestyles", "lifestyle"),
         _ => return None,
     };
-    let doc = store.doc(file).ok()?;
-    record_in(&doc, container, item, e).map(f)
+    let ix = store.index(file, container, item).ok()?;
+    record_in(&ix, e).map(f)
 }
 
 // ---------------------------------------------------------------------------
@@ -840,7 +910,7 @@ pub fn settle_new_item(ch: &mut Character, guid: &str) {
     for n in h.children.iter_mut() {
         if let Node::Element(ub) = n {
             if ub.name == "underbarrel" {
-                if let Some(i) = ub.children.iter().position(|c| matches!(c, Node::Element(w) if w.get("guid").eq_ignore_ascii_case(guid))) {
+                if let Some(i) = ub.children.iter().position(|c| matches!(c, Node::Element(w) if w.get_eq_ignore_case("guid", guid))) {
                     if let Node::Element(w) = ub.children.remove(i) {
                         moved = Some(w);
                     }

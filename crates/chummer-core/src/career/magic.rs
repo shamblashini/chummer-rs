@@ -41,7 +41,7 @@ pub fn technique_karma_cost(engine: &Engine, ch: &Character, art_guid: &str) -> 
     let has = ch
         .items("martialarts", "martialart")
         .into_iter()
-        .find(|a| a.get("guid").eq_ignore_ascii_case(art_guid))
+        .find(|a| a.get_eq_ignore_case("guid", art_guid))
         .and_then(|a| a.child("martialarttechniques"))
         .is_some_and(|t| t.children_named("martialarttechnique").next().is_some());
     if has {
@@ -152,7 +152,7 @@ fn check_foci_limits(ch: &Character, engine: &Engine, force: i32) -> Result<(), 
 
 fn find_gear(ch: &Character, guid: &str) -> Option<crate::xml::Element> {
     fn walk(e: &crate::xml::Element, guid: &str) -> Option<crate::xml::Element> {
-        if e.get("guid").eq_ignore_ascii_case(guid) {
+        if e.get_eq_ignore_case("guid", guid) {
             return Some(e.clone());
         }
         e.elements().find_map(|c| walk(c, guid))
@@ -277,7 +277,7 @@ pub fn fettering_karma_cost(engine: &Engine, ch: &Character, spirit: &crate::xml
 /// Undoing the fettering expense releases the spirit again (LB-01).
 pub fn set_spirit_fettered(ch: &mut Character, engine: &Engine, spirit_guid: &str, fettered: bool) -> Result<Option<String>, CareerError> {
     require_career(ch)?;
-    let s = ch.items("spirits", "spirit").into_iter().find(|s| s.get("guid").eq_ignore_ascii_case(spirit_guid)).cloned().ok_or_else(|| CareerError::NotFound(format!("spirit {spirit_guid}")))?;
+    let s = ch.items("spirits", "spirit").into_iter().find(|s| s.get_eq_ignore_case("guid", spirit_guid)).cloned().ok_or_else(|| CareerError::NotFound(format!("spirit {spirit_guid}")))?;
     if s.get_bool("fettered").unwrap_or(false) == fettered {
         return Ok(None);
     }

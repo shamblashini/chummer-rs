@@ -199,7 +199,7 @@ impl Ctx<'_> {
             return String::new();
         }
         for list in ["gearlocations", "armorlocations", "weaponlocations", "vehiclelocations"] {
-            if let Some(loc) = self.ch.items(list, "location").into_iter().find(|l| l.get("guid").eq_ignore_ascii_case(value)) {
+            if let Some(loc) = self.ch.items(list, "location").into_iter().find(|l| l.get_eq_ignore_case("guid", value)) {
                 return loc.get("name");
             }
         }

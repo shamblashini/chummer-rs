@@ -111,16 +111,39 @@ fail_pct = 50
 "gui.switch.classic.serpent.skills" = 12                 # 2.7 ms
 # The catalog: frames with a search shown (1.0 ms), typing a search (1.4 ms).
 "gui.catalog.*" = 6
+# Each page's first visit (gui.first, 3 fresh opens in quick mode, the
+# game data loaded): 0.5-3 ms. Set on 2026-10-11 from commit 59f4dda at
+# about 4x the local median. Before the data record index, the warm-up
+# and the item index on the Play page: Play 92 ms (cold) / 59 ms,
+# Vehicles & Drones 18 / 10 ms, Relationships 30 ms (cold), Gear 5.4 ms.
+"gui.first.*" = 8
+"gui.first.workspace.serpent.at_the_table" = 16          # 3.9 ms
+"gui.first.workspace.serpent.vehicles_drones" = 16       # 4.2 ms
+"gui.first.workspace.serpent.gear" = 12                  # 2.9 ms
+"gui.first.workspace.serpent.skills" = 12                # 2.6 ms
+"gui.first.classic.serpent.skills" = 10                  # 2.3 ms
+# The large character's first visits: 0.5-3 ms but for these. Before:
+# Play 967 ms, Gear 28, Weapons 36, Vehicles 30, Cyberware 23 ms.
+"gui.large.first.*" = 10
+"gui.large.first.at_the_table" = 80                      # 22.8 ms
+"gui.large.first.gear" = 40                              # 11.2 ms
+"gui.large.first.weapons" = 30                           # 7.6 ms
+"gui.large.first.vehicles_drones" = 25                   # 6.4 ms
+"gui.large.first.cyberware_bioware" = 16                 # 4.2 ms
+"gui.large.first.clothing_armor" = 14                    # 3.5 ms
+"gui.large.first.skills" = 12                            # 3.2 ms
+"gui.large.first.attributes_qualities" = 12              # 2.9 ms
 # The large character's Workspace tables built cold (ws_inventory_rows):
-# Gear 29 ms, Vehicles 25 ms, Cyberware 22 ms; the first frame with the
-# table to build is 1-2 ms more. Before the item index (4125244) the
-# lookups were quadratic: 1700, 885 and 110 ms here. These budgets fail
-# on that.
-"gui.large.rows.gear" = 150
-"gui.large.rows.vehicles" = 150
-"gui.large.rows.cyberware" = 100
-"gui.large.first_frame.gear" = 150
-"gui.large.first_frame.vehicles" = 150
-"gui.large.first_frame.cyberware" = 100
+# Gear 10.2 ms, Vehicles 4.3 ms, Cyberware 3.2 ms; the first frame with
+# the table to build is 1-2 ms more (from commit 59f4dda). Before the
+# data record index and the attribute cache: 27, 29 and 22 ms; before
+# the item index (4125244) the lookups were quadratic: 1700, 885 and
+# 110 ms here. These budgets fail on either.
+"gui.large.rows.gear" = 40
+"gui.large.rows.vehicles" = 16
+"gui.large.rows.cyberware" = 12
+"gui.large.first_frame.gear" = 40
+"gui.large.first_frame.vehicles" = 24
+"gui.large.first_frame.cyberware" = 16
 # Its steady frames (0.9 ms).
 "gui.large.frame.*" = 5

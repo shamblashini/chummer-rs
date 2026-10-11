@@ -551,8 +551,7 @@ impl AttributeSource for WareAttributes<'_> {
 }
 
 fn sheet_attributes(ch: &Character, store: &DataStore) -> Vec<AttributeValues> {
-    let rules = Rules::default();
-    ch.attributes.iter().map(|a| calc::attribute_values_with(ch, &a.name, &rules, Some(store))).collect()
+    super::edit::attribute_values(ch, store)
 }
 
 /// Saves before 5.214 wrote `MinimumAGI`-style tokens; `Cyberware.Load`
@@ -619,7 +618,7 @@ pub fn availability(ch: &Character, store: &DataStore, e: &Element) -> expr::Ava
 /// The ware `p.parent` names, if any.
 fn parent_ware<'a>(ch: &'a Character, p: &Purchase) -> Option<&'a Element> {
     let g = p.parent.as_deref()?;
-    all_ware(ch).into_iter().find(|w| w.get("guid").eq_ignore_ascii_case(g))
+    all_ware(ch).into_iter().find(|w| w.get_eq_ignore_case("guid", g))
 }
 
 /// Grade for a purchase: forced by the record, chosen, the parent's, or
@@ -705,7 +704,7 @@ pub fn add(tag: &str, ch: &mut Character, store: &DataStore, rec: Record<'_>, p:
 /// through `addware` (`FreeWare`), qualities, limit modifiers and mentor
 /// spirits. Creation mode: call [`crate::essence_loss::refresh`] afterwards.
 pub fn remove(ch: &mut Character, guid: &str) -> bool {
-    let Some(w) = all_ware(ch).into_iter().find(|w| w.get("guid").eq_ignore_ascii_case(guid)).cloned() else { return false };
+    let Some(w) = all_ware(ch).into_iter().find(|w| w.get_eq_ignore_case("guid", guid)).cloned() else { return false };
     let mut guids = Vec::new();
     collect_guids(&w, &mut guids);
     if let Some(c) = ch.doc.child_mut("cyberwares") {
@@ -756,7 +755,7 @@ fn collect_guids(e: &Element, out: &mut Vec<String>) {
 
 fn remove_nested(e: &mut Element, guid: &str) -> bool {
     let before = e.children.len();
-    e.children.retain(|n| !matches!(n, crate::xml::Node::Element(x) if x.name == "cyberware" && x.get("guid").eq_ignore_ascii_case(guid)));
+    e.children.retain(|n| !matches!(n, crate::xml::Node::Element(x) if x.name == "cyberware" && x.get_eq_ignore_case("guid", guid)));
     if e.children.len() != before {
         return true;
     }
@@ -791,7 +790,7 @@ fn saved_install(saved: &Element) -> Install {
 fn parent_of<'a>(ch: &'a Character, guid: &str) -> Option<&'a Element> {
     all_ware(ch)
         .into_iter()
-        .find(|w| w.child("children").is_some_and(|c| c.children_named("cyberware").any(|k| k.get("guid").eq_ignore_ascii_case(guid))))
+        .find(|w| w.child("children").is_some_and(|c| c.children_named("cyberware").any(|k| k.get_eq_ignore_case("guid", guid))))
 }
 
 /// Whether the parent's data lists `name` as an included subsystem, so

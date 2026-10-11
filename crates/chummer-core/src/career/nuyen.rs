@@ -89,7 +89,7 @@ pub fn sell_item_valued(ch: &mut Character, guid: &str, amount: f64) -> Result<f
 /// Find an item with this guid anywhere under the item containers.
 pub(super) fn find_item_deep<'a>(doc: &'a Element, guid: &str) -> Option<&'a Element> {
     fn walk<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
-        e.elements().find_map(|c| if c.get("guid").eq_ignore_ascii_case(guid) { Some(c) } else { walk(c, guid) })
+        e.elements().find_map(|c| if c.get_eq_ignore_case("guid", guid) { Some(c) } else { walk(c, guid) })
     }
     ITEM_CONTAINERS.iter().filter_map(|c| doc.child(c)).find_map(|c| walk(c, guid))
 }
@@ -107,7 +107,7 @@ pub(super) fn find_item_deep_mut<'a>(doc: &'a mut Element, guid: &str) -> Option
 /// made. Returns the item and the tag of its parent item, if nested.
 pub(super) fn take_item(ch: &mut Character, guid: &str) -> Option<(Element, Option<String>)> {
     fn walk(e: &mut Element, guid: &str, parent: Option<&str>) -> Option<(Element, Option<String>)> {
-        let pos = e.children.iter().position(|n| matches!(n, Node::Element(c) if c.get("guid").eq_ignore_ascii_case(guid)));
+        let pos = e.children.iter().position(|n| matches!(n, Node::Element(c) if c.get_eq_ignore_case("guid", guid)));
         if let Some(pos) = pos {
             let Node::Element(item) = e.children.remove(pos) else { return None };
             return Some((item, parent.map(str::to_owned)));

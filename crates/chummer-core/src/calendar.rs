@@ -109,7 +109,7 @@ pub fn add_next_week(ch: &mut Character, start: Option<(i32, i32)>) -> Week {
 
 pub fn set_notes(ch: &mut Character, guid: &str, notes: &str) -> bool {
     let Some(cal) = ch.doc.child_mut("calendar") else { return false };
-    match cal.elements_mut().find(|e| e.get("guid").eq_ignore_ascii_case(guid)) {
+    match cal.elements_mut().find(|e| e.get_eq_ignore_case("guid", guid)) {
         Some(e) => {
             e.set_child_text("notes", notes);
             ch.dirty = true;

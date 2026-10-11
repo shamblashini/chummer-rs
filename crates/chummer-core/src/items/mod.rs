@@ -177,7 +177,7 @@ pub fn add(tag: &str, ch: &mut Character, store: &DataStore, rec: Record<'_>, p:
 
 /// Find a saved item anywhere in the document by guid (for parents).
 pub fn find_by_guid_mut<'a>(e: &'a mut Element, guid: &str) -> Option<&'a mut Element> {
-    if e.get("guid").eq_ignore_ascii_case(guid) {
+    if e.get_eq_ignore_case("guid", guid) {
         return Some(e);
     }
     for c in e.elements_mut() {

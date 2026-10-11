@@ -51,8 +51,100 @@ impl<'a> Record<'a> {
     }
 }
 
-/// Parsed documents by file name.
-type DocCache = Mutex<HashMap<String, Arc<Element>>>;
+/// Parsed documents by file name. Each file has its own slot, locked
+/// while it is parsed: a thread that asks for a file another thread is
+/// parsing waits for that parse instead of doing it again.
+type DocCache = Mutex<HashMap<String, Arc<Mutex<Option<Arc<Element>>>>>>;
+
+/// The document in `file`'s slot of `cache`, from `load` the first time
+/// (a failed load is not kept).
+fn cached(cache: &DocCache, file: &str, load: impl FnOnce() -> Result<Arc<Element>, DataError>) -> Result<Arc<Element>, DataError> {
+    let slot = {
+        let mut m = cache.lock().unwrap();
+        match m.get(file) {
+            Some(s) => s.clone(),
+            None => m.entry(file.to_owned()).or_default().clone(),
+        }
+    };
+    let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(d) = &*slot {
+        return Ok(d.clone());
+    }
+    let d = load()?;
+    *slot = Some(d.clone());
+    Ok(d)
+}
+
+/// A built [`RecordIndex`] under its (file, container, item).
+type IndexEntry = ((String, String, String), Arc<RecordIndex>);
+
+/// The records of one list of a data document (`<container><item/>…`),
+/// indexed by id and name: [`find`] without the scan. Built from the
+/// store's document for that file, which never changes once loaded.
+#[derive(Debug)]
+pub struct RecordIndex {
+    doc: Arc<Element>,
+    /// The container's position in the root's children.
+    container: Option<usize>,
+    /// Lowercase `<id>` → the first record with it (positions in the
+    /// container's children).
+    by_id: HashMap<String, usize>,
+    /// `<name>` → every record with it, in document order.
+    by_name: HashMap<String, Vec<usize>>,
+}
+
+impl RecordIndex {
+    fn new(doc: Arc<Element>, container: &str, item: &str) -> Self {
+        // `Element::child`: the first child of that name.
+        let pos = doc.children.iter().position(|n| matches!(n, xml::Node::Element(e) if e.name == container));
+        let (mut by_id, mut by_name) = (HashMap::new(), HashMap::<String, Vec<usize>>::new());
+        if let Some(xml::Node::Element(c)) = pos.and_then(|p| doc.children.get(p)) {
+            for (i, n) in c.children.iter().enumerate() {
+                if let xml::Node::Element(e) = n {
+                    if e.name == item {
+                        by_id.entry(e.get("id").to_ascii_lowercase()).or_insert(i);
+                        by_name.entry(e.get("name")).or_default().push(i);
+                    }
+                }
+            }
+        }
+        RecordIndex { doc, container: pos, by_id, by_name }
+    }
+
+    fn container_el(&self) -> Option<&Element> {
+        match self.doc.children.get(self.container?) {
+            Some(xml::Node::Element(e)) => Some(e),
+            _ => None,
+        }
+    }
+
+    fn at(&self, i: usize) -> Option<Record<'_>> {
+        match self.container_el()?.children.get(i) {
+            Some(xml::Node::Element(e)) => Some(Record(e)),
+            _ => None,
+        }
+    }
+
+    /// The document the records are in.
+    pub fn doc(&self) -> &Element {
+        &self.doc
+    }
+
+    /// The first record whose `<id>` is `id` (case-insensitive).
+    pub fn by_id(&self, id: &str) -> Option<Record<'_>> {
+        self.at(*self.by_id.get(&id.to_ascii_lowercase())?)
+    }
+
+    /// The records named `name`, in document order.
+    pub fn named<'s>(&'s self, name: &str) -> impl Iterator<Item = Record<'s>> + 's {
+        self.by_name.get(name).into_iter().flatten().filter_map(|&i| self.at(i))
+    }
+
+    /// As [`find`]: by `<id>`, else the first by `<name>`.
+    pub fn find(&self, key: &str) -> Option<Record<'_>> {
+        self.by_id(key).or_else(|| self.named(key).next())
+    }
+}
 
 /// Lazily loaded, shared view of the data directory, optionally with a set
 /// of enabled custom data directories applied on top.
@@ -66,6 +158,12 @@ pub struct DataStore {
     /// Documents with custom data applied.
     merged: DocCache,
     warnings: Mutex<Vec<String>>,
+    /// Record indexes of this store's documents: (file, container, item).
+    /// A few dozen at most: a list, so a lookup allocates nothing.
+    indexes: Mutex<Vec<IndexEntry>>,
+    /// The thread of [`DataStore::warm`]: `None` before it, `Some(None)`
+    /// once joined.
+    warm: Mutex<Option<Option<std::thread::JoinHandle<()>>>>,
 }
 
 impl DataStore {
@@ -83,6 +181,8 @@ impl DataStore {
             custom_dirs: dirs,
             merged: Mutex::new(HashMap::new()),
             warnings: Mutex::new(Vec::new()),
+            indexes: Mutex::new(Vec::new()),
+            warm: Mutex::new(None),
         }
     }
 
@@ -94,6 +194,8 @@ impl DataStore {
             custom_dirs: dirs,
             merged: Mutex::new(HashMap::new()),
             warnings: Mutex::new(Vec::new()),
+            indexes: Mutex::new(Vec::new()),
+            warm: Mutex::new(None),
         }
     }
 
@@ -126,32 +228,72 @@ impl DataStore {
         if self.custom_dirs.is_empty() {
             return self.base_doc(file);
         }
-        if let Some(d) = self.merged.lock().unwrap().get(file) {
-            return Ok(d.clone());
+        cached(&self.merged, file, || {
+            let relevant = custom_data::relevant_directories(file, &self.custom_dirs);
+            Ok(if relevant.is_empty() {
+                self.base_doc(file)?
+            } else {
+                let mut root = (*self.base_doc(file)?).clone();
+                let report = custom_data::apply(&mut root, file, &relevant);
+                self.warnings.lock().unwrap().extend(report.warnings);
+                Arc::new(root)
+            })
+        })
+    }
+
+    /// The records of `<container><item>` in `file` (as [`DataStore::doc`]
+    /// gives it), indexed by id and name; built on first use.
+    pub fn index(&self, file: &str, container: &str, item: &str) -> Result<Arc<RecordIndex>, DataError> {
+        let get = |v: &[IndexEntry]| v.iter().find(|((f, c, i), _)| f == file && c == container && i == item).map(|(_, ix)| ix.clone());
+        if let Some(ix) = get(&self.indexes.lock().unwrap()) {
+            return Ok(ix);
         }
-        let relevant = custom_data::relevant_directories(file, &self.custom_dirs);
-        let doc = if relevant.is_empty() {
-            self.base_doc(file)?
-        } else {
-            let mut root = (*self.base_doc(file)?).clone();
-            let report = custom_data::apply(&mut root, file, &relevant);
-            self.warnings.lock().unwrap().extend(report.warnings);
-            Arc::new(root)
+        let ix = Arc::new(RecordIndex::new(self.doc(file)?, container, item));
+        let mut v = self.indexes.lock().unwrap();
+        // Another thread may have built it meanwhile: keep the first.
+        if let Some(first) = get(&v) {
+            return Ok(first);
+        }
+        v.push(((file.to_owned(), container.to_owned(), item.to_owned()), ix.clone()));
+        Ok(ix)
+    }
+
+    /// Parses `docs` and builds `indexes` (file, container, item) on
+    /// another thread, once per store, so the first page that reads them
+    /// does not (an app warms what its pages read on their first visit).
+    /// A file asked for meanwhile waits for that parse (see [`DocCache`]).
+    pub fn warm(self: &Arc<Self>, docs: &'static [&'static str], indexes: &'static [(&'static str, &'static str, &'static str)]) {
+        let mut w = self.warm.lock().unwrap();
+        if w.is_some() {
+            return;
+        }
+        let me = self.clone();
+        let job = move || {
+            for (f, c, i) in indexes {
+                let _ = me.index(f, c, i);
+            }
+            for f in docs {
+                let _ = me.doc(f);
+            }
         };
-        self.merged.lock().unwrap().insert(file.to_owned(), doc.clone());
-        Ok(doc)
+        *w = Some(std::thread::Builder::new().name("warm game data".into()).spawn(job).ok());
+    }
+
+    /// Waits for [`DataStore::warm`]'s thread, if one runs.
+    pub fn wait_warm(&self) {
+        let handle = self.warm.lock().unwrap().as_mut().and_then(Option::take);
+        if let Some(h) = handle {
+            let _ = h.join();
+        }
     }
 
     /// A data file exactly as shipped, without custom data.
     pub fn base_doc(&self, file: &str) -> Result<Arc<Element>, DataError> {
-        if let Some(d) = self.cache.lock().unwrap().get(file) {
-            return Ok(d.clone());
-        }
-        let path = self.data_dir.join(file);
-        let src = std::fs::read_to_string(&path).map_err(|source| DataError::Io { path: path.clone(), source })?;
-        let root = Arc::new(xml::parse(&src).map_err(|source| DataError::Xml { path, source })?);
-        self.cache.lock().unwrap().insert(file.to_owned(), root.clone());
-        Ok(root)
+        cached(&self.cache, file, || {
+            let path = self.data_dir.join(file);
+            let src = std::fs::read_to_string(&path).map_err(|source| DataError::Io { path: path.clone(), source })?;
+            Ok(Arc::new(xml::parse(&src).map_err(|source| DataError::Xml { path, source })?))
+        })
     }
 }
 
@@ -209,8 +351,8 @@ pub fn records<'a>(doc: &'a Element, container: &str, item: &'a str) -> Vec<Reco
 pub fn find<'a>(doc: &'a Element, container: &str, item: &'a str, key: &str) -> Option<Record<'a>> {
     let c = doc.child(container)?;
     c.children_named(item)
-        .find(|e| e.get("id").eq_ignore_ascii_case(key))
-        .or_else(|| c.children_named(item).find(|e| e.get("name") == key))
+        .find(|e| e.get_eq_ignore_case("id", key))
+        .or_else(|| c.children_named(item).find(|e| e.get_eq("name", key)))
         .map(Record)
 }
 
@@ -262,6 +404,38 @@ pub fn shared_store() -> Option<&'static DataStore> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The index answers exactly as the scan does, for every id and name
+    /// (and their case variants) of the lists the item pages look up.
+    #[test]
+    fn the_record_index_finds_what_find_finds() {
+        let store = DataStore::discover().expect("resources/data");
+        for (file, container, item) in [("gear.xml", "gears", "gear"), ("vehicles.xml", "vehicles", "vehicle"), ("vehicles.xml", "mods", "mod"), ("weapons.xml", "accessories", "accessory"), ("cyberware.xml", "cyberwares", "cyberware")] {
+            let ix = store.index(file, container, item).unwrap();
+            let doc = store.doc(file).unwrap();
+            let mut keys: Vec<String> = records(&doc, container, item).iter().flat_map(|r| [r.id(), r.id().to_uppercase(), r.name(), r.name().to_lowercase()]).collect();
+            keys.extend(["".to_owned(), "no such record".to_owned()]);
+            for k in &keys {
+                let (a, b) = (ix.find(k).map(|r| r.el() as *const Element), find(&doc, container, item, k).map(|r| r.el() as *const Element));
+                assert_eq!(a, b, "{file} {container}/{item}: {k:?}");
+            }
+            assert!(std::ptr::eq(ix.doc(), &*doc));
+        }
+    }
+
+    /// Threads asking for a file at once share one parse.
+    #[test]
+    fn a_file_is_parsed_once_across_threads() {
+        let store = Arc::new(DataStore::discover().expect("resources/data"));
+        let docs: Vec<Arc<Element>> = (0..4).map(|_| { let s = store.clone(); std::thread::spawn(move || s.doc("lifestyles.xml").unwrap()) }).collect::<Vec<_>>().into_iter().map(|t| t.join().unwrap()).collect();
+        assert!(docs.iter().all(|d| Arc::ptr_eq(d, &docs[0])));
+        store.warm(&["contacts.xml"], &[("armor.xml", "armors", "armor")]);
+        store.wait_warm();
+        assert!(Arc::ptr_eq(&store.doc("armor.xml").unwrap(), &store.index("armor.xml", "armors", "armor").unwrap().doc));
+        // Once per store.
+        store.warm(&["critters.xml"], &[]);
+        store.wait_warm();
+    }
 
     #[test]
     fn the_user_root_is_never_a_resource_root() {

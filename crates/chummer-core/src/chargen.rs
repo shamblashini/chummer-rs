@@ -953,7 +953,7 @@ pub fn add_knowledge_skill(ch: &mut Character, name: &str, kind: &str, native: b
 pub fn remove_knowledge_skill(ch: &mut Character, guid: &str) {
     ch.knowledge_skills.retain(|k| !k.guid.eq_ignore_ascii_case(guid));
     if let Some(k) = ch.doc.child_mut("newskills").and_then(|n| n.child_mut("knoskills")) {
-        k.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.get("guid").eq_ignore_ascii_case(guid)));
+        k.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.get_eq_ignore_case("guid", guid)));
     }
     ch.dirty = true;
 }

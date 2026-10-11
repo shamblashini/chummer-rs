@@ -94,7 +94,7 @@ pub fn of_type(ch: &Character, kind: ContactType) -> Vec<&Element> {
 }
 
 pub fn find_mut<'a>(ch: &'a mut Character, guid: &str) -> Option<&'a mut Element> {
-    ch.doc.child_mut("contacts")?.elements_mut().find(|c| c.name == "contact" && c.get("guid").eq_ignore_ascii_case(guid))
+    ch.doc.child_mut("contacts")?.elements_mut().find(|c| c.name == "contact" && c.get_eq_ignore_case("guid", guid))
 }
 
 /// Set one saved field of a contact. Returns whether it changed.
@@ -119,7 +119,7 @@ pub fn notes_color(c: &Element) -> [u8; 3] {
 /// The notes dialog's colour picker: save the colour as
 /// `ColorTranslator.ToHtml` does. Returns whether it changed.
 pub fn set_notes_color(ch: &mut Character, guid: &str, rgb: [u8; 3]) -> bool {
-    let Some(c) = ch.items("contacts", "contact").into_iter().find(|c| c.get("guid").eq_ignore_ascii_case(guid)) else { return false };
+    let Some(c) = ch.items("contacts", "contact").into_iter().find(|c| c.get_eq_ignore_case("guid", guid)) else { return false };
     if notes_color(c) == rgb {
         return false;
     }
@@ -136,7 +136,7 @@ pub fn preferred_color(c: &Element) -> Option<[u8; 4]> {
 }
 
 fn is_contact(n: &crate::xml::Node, guid: &str) -> bool {
-    matches!(n, crate::xml::Node::Element(e) if e.name == "contact" && e.get("guid").eq_ignore_ascii_case(guid))
+    matches!(n, crate::xml::Node::Element(e) if e.name == "contact" && e.get_eq_ignore_case("guid", guid))
 }
 
 /// Drag and drop: move the contact `guid` to just before (or, with
@@ -169,7 +169,7 @@ pub fn move_contact(ch: &mut Character, guid: &str, target: &str, after: bool) -
 /// Move up / Move down: swap places with the previous (`up`) or next
 /// entry of the same type. Returns whether it moved.
 pub fn move_step(ch: &mut Character, guid: &str, up: bool) -> bool {
-    let Some(c) = ch.items("contacts", "contact").into_iter().find(|c| c.get("guid").eq_ignore_ascii_case(guid)) else { return false };
+    let Some(c) = ch.items("contacts", "contact").into_iter().find(|c| c.get_eq_ignore_case("guid", guid)) else { return false };
     let same: Vec<String> = of_type(ch, ContactType::of(c)).iter().map(|c| c.get("guid")).collect();
     let Some(i) = same.iter().position(|g| g.eq_ignore_ascii_case(guid)) else { return false };
     let neighbour = if up { i.checked_sub(1) } else { Some(i + 1).filter(|&j| j < same.len()) };

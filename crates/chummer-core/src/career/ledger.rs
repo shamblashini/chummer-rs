@@ -240,7 +240,7 @@ pub fn entries_of(ch: &Character, kind: ExpenseType) -> Vec<ExpenseEntry> {
 }
 
 pub fn find_entry(ch: &Character, guid: &str) -> Option<ExpenseEntry> {
-    ch.items("expenses", "expense").into_iter().find(|e| e.get("guid").eq_ignore_ascii_case(guid)).map(ExpenseEntry::from_xml)
+    ch.items("expenses", "expense").into_iter().find(|e| e.get_eq_ignore_case("guid", guid)).map(ExpenseEntry::from_xml)
 }
 
 /// Add an entry to the log in date order (`ExpenseEntries.AddWithSort`).
@@ -260,14 +260,14 @@ pub fn push_entry(ch: &mut Character, entry: &ExpenseEntry) -> String {
 /// object it bought. See [`super::undo`] for reversing a spend.
 pub fn remove_entry(ch: &mut Character, guid: &str) -> Option<ExpenseEntry> {
     let log = ch.doc.child_mut("expenses")?;
-    let pos = log.children.iter().position(|n| matches!(n, Node::Element(e) if e.name == "expense" && e.get("guid").eq_ignore_ascii_case(guid)))?;
+    let pos = log.children.iter().position(|n| matches!(n, Node::Element(e) if e.name == "expense" && e.get_eq_ignore_case("guid", guid)))?;
     let Node::Element(e) = log.children.remove(pos) else { return None };
     ch.dirty = true;
     Some(ExpenseEntry::from_xml(&e))
 }
 
 fn entry_element_mut<'a>(ch: &'a mut Character, guid: &str) -> Option<&'a mut Element> {
-    ch.doc.child_mut("expenses")?.elements_mut().find(|e| e.name == "expense" && e.get("guid").eq_ignore_ascii_case(guid))
+    ch.doc.child_mut("expenses")?.elements_mut().find(|e| e.name == "expense" && e.get_eq_ignore_case("guid", guid))
 }
 
 /// Log a karma change and apply it to the balance (`ModifyKarma`).

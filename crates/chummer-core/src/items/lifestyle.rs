@@ -589,7 +589,7 @@ pub fn remove_quality(ch: &mut Character, lifestyle: &str, quality: &str) -> boo
     let Some(l) = super::find_by_guid_mut(ch.items_mut("lifestyles"), lifestyle) else { return false };
     let Some(list) = l.child_mut("lifestylequalities") else { return false };
     let before = list.children.len();
-    list.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.get("guid").eq_ignore_ascii_case(quality)));
+    list.children.retain(|n| !matches!(n, crate::xml::Node::Element(e) if e.get_eq_ignore_case("guid", quality)));
     if list.children.len() == before {
         return false;
     }

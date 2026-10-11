@@ -183,7 +183,7 @@ pub fn total_rating(ch: &Character, p: &Element, mag: i32) -> i32 {
 /// rating and re-creates the power's bonus improvements at the new rating
 /// with its saved selection. Powers without levels stay at 1.
 pub fn set_rating(ch: &mut Character, store: &DataStore, guid: &str, rating: i32) -> Result<(), String> {
-    let saved = ch.items("powers", "power").into_iter().find(|p| p.get("guid").eq_ignore_ascii_case(guid)).cloned().ok_or("unknown power")?;
+    let saved = ch.items("powers", "power").into_iter().find(|p| p.get_eq_ignore_case("guid", guid)).cloned().ok_or("unknown power")?;
     let rating = if saved.get_bool("levels").unwrap_or(false) { rating.max(1) } else { 1 };
     let extra = saved.get("extra");
     let forced = Some(extra.as_str()).filter(|s| !s.is_empty());

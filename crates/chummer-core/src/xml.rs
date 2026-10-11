@@ -132,6 +132,37 @@ impl Element {
         out
     }
 
+    /// [`Element::text`] without a copy when the text is one piece (as
+    /// it nearly always is).
+    pub fn text_ref(&self) -> std::borrow::Cow<'_, str> {
+        let mut parts = self.children.iter().filter_map(|n| match n {
+            Node::Text(t) | Node::CData(t) => Some(t.as_str()),
+            _ => None,
+        });
+        match (parts.next(), parts.next()) {
+            (None, _) => std::borrow::Cow::Borrowed(""),
+            (Some(t), None) => std::borrow::Cow::Borrowed(t),
+            _ => std::borrow::Cow::Owned(self.text()),
+        }
+    }
+
+    /// Whether [`Element::get`]`(name)` is `value`, ignoring ASCII case,
+    /// without copying the text (lookups by guid walk whole documents).
+    pub fn get_eq_ignore_case(&self, name: &str, value: &str) -> bool {
+        match self.child(name) {
+            Some(c) => c.text_ref().eq_ignore_ascii_case(value),
+            None => value.is_empty(),
+        }
+    }
+
+    /// Whether [`Element::get`]`(name)` is exactly `value`, without a copy.
+    pub fn get_eq(&self, name: &str, value: &str) -> bool {
+        match self.child(name) {
+            Some(c) => c.text_ref() == value,
+            None => value.is_empty(),
+        }
+    }
+
     /// Text of a child element, `None` when the child is absent.
     pub fn child_text(&self, name: &str) -> Option<String> {
         self.child(name).map(Element::text)

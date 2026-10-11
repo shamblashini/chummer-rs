@@ -155,7 +155,7 @@ pub fn create(ch: &Character, store: &DataStore, rec: Record<'_>, guid: &str, me
 /// one added by a `selectmentorspirit` bonus): rebuilds the element and
 /// replaces the improvements it granted.
 pub fn set_mentor_choices(ch: &mut Character, store: &DataStore, guid: &str, choice1: Option<&str>, choice2: Option<&str>) -> Result<(), String> {
-    let saved = ch.items("mentorspirits", "mentorspirit").into_iter().find(|m| m.get("guid").eq_ignore_ascii_case(guid)).cloned().ok_or("unknown mentor spirit")?;
+    let saved = ch.items("mentorspirits", "mentorspirit").into_iter().find(|m| m.get_eq_ignore_case("guid", guid)).cloned().ok_or("unknown mentor spirit")?;
     let mtype = saved.child_text("mentortype").unwrap_or_else(|| "MentorSpirit".into());
     let doc = store.doc(data_file(&mtype)).map_err(|e| e.to_string())?;
     let rec = super::find_saved(&doc, "mentors", "mentor", &saved).ok_or("unknown mentor")?;

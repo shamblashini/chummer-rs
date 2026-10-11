@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use chummer_bench::{Record, Runner};
-use eframe::egui::{Key, Modifiers};
+use eframe::egui::{Event, Key, Modifiers, PointerButton};
 
 use super::{catalog_search, fixture, go_special, pages, scratch, Harness, WIDE};
 use crate::theme::{Layout, ThemeKind};
@@ -68,6 +68,76 @@ fn go(h: &mut Harness, i: usize, s: Section) {
     }
 }
 
+fn timed_frame(h: &mut Harness, events: Vec<Event>) -> f64 {
+    let t = Instant::now();
+    h.frame(events);
+    t.elapsed().as_secs_f64() * 1000.0
+}
+
+/// The first visit of page `s`: the frame that draws it first, after the
+/// click on its sidebar entry for Play and History (as `go_special`; the
+/// slowest frame from the click on).
+fn visit(h: &mut Harness, i: usize, s: Section) -> f64 {
+    if !matches!(s, Section::Play | Section::History) {
+        // As the sidebar does: a tab page leaves Play and History.
+        let id = h.app.views[i].ws_id();
+        h.app.ws.leave_special(id);
+        h.app.views[i].ws_go(s);
+        return timed_frame(h, Vec::new());
+    }
+    let label = h.app.lang.tr(s.label());
+    h.size = WIDE;
+    h.frame(Vec::new());
+    let mut worst = 0.0_f64;
+    if let Some(r) = h.find_text(&label) {
+        let pos = r.center();
+        let button = |pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        for ev in [vec![Event::PointerMoved(pos)], vec![button(true)], vec![button(false)], Vec::new()] {
+            worst = worst.max(timed_frame(h, ev));
+        }
+    }
+    if h.count(&label) < 2 {
+        h.palette_pick(&label);
+        worst = worst.max(timed_frame(h, Vec::new()));
+    }
+    assert!(h.count(&label) >= 2, "went to {label}; shown: {:?}", h.on_screen());
+    worst
+}
+
+/// Opens `path` as the only character, with the game data its pages read
+/// loaded (a moment after opening, `CharacterView::wait_warm`).
+fn open_warm(h: &mut Harness, path: &std::path::Path) -> usize {
+    h.close_all();
+    let i = h.open(path);
+    h.app.views[i].wait_warm();
+    h.frames(2);
+    i
+}
+
+/// Each page's first visit on `reps` fresh opens of `path` (a new view
+/// each time: its caches are built again), as records `{prefix}{page}`.
+fn first_visits(r: &mut Runner, h: &mut Harness, path: &std::path::Path, prefix: &str, reps: usize, note: &str) {
+    let mut by_page: Vec<(String, Vec<f64>)> = Vec::new();
+    for _ in 0..reps {
+        let i = open_warm(h, path);
+        for s in pages(h, i) {
+            let name = format!("{prefix}{}", slug(s.label()));
+            if !r.wants(&name) {
+                continue;
+            }
+            h.size = WIDE;
+            let ms = visit(h, i, s);
+            match by_page.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, v)) => v.push(ms),
+                None => by_page.push((name, vec![ms])),
+            }
+        }
+    }
+    for (name, samples) in by_page {
+        r.push(Record::from_samples(&name, "ms", samples).with_note(note.to_owned()));
+    }
+}
+
 /// A campaign of three players and three NPCs, from the biggest fixtures.
 fn big_campaign() -> PathBuf {
     use chummer_core::campaign::{Campaign, Encounter, Member, MemberKind};
@@ -95,6 +165,9 @@ fn perf_frames() {
     // frames; with "vsync" it leaves pacing to the driver, so frames run
     // back to back. Edition 2021: set_var is safe; std's lock covers it.
     std::env::set_var("CHUMMER_VSYNC", "1");
+    // CHUMMER_TRACE_FRAMES=1 (and CHUMMER_TRACE_SLOW_MS) logs slow frames
+    // with their spans, as in the app.
+    crate::trace::init();
     let mut r = Runner::new(quick, only);
     let heavy = slug(HEAVY.trim_end_matches(".chum5"));
     for kind in [ThemeKind::WorkspaceDark, ThemeKind::Graphite] {
@@ -102,13 +175,12 @@ fn perf_frames() {
         let ln = layout_name(layout);
         let prefix = format!("gui.frame.{ln}.");
         let switch_prefix = format!("gui.switch.{ln}.");
-        if !(r.wants(&prefix) || r.wants(&switch_prefix) || (layout == Layout::Workspace && r.wants("gui.catalog."))) {
+        if !(r.wants(&prefix) || r.wants(&switch_prefix) || r.wants(&format!("gui.first.{ln}.")) || (layout == Layout::Workspace && r.wants("gui.catalog."))) {
             continue;
         }
         let mut h = Harness::new(kind);
         h.size = WIDE;
-        let i = h.open(&fixture(HEAVY));
-        h.frames(2);
+        let mut i = open_warm(&mut h, &fixture(HEAVY));
         let (mut all, mut first) = (Vec::new(), Vec::new());
         let switches = if quick { 2 } else { 5 };
         for s in pages(&h, i) {
@@ -123,11 +195,8 @@ fn perf_frames() {
             let direct = !matches!(s, Section::Play | Section::History);
             // The first visit (caches being built), then switches from a
             // light page: the frame a click on the page's tab costs.
-            let t = Instant::now();
-            go(&mut h, i, s);
-            h.frame(Vec::new());
+            first.push(visit(&mut h, i, s));
             if direct {
-                first.push(t.elapsed().as_secs_f64() * 1000.0);
                 let rest = if s == Section::Page(Tab::Limits) { Section::Page(Tab::Common) } else { Section::Page(Tab::Limits) };
                 let mut samples = Vec::new();
                 for _ in 0..switches {
@@ -151,6 +220,13 @@ fn perf_frames() {
         }
         if !first.is_empty() {
             r.push(Record::from_samples(&format!("{switch_prefix}{heavy}.first_visits"), "ms", first).with_note("the first frame of each page on its first visit, one sample per page (max = the worst page)"));
+        }
+        // Each page's first visit on its own, on fresh opens.
+        let first_prefix = format!("gui.first.{ln}.{heavy}.");
+        if r.wants(&first_prefix) {
+            let note = "the first frame of the page on its first visit, after opening the character (game data loaded); one sample per open";
+            first_visits(&mut r, &mut h, &fixture(HEAVY), &first_prefix, if quick { 3 } else { 5 }, note);
+            i = open_warm(&mut h, &fixture(HEAVY));
         }
         if layout == Layout::Workspace && r.wants("gui.catalog.") {
             catalog(&mut r, &mut h, i, &heavy, warm, n);
@@ -221,9 +297,11 @@ fn large(r: &mut Runner, warm: usize, n: usize) {
     engine.save(&mut ch, &path).expect("save the large character");
     let mut h = Harness::new(ThemeKind::WorkspaceDark);
     h.size = WIDE;
-    let i = h.open(&path);
-    h.frames(2);
     let about = format!("Serpent with {added} items added (chummer_bench::synth)");
+    if r.wants("gui.large.first.") {
+        first_visits(r, &mut h, &path, "gui.large.first.", if r.quick { 3 } else { 5 }, &format!("{about}: the first frame of the page on its first visit, after opening (game data loaded); one sample per open"));
+    }
+    let i = open_warm(&mut h, &path);
     let rows_n = if r.quick { 3 } else { 10 };
     for (tab, page) in [(Tab::StreetGear, "gear"), (Tab::Vehicles, "vehicles"), (Tab::Cyberware, "cyberware")] {
         let s = if tab == Tab::StreetGear { Section::Gear(0) } else { Section::Page(tab) };

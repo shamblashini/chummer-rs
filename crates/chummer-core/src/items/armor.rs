@@ -446,7 +446,7 @@ fn add_weapons(ch: &mut Character, store: &DataStore, rec: &Element, parent: &st
 fn parent_armor<'a>(doc: &'a Element, guid: &str) -> Option<&'a Element> {
     let mut out = Vec::new();
     doc.descendants("armor", &mut out);
-    out.into_iter().find(|a| a.child("armormods").is_some_and(|ms| ms.children_named("armormod").any(|m| m.get("guid").eq_ignore_ascii_case(guid))))
+    out.into_iter().find(|a| a.child("armormods").is_some_and(|ms| ms.children_named("armormod").any(|m| m.get_eq_ignore_case("guid", guid))))
 }
 
 /// Find a record by saved `sourceid`, else by name (old saves have no

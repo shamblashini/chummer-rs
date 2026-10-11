@@ -138,7 +138,7 @@ pub fn object_name(ctx: &Ctx, guid: &str, custom: &str) -> String {
         return custom.to_owned();
     }
     fn find(e: &Element, guid: &str) -> Option<String> {
-        if e.get("guid").eq_ignore_ascii_case(guid) && e.child("name").is_some() {
+        if e.get_eq_ignore_case("guid", guid) && e.child("name").is_some() {
             return Some(e.get("name"));
         }
         e.elements().filter(|c| c.name != "improvements").find_map(|c| find(c, guid))

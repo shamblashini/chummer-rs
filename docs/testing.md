@@ -87,9 +87,15 @@ to `target/perf/work`, not to your own folders. The results are in
 | `sync.catchup` | a replica that comes back after 200 changes (replayed, per change) and after 500 (beyond the log window, so a snapshot) |
 | `sync.mail` | sealing and opening 20 offline edits, and a snapshot push |
 | `gui.frame` | the mean, median and p95 frame of every page in Workspace and Classic, and the GM screen with six members |
-| `gui.switch` | the first frame after going to a page; each page's first visit |
+| `gui.switch` | the first frame after going to a page (from a light page, caches built); `first_visits` holds each page's first visit in one record, for the trend |
+| `gui.first` | each page's first visit on its own, Play and History included: the first frame of the page on 3 (quick) or 5 fresh opens of the character, after its game data has loaded in the background (`CharacterView::wait_warm`). Play and History are timed from the click on their sidebar entry |
 | `gui.catalog` | the gear catalog with a search shown, and the frame that takes a typed search |
-| `core.large`, `gui.large` | a large synthetic character: Serpent plus about 400 items bought for free from the game data in a seeded order (`chummer_bench::synth`; built at run time, no file is checked in). Load and compute, `AddItem` and `SetField`; the Workspace Gear, Vehicles and Cyberware tables built cold (`ws_inventory_rows`), the first frame with the table to build, and steady frames. The table budgets fail on the quadratic lookups that commit 4125244 removed |
+| `core.large`, `gui.large` | a large synthetic character: Serpent plus about 400 items bought for free from the game data in a seeded order (`chummer_bench::synth`; built at run time, no file is checked in). Load and compute, `AddItem` and `SetField`; each page's first visit (`gui.large.first`, as `gui.first`); the Workspace Gear, Vehicles and Cyberware tables built cold (`ws_inventory_rows`), the first frame with the table to build, and steady frames. The table budgets fail on the quadratic lookups that commit 4125244 removed |
+
+To see what a slow frame spends its time on, run the GUI part with the
+frame tracer: `CHUMMER_TRACE_FRAMES=1 CHUMMER_TRACE_SLOW_MS=5` with
+`scripts/perf.sh --quick --only gui` logs every frame over 5 ms with its
+spans (`crate::trace::span`) to the test's output.
 
 Each benchmark has a warm-up (at least 100 ms, at most 50 calls) and
 then several samples (3 in quick mode). The report gives the median, mean, p95, minimum, maximum and the

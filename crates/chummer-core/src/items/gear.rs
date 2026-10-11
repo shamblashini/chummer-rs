@@ -237,7 +237,7 @@ fn bonus_node(rec: &Element, name: &str) -> Element {
 fn find_named<'a>(doc: &'a Element, name: &str, category: &str) -> Option<Record<'a>> {
     doc.child("gears")?
         .children_named("gear")
-        .find(|g| (name.is_empty() || g.get("name") == name) && (category.is_empty() || g.get("category") == category))
+        .find(|g| (name.is_empty() || g.get_eq("name", name)) && (category.is_empty() || g.get_eq("category", category)))
         .map(Record)
 }
 
@@ -247,17 +247,32 @@ pub fn record_of<'a>(doc: &'a Element, saved: &Element) -> Option<Record<'a>> {
     let gears = doc.child("gears")?;
     let id = saved.child_text("sourceid").filter(|s| !s.is_empty()).or_else(|| saved.child_text("id")).unwrap_or_default();
     if !id.is_empty() {
-        if let Some(g) = gears.children_named("gear").find(|g| g.get("id").eq_ignore_ascii_case(&id)) {
+        if let Some(g) = gears.children_named("gear").find(|g| g.get_eq_ignore_case("id", &id)) {
             return Some(Record(g));
         }
     }
     find_named(doc, &saved.get("name"), &saved.get("category")).or_else(|| find_named(doc, &saved.get("name"), ""))
 }
 
+/// [`record_of`] from the store's index of `gear.xml` (no scan).
+pub fn record_of_indexed<'a>(ix: &'a crate::data::RecordIndex, saved: &Element) -> Option<Record<'a>> {
+    let id = saved.child_text("sourceid").filter(|s| !s.is_empty()).or_else(|| saved.child_text("id")).unwrap_or_default();
+    if !id.is_empty() {
+        if let Some(g) = ix.by_id(&id) {
+            return Some(g);
+        }
+    }
+    let (name, category) = (saved.get("name"), saved.get("category"));
+    if name.is_empty() {
+        // Any name: the scan, as `find_named`.
+        return find_named(ix.doc(), &name, &category).or_else(|| find_named(ix.doc(), &name, ""));
+    }
+    ix.named(&name).find(|g| category.is_empty() || g.el().get_eq("category", &category)).or_else(|| ix.named(&name).next())
+}
+
 /// Attribute values for `{LOG}`-style tokens.
 fn attribute_values(ch: &Character, store: &DataStore) -> Vec<AttributeValues> {
-    let rules = crate::calc::Rules::default();
-    ch.attributes.iter().map(|a| crate::calc::attribute_values_with(ch, &a.name, &rules, Some(store))).collect()
+    super::edit::attribute_values(ch, store)
 }
 
 /// The extra `Create` stores: the weapon category of ammunition, the bonus
@@ -456,7 +471,7 @@ fn create_child(doc: &Element, attrs: &dyn AttributeSource, u: &Element, parent:
 
 /// Find a saved item by guid.
 fn find_by_guid<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
-    if e.get("guid").eq_ignore_ascii_case(guid) {
+    if e.get_eq_ignore_case("guid", guid) {
         return Some(e);
     }
     e.elements().find_map(|c| find_by_guid(c, guid))
@@ -466,7 +481,7 @@ fn find_by_guid<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
 /// cyberware's `<gears>`, ...). `None` for top-level gear.
 fn owner_of<'a>(e: &'a Element, guid: &str, top: bool) -> Option<&'a Element> {
     for list in e.elements() {
-        if !top && list.elements().any(|g| g.name == "gear" && g.get("guid").eq_ignore_ascii_case(guid)) {
+        if !top && list.elements().any(|g| g.name == "gear" && g.get_eq_ignore_case("guid", guid)) {
             return Some(e);
         }
         for item in list.elements() {

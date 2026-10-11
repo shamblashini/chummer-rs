@@ -130,8 +130,15 @@ const ROOTS: &[&str] = &["gears", "cyberwares", "armors", "weapons", "vehicles"]
 
 /// The top-level container (of [`ROOTS`]) the item is in, at any depth.
 pub fn root_container(ch: &Character, guid: &str) -> Option<&'static str> {
+    // With an item index (`edit::with_index`): the list on its path (guids
+    // are unique in a character).
+    if let Some(top) = edit::indexed_top(&ch.doc, guid) {
+        if let Some(r) = ROOTS.iter().copied().find(|r| *r == top.name) {
+            return Some(r);
+        }
+    }
     fn holds(e: &Element, guid: &str) -> bool {
-        e.get("guid").eq_ignore_ascii_case(guid) || e.elements().any(|c| holds(c, guid))
+        e.get_eq_ignore_case("guid", guid) || e.elements().any(|c| holds(c, guid))
     }
     ROOTS.iter().copied().find(|c| ch.doc.child(c).is_some_and(|c| c.elements().any(|e| holds(e, guid))))
 }
@@ -245,25 +252,35 @@ pub fn enforces_capacity(ch: &Character, engine: &crate::engine::Engine) -> bool
 /// Whether `cand` can go to `dest`. `enforce`: refuse what does not fit
 /// the free capacity ([`enforces_capacity`]).
 pub fn check(ch: &Character, store: &DataStore, cand: Candidate<'_>, dest: &Dest, enforce: bool) -> Result<(), Misfit> {
-    let (tag, data, item, rating): (String, Element, Option<&Element>, i32) = match cand {
+    // The data record of an owned item is looked up (and copied) only
+    // when a check needs it.
+    let (tag, rec, item, rating): (String, Option<&Element>, Option<&Element>, i32) = match cand {
         Candidate::Owned(g) => {
             let e = find(ch, g).ok_or(Misfit::Missing)?;
             if edit::is_included(ch, g) {
                 return Err(Misfit::Included);
             }
-            (tag_of(e).to_owned(), data_of(store, e), Some(e), e.get_i32("rating").unwrap_or(0))
+            (tag_of(e).to_owned(), None, Some(e), e.get_i32("rating").unwrap_or(0))
         }
-        Candidate::Record { tag, rec, rating } => (tag.to_owned(), rec.clone(), None, rating),
+        Candidate::Record { tag, rec, rating } => (tag.to_owned(), Some(rec), None, rating),
     };
     let owned = match cand {
         Candidate::Owned(g) => Some(g),
         Candidate::Record { .. } => None,
     };
-    let needs_parent = matches!(tag.as_str(), "armormod" | "accessory" | "mod" | "weaponmount") || data.child("requireparent").is_some();
+    // The record, else the saved item when it has none (`data_of`).
+    let needs_parent = || {
+        matches!(tag.as_str(), "armormod" | "accessory" | "mod" | "weaponmount")
+            || match (rec, item) {
+                (Some(r), _) => r.child("requireparent").is_some(),
+                (None, Some(e)) => edit::with_record(store, e, |r| r.el().child("requireparent").is_some()).unwrap_or_else(|| e.child("requireparent").is_some()),
+                (None, None) => false,
+            }
+    };
     match dest {
         Dest::Top | Dest::Location(_) => {
             let Some(container) = top_container(&tag) else { return Err(Misfit::NeedsParent) };
-            if needs_parent {
+            if needs_parent() {
                 return Err(Misfit::NeedsParent);
             }
             if let Some(g) = owned {
@@ -279,7 +296,7 @@ pub fn check(ch: &Character, store: &DataStore, cand: Candidate<'_>, dest: &Dest
                     "vehicle" => "vehiclelocations",
                     _ => return Err(Misfit::NoLocation),
                 };
-                let known = ch.doc.child(lc).is_some_and(|c| c.children_named("location").any(|e| e.get("guid").eq_ignore_ascii_case(l)));
+                let known = ch.doc.child(lc).is_some_and(|c| c.children_named("location").any(|e| e.get_eq_ignore_case("guid", l)));
                 if !known {
                     return Err(Misfit::NoLocation);
                 }
@@ -298,9 +315,18 @@ pub fn check(ch: &Character, store: &DataStore, cand: Candidate<'_>, dest: &Dest
                 if root_container(ch, g) != host.root {
                     return Err(Misfit::OtherList);
                 }
-                here = edit::parent(ch, g).is_some_and(|p| p.get("guid").eq_ignore_ascii_case(pg));
+                here = edit::parent(ch, g).is_some_and(|p| p.get_eq_ignore_case("guid", pg));
             }
-            host.takes(&tag, &data, item, rating, enforce, here)
+            let owned_data;
+            let data = match (rec, item) {
+                (Some(r), _) => r,
+                (None, Some(e)) => {
+                    owned_data = data_of(store, e);
+                    &owned_data
+                }
+                (None, None) => unreachable!("an owned item or a record"),
+            };
+            host.takes(&tag, data, item, rating, enforce, here)
         }
     }
 }
@@ -486,7 +512,7 @@ pub fn current(ch: &Character, guid: &str) -> Option<Dest> {
 /// Take an item out of the document, keeping its improvements. An
 /// `<underbarrel>` left empty goes too.
 fn take(doc: &mut Element, guid: &str) -> Option<Element> {
-    let at = doc.children.iter().position(|n| matches!(n, Node::Element(c) if edit::is_item(c) && c.get("guid").eq_ignore_ascii_case(guid)));
+    let at = doc.children.iter().position(|n| matches!(n, Node::Element(c) if edit::is_item(c) && c.get_eq_ignore_case("guid", guid)));
     if let Some(i) = at {
         if let Node::Element(e) = doc.children.remove(i) {
             return Some(e);
@@ -585,7 +611,7 @@ pub fn move_item(ch: &mut Character, store: &DataStore, guid: &str, dest: &Dest,
                     // Mounts of the new weapon, without this accessory.
                     let mut w = parent.clone();
                     if let Some(a) = w.child_mut("accessories") {
-                        a.children.retain(|n| !matches!(n, Node::Element(x) if x.get("guid").eq_ignore_ascii_case(guid)));
+                        a.children.retain(|n| !matches!(n, Node::Element(x) if x.get_eq_ignore_case("guid", guid)));
                     }
                     let options = weapon::mount_options(&w, Record(&data));
                     let mount = el.get("mount");
@@ -645,7 +671,7 @@ pub fn place_name(ch: &Character, dest: &Dest) -> String {
             .iter()
             .filter_map(|c| ch.doc.child(c))
             .flat_map(|c| c.children_named("location"))
-            .find(|e| e.get("guid").eq_ignore_ascii_case(l))
+            .find(|e| e.get_eq_ignore_case("guid", l))
             .map(|e| e.get("name"))
             .unwrap_or_else(|| "that location".into()),
     }

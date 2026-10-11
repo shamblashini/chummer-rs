@@ -118,6 +118,10 @@ const NO_SUPPRESSIVE: &str = "Not enough Ammunition. Cannot fire Suppressive Fir
 // ---------------------------------------------------------------------------
 
 fn weapon<'a>(ch: &'a Character, guid: &str) -> Option<&'a Element> {
+    // From the item index when one is active (`edit::with_index`).
+    if let Some(hit) = crate::items::edit::indexed(&ch.doc, guid) {
+        return hit.and_then(|c| c.last().copied()).filter(|e| e.name == "weapon");
+    }
     super::find(&ch.doc, guid).filter(|e| e.name == "weapon")
 }
 
@@ -195,6 +199,9 @@ pub fn remaining(w: &Element) -> i32 {
 /// `AmmoLoaded`: the gear in the active clip.
 pub fn loaded<'a>(ch: &'a Character, w: &Element) -> Option<&'a Element> {
     let id = clips(w).get(active_slot(w) - 1)?.ammo.clone()?;
+    if let Some(hit) = crate::items::edit::indexed(&ch.doc, &id) {
+        return hit.and_then(|c| c.last().copied()).filter(|g| g.name == "gear");
+    }
     super::find(&ch.doc, &id).filter(|g| g.name == "gear")
 }
 
@@ -227,10 +234,14 @@ pub fn allows(ch: &Character, w: &Element, mode: FireMode) -> bool {
 
 /// The weapon mount a vehicle weapon sits in, for ammo bonuses.
 fn mount_of<'a>(doc: &'a Element, guid: &str) -> Option<&'a Element> {
+    if let Some(hit) = crate::items::edit::indexed(doc, guid) {
+        let chain = hit?;
+        return chain.last().filter(|w| w.name == "weapon").and_then(|_| chain.iter().rev().skip(1).find(|e| e.name == "weaponmount").copied());
+    }
     fn walk<'a>(e: &'a Element, guid: &str, mount: Option<&'a Element>) -> Option<&'a Element> {
         let here = if e.name == "weaponmount" { Some(e) } else { mount };
         for c in e.elements().filter(|c| c.name != "improvements") {
-            if c.name == "weapon" && c.get("guid").eq_ignore_ascii_case(guid) {
+            if c.name == "weapon" && c.get_eq_ignore_case("guid", guid) {
                 return here;
             }
             if let Some(m) = walk(c, guid, here) {
@@ -292,10 +303,14 @@ fn replace_ci(s: &str, from: &str, to: &str) -> String {
 
 /// The vehicle a weapon is on (its gear is the ammunition pool).
 fn vehicle_of(doc: &Element, guid: &str) -> Option<String> {
+    // An item: the vehicle on its indexed path (guids are unique).
+    if let Some(Some(chain)) = crate::items::edit::indexed(doc, guid) {
+        return chain.iter().rev().skip(1).find(|e| e.name == "vehicle").map(|v| v.get("guid"));
+    }
     fn walk(e: &Element, guid: &str, veh: Option<&Element>) -> Option<Option<String>> {
         let here = if e.name == "vehicle" { Some(e) } else { veh };
         for c in e.elements().filter(|c| c.name != "improvements") {
-            if c.get("guid").eq_ignore_ascii_case(guid) {
+            if c.get_eq_ignore_case("guid", guid) {
                 return Some(here.map(|v| v.get("guid")));
             }
             if let Some(r) = walk(c, guid, here) {
@@ -325,20 +340,23 @@ fn pool_mut<'a>(ch: &'a mut Character, weapon_guid: &str) -> &'a mut Element {
 
 /// Guids of every gear loaded in some clip.
 fn loaded_ids(doc: &Element) -> Vec<String> {
-    let mut clips = Vec::new();
-    doc.descendants("clip", &mut clips);
-    clips.iter().map(|c| c.get("id").to_ascii_lowercase()).filter(|id| !id.starts_with("00000000")).collect()
+    crate::items::edit::scoped(doc, "ammo::loaded_ids", || {
+        let mut clips = Vec::new();
+        doc.descendants("clip", &mut clips);
+        clips.iter().map(|c| c.get("id").to_ascii_lowercase()).filter(|id| !id.starts_with("00000000")).collect::<Vec<String>>()
+    })
 }
 
 /// A gear field, saved or (for old saves) from gear.xml.
-fn gear_field(store: Option<&DataStore>, g: &Element, field: &str) -> String {
-    if let Some(v) = g.child_text(field).filter(|s| !s.is_empty()) {
-        return v;
+fn gear_field(store: Option<&DataStore>, g: &Element, field: &str, f: impl FnOnce(&str) -> bool) -> bool {
+    // Without copies: [`reloadable`] asks for every gear, for each weapon.
+    if let Some(v) = g.child(field).map(Element::text_ref).filter(|s| !s.is_empty()) {
+        return f(&v);
     }
-    let Some(doc) = store.and_then(|s| s.doc("gear.xml").ok()) else { return String::new() };
-    let id = g.get("sourceid");
-    let rec = (!id.is_empty()).then(|| crate::data::find(&doc, "gears", "gear", &id)).flatten().or_else(|| crate::data::find(&doc, "gears", "gear", &g.get("name")));
-    rec.and_then(|r| r.el().child_text(field)).unwrap_or_default()
+    let Some(ix) = store.and_then(|s| s.index("gear.xml", "gears", "gear").ok()) else { return f("") };
+    let id = g.child("sourceid").map(Element::text_ref).unwrap_or_default();
+    let rec = (!id.is_empty()).then(|| ix.find(&id)).flatten().or_else(|| ix.find(&g.child("name").map(Element::text_ref).unwrap_or_default()));
+    f(&rec.and_then(|r| r.el().child(field)).map(Element::text_ref).unwrap_or_default())
 }
 
 /// `Weapon.AmmoCategory`: the saved one, else the weapon's category.
@@ -377,24 +395,30 @@ pub fn reloadable(ch: &Character, store: Option<&DataStore>, weapon_guid: &str) 
     let wtype = weapon_type(store, w);
     let flechette = w.get("damage").contains("(f)");
     let throwing = w.get("useskill") == "Throwing Weapons" || w.get("category") == "Throwing Weapons";
+    let w_name = w.get("name");
     let mut out = Vec::new();
     let mut stack: Vec<&Element> = pool.children_named("gear").collect();
     stack.reverse();
+    // Read without copies: every gear the character carries is tried,
+    // for each weapon.
     while let Some(g) = stack.pop() {
-        if !g.get_bool("equipped").unwrap_or(true) {
+        if !g.child("equipped").is_none_or(|e| crate::xml::parse_bool(&e.text_ref())) {
             continue;
         }
-        let extra = g.get("extra");
-        let for_type = gear_field(store, g, "ammoforweapontype").split(',').map(str::trim).any(|t| t == wtype);
-        let is_flechette = crate::xml::parse_bool(&gear_field(store, g, "isflechetteammo"));
-        let fits = qty(g) > 0.0
-            && !loaded.contains(&g.get("guid").to_ascii_lowercase())
+        let extra = g.child("extra").map(Element::text_ref).unwrap_or_default();
+        // The data lookups last: every gear the character carries is
+        // tried, for each weapon.
+        let for_type = || gear_field(store, g, "ammoforweapontype", |v| v.split(',').map(str::trim).any(|t| t == wtype));
+        let is_flechette = || gear_field(store, g, "isflechetteammo", crate::xml::parse_bool);
+        let qty_ok = g.child("qty").map_or(1.0, |q| crate::xml::parse_f64(&q.text_ref()).unwrap_or(1.0)) > 0.0;
+        let fits = qty_ok
+            && !loaded.iter().any(|l| g.get_eq_ignore_case("guid", l))
             && if cat == "Gear" {
-                g.get("name") == w.get("name") && (extra.is_empty() || extra == cat)
+                g.get_eq("name", &w_name) && (extra.is_empty() || extra == cat)
             } else if throwing {
-                (!flechette || is_flechette) && for_type && (extra.is_empty() || extra == cat || g.get("name") == w.get("name"))
+                (extra.is_empty() || extra == cat || g.get_eq("name", &w_name)) && (!flechette || is_flechette()) && for_type()
             } else {
-                (!flechette || is_flechette) && for_type && (extra.is_empty() || extra == cat)
+                (extra.is_empty() || extra == cat) && (!flechette || is_flechette()) && for_type()
             };
         if fits {
             out.push((g.get("guid"), g.get("name"), qty(g)));
@@ -566,7 +590,7 @@ fn copy_gear(g: &Element) -> Element {
 /// Index path from `root` to the gear with this guid.
 fn path_to(root: &Element, guid: &str) -> Option<Vec<usize>> {
     for (i, c) in root.elements().enumerate() {
-        if c.get("guid").eq_ignore_ascii_case(guid) {
+        if c.get_eq_ignore_case("guid", guid) {
             return Some(vec![i]);
         }
         if let Some(mut p) = path_to(c, guid) {
@@ -690,7 +714,7 @@ pub fn unload(ch: &mut Character, weapon_guid: &str) -> bool {
         cs[i].count = 0;
     });
     let gid = g.get("guid");
-    let merge = pool(ch, weapon_guid).and_then(|p| p.children_named("gear").find(|x| !x.get("guid").eq_ignore_ascii_case(&gid) && identical(x, &g, true)).map(|x| (x.get("guid"), qty(x))));
+    let merge = pool(ch, weapon_guid).and_then(|p| p.children_named("gear").find(|x| !x.get_eq_ignore_case("guid", &gid) && identical(x, &g, true)).map(|x| (x.get("guid"), qty(x))));
     if let Some((mguid, mq)) = merge {
         set_gear_qty(ch, &mguid, mq + qty(&g));
         ch.remove_item_anywhere(&gid);

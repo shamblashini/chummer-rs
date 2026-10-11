@@ -187,13 +187,13 @@ impl Character {
         let ns = doc.child_or_insert("newskills");
         let skills = ns.child_or_insert("skills");
         for s in &self.skills {
-            if let Some(e) = skills.elements_mut().find(|e| e.get("guid").eq_ignore_ascii_case(&s.guid)) {
+            if let Some(e) = skills.elements_mut().find(|e| e.get_eq_ignore_case("guid", &s.guid)) {
                 s.write_into(e);
             }
         }
         let kno = ns.child_or_insert("knoskills");
         for s in &self.knowledge_skills {
-            if let Some(e) = kno.elements_mut().find(|e| e.get("guid").eq_ignore_ascii_case(&s.guid)) {
+            if let Some(e) = kno.elements_mut().find(|e| e.get_eq_ignore_case("guid", &s.guid)) {
                 s.write_into(e);
             }
         }
@@ -327,7 +327,7 @@ impl Character {
     pub fn remove_item_anywhere(&mut self, guid: &str) -> bool {
         fn strip(e: &mut Element, guid: &str) -> bool {
             let before = e.children.len();
-            e.children.retain(|n| !matches!(n, xml::Node::Element(c) if c.get("guid").eq_ignore_ascii_case(guid)));
+            e.children.retain(|n| !matches!(n, xml::Node::Element(c) if c.get_eq_ignore_case("guid", guid)));
             if e.children.len() != before {
                 return true;
             }
@@ -345,7 +345,7 @@ impl Character {
     pub fn remove_item(&mut self, container: &str, guid: &str) -> bool {
         let Some(c) = self.doc.child_mut(container) else { return false };
         let before = c.children.len();
-        c.children.retain(|n| !matches!(n, xml::Node::Element(e) if e.get("guid").eq_ignore_ascii_case(guid)));
+        c.children.retain(|n| !matches!(n, xml::Node::Element(e) if e.get_eq_ignore_case("guid", guid)));
         let removed = c.children.len() != before;
         if removed {
             self.improvements.remove_from_source(guid);

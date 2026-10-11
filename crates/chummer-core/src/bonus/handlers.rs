@@ -1190,7 +1190,7 @@ fn weapon_specific_dice(ctx: &mut Ctx<'_>, node: &Element) -> bool {
     let Some(a) = ctx.answer() else { return false };
     let ty = node.attr("type").unwrap_or("");
     let weapons = ctx.ch.items("weapons", "weapon");
-    let Some(w) = weapons.into_iter().filter(|w| ty.is_empty() || w.get("type") == ty).find(|w| w.get("guid").eq_ignore_ascii_case(&a) || w.get("name") == a) else { return false };
+    let Some(w) = weapons.into_iter().filter(|w| ty.is_empty() || w.get("type") == ty).find(|w| w.get_eq_ignore_case("guid", &a) || w.get("name") == a) else { return false };
     let (guid, wname) = (w.get("guid"), w.get("name"));
     let mut i = ctx.imp("WeaponSpecificDice", &guid);
     i.val = ctx.dec(&node.text());

@@ -107,7 +107,7 @@ pub fn check_release(ch: &Character, spirit: &Element) -> Result<(), String> {
     let flag = |s: &Element, k: &str| s.get_bool(k).unwrap_or(false);
     if ch.created && !flag(spirit, "bound") && owes(spirit) {
         let other = ch.items("spirits", "spirit").into_iter().any(|x| {
-            !x.get("guid").eq_ignore_ascii_case(&spirit.get("guid")) && x.get("type") == kind && owes(x) && !flag(x, "bound") && !flag(x, "fettered")
+            !x.get_eq_ignore_case("guid", &spirit.get("guid")) && x.get("type") == kind && owes(x) && !flag(x, "bound") && !flag(x, "fettered")
         });
         if other {
             return Err(if kind == "Sprite" { "only one unregistered sprite with tasks is allowed".into() } else { "only one unbound spirit with services is allowed".into() });
