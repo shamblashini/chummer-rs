@@ -31,7 +31,7 @@ pub(crate) fn find<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
     if guid.is_empty() {
         return None;
     }
-    if e.get("guid").eq_ignore_ascii_case(guid) && e.name != "improvement" {
+    if e.get_eq_ignore_case("guid", guid) && e.name != "improvement" {
         return Some(e);
     }
     e.elements().filter(|c| c.name != "improvements").find_map(|c| find(c, guid))
@@ -41,7 +41,7 @@ pub(crate) fn find_mut<'a>(e: &'a mut Element, guid: &str) -> Option<&'a mut Ele
     if guid.is_empty() {
         return None;
     }
-    if e.get("guid").eq_ignore_ascii_case(guid) && e.name != "improvement" {
+    if e.get_eq_ignore_case("guid", guid) && e.name != "improvement" {
         return Some(e);
     }
     e.elements_mut().filter(|c| c.name != "improvements").find_map(|c| find_mut(c, guid))

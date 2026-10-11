@@ -525,7 +525,7 @@ fn weapon_target(ch: &Character, vguid: &str, name: &str, size: &str, allowed: &
 /// if the kind's `add` put it elsewhere. `zero_cost`: data-included items
 /// cost nothing (`Cost = "0"`).
 fn place(ch: &mut Character, id: &str, parent: &str, container: &str, zero_cost: bool) {
-    let inside = find_by_guid(&ch.doc, parent).and_then(|p| p.child(container)).is_some_and(|c| c.elements().any(|e| e.get("guid").eq_ignore_ascii_case(id)));
+    let inside = find_by_guid(&ch.doc, parent).and_then(|p| p.child(container)).is_some_and(|c| c.elements().any(|e| e.get_eq_ignore_case("guid", id)));
     if !inside {
         if let Some(item) = take_by_guid(&mut ch.doc, id) {
             if let Some(p) = find_by_guid_mut(&mut ch.doc, parent) {
@@ -546,7 +546,7 @@ fn place(ch: &mut Character, id: &str, parent: &str, container: &str, zero_cost:
 
 /// Find a saved item anywhere below `e` by guid.
 fn find_by_guid<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
-    if e.get("guid").eq_ignore_ascii_case(guid) {
+    if e.get_eq_ignore_case("guid", guid) {
         return Some(e);
     }
     e.elements().find_map(|c| find_by_guid(c, guid))
@@ -554,7 +554,7 @@ fn find_by_guid<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
 
 /// Remove and return the item with this guid from anywhere below `e`.
 fn take_by_guid(e: &mut Element, guid: &str) -> Option<Element> {
-    let pos = e.children.iter().position(|n| matches!(n, Node::Element(c) if c.get("guid").eq_ignore_ascii_case(guid)));
+    let pos = e.children.iter().position(|n| matches!(n, Node::Element(c) if c.get_eq_ignore_case("guid", guid)));
     if let Some(i) = pos {
         if let Node::Element(c) = e.children.remove(i) {
             return Some(c);

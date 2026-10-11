@@ -362,7 +362,7 @@ pub fn choices(tag: &str, ch: &Character, _store: &DataStore, rec: Record<'_>, p
 
 /// Find any saved element by guid (immutable `items::find_by_guid_mut`).
 fn find_by_guid<'a>(e: &'a Element, guid: &str) -> Option<&'a Element> {
-    if e.get("guid").eq_ignore_ascii_case(guid) {
+    if e.get_eq_ignore_case("guid", guid) {
         return Some(e);
     }
     e.elements().find_map(|c| find_by_guid(c, guid))

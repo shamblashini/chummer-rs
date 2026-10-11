@@ -110,7 +110,7 @@ fn printed_values_equal_engine_values() {
             }
             // Weapons made by gear print the gear's cost.
             let pid = sw.get("parentid");
-            let from_gear = !pid.is_empty() && all(&ch.doc, "gear").iter().any(|g| g.get("guid").eq_ignore_ascii_case(&pid));
+            let from_gear = !pid.is_empty() && all(&ch.doc, "gear").iter().any(|g| g.get_eq_ignore_case("guid", &pid));
             if !from_gear && !sw.get_bool("included").unwrap_or(false) {
                 t.eq(|| l("cost"), &pw.get("cost"), &nuyen(weapon::cost(sw)));
             }
@@ -138,7 +138,7 @@ fn printed_values_equal_engine_values() {
         let pairs = |container: &str, tag: &'static str| -> Vec<(Element, Element)> {
             let printed: Vec<Element> = pc.child(container).map(|c| c.children_named(tag).cloned().collect()).unwrap_or_default();
             let saved = ch.items(container, tag);
-            printed.into_iter().filter_map(|p| saved.iter().find(|s| s.get("guid").eq_ignore_ascii_case(&p.get("guid"))).map(|s| (p, (*s).clone()))).collect()
+            printed.into_iter().filter_map(|p| saved.iter().find(|s| s.get_eq_ignore_case("guid", &p.get("guid"))).map(|s| (p, (*s).clone()))).collect()
         };
         for (p, s) in pairs("gears", "gear") {
             t.eq(|| format!("{fname} gear {} cost", s.get("name")), &p.get("cost"), &nuyen(gear::cost(&s)));

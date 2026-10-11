@@ -536,7 +536,7 @@ pub fn remove_quality(ch: &mut Character, engine: &Engine, quality_guid: &str) -
     let q = ch
         .items("qualities", "quality")
         .into_iter()
-        .find(|q| q.get("guid").eq_ignore_ascii_case(quality_guid))
+        .find(|q| q.get_eq_ignore_case("guid", quality_guid))
         .cloned()
         .ok_or_else(|| CareerError::NotFound(format!("quality {quality_guid}")))?;
     check_removable(ch, &q)?;
@@ -654,7 +654,7 @@ fn spell_category(spell: &Element) -> &'static str {
 }
 
 fn find_item<'a>(ch: &'a Character, container: &str, tag: &'a str, guid: &str) -> Option<&'a Element> {
-    ch.items(container, tag).into_iter().find(|e| e.get("guid").eq_ignore_ascii_case(guid))
+    ch.items(container, tag).into_iter().find(|e| e.get_eq_ignore_case("guid", guid))
 }
 
 /// Pay karma for a spell already on the character (bonus spells set

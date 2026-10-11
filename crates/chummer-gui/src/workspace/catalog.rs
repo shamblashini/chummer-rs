@@ -1083,7 +1083,7 @@ impl CharacterView {
         }
         // The kinds the anchor takes, for the switch.
         let into: Vec<(&'static str, String)> = match (&c.anchor, &target) {
-            (Some(a), Some(t)) if t.get("guid").eq_ignore_ascii_case(a) => {
+            (Some(a), Some(t)) if t.get_eq_ignore_case("guid", a) => {
                 let ptag = edit::tag_of(t);
                 place::accepts(&self.doc, &self.store, a).into_iter().map(|k| (k.tag, into_label(lang, ptag, k.tag, k.label))).collect()
             }

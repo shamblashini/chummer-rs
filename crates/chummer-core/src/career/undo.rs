@@ -40,7 +40,7 @@ pub fn undo_expense(ch: &mut Character, engine: &Engine, entry_guid: &str) -> Re
 fn check_highest_grade(ch: &Character, grade_guid: &str) -> Result<(), CareerError> {
     let grades = ch.items("initiationgrades", "initiationgrade");
     let max = grades.iter().filter_map(|g| g.get_i32("grade")).max().unwrap_or(0);
-    match grades.iter().find(|g| g.get("guid").eq_ignore_ascii_case(grade_guid)) {
+    match grades.iter().find(|g| g.get_eq_ignore_case("guid", grade_guid)) {
         Some(g) if g.get_i32("grade").unwrap_or(0) < max => Err(CareerError::Refused("only the highest grade can be undone".into())),
         _ => Ok(()),
     }
@@ -112,7 +112,7 @@ fn undo_karma_object(ch: &mut Character, engine: &Engine, e: &ExpenseEntry) -> R
 fn undo_fettering(ch: &mut Character, id: &str) -> Result<(), CareerError> {
     use crate::items::magic::spirit;
     let spirits = ch.items("spirits", "spirit");
-    if spirits.iter().any(|s| s.get("guid").eq_ignore_ascii_case(id) && s.get_bool("fettered").unwrap_or(false)) {
+    if spirits.iter().any(|s| s.get_eq_ignore_case("guid", id) && s.get_bool("fettered").unwrap_or(false)) {
         spirit::set_fettered(ch, id, false).map_err(CareerError::Refused)?;
     } else if !spirits.iter().any(|s| s.get_bool("fettered").unwrap_or(false)) {
         ch.improvements.list.retain(|i| i.source != spirit::FETTERING_SOURCE);
@@ -124,13 +124,13 @@ fn undo_fettering(ch: &mut Character, id: &str) -> Result<(), CareerError> {
 /// or (old files) the focus gear's guid. The gear loses its bonded flag
 /// and bonus, the focus is dropped; a stacked focus is only unbonded.
 fn unbind_focus(ch: &mut Character, engine: &Engine, id: &str) {
-    let gear = ch.items("foci", "focus").into_iter().find(|f| f.get("guid").eq_ignore_ascii_case(id)).map(|f| f.get("gearid"));
+    let gear = ch.items("foci", "focus").into_iter().find(|f| f.get_eq_ignore_case("guid", id)).map(|f| f.get("gearid"));
     if let Some(gear) = gear {
         account::unbind_focus(ch, &gear);
         account::set_focus_bonded(ch, &engine.store, &gear, false);
         return;
     }
-    if let Some(stack) = ch.doc.child_mut("stackedfoci").and_then(|c| c.elements_mut().find(|s| s.name == "stackedfocus" && s.get("guid").eq_ignore_ascii_case(id))) {
+    if let Some(stack) = ch.doc.child_mut("stackedfoci").and_then(|c| c.elements_mut().find(|s| s.name == "stackedfocus" && s.get_eq_ignore_case("guid", id))) {
         stack.set_child_text("bonded", "False");
         ch.improvements.list.retain(|i| !(i.source == "StackedFocus" && i.source_name.eq_ignore_ascii_case(id)));
         ch.dirty = true;
@@ -149,7 +149,7 @@ fn remove_technique(ch: &mut Character, id: &str) {
     for art in arts.elements_mut() {
         if let Some(list) = art.child_mut("martialarttechniques") {
             let before = list.children.len();
-            list.children.retain(|n| !matches!(n, crate::xml::Node::Element(t) if t.get("guid").eq_ignore_ascii_case(id)));
+            list.children.retain(|n| !matches!(n, crate::xml::Node::Element(t) if t.get_eq_ignore_case("guid", id)));
             removed |= list.children.len() != before;
         }
     }
@@ -208,7 +208,7 @@ fn undo_add_skill(ch: &mut Character, engine: &Engine, id: &str) -> Result<(), C
 /// `InitiationGrade.Remove`: drop the grade and the arts, metamagics and
 /// enhancements learned at it, and spells (rituals, enchantments) tied to it.
 fn remove_grade(ch: &mut Character, grade_guid: &str) {
-    let Some(g) = ch.items("initiationgrades", "initiationgrade").into_iter().find(|g| g.get("guid").eq_ignore_ascii_case(grade_guid)).cloned() else {
+    let Some(g) = ch.items("initiationgrades", "initiationgrade").into_iter().find(|g| g.get_eq_ignore_case("guid", grade_guid)).cloned() else {
         return;
     };
     let grade = g.get("grade");

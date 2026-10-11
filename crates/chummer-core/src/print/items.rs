@@ -113,7 +113,7 @@ fn is_commlink(item: &Element) -> bool {
 
 /// Find an element named `tag` with this guid anywhere under `e`.
 pub(crate) fn find_tagged<'a>(e: &'a Element, tag: &str, guid: &str) -> Option<&'a Element> {
-    if e.name == tag && e.get("guid").eq_ignore_ascii_case(guid) {
+    if e.name == tag && e.get_eq_ignore_case("guid", guid) {
         return Some(e);
     }
     e.elements().filter(|c| c.name != "improvements").find_map(|c| find_tagged(c, tag, guid))

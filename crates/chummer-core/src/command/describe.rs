@@ -46,7 +46,7 @@ fn item_name(ch: &Character, guid: &str) -> String {
 }
 
 fn find_any<'a>(e: &'a crate::xml::Element, guid: &str) -> Option<&'a crate::xml::Element> {
-    if e.get("guid").eq_ignore_ascii_case(guid) {
+    if e.get_eq_ignore_case("guid", guid) {
         return Some(e);
     }
     e.elements().find_map(|c| find_any(c, guid))

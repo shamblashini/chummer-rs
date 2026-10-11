@@ -792,7 +792,7 @@ fn items_in(ch: &mut Character, guid: &str, container: &str) -> Vec<Element> {
 /// Move the item `guid` into the `container` of item `parent`.
 fn move_into(ch: &mut Character, guid: &str, parent: &str, container: &str) {
     fn take(e: &mut Element, guid: &str) -> Option<Element> {
-        let pos = e.children.iter().position(|n| matches!(n, Node::Element(c) if c.get("guid").eq_ignore_ascii_case(guid)));
+        let pos = e.children.iter().position(|n| matches!(n, Node::Element(c) if c.get_eq_ignore_case("guid", guid)));
         if let Some(i) = pos {
             if let Node::Element(c) = e.children.remove(i) {
                 return Some(c);

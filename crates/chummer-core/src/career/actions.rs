@@ -166,7 +166,7 @@ pub fn set_group_member(ch: &mut Character, engine: &Engine, member: bool) -> Re
 /// picks the amount (at least 1). Returns the expense guid.
 pub fn quicken_spell(ch: &mut Character, spell_guid: &str, karma: i32) -> Result<String, CareerError> {
     require_career(ch)?;
-    let spell = ch.items("spells", "spell").into_iter().find(|s| s.get("guid").eq_ignore_ascii_case(spell_guid)).cloned().ok_or_else(|| CareerError::NotFound(format!("spell {spell_guid}")))?;
+    let spell = ch.items("spells", "spell").into_iter().find(|s| s.get_eq_ignore_case("guid", spell_guid)).cloned().ok_or_else(|| CareerError::NotFound(format!("spell {spell_guid}")))?;
     if karma < 1 {
         return Err(CareerError::Refused("quickening costs at least 1 karma".into()));
     }
