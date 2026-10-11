@@ -2,6 +2,7 @@
 //! `data/settings.xml` and user files from the settings directory.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::data::{DataError, DataStore};
 use crate::xml::{self, Element};
@@ -13,6 +14,23 @@ pub struct CharacterSettings {
     pub raw: Element,
     /// File name for user presets, `None` for built-ins.
     pub file: Option<PathBuf>,
+    /// Set for a preset an online campaign's GM shared: read-only, and
+    /// found only for that campaign's characters ([`Character::settings_scope`](crate::character::Character::settings_scope)).
+    pub campaign: Option<Arc<CampaignSource>>,
+}
+
+/// Where a campaign's shared preset came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CampaignSource {
+    /// Which campaign's characters see it (a player's copies name it in
+    /// `settings_scope`).
+    pub scope: String,
+    /// The campaign's name, as the GM calls it.
+    pub campaign: String,
+    /// The key the GM's characters store for it.
+    pub key: String,
+    /// [`CharacterSettings::content_hash`] at the GM's.
+    pub hash: [u8; 32],
 }
 
 impl CharacterSettings {
@@ -22,10 +40,26 @@ impl CharacterSettings {
     /// What a character's `<settings>` stores: the file name for user
     /// presets, the GUID for built-ins (`CharacterSettings.DictionaryKey`).
     pub fn key(&self) -> String {
+        if let Some(c) = &self.campaign {
+            return c.key.clone();
+        }
         match self.file.as_deref().and_then(std::path::Path::file_name) {
             Some(f) => f.to_string_lossy().into_owned(),
             None => self.id(),
         }
+    }
+    /// A preset of the game data (not a user file, not a campaign's).
+    pub fn is_builtin(&self) -> bool {
+        self.file.is_none() && self.campaign.is_none()
+    }
+    /// One of the user's own files, which they may edit.
+    pub fn is_user(&self) -> bool {
+        self.file.is_some() && self.campaign.is_none()
+    }
+    /// BLAKE3 of the preset's XML: tells whether two machines have the
+    /// same rules under one key.
+    pub fn content_hash(&self) -> [u8; 32] {
+        *blake3::hash(self.raw.to_xml_string().as_bytes()).as_bytes()
     }
     pub fn name(&self) -> String {
         self.raw.get("name")
@@ -69,10 +103,13 @@ impl CharacterSettings {
     }
 }
 
-/// All presets: built-ins first, then user files.
+/// All presets: built-ins first, then user files. The presets online
+/// campaigns shared are kept apart in `campaign`: they only count for
+/// those campaigns' characters.
 #[derive(Debug, Clone)]
 pub struct SettingsLibrary {
     pub presets: Vec<CharacterSettings>,
+    pub campaign: Vec<CharacterSettings>,
 }
 
 impl SettingsLibrary {
@@ -80,7 +117,7 @@ impl SettingsLibrary {
         let doc = store.doc("settings.xml")?;
         let mut presets: Vec<CharacterSettings> = doc
             .child("settings")
-            .map(|s| s.children_named("setting").map(|e| CharacterSettings { raw: e.clone(), file: None }).collect())
+            .map(|s| s.children_named("setting").map(|e| CharacterSettings { raw: e.clone(), file: None, campaign: None }).collect())
             .unwrap_or_default();
         if let Some(dir) = user_dir {
             if let Ok(rd) = std::fs::read_dir(dir) {
@@ -94,31 +131,60 @@ impl SettingsLibrary {
                     let Ok(root) = xml::parse(&src) else { continue };
                     // User files are `<settings>` roots holding one preset.
                     let raw = if root.name == "settings" && root.child("name").is_some() { root } else { continue };
-                    presets.push(CharacterSettings { raw, file: Some(p) });
+                    presets.push(CharacterSettings { raw, file: Some(p), campaign: None });
                 }
             }
         }
-        Ok(Self { presets })
+        Ok(Self { presets, campaign: Vec::new() })
     }
 
     /// Resolve a character's `<settings>` value: a user file name, a preset
     /// id, or a name. Falls back to Standard (see [`Self::fallback`]); use
-    /// [`Self::missing_preset`] to tell the user when that happens.
+    /// [`Self::missing_preset`] to tell the user when that happens. For a
+    /// character use [`Self::resolve_for`], which knows its campaign.
     pub fn resolve(&self, key: &str) -> Option<&CharacterSettings> {
         self.find(key).or_else(|| self.fallback())
     }
 
-    /// The preset `key` names, without any fallback.
+    /// The preset `key` names, without any fallback (campaign presets
+    /// not included).
     pub fn find(&self, key: &str) -> Option<&CharacterSettings> {
+        self.find_in(key, None)
+    }
+
+    /// The preset `key` names for a character of campaign `scope`: that
+    /// campaign's shared presets, then the built-ins (never the user's
+    /// own files, which may hold other rules under the same name).
+    /// Without a scope: built-ins and user files.
+    pub fn find_in(&self, key: &str, scope: Option<&str>) -> Option<&CharacterSettings> {
         let key = key.trim();
         if key.is_empty() {
             return None;
         }
-        self.presets
-            .iter()
-            .find(|p| p.file.as_deref().and_then(Path::file_name).and_then(|f| f.to_str()) == Some(key))
-            .or_else(|| self.presets.iter().find(|p| key != EMPTY_GUID && p.id().eq_ignore_ascii_case(key)))
-            .or_else(|| self.presets.iter().find(|p| p.name() == key))
+        match scope {
+            None => find_among(&self.presets, key, |_| true),
+            Some(s) => find_among(&self.campaign, key, |p| p.campaign.as_ref().is_some_and(|c| c.scope == s)).or_else(|| find_among(&self.presets, key, CharacterSettings::is_builtin)),
+        }
+    }
+
+    /// [`Self::resolve`] for a character's preset, in its campaign.
+    pub fn resolve_for(&self, ch: &crate::character::Character) -> Option<&CharacterSettings> {
+        self.find_for(ch).or_else(|| self.fallback())
+    }
+
+    /// [`Self::find`] for a character's preset, in its campaign.
+    pub fn find_for(&self, ch: &crate::character::Character) -> Option<&CharacterSettings> {
+        self.find_in(&ch.field("settings"), ch.settings_scope.as_deref())
+    }
+
+    /// [`Self::missing_preset`] for a character, in its campaign.
+    pub fn missing_for(&self, ch: &crate::character::Character) -> Option<String> {
+        self.missing_in(&ch.field("settings"), ch.settings_scope.as_deref())
+    }
+
+    /// The presets campaign `scope` shared.
+    pub fn campaign_presets<'a>(&'a self, scope: &'a str) -> impl Iterator<Item = &'a CharacterSettings> + 'a {
+        self.campaign.iter().filter(move |p| p.campaign.as_ref().is_some_and(|c| c.scope == scope))
     }
 
     /// What characters use when their preset is missing: built-in Standard
@@ -132,8 +198,13 @@ impl SettingsLibrary {
     /// Settings File". The name is the key without `.xml`, as Chummer shows
     /// it. An empty value is not missing: Chummer uses its default then.
     pub fn missing_preset(&self, key: &str) -> Option<String> {
+        self.missing_in(key, None)
+    }
+
+    /// [`Self::missing_preset`] for a character of campaign `scope`.
+    pub fn missing_in(&self, key: &str, scope: Option<&str>) -> Option<String> {
         let key = key.trim();
-        if key.is_empty() || self.find(key).is_some() {
+        if key.is_empty() || self.find_in(key, scope).is_some() {
             return None;
         }
         Some(Path::new(key).file_stem().map_or_else(|| key.to_owned(), |s| s.to_string_lossy().into_owned()))
@@ -156,6 +227,16 @@ impl SettingsLibrary {
         let name_clash = self.presets.iter().any(|p| p.name() == name && p.file.as_deref().and_then(Path::file_name).and_then(|f| f.to_str()) != Some(file_name.as_str()));
         Ok(ImportPlan { root, file_name, file_clash, name_clash })
     }
+}
+
+/// The preset `key` names among `presets` (those `keep` lets through):
+/// by file name (or a campaign preset's key), then id, then name.
+fn find_among<'a>(presets: &'a [CharacterSettings], key: &str, keep: impl Fn(&CharacterSettings) -> bool) -> Option<&'a CharacterSettings> {
+    let mut it = presets.iter().filter(|p| keep(p));
+    it.clone()
+        .find(|p| (p.file.is_some() || p.campaign.is_some()) && p.key() == key)
+        .or_else(|| it.clone().find(|p| key != EMPTY_GUID && p.id().eq_ignore_ascii_case(key)))
+        .or_else(|| it.find(|p| p.name() == key))
 }
 
 /// GUID of the built-in "Standard" preset.

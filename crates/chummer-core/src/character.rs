@@ -69,6 +69,10 @@ pub struct Character {
     /// cover; everything else is read and written here directly.
     pub doc: Element,
     pub file: Option<PathBuf>,
+    /// For a player's copy of an online campaign's character: the
+    /// campaign whose shared settings presets its `<settings>` names
+    /// ([`crate::settings::SettingsLibrary::find_in`]). Not saved.
+    pub settings_scope: Option<String>,
     pub attributes: Vec<Attribute>,
     pub skills: Vec<Skill>,
     pub skill_groups: Vec<SkillGroup>,
@@ -145,6 +149,7 @@ impl Character {
             improvements,
             doc,
             file: None,
+            settings_scope: None,
             dirty: false,
         })
     }

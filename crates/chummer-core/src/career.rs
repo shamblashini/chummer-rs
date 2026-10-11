@@ -135,7 +135,7 @@ impl CareerRules {
 
     /// The career rules of a character's settings preset.
     pub fn for_character(engine: &Engine, ch: &Character) -> CareerRules {
-        engine.settings().resolve(&ch.field("settings")).map(CareerRules::from_settings).unwrap_or_default()
+        engine.settings().resolve_for(ch).map(CareerRules::from_settings).unwrap_or_default()
     }
 }
 

@@ -350,6 +350,19 @@ pub fn enabled_directories<'a>(settings: &Element, available: &'a [CustomDataDir
     out
 }
 
+/// The directories a settings preset enables that are not installed here
+/// (a preset from another machine, e.g. a campaign GM's), as the preset
+/// names them: a folder name, or `guid>version`.
+pub fn missing_directories(settings: &Element, available: &[CustomDataDirectory]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in settings_entries(settings).into_iter().filter(|e| e.enabled) {
+        if resolve_key(&e.key, available).is_none() && !out.iter().any(|k| k.eq_ignore_ascii_case(&e.key)) {
+            out.push(e.key);
+        }
+    }
+    out
+}
+
 /// Problems with a set of enabled directories: `(directory, message)` for
 /// each missing dependency and each enabled incompatibility
 /// (`CustomDataDirectoryInfo.CheckDependency` / `CheckIncompatibility`).
