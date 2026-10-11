@@ -1,15 +1,16 @@
 //! Opt-in frame timing (`CHUMMER_TRACE_FRAMES=1`), for finding what makes
 //! the window stop answering.
 //!
-//! A frame slower than [`SLOW`] is logged to stderr with the spans that
-//! ran in it (`span("recompute")` around a phase), the time spent outside
-//! `update` (tessellation and painting) and any wait for the online locks
-//! (`chummer_sync::lockwatch`). Spans on other threads are logged on their
-//! own when slow, and so are long holds of the online locks by network
-//! tasks. Without the variable a span costs one atomic load.
+//! A frame slower than [`SLOW`] (or `CHUMMER_TRACE_SLOW_MS`, in ms) is
+//! logged to stderr with the spans that ran in it (`span("recompute")`
+//! around a phase), the time spent outside `update` (tessellation and
+//! painting) and any wait for the online locks (`chummer_sync::lockwatch`).
+//! Spans on other threads are logged on their own when slow, and so are
+//! long holds of the online locks by network tasks. Without the variable
+//! a span costs one atomic load.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,8 @@ use std::time::{Duration, Instant};
 pub const SLOW: Duration = Duration::from_millis(50);
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
+/// The threshold in microseconds: [`SLOW`], or `CHUMMER_TRACE_SLOW_MS`.
+static SLOW_US: AtomicU64 = AtomicU64::new(SLOW.as_micros() as u64);
 static START: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Default)]
@@ -48,13 +51,21 @@ pub fn init() {
     ENABLED.store(on, Ordering::Relaxed);
     if on {
         START.get_or_init(Instant::now);
+        if let Some(ms) = std::env::var("CHUMMER_TRACE_SLOW_MS").ok().and_then(|v| v.trim().parse::<f64>().ok()).filter(|ms| *ms >= 0.0) {
+            SLOW_US.store((ms * 1000.0) as u64, Ordering::Relaxed);
+        }
         chummer_sync::lockwatch::set_hook(lock_event);
-        eprintln!("[trace] frame timing on: frames over {} ms are logged", SLOW.as_millis());
+        eprintln!("[trace] frame timing on: frames over {} ms are logged", ms(slow()));
     }
 }
 
 pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
+}
+
+/// The threshold for logging a frame or a span.
+fn slow() -> Duration {
+    Duration::from_micros(SLOW_US.load(Ordering::Relaxed))
 }
 
 fn stamp() -> f64 {
@@ -104,7 +115,7 @@ impl Drop for Span {
             }
             f.open
         });
-        if !open && took >= SLOW {
+        if !open && took >= slow() {
             let thread = std::thread::current();
             eprintln!("[trace {:>9.3}] {} took {} ms (thread {})", stamp(), self.name, ms(took), thread.name().unwrap_or("?"));
         }
@@ -126,7 +137,7 @@ fn lock_event(e: chummer_sync::lockwatch::LockEvent) {
     let name = thread.name().unwrap_or("?");
     match e {
         LockEvent::Waited { lock, wait } if !in_frame && wait >= Duration::from_millis(5) => eprintln!("[trace {:>9.3}] waited {} ms for the {lock} lock (thread {name})", stamp(), ms(wait)),
-        LockEvent::Held { lock, held } if !in_frame || held >= SLOW => eprintln!("[trace {:>9.3}] held the {lock} lock {} ms (thread {name})", stamp(), ms(held)),
+        LockEvent::Held { lock, held } if !in_frame || held >= slow() => eprintln!("[trace {:>9.3}] held the {lock} lock {} ms (thread {name})", stamp(), ms(held)),
         _ => {}
     }
 }
@@ -145,7 +156,7 @@ pub fn begin_frame(cpu: Option<f32>) {
             let cpu = Duration::from_secs_f32(cpu.unwrap_or_default().max(0.0));
             let paint = cpu.saturating_sub(f.updates);
             f.updates = Duration::ZERO;
-            if paint >= SLOW {
+            if paint >= slow() {
                 eprintln!("[trace {:>9.3}] previous frame spent {} ms outside update (tessellate/paint/texture upload), {} ms total", stamp(), ms(paint), ms(cpu));
             }
         }
@@ -172,7 +183,7 @@ pub fn end_frame() {
         if took > f.worst {
             f.worst = took;
         }
-        if took < SLOW {
+        if took < slow() {
             return;
         }
         let mut line = format!("[trace {:>9.3}] slow frame #{}: update {} ms (worst so far {} ms)", stamp(), f.frames, ms(took), ms(f.worst));
@@ -190,7 +201,7 @@ pub fn end_frame() {
                 None => spans.push((at, depth, name, d, 1)),
             }
         }
-        for (_, depth, name, d, n) in spans.iter().filter(|s| s.3 >= Duration::from_millis(2)).take(32) {
+        for (_, depth, name, d, n) in spans.iter().filter(|s| s.3 >= (slow() / 25).min(Duration::from_millis(2))).take(40) {
             let times = if *n > 1 { format!(" ({n} times)") } else { String::new() };
             line.push_str(&format!("\n    {}{name}: {} ms{times}", "  ".repeat(*depth), ms(*d)));
         }

@@ -95,6 +95,9 @@ fn perf_frames() {
     // frames; with "vsync" it leaves pacing to the driver, so frames run
     // back to back. Edition 2021: set_var is safe; std's lock covers it.
     std::env::set_var("CHUMMER_VSYNC", "1");
+    // CHUMMER_TRACE_FRAMES=1 (and CHUMMER_TRACE_SLOW_MS) logs slow frames
+    // with their spans, as in the app.
+    crate::trace::init();
     let mut r = Runner::new(quick, only);
     let heavy = slug(HEAVY.trim_end_matches(".chum5"));
     for kind in [ThemeKind::WorkspaceDark, ThemeKind::Graphite] {
