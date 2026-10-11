@@ -1,0 +1,21 @@
+[package]
+name = "chummer-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "chummer-rs performance suite: timings of the main operations, budgets and the regression check (docs/testing.md)"
+publish = false
+
+[[bin]]
+name = "chummer-bench"
+path = "src/main.rs"
+
+[dependencies]
+chummer-core.workspace = true
+chummer-net.workspace = true
+chummer-sync.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
