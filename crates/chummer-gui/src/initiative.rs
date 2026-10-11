@@ -122,7 +122,9 @@ impl Tracker {
                 ui.add(egui::DragValue::new(&mut c.score));
                 ui.checkbox(&mut c.acted, "");
                 let c = &self.enc.combatants[i];
-                ui.horizontal_wrapped(|ui| {
+                ui.horizontal(|ui| {
+                    // A grid cell is as narrow as last frame's: grow it.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     ui.spacing_mut().item_spacing = egui::vec2(4.0, 2.0);
                     if let Some(k) = init_adjust::chips(ui, lang, &c.adjust) {
                         unadjust = Some((i, k));
