@@ -51,6 +51,9 @@ pub enum Shortcut {
     JoinCampaign,
 }
 
+/// Height the setup's header, buttons and margins take besides its steps.
+const SETUP_CHROME: f32 = 240.0;
+
 /// How a frame of the setup ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -219,8 +222,12 @@ impl App {
         let mut new_language = None;
         let mut open_files = false;
         let mut new_look = None;
+        // The steps scroll in what the app window leaves after the header
+        // and the buttons, so the buttons stay on screen in a short window.
+        let body = (ctx.content_rect().height() - SETUP_CHROME).clamp(120.0, 380.0);
+        let width = (ctx.content_rect().width() - 80.0).clamp(280.0, 640.0);
         egui::Modal::new(egui::Id::new("first_start_setup")).show(ctx, |ui| {
-            ui.set_width(640.0);
+            ui.set_width(width);
             // Header: the steps as dots and the step's title.
             ui.horizontal(|ui| {
                 for (i, step) in Step::ALL.iter().enumerate() {
@@ -240,8 +247,8 @@ impl App {
                 ui.heading(title);
             }
             ui.add_space(8.0);
-            egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show(ui, |ui| {
-                ui.set_min_height(300.0);
+            egui::ScrollArea::vertical().max_height(body).auto_shrink([false, true]).show(ui, |ui| {
+                ui.set_min_height(body.min(300.0));
                 match s.step {
                     Step::Language => {
                         ui.label(self.lang.tr("A few questions to set chummer-rs up. Skip any of them; everything can be changed later."));
@@ -402,6 +409,10 @@ impl App {
                 });
             });
         });
+        // Escape skips the setup, as "Skip setup" does.
+        if outcome == Outcome::Open && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            outcome = Outcome::Done(None);
+        }
         if open_files {
             self.open_user_data_folder();
         }
