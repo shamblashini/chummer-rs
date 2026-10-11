@@ -1075,7 +1075,8 @@ turns vsync back on). If the window still stalls, start chummer-rs from a termin
 CHUMMER_TRACE_FRAMES=1 chummer-rs 2>trace.log
 ```
 
-Every frame slower than 50 ms is then written to stderr with the phases
+Every frame slower than 50 ms (`CHUMMER_TRACE_SLOW_MS` sets another
+threshold, e.g. 10) is then written to stderr with the phases
 that ran in it (sheet recompute, issues, catalog preview, palette index,
 page drawing, online refresh and so on), time spent painting outside the
 frame, waits for the online locks, long holds of those locks by network
