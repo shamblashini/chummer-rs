@@ -59,7 +59,13 @@ type DocCache = Mutex<HashMap<String, Arc<Mutex<Option<Arc<Element>>>>>>;
 /// The document in `file`'s slot of `cache`, from `load` the first time
 /// (a failed load is not kept).
 fn cached(cache: &DocCache, file: &str, load: impl FnOnce() -> Result<Arc<Element>, DataError>) -> Result<Arc<Element>, DataError> {
-    let slot = cache.lock().unwrap().entry(file.to_owned()).or_default().clone();
+    let slot = {
+        let mut m = cache.lock().unwrap();
+        match m.get(file) {
+            Some(s) => s.clone(),
+            None => m.entry(file.to_owned()).or_default().clone(),
+        }
+    };
     let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(d) = &*slot {
         return Ok(d.clone());
