@@ -273,7 +273,6 @@ impl Command {
             SetImprovementNotes { at, .. } => format!("imp-notes:{}", at.source),
             SetContactField { contact, key, .. } => format!("contact:{contact}:{key}"),
             SetWeekNotes { week, .. } => format!("week:{week}"),
-            SetChoke { weapon, .. } => format!("choke:{weapon}"),
             _ => return None,
         })
     }
