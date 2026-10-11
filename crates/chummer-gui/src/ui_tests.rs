@@ -2926,3 +2926,102 @@ fn print_window_resizes_and_its_list_is_tall() {
         h.reset();
     }
 }
+
+/// Workspace Play screen: a shotgun's choke selector (not on a pistol),
+/// its tooltips, the DV and note it shows, the note on the roll, and
+/// undo; the Classic item pane has the same setting.
+#[test]
+fn workspace_play_shotgun_choke() {
+    use chummer_core::play::choke::{self, Choke};
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    h.size = TALL;
+    let i = h.open(&fixture("Munin_Career.chum5"));
+    let shotgun = buy_item(&mut h, i, "weapon", "Remington 990", None, None);
+    buy_item(&mut h, i, "weapon", "Ares Predator V", None, None);
+    let with_choke = h.app.views[i].ch().items("weapons", "weapon").into_iter().filter(|w| choke::has_choke(w)).count();
+    assert_eq!(with_choke, 1, "only the shotgun has a choke");
+    go_special(&mut h, Section::Play);
+    h.frames(2);
+    assert!(h.find_text("Remington 990").is_some() && h.find_text("Ares Predator V").is_some(), "{:?}", h.on_screen());
+    assert_eq!(h.count("Choke"), 1, "one selector, for the shotgun: {:?}", h.on_screen());
+    let card = h.find_text("Remington 990").unwrap();
+    let narrow = h.find_text("Narrow").expect("Narrow");
+    assert!(narrow.top() > card.top() && narrow.top() - card.top() < 80.0, "on the shotgun's card");
+    assert!(h.find_where(|t| t.starts_with("11P · ")).is_some(), "no choke: the weapon's own DV");
+
+    // Medium spread: saved, the DV drops at short range, the note.
+    h.click_text("Medium");
+    h.frames(2);
+    let get = |h: &Harness| choke::choke(chummer_core::items::edit::find(h.app.views[i].ch(), &shotgun).unwrap());
+    assert_eq!(get(&h), Some(Choke::Medium));
+    assert!(h.find_where(|t| t.starts_with("10P · ")).is_some(), "DV −1 at short range: {:?}", h.on_screen());
+    let note = "Medium spread, Short: DV −1, up to 2 targets within 2 m; defender −3";
+    assert!(h.find_text(note).is_some(), "the note: {:?}", h.on_screen());
+    // Long range: DV −5 and Accuracy −1.
+    h.click_text("L");
+    h.frames(2);
+    assert!(h.find_text("Medium spread, Long: DV −5, Accuracy −1, up to 4 targets within 6 m; defender −3").is_some(), "{:?}", h.on_screen());
+    assert!(h.find_where(|t| t.starts_with("6P · ")).is_some(), "{:?}", h.on_screen());
+
+    // Roll the shotgun: the note goes with the roll.
+    let card = h.find_text("Remington 990").unwrap();
+    let r = h.texts.iter().rev().find(|(t, r)| t.starts_with("Roll ") && (r.center().y - card.center().y).abs() < 12.0).map(|(_, r)| *r).expect("the shotgun's Roll");
+    h.click_at(r.center());
+    h.frames(2);
+    let label = h.app.views[i].ws_last_roll_label().unwrap_or_default();
+    assert!(label.contains("Remington 990") && label.ends_with("Medium spread, Long: DV −5, Accuracy −1, up to 4 targets within 6 m; defender −3"), "{label}");
+    assert!(h.find_where(|t| t.contains("Remington 990 · Medium spread, Long")).is_some(), "the roll card: {:?}", h.on_screen());
+
+    // The tooltip of Wide: the defender's modifier and each band.
+    let wide = h.find_text("Wide").unwrap();
+    h.frame(vec![Event::PointerMoved(wide.center())]);
+    h.frames(40);
+    let tip = ["Wide spread", "Defender −5 at every range. No Called Shots.", "Short (0-15 m): DV −3, up to 2 targets within 3 m", "Extreme (46-60 m): DV −9, Accuracy −1, up to 6 targets within 12 m"];
+    for line in tip {
+        assert!(h.find_where(|t| t.contains(line)).is_some(), "tooltip line {line:?}: {:?}", h.on_screen());
+    }
+
+    // Clicking the setting again clears it; undo brings it back.
+    h.click_text("Medium");
+    h.frames(2);
+    assert_eq!(get(&h), None);
+    assert!(h.app.views[i].doc_mut().undo().is_some());
+    h.frames(2);
+    assert_eq!(get(&h), Some(Choke::Medium));
+}
+
+/// Workspace GM screen: a member's shotgun has the choke selector on its
+/// card (N / M / W), the note under it, and the note on the GM's roll.
+#[test]
+fn workspace_gm_shotgun_choke() {
+    use chummer_core::command::{Command, RecordRef};
+    use chummer_core::play::choke::{self, Choke};
+    let (mut h, members) = gm_with_campaign(ThemeKind::WorkspaceDark);
+    // Munin: the card lists the first five weapons, and Munin has two.
+    let (member, name) = members[0].clone();
+    h.click_at(leftmost(&h, &name).center());
+    h.frames(3);
+    let purchase = chummer_core::items::Purchase { qty: 1.0, cost_multiplier: 1.0, ..Default::default() };
+    let doc = h.app.gm.as_mut().unwrap().test_doc_mut(member).expect("the member's character");
+    doc.apply(Command::AddItem { tag: "weapon".into(), record: RecordRef { id: String::new(), name: "Remington 990".into() }, purchase }).unwrap();
+    h.frames(3);
+    let row = h.find_text("Remington 990").unwrap_or_else(|| panic!("the card's weapons: {:?}", h.on_screen()));
+    let near = |h: &Harness, text: &str| h.texts.iter().rev().find(|(t, r)| t.trim() == text && (r.center().y - row.center().y).abs() < 12.0).map(|(_, r)| *r);
+    for code in ["N", "M", "W"] {
+        assert!(near(&h, code).is_some(), "{code} on the shotgun's row: {:?}", h.on_screen());
+    }
+    h.click_at(near(&h, "M").unwrap().center());
+    h.frames(2);
+    let doc = h.app.gm.as_mut().unwrap().test_doc_mut(member).unwrap();
+    let w = doc.items("weapons", "weapon").into_iter().find(|w| w.get("name") == "Remington 990").unwrap().clone();
+    assert_eq!(choke::choke(&w), Some(Choke::Medium));
+    let note = "Medium spread: defender −3, DV −1/−3/−5/−7 by range";
+    assert!(h.find_text(note).is_some(), "the note on the card: {:?}", h.on_screen());
+    let roll = h.texts.iter().rev().find(|(t, r)| t.starts_with("Roll ") && (r.center().y - row.center().y).abs() < 12.0).map(|(_, r)| *r).expect("the shotgun's Roll");
+    h.click_at(roll.center());
+    h.frames(2);
+    let gm = h.app.gm.as_ref().unwrap();
+    let label = gm.rolls().first().map(|r| r.rec.label.clone()).unwrap_or_default();
+    assert_eq!(label, format!("Remington 990 · {note}"));
+    assert!(h.app.close_campaign(true));
+}

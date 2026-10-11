@@ -102,6 +102,8 @@ enum CardDo {
     Matrix(String, i32),
     Vehicle(String, i32),
     Roll(String, i32),
+    /// Set or clear a shotgun's choke.
+    Choke(String, Option<chummer_core::play::choke::Choke>),
     /// Push the Limit on the next roll, or not.
     Push(bool),
     /// Show the next roll to players, or not.
@@ -768,7 +770,14 @@ impl GmScreen {
         let device = matrix::active_commlink(doc).cloned();
         let vehicles: Vec<_> = doc.items("vehicles", "vehicle").into_iter().take(4).cloned().collect();
         let pools = crate::campaign_ui::quick_pools(doc, &sheet, lang, 5);
-        let weapons: Vec<(String, chummer_core::items::weapon::WeaponStats)> = doc.items("weapons", "weapon").into_iter().take(5).map(|w| (w.get("name"), chummer_core::items::weapon::stats(doc, &sheet, w))).collect();
+        // Name, stats, guid, whether it has a choke and the choke set.
+        type Choke = Option<chummer_core::play::choke::Choke>;
+        let weapons: Vec<(String, chummer_core::items::weapon::WeaponStats, String, bool, Choke)> = doc
+            .items("weapons", "weapon")
+            .into_iter()
+            .take(5)
+            .map(|w| (w.get("name"), chummer_core::items::weapon::stats(doc, &sheet, w), w.get("guid"), chummer_core::play::choke::has_choke(w), chummer_core::play::choke::choke(w)))
+            .collect();
         let mut rated: Vec<_> = sheet.skills.iter().filter(|s| s.rating > 0 && !s.disabled).collect();
         rated.sort_by(|a, b| b.rating.cmp(&a.rating).then(a.name.cmp(&b.name)));
         let skills: Vec<(String, String)> = rated.into_iter().take(6).map(|s| (lang.data_name("skills.xml", "", &s.name), s.rating.to_string())).collect();
@@ -928,19 +937,34 @@ impl GmScreen {
             ui.add_space(12.0);
             ui.label(widgets::title(&lang.tr("Weapons"), &ws));
             ui.add_space(2.0);
-            for (k, (name, st)) in weapons.iter().enumerate() {
+            for (k, (name, st, guid, has_choke, set)) in weapons.iter().enumerate() {
+                let note = set.map(|c| crate::play_ui::choke_note(lang, c, None));
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
                 ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0_f32, ws.divider));
                 let mut row = ui.new_child(egui::UiBuilder::new().id_salt(("ws_gm_weapon", k)).max_rect(rect).layout(egui::Layout::right_to_left(egui::Align::Center)));
                 row.spacing_mut().item_spacing.x = 8.0;
                 if widgets::button(&mut row, Some(icons::DICE_FIVE), &format!("{} {}", lang.tr("Roll"), st.dice_pool), Look::Secondary, 22.0).clicked() {
-                    todo.push(CardDo::Roll(name.clone(), st.dice_pool));
+                    // The choke's note goes with the roll.
+                    let label = note.as_ref().map_or_else(|| name.clone(), |n| format!("{name} · {n}"));
+                    todo.push(CardDo::Roll(label, st.dice_pool));
+                }
+                if *has_choke {
+                    let ranges = crate::play_ui::choke_ranges(st);
+                    let tips: Vec<String> = chummer_core::play::choke::Choke::ALL.iter().map(|c| crate::play_ui::choke_tip(lang, *c, Some(&ranges))).collect();
+                    let items: Vec<(&str, &str)> = chummer_core::play::choke::Choke::ALL.iter().zip(&tips).map(|(c, t)| (crate::play_ui::choke_code(*c), t.as_str())).collect();
+                    let at = set.map_or(usize::MAX, |c| c as usize);
+                    if let Some(i) = widgets::segmented(&mut row, &items, at, 22.0) {
+                        todo.push(CardDo::Choke(guid.clone(), crate::play_ui::choke_click(*set, i)));
+                    }
                 }
                 let ap = if st.ap.is_empty() { "-".to_owned() } else { st.ap.clone() };
                 row.label(RichText::new(format!("{} · {} {ap}", st.damage, lang.tr("AP"))).size(11.5).color(ws.muted));
                 row.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.add(egui::Label::new(RichText::new(name).size(12.5).color(ws.text)).truncate());
                 });
+                if let Some(n) = &note {
+                    ui.label(RichText::new(n).size(11.0).color(ws.muted));
+                }
             }
         }
         // Skills, gear and qualities.
@@ -996,6 +1020,7 @@ impl GmScreen {
                 CardDo::EdgeUsed(n) => self.run_for(id, Command::SetEdgeUsed { used: n }, env),
                 CardDo::Matrix(g, f) => self.run_for(id, Command::SetMatrixDamage { device: g, filled: f }, env),
                 CardDo::Vehicle(g, f) => self.run_for(id, Command::SetVehicleDamage { vehicle: g, filled: f }, env),
+                CardDo::Choke(g, c) => self.run_for(id, Command::SetChoke { weapon: g, choke: c }, env),
             }
         }
         self.keep_rename(RenameAt::Card(id), rename);

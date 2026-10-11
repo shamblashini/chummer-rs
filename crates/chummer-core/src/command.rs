@@ -40,6 +40,7 @@ use crate::items::lifestyle::Options as LifestyleOptions;
 use crate::items::magic::spell::SpellOptions;
 use crate::items::Purchase;
 use crate::play::ammo::FireMode;
+use crate::play::choke::Choke;
 
 pub use numbers::FLOAT_LIMIT;
 pub use session::{LogEntry, Report, Session, HISTORY_LIMIT};
@@ -234,6 +235,11 @@ pub enum Command {
     /// or into a location, under the rules of buying it there
     /// ([`crate::items::place`]).
     MoveItem { item: String, to: crate::items::place::Dest },
+
+    // ----- play (appended) -----
+    /// A shotgun's choke setting ([`crate::play::choke`]); `None` clears
+    /// it (slugs).
+    SetChoke { weapon: String, choke: Option<Choke> },
 }
 
 impl Command {
@@ -284,6 +290,8 @@ impl Command {
             SetItemText { field, .. } => field == "location",
             // A revert restores a state the rules already produced.
             SetContactField { .. } | SetContactNotes { .. } | SortContacts { .. } | SetWeekNotes { .. } | SetImprovementNotes { .. } | Revert { .. } => false,
+            // The choke changes no sheet value, only the notes on a roll.
+            SetChoke { .. } => false,
             _ => true,
         }
     }
@@ -406,7 +414,9 @@ impl Command {
             Revert { snapshot: Vec::new(), what: s("Raised Pistols to 5 (10 karma)"), from: 3, to: 4 },
             MoveItem { item: g.clone(), to: crate::items::place::Dest::Item(g.clone()) },
             MoveItem { item: g.clone(), to: crate::items::place::Dest::Top },
-            MoveItem { item: g.clone(), to: crate::items::place::Dest::Location(g) },
+            MoveItem { item: g.clone(), to: crate::items::place::Dest::Location(g.clone()) },
+            SetChoke { weapon: g.clone(), choke: Some(Choke::Medium) },
+            SetChoke { weapon: g, choke: None },
         ]
     }
 }

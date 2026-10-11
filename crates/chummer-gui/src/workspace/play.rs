@@ -22,7 +22,7 @@ use chummer_core::campaign::damage::Attack;
 use chummer_core::campaign::Combatant;
 use chummer_core::command::Command;
 use chummer_core::lang::Language;
-use chummer_core::play::{ammo, matrix, vehicle};
+use chummer_core::play::{ammo, choke, matrix, vehicle};
 use chummer_core::sections;
 use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
@@ -137,6 +137,9 @@ pub struct PlayState {
     weapon: Option<String>,
     /// Fire mode picked per weapon.
     modes: HashMap<String, ammo::FireMode>,
+    /// Range band picked per shotgun with a medium or wide choke (per
+    /// shot, so not saved; short by default).
+    bands: HashMap<String, choke::Band>,
     /// Ammunition choices and the fire question (`play_ui`).
     ammo: crate::play_ui::PlayPanel,
     /// The weapon whose reload choices are open.
@@ -261,6 +264,12 @@ impl CharacterView {
     }
 
     /// The session of the character's online campaign, for a player.
+    /// The label of the newest roll in the Play screen's roller.
+    #[cfg(test)]
+    pub(crate) fn ws_last_roll_label(&self) -> Option<String> {
+        self.play.roller.last().map(|e| e.label.clone())
+    }
+
     fn player_session(&self) -> Option<(chummer_sync::PlayerSession, chummer_sync::CharacterId)> {
         match self.doc.backend() {
             Some(Backend::Player { session, id }) => Some((session.clone(), id.clone())),
@@ -678,6 +687,14 @@ impl CharacterView {
         let selected = self.play.weapon.as_deref() == Some(guid.as_str());
         let melee = st.ranges.short.is_empty();
         let mut changed = false;
+        // A shotgun's choke: the DV, Accuracy and roll note at the band picked.
+        let has_choke = choke::has_choke(w);
+        let set = choke::choke(w);
+        let band = self.play.bands.get(&guid).copied().unwrap_or_default();
+        let effect = set.map(|c| c.effect(band));
+        let accuracy = st.accuracy + effect.map_or(0, |e| e.accuracy);
+        let damage = effect.map_or_else(|| st.damage.clone(), |e| choke::adjust_damage(&st.damage, e.dv));
+        let note = set.map(|c| crate::play_ui::choke_note(lang, c, Some(band)));
         let frame = egui::Frame::new()
             .fill(if selected { ws.selection } else { ws.raised })
             .stroke(egui::Stroke::new(1.0_f32, if selected { ws.primary } else { ws.divider }))
@@ -691,15 +708,19 @@ impl CharacterView {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let look = if selected { Look::Primary } else { Look::Secondary };
                     let label = format!("{} {}", lang.tr("Roll"), st.dice_pool);
-                    if widgets::button(ui, Some(icons::DICE_FIVE), &label, look, 24.0).on_hover_text(lang.tr_fmt("Limit {0}", &[&st.accuracy])).clicked() {
-                        let what = if st.skill.is_empty() { name.clone() } else { format!("{} · {name}", lang.data_name("skills.xml", "", &st.skill)) };
-                        self.play.roller.roll_as(&what, st.dice_pool.max(0) as u32, Some(st.accuracy.max(0) as u32));
+                    if widgets::button(ui, Some(icons::DICE_FIVE), &label, look, 24.0).on_hover_text(lang.tr_fmt("Limit {0}", &[&accuracy])).clicked() {
+                        let mut what = if st.skill.is_empty() { name.clone() } else { format!("{} · {name}", lang.data_name("skills.xml", "", &st.skill)) };
+                        // The choke's note goes with the roll to the GM.
+                        if let Some(n) = &note {
+                            what = format!("{what} · {n}");
+                        }
+                        self.play.roller.roll_as(&what, st.dice_pool.max(0) as u32, Some(accuracy.max(0) as u32));
                         self.play.weapon = Some(guid.clone());
                     }
                 });
             });
             let ap = if st.ap.is_empty() { "-".to_owned() } else { st.ap.clone() };
-            let mut parts = vec![st.damage.clone(), format!("{} {ap}", lang.tr("AP")), format!("{} {}", lang.tr("Acc"), st.accuracy)];
+            let mut parts = vec![damage, format!("{} {ap}", lang.tr("AP")), format!("{} {}", lang.tr("Acc"), accuracy)];
             if melee {
                 parts.push(format!("{} {}", lang.tr("Reach"), st.reach));
             } else {
@@ -710,10 +731,55 @@ impl CharacterView {
                 parts.push(format!("{} {}", lang.tr("RC"), st.rc));
             }
             ui.label(RichText::new(parts.join(" · ")).size(11.5).color(ws.muted));
+            if has_choke {
+                changed |= self.play_choke(ui, lang, status, w, &st, set, band);
+            }
             if self.doc.created && ammo::uses_ammo(w) && !ammo::clips(w).is_empty() {
                 changed |= self.play_ammo(ui, lang, status, w);
             }
         });
+        changed
+    }
+
+    /// A shotgun's choke (Narrow / Medium / Wide, saved with the
+    /// character) and, for a medium or wide spread, the range band of the
+    /// shot (S / M / L / E); each with a tooltip of what it does. The
+    /// note below says what the GM applies.
+    #[allow(clippy::too_many_arguments)]
+    fn play_choke(&mut self, ui: &mut egui::Ui, lang: &Language, status: &mut Status, w: &Element, st: &chummer_core::items::weapon::WeaponStats, set: Option<choke::Choke>, band: choke::Band) -> bool {
+        let ws = theme::ws(ui);
+        let guid = w.get("guid");
+        let ranges = crate::play_ui::choke_ranges(st);
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.label(RichText::new(lang.tr("Choke")).size(11.5).color(ws.muted)).on_hover_text(lang.tr("Click the setting again to clear it (slugs)."));
+            let names: Vec<String> = choke::Choke::ALL.iter().map(|c| lang.tr(c.short_label())).collect();
+            let tips: Vec<String> = choke::Choke::ALL.iter().map(|c| crate::play_ui::choke_tip(lang, *c, Some(&ranges))).collect();
+            let items: Vec<(&str, &str)> = names.iter().zip(&tips).map(|(n, t)| (n.as_str(), t.as_str())).collect();
+            let at = set.map_or(usize::MAX, |c| c as usize);
+            // Own ids: `segmented` keys its parts by `ui.id()`, which the
+            // fire modes' row on this card shares.
+            if let Some(i) = ui.push_id("choke", |ui| widgets::segmented(ui, &items, at, 22.0)).inner {
+                let cmd = Command::SetChoke { weapon: guid.clone(), choke: crate::play_ui::choke_click(set, i) };
+                changed |= self.doc.run(cmd, status).is_some_and(|r| r.changed);
+            }
+        });
+        // Its own row: a card is too narrow for both.
+        if set.is_some_and(choke::Choke::by_range) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(RichText::new(lang.tr("Range")).size(11.5).color(ws.muted));
+                let tips: Vec<String> = choke::Band::ALL.iter().map(|b| if ranges[*b as usize].is_empty() { lang.tr(b.label()) } else { format!("{}: {} m", lang.tr(b.label()), ranges[*b as usize]) }).collect();
+                let items: Vec<(&str, &str)> = choke::Band::ALL.iter().zip(&tips).map(|(b, t)| (&b.label()[..1], t.as_str())).collect();
+                if let Some(i) = ui.push_id("choke_band", |ui| widgets::segmented(ui, &items, band as usize, 22.0)).inner {
+                    self.play.bands.insert(guid.clone(), choke::Band::ALL[i]);
+                }
+            });
+        }
+        if let Some(c) = set {
+            ui.label(RichText::new(crate::play_ui::choke_note(lang, c, Some(band))).size(11.0).color(ws.muted));
+        }
         changed
     }
 

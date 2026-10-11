@@ -487,6 +487,7 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
         SetMatrixDamage { device, filled } => flag(matrix::set_filled(ch, device, *filled)),
         SetActiveCommlink { device, on } => flag(matrix::set_active(ch, device, *on)),
         SetHomeNode { device, on } => flag(matrix::set_home_node(ch, device, *on)),
+        SetChoke { weapon, choke } => flag(crate::play::choke::set_choke(ch, weapon, *choke)),
         Revert { snapshot, .. } => {
             let mut state = super::restore(snapshot).map_err(reject)?;
             if super::canonical(&state) == super::canonical(ch) {

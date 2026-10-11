@@ -5,6 +5,7 @@
 
 pub mod ai;
 pub mod ammo;
+pub mod choke;
 pub mod matrix;
 pub mod vehicle;
 

@@ -1,7 +1,8 @@
 //! In-play tracking at the table: the Edge boxes in the sidebar, and in
 //! the item pane a weapon's ammunition (clips, fire, reload, unload), a
 //! device's matrix attributes, matrix condition monitor and active
-//! commlink, and a vehicle's damage track.
+//! commlink, and a vehicle's damage track; a shotgun's choke setting
+//! (also on the Play and GM screens, with the texts from here).
 //!
 //! All changes go through `chummer_core::play`; this file only draws.
 
@@ -10,6 +11,7 @@ use chummer_core::command::Command;
 use chummer_core::data::DataStore;
 use chummer_core::items::vehicle::VehicleRules;
 use chummer_core::lang::Language;
+use chummer_core::play::choke::{self, Band, Choke};
 use chummer_core::play::{ammo, matrix, vehicle};
 use chummer_core::xml::Element;
 use eframe::egui::{self, RichText};
@@ -41,6 +43,111 @@ pub fn edge_track(ui: &mut egui::Ui, ch: &mut Doc, sheet: &Sheet, lang: &Languag
     changed
 }
 
+// ----- shotgun choke (SR5 p. 180) -----
+
+/// The range bands of a weapon's cone: its alternate ranges (a
+/// shotgun's flechette ranges) when it has them, else its own. Empty
+/// strings when unknown.
+pub fn choke_ranges(st: &chummer_core::items::weapon::WeaponStats) -> [String; 4] {
+    let r = &st.ranges;
+    if !r.alt_short.is_empty() {
+        [r.alt_short.clone(), r.alt_medium.clone(), r.alt_long.clone(), r.alt_extreme.clone()]
+    } else {
+        [r.short.clone(), r.medium.clone(), r.long.clone(), r.extreme.clone()]
+    }
+}
+
+/// "Short (0-15 m)", or just "Short" when the range is unknown.
+fn band_text(lang: &Language, b: Band, ranges: Option<&[String; 4]>) -> String {
+    match ranges.map(|r| &r[b as usize]).filter(|r| !r.is_empty()) {
+        Some(r) => format!("{} ({r} m)", lang.tr(b.label())),
+        None => lang.tr(b.label()),
+    }
+}
+
+/// What a choke setting does at one band: "DV −1, up to 2 targets
+/// within 2 m" (the defender's modifier is the same at every band).
+fn effect_text(lang: &Language, e: choke::Effect) -> String {
+    let mut parts = vec![format!("{} {}", lang.tr("DV"), choke::signed(e.dv))];
+    if e.accuracy != 0 {
+        parts.push(format!("{} {}", lang.tr("Accuracy"), choke::signed(e.accuracy)));
+    }
+    if e.targets > 1 {
+        parts.push(lang.tr_fmt("up to {0} targets within {1} m", &[&e.targets, &e.spread_m]));
+    }
+    parts.join(", ")
+}
+
+/// The tooltip of a choke setting: the defender's modifier, and per
+/// range band the DV, Accuracy and the targets in the cone.
+pub fn choke_tip(lang: &Language, c: Choke, ranges: Option<&[String; 4]>) -> String {
+    let mut lines = vec![lang.tr(c.label())];
+    if c.by_range() {
+        lines.push(lang.tr_fmt("Defender {0} at every range. No Called Shots.", &[&choke::signed(c.defense())]));
+        for b in Band::ALL {
+            lines.push(format!("{}: {}", band_text(lang, b, ranges), effect_text(lang, c.effect(b))));
+        }
+        lines.push(lang.tr("The cone is as long as the range band."));
+    } else {
+        lines.push(lang.tr_fmt("One target. Defender {0} at every range; DV and Accuracy unchanged.", &[&choke::signed(c.defense())]));
+    }
+    lines.push(lang.tr("For shot rounds (flechette rules). Changing the choke is a Simple Action, a Free Action with a smartlink (SR5 p. 180)."));
+    lines.join("\n")
+}
+
+/// The note on a roll with a choke set, for the GM: "Medium spread,
+/// Short: DV −1, up to 2 targets within 2 m; defender −3". Without a
+/// band, the DV of each band ("DV −1/−3/−5/−7 by range").
+pub fn choke_note(lang: &Language, c: Choke, band: Option<Band>) -> String {
+    let defender = lang.tr_fmt("defender {0}", &[&choke::signed(c.defense())]);
+    if !c.by_range() {
+        return format!("{}: {defender}", lang.tr(c.label()));
+    }
+    match band {
+        Some(b) => format!("{}, {}: {}; {defender}", lang.tr(c.label()), lang.tr(b.label()), effect_text(lang, c.effect(b))),
+        None => {
+            let dv: Vec<String> = c.effects().iter().map(|e| choke::signed(e.dv)).collect();
+            format!("{}: {defender}, {}", lang.tr(c.label()), lang.tr_fmt("DV {0} by range", &[&dv.join("/")]))
+        }
+    }
+}
+
+/// The new choke when setting `i` of [`Choke::ALL`] is clicked: clicking
+/// the one set clears it (slugs).
+pub fn choke_click(current: Option<Choke>, i: usize) -> Option<Choke> {
+    let c = Choke::ALL[i];
+    (current != Some(c)).then_some(c)
+}
+
+/// "N", "M", "W": the choke settings' short labels.
+pub fn choke_code(c: Choke) -> &'static str {
+    match c {
+        Choke::Narrow => "N",
+        Choke::Medium => "M",
+        Choke::Wide => "W",
+    }
+}
+
+/// The item pane's choke row (both layouts): one toggle per setting,
+/// each with its tooltip. Returns whether it changed.
+fn choke_ui(ui: &mut egui::Ui, ch: &mut Doc, lang: &Language, w: &Element) -> bool {
+    let current = choke::choke(w);
+    let mut changed = false;
+    ui.add_space(6.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(lang.tr("Choke")).strong()).on_hover_text(lang.tr("Click the setting again to clear it (slugs)."));
+        for (i, c) in Choke::ALL.into_iter().enumerate() {
+            if ui.selectable_label(current == Some(c), lang.tr(c.short_label())).on_hover_text(choke_tip(lang, c, None)).clicked() {
+                changed |= ch.set(Command::SetChoke { weapon: w.get("guid"), choke: choke_click(current, i) });
+            }
+        }
+    });
+    if let Some(c) = current {
+        ui.label(RichText::new(choke_note(lang, c, None)).small().weak());
+    }
+    changed
+}
+
 /// State of the item pane's play section between frames.
 #[derive(Default)]
 pub struct PlayPanel {
@@ -67,6 +174,9 @@ impl PlayPanel {
         }
         if e.name == "weapon" && ch.created && ammo::uses_ammo(&e) {
             changed |= self.weapon_ui(ui, ch, store, lang, &e, status);
+        }
+        if choke::has_choke(&e) {
+            changed |= choke_ui(ui, ch, lang, &e);
         }
         if matrix::has_matrix(&e) {
             changed |= device_ui(ui, ch, lang, &e);
