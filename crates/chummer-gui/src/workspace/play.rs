@@ -148,6 +148,9 @@ pub struct PlayState {
     /// What the weapon cards show of each weapon's ammunition, by guid,
     /// once per revision.
     ammo_info: crate::memo::Memo<String, AmmoInfo>,
+    /// The revision for which every card's `ammo_info` was worked out in
+    /// one go (`play_weapons`).
+    ammo_filled: std::cell::Cell<Option<u64>>,
     /// The table's rolls as last read from the campaign replica, with the
     /// replica's roll revision.
     table: Option<(u64, Vec<GmRoll>)>,
@@ -165,6 +168,7 @@ struct AmmoInfo {
 impl CharacterView {
     pub(super) fn play_memo_clear(&self) {
         self.play.ammo_info.clear();
+        self.play.ammo_filled.set(None);
     }
 
     fn ammo_info(&self, w: &Element) -> AmmoInfo {
@@ -673,7 +677,9 @@ impl CharacterView {
         // The cards' ammunition (memoized), worked out in one go with an
         // index of the items: each weapon's otherwise searches the whole
         // character a few times.
-        if self.doc.created {
+        // Once per revision: the index is a walk of the whole character.
+        if self.doc.created && self.play.ammo_filled.get() != Some(self.doc.revision()) {
+            self.play.ammo_filled.set(Some(self.doc.revision()));
             chummer_core::items::edit::with_index(&self.doc, || {
                 for w in weapons.iter().filter(|w| ammo::uses_ammo(w) && !ammo::clips(w).is_empty()) {
                     self.ammo_info(w);
