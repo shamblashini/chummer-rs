@@ -46,6 +46,7 @@ Each table has these columns:
 | Undo of "Fettered a Spirit" refunds the karma, but the spirit stays fettered and keeps its MAG −1. | Undo also releases the spirit and removes the MAG −1 improvement. (LB-01) | SG p. 192. Otherwise the fetter is free. | yes |
 | Buying karma with nuyen logs the nuyen at `NuyenPerBPWftP` but deducts it at `NuyenPerBPWftM`. | Uses WftP for both, so the log matches the balance. Same result with the default settings (both 2,000). (LB-24) | Book-keeping. | yes (nuyen) |
 | Career essence loss can lower an attribute's karma levels below 0. | Karma levels stop at 0. (LB-33) | Negative purchased levels have no meaning. | yes (karma levels) |
+| Removing a quality with several levels books one karma entry for all of them (cost × levels). | One entry per level, each with its own undo. | Same karma; each level can be undone on its own. | yes (expense log) |
 | Reload with a top-up that needs more rounds than the stack has: the loaded quantity becomes `Quantity − selected.Quantity`, so rounds disappear. A stack can stay at quantity 0. | The stacks merge, as Chummer's own comment says. A stack that reaches 0 is removed. (LB-20) | Book-keeping. | yes (ammo quantities) |
 
 ## Creation
@@ -132,6 +133,7 @@ file differences.
 | Magic, resonance, A.I. and critter tabs follow the character's flags. | The same, but a tab also shows while the character has items that it lists. | Nothing becomes unreachable. | no |
 | Item details are fields on each tab. | Clicking an item opens a detail pane on the right (rating, quantity, equipped, wireless, names, location, notes, children, sell). | Layout. | no |
 | Selection dialogs ask where to install an item (the selected tree node). | Workspace: the selected inventory row is the catalog's target when it can hold the selected record, else the purchase goes to the top level and the bar says why; records can be dragged onto a row or a location to buy them there. No "Install in" list. | Layout. | no |
+| Add Quality: the karma label is the quality's karma × the chosen Rating, also when some levels are already taken. | The Level stepper starts one above the levels already taken, and its karma is for the levels that Add adds. | Shows what Add costs. | no |
 | Career: a new metamagic goes to the initiation grade node selected in the tree. | A Grade dropdown in the Metamagics section, with each grade's cost; the lowest grade without a metamagic is preselected. (LB-30) | Same result; no tree selection needed. | no |
 | Tree views: multi-level qualities are one node; `startcollapsed` gear starts closed; vehicle mod grouping can be turned off; "Initiate Grade" nodes. | Multi-level qualities are one row per level; that gear starts open; vehicle mods are always grouped by category (Chummer's default); plain "Grade N" groups. | Simplification. | no |
 | Character sheets are shown in the built-in sheet viewer. | Chummer's XSLT sheets run through `xsltproc` (on a copy with two libxslt fixes) and open in the web browser. Sheets that `sheets.xml` lists but that are not shipped are left out (Chummer shows "File not found"). | No .NET or embedded browser. | no |

@@ -26,6 +26,23 @@ pub fn long_name(abbrev: &str) -> &'static str {
     }
 }
 
+/// Whether the attribute lists show `abbrev` (`AttributeSection
+/// .InitializeAttributesList`): MAG/RES/DEP only when enabled, Essence
+/// never, and MAGAdept only for a mystic adept whose settings have
+/// `MysAdeptSecondMAGAttribute` ("Mystic Adepts use second MAG attribute
+/// for Adept abilities instead of special PP rules"). Without that house
+/// rule a mystic adept has one Magic and buys power points with karma.
+pub fn shown(ch: &crate::character::Character, abbrev: &str, mys_adept_second_mag: bool) -> bool {
+    match abbrev {
+        "ESS" => false,
+        "MAG" => ch.mag_enabled(),
+        "MAGAdept" => ch.mag_enabled() && ch.is_adept() && ch.is_magician() && mys_adept_second_mag,
+        "RES" => ch.res_enabled(),
+        "DEP" => ch.dep_enabled(),
+        _ => true,
+    }
+}
+
 /// One attribute as saved. Computed values live in [`crate::calc`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Attribute {

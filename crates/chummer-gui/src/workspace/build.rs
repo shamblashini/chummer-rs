@@ -443,7 +443,10 @@ impl CharacterView {
                 let mut raise = false;
                 let row = widgets::table_row(ui, name, selected, 34.0, |ui| {
                     widgets::cell(ui, next(), 34.0, |ui| {
-                        ui.label(RichText::new(&long).size(13.0).color(ws.text));
+                        let r = ui.label(RichText::new(&long).size(13.0).color(ws.text));
+                        if let Some(h) = crate::view::mystic_magic_hint(lang, name) {
+                            r.on_hover_text(h);
+                        }
                         ui.label(RichText::new(name).size(11.0).color(ws.muted));
                     });
                     if career_mode {
@@ -579,6 +582,8 @@ impl CharacterView {
         let mut open = None;
         let mut remove = None;
         let mut book = None;
+        let levels = if sec.container == "qualities" { crate::view::quality_levels(&self.doc, &self.store) } else { Default::default() };
+        let mut level_to = None;
         widgets::table_frame(&ws).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let widths = widgets::table_columns(ui, &spec);
@@ -589,7 +594,7 @@ impl CharacterView {
             widgets::table_header(ui, &caps, &widths);
             let mut stack: Vec<(&chummer_core::tree::ItemNode, usize)> = tree.iter().rev().map(|n| (n, 0)).collect();
             while let Some((n, depth)) = stack.pop() {
-                let view = crate::view::tree_row(sec, n, lang, &marks);
+                let view = crate::view::with_level(crate::view::tree_row(sec, n, lang, &marks), sec, n, &levels);
                 match &n.value {
                     Entry::Group(_) => {
                         ui.horizontal(|ui| {
@@ -607,6 +612,13 @@ impl CharacterView {
                                 ui.add_space(depth as f32 * 14.0);
                                 if let Some((msg, err)) = &view.warning {
                                     widgets::issue_mark(ui, *err, msg);
+                                }
+                                // A quality with levels: its level stepper first.
+                                if let Some(&(mut lv, Some(max))) = levels.get(&guid) {
+                                    let name = el.get("name");
+                                    if widgets::stepper(ui, ("quality_level", &guid), &mut lv, 1, max, &lang.tr_fmt("Lower {0}", &[&name]), &lang.tr_fmt("Raise {0}", &[&name])) {
+                                        level_to = Some((guid.clone(), lv));
+                                    }
                                 }
                                 let r = ui.add(egui::Label::new(RichText::new(&view.cells[0]).size(12.5).color(ws.text)).truncate());
                                 if !view.hover.is_empty() {
@@ -646,6 +658,9 @@ impl CharacterView {
         }
         if remove.is_some() {
             self.confirm_remove = remove;
+        }
+        if let Some((g, l)) = level_to {
+            self.set_quality_level(g, l);
         }
         if let Some(g) = open {
             self.ws_open_item(g);

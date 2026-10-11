@@ -220,7 +220,7 @@ not in the .chum5.
 
 **Career mode.**
 - Raise attributes, skills, skill groups and knowledge skills for karma at Chummer's costs.
-- Buy specializations, qualities and spells.
+- Buy specializations, qualities and spells. Qualities with levels (Focused Concentration, Gremlins, Infirm …) take a Level in the Add dialog and a level stepper on their row; each level costs its karma.
 - Buy off negative qualities.
 - Initiate or submerge (group, ordeal and schooling discounts). A mystic adept with the second-MAG house rule is also limited by MAGAdept.
 - Learn martial arts and their techniques.

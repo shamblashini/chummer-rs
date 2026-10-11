@@ -251,10 +251,10 @@ fn quality_sums(ch: &Character, rules: &Rules, kind: &str) -> (i32, i32) {
     (limited, unlimited)
 }
 
-/// `Quality.Levels`: copies with the same id, extra, source name and type.
+/// `Quality.Levels`: copies with the same source id, extra, source name
+/// and type.
 fn quality_levels(ch: &Character, q: &Element) -> i32 {
-    let key = |x: &Element| (x.get("id"), x.get("extra"), x.get("sourcename"), x.get("qualitytype"));
-    ch.items("qualities", "quality").iter().filter(|o| key(o) == key(q)).count() as i32
+    crate::items::quality::levels(ch, q)
 }
 
 /// Life module qualities cost BP x Levels x KarmaQuality (`CalculateBP`).

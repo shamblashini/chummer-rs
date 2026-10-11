@@ -206,6 +206,8 @@ enum CareerAction {
     Undo(String),
     Initiate(career::InitiationOptions),
     RemoveQuality(String),
+    /// A quality's level (guid, level): in career mode levels cost karma.
+    SetQualityLevel(String, i32),
 }
 
 impl CareerAction {
@@ -219,6 +221,7 @@ impl CareerAction {
             CareerAction::Undo(entry) => Command::UndoExpense { entry },
             CareerAction::Initiate(options) => Command::Initiate { options },
             CareerAction::RemoveQuality(guid) => Command::RemoveItem { container: "qualities".into(), guid },
+            CareerAction::SetQualityLevel(guid, level) => Command::SetQualityLevel { guid, level },
         }
     }
 }
@@ -933,7 +936,10 @@ impl CharacterView {
                         row.col(|ui| {
                             let key = format!("String_Attribute{name}Long");
                             let long = if lang.has(&key) { lang.s(&key) } else { lang.tr(attributes::long_name(name)) };
-                            ui.label(format!("{long} ({name})"));
+                            let r = ui.label(format!("{long} ({name})"));
+                            if let Some(h) = mystic_magic_hint(lang, name) {
+                                r.on_hover_text(h);
+                            }
                         });
                         row.col(|ui| {
                             if let Some(a) = self.doc.attribute(name) {
@@ -1449,8 +1455,15 @@ impl CharacterView {
         let selected = self.item_editor.as_ref().map(|(g, _)| g.as_str());
         let mut remove = None;
         let marks = self.item_marks(lang);
-        let out = crate::tree_table::TreeTable::new(sec.container, &headers).selected(selected).show(ui, &tree, |n| tree_row(sec, n, lang, &marks), |ui, n| {
+        let levels = if sec.container == "qualities" { quality_levels(&self.doc, &self.store) } else { Default::default() };
+        let mut level_to = None;
+        let out = crate::tree_table::TreeTable::new(sec.container, &headers).selected(selected).show(ui, &tree, |n| with_level(tree_row(sec, n, lang, &marks), sec, n, &levels), |ui, n| {
             let Entry::Item { el, top } = n.value else { return };
+            if let Some(&(mut lv, Some(max))) = levels.get(&el.get("guid")) {
+                if ui.add(egui::DragValue::new(&mut lv).range(1..=max)).on_hover_text(lang.tr("Level")).changed() {
+                    level_to = Some((el.get("guid"), lv));
+                }
+            }
             pdf_ui::source_icon(ui, pdfs, SourceRef::of(el), status);
             if top && ui.small_button(crate::theme::glyph("🗑")).on_hover_text(lang.tr("Remove (also removes its improvements)")).clicked() {
                 remove = Some((sec.container.to_owned(), el.get("guid"), display_name(sec, el, lang)));
@@ -1458,6 +1471,9 @@ impl CharacterView {
         });
         if remove.is_some() {
             self.confirm_remove = remove;
+        }
+        if let Some((g, l)) = level_to {
+            self.action = Some(CareerAction::SetQualityLevel(g, l));
         }
         if let Some(g) = out.clicked {
             self.item_editor = Some((g, crate::item_editor::ItemEditor::default()));
@@ -1624,7 +1640,8 @@ impl CharacterView {
         let books = self.settings.as_ref().map(|s| s.books()).unwrap_or_default();
         let max_avail = self.settings.as_ref().map_or(12, |s| s.max_availability());
         let nuyen_left = self.budget.as_ref().map(|b| b.nuyen_left());
-        self.select = SelectDialog::new(tag, &self.store, books, max_avail, nuyen_left);
+        let double = !self.settings.as_ref().is_some_and(|s| s.flag("dontdoublequalities"));
+        self.select = SelectDialog::new(tag, &self.store, books, max_avail, nuyen_left).map(|d| d.with_quality_karma(self.rules.karma_quality, double));
     }
 
     fn select_dialog(&mut self, ctx: &egui::Context, lang: &Language, pdfs: &SourcebookLibrary, status: &mut Status) -> bool {
@@ -1732,6 +1749,12 @@ impl CharacterView {
             });
         });
         changed
+    }
+
+    /// A quality's level stepper changed: run it after the frame (career
+    /// levels cost karma, and a refusal goes to the status line).
+    pub(crate) fn set_quality_level(&mut self, guid: String, level: i32) {
+        self.action = Some(CareerAction::SetQualityLevel(guid, level));
     }
 
     fn run_action(&mut self, a: CareerAction, status: &mut Status) -> bool {
@@ -1858,21 +1881,15 @@ impl CharacterView {
     }
 
     /// The attributes the attribute table lists: the special ones only
-    /// when the character has them, Essence never.
+    /// when the character has them (MAG (Adept) only under the second-MAG
+    /// house rule), Essence never.
     fn shown_attributes(&self) -> Vec<&'static str> {
         attributes::PHYSICAL
             .iter()
             .chain(attributes::MENTAL)
             .chain(attributes::SPECIAL)
             .copied()
-            .filter(|n| match *n {
-                "ESS" => false,
-                "MAG" => self.doc.mag_enabled(),
-                "MAGAdept" => self.doc.mag_enabled() && self.doc.is_adept() && self.doc.is_magician(),
-                "RES" => self.doc.res_enabled(),
-                "DEP" => self.doc.dep_enabled(),
-                _ => true,
-            })
+            .filter(|n| attributes::shown(&self.doc, n, self.rules.mys_adept_second_mag_attribute))
             .collect()
     }
 
@@ -1952,6 +1969,48 @@ fn fmt_opt(v: f64) -> String {
         String::new()
     } else {
         chummer_core::improvement::fmt_num(v)
+    }
+}
+
+/// The level of each shown quality row, by guid: (level, the maximum when
+/// the level can be changed here). Only rows that show a level
+/// (`Quality.DisplayName`).
+pub(crate) fn quality_levels(ch: &Character, store: &chummer_core::data::DataStore) -> std::collections::HashMap<String, (i32, Option<i32>)> {
+    use chummer_core::items::quality;
+    let Ok(doc) = store.doc("qualities.xml") else { return Default::default() };
+    let mut out = std::collections::HashMap::new();
+    for q in ch.items("qualities", "quality") {
+        let Some(level) = quality::shown_level(ch, store, q) else { continue };
+        let key = q.child_text("sourceid").filter(|s| !s.is_empty()).unwrap_or_else(|| q.get("name"));
+        let max = data::find(&doc, "qualities", "quality", &key).and_then(|r| quality::level_editable(q, r.el(), ch.created));
+        out.insert(q.get("guid"), (level, max));
+    }
+    out
+}
+
+/// A quality row with its level after the name ("Focused Concentration
+/// 3") and the karma of all its levels.
+pub(crate) fn with_level(mut v: crate::tree_table::RowView, sec: &Section, n: &chummer_core::tree::ItemNode, levels: &std::collections::HashMap<String, (i32, Option<i32>)>) -> crate::tree_table::RowView {
+    if let Entry::Item { el, .. } = &n.value {
+        if let Some((level, _)) = levels.get(&el.get("guid")) {
+            v.cells[0] = format!("{} {level}", v.cells[0]);
+            let karma = sec.columns.iter().position(|c| c.field == "bp");
+            if let (Some(c), Some(bp)) = (karma.and_then(|i| v.cells.get_mut(i)), el.get_i32("bp")) {
+                *c = (bp * level).to_string();
+            }
+        }
+    }
+    v
+}
+
+/// How MAG and MAG (Adept) relate, for the attribute rows of a mystic
+/// adept under the second-MAG house rule (the only case both rows show).
+pub(crate) fn mystic_magic_hint(lang: &Language, name: &str) -> Option<String> {
+    let rule = lang.s("Checkbox_Options_MysAdeptSecondMAGAttribute");
+    match name {
+        "MAG" => Some(lang.tr_fmt("Magic for spells, spirits and initiation. This character's settings file has the house rule “{0}”, so Magic (Adept) is a separate attribute: raising Magic does not raise it.", &[&rule])),
+        "MAGAdept" => Some(lang.tr_fmt("Magic for adept powers: the power points equal it. This character's settings file has the house rule “{0}”, so it is separate from Magic: it starts at the metatype minimum, has its own maximum, and is bought with its own points or karma. Without the house rule there is one Magic and power points are bought with karma.", &[&rule])),
+        _ => None,
     }
 }
 
@@ -2076,5 +2135,6 @@ fn describe_action(a: &CareerAction) -> String {
         CareerAction::Undo(_) => "undone".into(),
         CareerAction::Initiate(_) => "initiated".into(),
         CareerAction::RemoveQuality(_) => "quality removed".into(),
+        CareerAction::SetQualityLevel(_, l) => format!("quality level {l}"),
     }
 }

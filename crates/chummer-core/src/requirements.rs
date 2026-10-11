@@ -48,7 +48,8 @@ pub fn unmet(record: &Element, c: &Check<'_>) -> Vec<String> {
 
 /// How many more times a quality can be taken (`<limit>`), `None` = no limit.
 pub fn remaining_quality_slots(record: &Element, ch: &Character) -> Option<usize> {
-    let limit = record.get("limit");
+    // In creation `<chargenlimit>` first (`SelectionShared.RequirementsMet`).
+    let limit = record.child_text("chargenlimit").filter(|l| !l.trim().is_empty() && !ch.created).unwrap_or_else(|| record.get("limit"));
     if limit.eq_ignore_ascii_case("false") {
         return None;
     }

@@ -134,6 +134,9 @@ pub enum Command {
     DeleteItem { guid: String },
     SellItem { guid: String, fraction: f64 },
     SetItemRating { guid: String, rating: i32 },
+    /// A quality's level (Chummer's `nudQualityLevel`): copies are added
+    /// or removed; in career mode each level is paid for or bought off.
+    SetQualityLevel { guid: String, level: i32 },
     SetItemQuantity { guid: String, qty: f64 },
     SetItemEquipped { guid: String, on: bool },
     SetItemWireless { guid: String, on: bool },
@@ -340,6 +343,7 @@ impl Command {
             DeleteItem { guid: g.clone() },
             SellItem { guid: g.clone(), fraction: 0.5 },
             SetItemRating { guid: g.clone(), rating: 3 },
+            SetQualityLevel { guid: g.clone(), level: 3 },
             SetItemQuantity { guid: g.clone(), qty: 10.0 },
             SetItemEquipped { guid: g.clone(), on: false },
             SetItemWireless { guid: g.clone(), on: true },

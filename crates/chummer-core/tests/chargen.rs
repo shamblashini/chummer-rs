@@ -242,3 +242,47 @@ fn default_priorities_fit_every_preset() {
     let std = chummer_core::chargen::creation_presets(&engine).into_iter().find(|p| p.name() == "Standard").unwrap();
     assert_eq!(chummer_core::chargen::Priorities::default_for(&std).0, ['D', 'E', 'A', 'B', 'C']);
 }
+
+/// Oracle: a priority mystic adept gets the talent's Magic on MAG only;
+/// MAGAdept keeps the metatype's limits (magmin/magmax/magaug, 1/6/6 for
+/// a human in the current data), as in Chummer-saved fixtures
+/// (`SelectMetatypePriority` assigns the talent to MAG only).
+#[test]
+fn mystic_adept_talent_magic_goes_to_mag_only() {
+    let engine = Engine::load().unwrap();
+    let limits = |ch: &Character, n: &str| ch.attribute(n).map(|a| (a.metatype_min, a.metatype_max, a.metatype_aug_max)).unwrap();
+    let saved = Character::load(std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/Harmony.chum5"))).unwrap();
+    for (letter, magic) in [('A', 6), ('B', 4)] {
+        let spec = NewCharacter {
+            settings_id: STANDARD.into(),
+            metatype: "Human".into(),
+            metavariant: None,
+            priorities: Priorities(['E', letter, if letter == 'A' { 'B' } else { 'A' }, 'C', 'D']),
+            talent: "Mystic Adept".into(),
+            talent_skills: vec!["Spellcasting".into(), "Summoning".into()],
+            name: "Mystic".into(),
+        };
+        let ch = chargen::create(&engine, &spec).unwrap();
+        assert!(ch.is_adept() && ch.is_magician());
+        assert_eq!(limits(&ch, "MAG"), (magic, 6, 6), "talent {letter}");
+        assert_eq!(limits(&ch, "MAGAdept"), (1, 6, 6), "talent {letter}");
+        if letter == 'A' {
+            // Harmony: Chummer-saved human mystic adept, talent A (MAG
+            // 6/6/6, MAGAdept 1/6; its MAGAdept aug 10 is from older data,
+            // where a human's magaug was 10).
+            assert_eq!(limits(&ch, "MAG"), limits(&saved, "MAG"));
+            let (min, max, _) = limits(&saved, "MAGAdept");
+            assert_eq!((min, max), (1, 6));
+            assert_eq!(limits(&ch, "MAGAdept").0, min);
+        }
+        // Standard has no second-MAG house rule: one Magic, no MAGAdept row.
+        let rules = engine.rules_for(&ch);
+        assert!(!rules.mys_adept_second_mag_attribute);
+        assert!(chummer_core::attributes::shown(&ch, "MAG", rules.mys_adept_second_mag_attribute));
+        assert!(!chummer_core::attributes::shown(&ch, "MAGAdept", rules.mys_adept_second_mag_attribute));
+        assert!(chummer_core::attributes::shown(&ch, "MAGAdept", true));
+        let (s, _) = sheet(&engine, &ch);
+        assert_eq!(s.attr("MAG"), magic);
+        assert_eq!(s.attr("MAGAdept"), 1);
+    }
+}

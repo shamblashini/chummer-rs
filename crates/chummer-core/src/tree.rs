@@ -260,6 +260,18 @@ fn with_locations<'a>(doc: &'a Element, sec: &Section, items: Vec<&'a Element>, 
 const ESSENCE_HOLE: &str = "b57eadaa-7c3b-4b80-8d79-cbbd922c1196";
 const ESSENCE_ANTIHOLE: &str = "961eac53-0c43-4b19-8741-2872177a3a4c";
 
+/// The first copy of each quality's levels, in file order.
+fn first_levels(items: Vec<&Element>) -> Vec<&Element> {
+    let mut seen = std::collections::HashSet::new();
+    items
+        .into_iter()
+        .filter(|q| {
+            let (id, extra, source, _) = crate::items::quality::level_key(q);
+            seen.insert((id, source, extra))
+        })
+        .collect()
+}
+
 /// The tree of a section, from the character document (`Character::doc`).
 pub fn section_tree<'a>(doc: &'a Element, sec: &Section) -> Vec<ItemNode<'a>> {
     let items: Vec<&'a Element> = doc.child(sec.container).map(|c| c.children_named(sec.item).collect()).unwrap_or_default();
@@ -268,7 +280,9 @@ pub fn section_tree<'a>(doc: &'a Element, sec: &Section) -> Vec<ItemNode<'a>> {
         "armors" => with_locations(doc, sec, items, "Selected Armor", "armorlocations"),
         "weapons" => with_locations(doc, sec, items, "Selected Weapons", "weaponlocations"),
         "vehicles" => with_locations(doc, sec, items, "Selected Vehicles", "vehiclelocations"),
-        "qualities" => grouped(sec, items, &["Positive Qualities", "Negative Qualities", "Life Modules"], |q| match q.get("qualitytype").as_str() {
+        // RefreshQualities: the levels of a quality (same source id,
+        // source name and extra) are one node, the first copy.
+        "qualities" => grouped(sec, first_levels(items), &["Positive Qualities", "Negative Qualities", "Life Modules"], |q| match q.get("qualitytype").as_str() {
             "Positive" => Some(0),
             "Negative" => Some(1),
             "LifeModule" => Some(2),
