@@ -598,8 +598,46 @@ pub fn add_quality_with_source(ch: &mut Character, store: &DataStore, rec: Recor
         q.set_child_text("contributetolimit", "False");
         q.set_child_text("contributetobp", "False");
     }
+    // `<firstlevelbonus>` (Gremlins' notoriety): only on the first level,
+    // counted before this copy joins the list.
+    let first = rec.el().child("firstlevelbonus").filter(|b| b.elements().next().is_some()).filter(|_| items::quality::levels(ch, &q) == 0).cloned();
     ch.items_mut("qualities").push(q);
     finish_outcome(ch, store, out);
+    if let Some(b) = first {
+        let forced = if extra.is_empty() { answer } else { Some(extra.as_str()) };
+        let out = bonus::apply(ch, store, &b, &src, forced);
+        finish_outcome(ch, store, out);
+    }
+    guid
+}
+
+/// Add `target` levels of a quality in total (`CharacterCreate`'s "Add"
+/// with the dialog's Rating): the copies the player already took are
+/// subtracted. A quality without levels, or `target` 0, adds one copy.
+/// Returns the new guids (none when it is already at `target`).
+pub fn add_quality_levels(ch: &mut Character, store: &DataStore, rec: Record<'_>, answer: Option<&str>, target: i32) -> Vec<String> {
+    let n = quality_copies_to_add(ch, rec, target);
+    (0..n).map(|_| add_quality(ch, store, rec, answer)).collect()
+}
+
+/// How many copies "Add" at level `target` adds (see [`add_quality_levels`]).
+pub fn quality_copies_to_add(ch: &Character, rec: Record<'_>, target: i32) -> i32 {
+    match items::quality::level_limit(rec.el(), ch.created) {
+        Some(limit) if target > 0 => (target.min(limit) - items::quality::taken(ch, rec)).max(0),
+        _ => 1,
+    }
+}
+
+/// One more level of the quality `like` (`nudQualityLevel_ValueChanged`):
+/// a copy from the data with the same extra, karma and limit flag.
+pub fn add_quality_level(ch: &mut Character, store: &DataStore, rec: Record<'_>, like: &Element) -> String {
+    let extra = like.get("extra");
+    let guid = add_quality_with_source(ch, store, rec, (!extra.is_empty()).then_some(extra.as_str()), &like.get("qualitysource"), true);
+    if let Some(q) = ch.items_mut("qualities").elements_mut().find(|q| q.get("guid") == guid) {
+        for k in ["bp", "contributetolimit", "contributetobp"] {
+            q.set_child_text(k, like.get(k));
+        }
+    }
     guid
 }
 

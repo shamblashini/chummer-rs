@@ -230,12 +230,22 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
         AddItem { tag, record, purchase } => add_item(ch, engine, store, tag, record, purchase),
         RemoveItem { container, guid } => match container.as_str() {
             // Career mode: buying off a negative quality costs karma.
+            // Every level goes (`DeleteQuality(blnFullRemoval)`).
             "qualities" if ch.created => {
-                let msg = career::remove_quality(ch, engine, guid).map_err(reject)?;
+                let mut msg = None;
+                for g in quality_levels_of(ch, guid, true) {
+                    match career::remove_quality(ch, engine, &g) {
+                        Ok(m) => msg = msg.or(m),
+                        Err(e) if msg.is_none() && g.eq_ignore_ascii_case(guid) => return Err(reject(e)),
+                        Err(_) => break,
+                    }
+                }
                 Ok(Done::Changed { message: msg, count: None })
             }
             "qualities" => {
-                chargen::remove_quality(ch, guid);
+                for g in quality_levels_of(ch, guid, false) {
+                    chargen::remove_quality(ch, &g);
+                }
                 changed()
             }
             "cyberwares" => flag(items::cyberware::remove(ch, guid)),
@@ -250,6 +260,7 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
             edit::apply_rating_change(ch, store, guid, *rating).map_err(Rejected::new)?;
             changed()
         }
+        SetQualityLevel { guid, level } => set_quality_level(ch, engine, store, guid, *level),
         SetItemQuantity { guid, qty } => flag(edit::set_quantity(ch, guid, *qty)),
         SetItemEquipped { guid, on } => flag(edit::set_equipped(ch, store, guid, *on)),
         SetItemWireless { guid, on } => flag(edit::set_wireless(ch, store, guid, *on)),
@@ -503,7 +514,21 @@ fn add_item(ch: &mut Character, engine: &Engine, store: &DataStore, tag: &str, r
                 "martialart" => career::learn_martial_art(ch, engine, rec, answer),
                 "critterpower" => career::learn_critter_power(ch, engine, rec, purchase.rating, answer),
                 "aiprogram" => career::learn_ai_program(ch, engine, rec, purchase),
-                _ => career::add_quality(ch, engine, rec, answer),
+                _ => {
+                    // One karma expense per level, as Chummer's loop; a
+                    // level that cannot be paid for ends it.
+                    let n = chargen::quality_copies_to_add(ch, rec, purchase.rating);
+                    if n == 0 {
+                        return Err(Rejected::new(format!("{name} is already at level {}", items::quality::taken(ch, rec))));
+                    }
+                    let first = career::add_quality(ch, engine, rec, answer).map_err(reject)?;
+                    for _ in 1..n {
+                        if career::add_quality(ch, engine, rec, answer).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(first)
+                }
             }
             .map_err(reject)?;
             return said(format!("Added {name}"));
@@ -543,6 +568,70 @@ fn add_custom_drug(ch: &mut Character, store: &DataStore, name: &str, grade: &st
         career::pay_for_item(ch, "drug", None, &guid, cost).map_err(reject)?;
     }
     said(format!("Added {name} ({} per dose)", format::nuyen(cost)))
+}
+
+/// The guids of every level of the quality `guid`: `guid` itself first
+/// when `selected_first`, else last (removed after its copies).
+fn quality_levels_of(ch: &Character, guid: &str, selected_first: bool) -> Vec<String> {
+    let Some(q) = ch.items("qualities", "quality").into_iter().find(|q| q.get("guid").eq_ignore_ascii_case(guid)).cloned() else {
+        return vec![guid.to_owned()];
+    };
+    let mut v: Vec<String> = items::quality::level_guids(ch, &q).into_iter().filter(|g| !g.eq_ignore_ascii_case(guid)).collect();
+    if selected_first {
+        v.insert(0, guid.to_owned());
+    } else {
+        v.push(guid.to_owned());
+    }
+    v
+}
+
+/// `nudQualityLevel_ValueChanged`: add copies up to `level` (capped at the
+/// quality's limit), or remove copies other than `guid` down to it; at 0
+/// the quality goes. In career mode each new level costs its karma and
+/// each removed level is bought off; a level that cannot be paid for ends
+/// the change.
+fn set_quality_level(ch: &mut Character, engine: &Engine, store: &DataStore, guid: &str, level: i32) -> R {
+    let q = ch.items("qualities", "quality").into_iter().find(|q| q.get("guid").eq_ignore_ascii_case(guid)).cloned().ok_or_else(|| Rejected::new("no such quality"))?;
+    let doc = store.doc("qualities.xml").map_err(reject)?;
+    let key = q.child_text("sourceid").filter(|s| !s.is_empty()).unwrap_or_else(|| q.get("name"));
+    let rec = data::find(&doc, "qualities", "quality", &key).ok_or_else(|| Rejected::new(format!("{} is not in the game data", q.get("name"))))?;
+    let limit = items::quality::level_editable(&q, rec.el(), ch.created).ok_or_else(|| Rejected::new(format!("{} has no levels", q.get("name"))))?;
+    let level = level.clamp(0, limit);
+    let mut current = items::quality::levels(ch, &q);
+    if level == current {
+        return Ok(Done::Unchanged);
+    }
+    let extra = q.get("extra");
+    let answer = (!extra.is_empty()).then_some(extra.as_str());
+    let mut done = 0;
+    while level > current {
+        let r = if ch.created { career::add_quality(ch, engine, rec, answer).map(|_| ()) } else {
+            chargen::add_quality_level(ch, store, rec, &q);
+            Ok(())
+        };
+        match r {
+            Ok(()) => {}
+            Err(e) if done == 0 => return Err(reject(e)),
+            Err(_) => break,
+        }
+        current += 1;
+        done += 1;
+    }
+    while level < current {
+        let g = items::quality::level_guids(ch, &q).into_iter().rev().find(|g| !g.eq_ignore_ascii_case(guid)).unwrap_or_else(|| guid.to_owned());
+        let r = if ch.created { career::remove_quality(ch, engine, &g).map(|_| ()) } else {
+            chargen::remove_quality(ch, &g);
+            Ok(())
+        };
+        match r {
+            Ok(()) => {}
+            Err(e) if done == 0 => return Err(reject(e)),
+            Err(_) => break,
+        }
+        current -= 1;
+        done += 1;
+    }
+    changed()
 }
 
 /// An adept power's level, refused when the power points run out.

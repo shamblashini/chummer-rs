@@ -161,7 +161,8 @@ pub fn choices(tag: &str, ch: &Character, store: &DataStore, rec: Record<'_>, p:
 /// Add a record of kind `tag` to the character. Returns the new guid.
 pub fn add(tag: &str, ch: &mut Character, store: &DataStore, rec: Record<'_>, p: &Purchase) -> Result<String, String> {
     match tag {
-        "quality" => Ok(crate::chargen::add_quality(ch, store, rec, p.answer.as_deref())),
+        // `rating` is the level to reach (the dialog's Level); 0 adds one.
+        "quality" => crate::chargen::add_quality_levels(ch, store, rec, p.answer.as_deref(), p.rating).into_iter().next().ok_or_else(|| format!("already at level {}", quality::taken(ch, rec))),
         "gear" => gear::add(ch, store, rec, p),
         "lifestyle" => lifestyle::add(ch, store, rec, p),
         "cyberware" | "bioware" => cyberware::add(tag, ch, store, rec, p),

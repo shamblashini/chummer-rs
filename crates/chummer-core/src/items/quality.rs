@@ -65,3 +65,73 @@ pub const IGNORE: &[&str] = &[
     // legacy names in pre-5.214 saves (`id` was the record id, now `sourceid`)
     "metagenetic", "metagenic", "id",
 ];
+
+// ---------------------------------------------------------------------------
+// Levels
+// ---------------------------------------------------------------------------
+//
+// Chummer has no rating on a quality: each level is one more `<quality>`
+// with the same SourceID, Extra, SourceName and Type, and `Quality.Levels`
+// counts them. Every copy carries the full karma and applies `<bonus>`;
+// `<firstlevelbonus>` applies to the first copy only. The tree shows the
+// copies as one node, "Name N".
+
+/// The highest level a quality allows, when it has levels: an integer
+/// `<limit>` (in creation `<chargenlimit>` first) and no `<nolevels>`
+/// (`UpdateQualityLevelValue`, `SelectQuality`). `None` for `limit` False,
+/// a formula, a missing limit or `<nolevels/>`.
+pub fn level_limit(rec: &Element, created: bool) -> Option<i32> {
+    if rec.child("nolevels").is_some() {
+        return None;
+    }
+    let raw = (!created).then(|| rec.child_text("chargenlimit")).flatten().or_else(|| rec.child_text("limit"))?;
+    raw.trim().parse::<i32>().ok().filter(|n| *n > 0)
+}
+
+/// What makes two `<quality>` elements levels of one quality (`Levels`).
+pub fn level_key(q: &Element) -> (String, String, String, String) {
+    let id = q.child_text("sourceid").filter(|s| !s.is_empty()).or_else(|| q.child_text("id")).unwrap_or_else(|| q.get("name"));
+    (id.to_lowercase(), q.get("extra"), q.get("sourcename"), q.get("qualitytype"))
+}
+
+/// The guids of every level of `q` (itself included), in file order.
+pub fn level_guids(ch: &Character, q: &Element) -> Vec<String> {
+    let key = level_key(q);
+    ch.items("qualities", "quality").into_iter().filter(|o| level_key(o) == key).map(|o| o.get("guid")).collect()
+}
+
+/// `Quality.Levels`.
+pub fn levels(ch: &Character, q: &Element) -> i32 {
+    level_guids(ch, q).len() as i32
+}
+
+/// Copies of a data record taken by the player (`SourceID` and an empty
+/// `SourceName`, any extra): what `CharacterCreate`'s "Add" subtracts from
+/// the chosen level.
+pub fn taken(ch: &Character, rec: Record<'_>) -> i32 {
+    let id = rec.id().to_lowercase();
+    ch.items("qualities", "quality").into_iter().filter(|q| q.get("sourceid").to_lowercase() == id && q.get("sourcename").is_empty()).count() as i32
+}
+
+/// Whether the level stepper applies to a quality on the character: it has
+/// levels in the data and was not granted by the metatype, the talent or
+/// an improvement (`UpdateQualityLevelValue`).
+pub fn level_editable(q: &Element, rec: &Element, created: bool) -> Option<i32> {
+    if matches!(q.get("qualitysource").as_str(), "Improvement" | "QualityLevelImprovement" | "Metatype" | "Heritage") {
+        return None;
+    }
+    level_limit(rec, created)
+}
+
+/// The level a quality's name shows (`Quality.DisplayName`): the count when
+/// above 1, else 1 when the data gives it levels; `None` otherwise.
+pub fn shown_level(ch: &Character, store: &DataStore, q: &Element) -> Option<i32> {
+    let n = levels(ch, q);
+    if n > 1 {
+        return Some(n);
+    }
+    let doc = store.doc("qualities.xml").ok()?;
+    let key = q.child_text("sourceid").filter(|s| !s.is_empty()).unwrap_or_else(|| q.get("name"));
+    let rec = crate::data::find(&doc, "qualities", "quality", &key)?;
+    level_limit(rec.el(), ch.created).map(|_| n)
+}

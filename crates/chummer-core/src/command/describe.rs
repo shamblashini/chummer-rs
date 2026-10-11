@@ -177,6 +177,7 @@ fn what(cmd: &Command, b: &Character, a: &Character, engine: &Engine) -> String 
         RemoveItem { guid, .. } | DeleteItem { guid } | RemoveAiProgram { guid } => format!("Removed {}", item_name(b, guid)),
         SellItem { guid, .. } => format!("Sold {}", item_name(b, guid)),
         SetItemRating { guid, rating } => format!("Set {} to rating {rating}", item_name(b, guid)),
+        SetQualityLevel { guid, level } => format!("Set {} to level {level}", item_name(b, guid)),
         SetItemQuantity { guid, qty } => format!("Set {} quantity to {}", item_name(b, guid), crate::improvement::fmt_num(*qty)),
         SetItemEquipped { guid, on } => format!("{} {}", if *on { "Equipped" } else { "Unequipped" }, item_name(b, guid)),
         SetItemWireless { guid, on } => format!("Turned wireless {} for {}", on_off(*on), item_name(b, guid)),

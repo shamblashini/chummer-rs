@@ -38,6 +38,17 @@ fn every_item_appears_once() {
             if let Some(c) = doc.child(sec.container) {
                 count_items(c, &mut want);
             }
+            // A quality's levels (copies with one source id, source name
+            // and extra) are one node, the first copy (`RefreshQualities`).
+            if sec.container == "qualities" {
+                let mut seen = std::collections::HashSet::new();
+                for q in doc.child("qualities").into_iter().flat_map(|c| c.children_named("quality")) {
+                    let (id, extra, source, _) = chummer_core::items::quality::level_key(q);
+                    if !seen.insert((id, source, extra)) {
+                        want.remove(&q.get("guid").to_lowercase());
+                    }
+                }
+            }
             let tree = section_tree(&doc, sec);
             let mut got: HashMap<String, usize> = HashMap::new();
             for r in flatten(&tree, &|_| true) {
