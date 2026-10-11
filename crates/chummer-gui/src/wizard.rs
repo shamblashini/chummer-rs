@@ -37,6 +37,12 @@ impl Wizard {
         Wizard { preset: 0, priorities_for: None, picker: ChoicePicker::default(), name: String::new(), error: None, guided: crate::view::guided_offer() }
     }
 
+    /// Starting on the preset `key` names (a campaign's default), when it
+    /// is one to create with.
+    pub fn with_preset(engine: &Engine, key: &str) -> Self {
+        Wizard { preset: preset_index(engine, key), ..Wizard::new() }
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, engine: &Engine, lang: &Language) -> WizardResult {
         let presets = chargen::creation_presets(engine);
         if presets.is_empty() {
@@ -116,4 +122,11 @@ impl Wizard {
         }
         result
     }
+}
+
+/// Where the preset `key` names is in [`chargen::creation_presets`]; the
+/// first when it is not there.
+pub(crate) fn preset_index(engine: &Engine, key: &str) -> usize {
+    let Some(want) = engine.settings().find(key).map(CharacterSettings::key) else { return 0 };
+    chargen::creation_presets(engine).iter().position(|p| p.key() == want).unwrap_or(0)
 }

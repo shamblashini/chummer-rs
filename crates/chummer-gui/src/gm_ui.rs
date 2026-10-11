@@ -45,6 +45,11 @@ pub enum CritterResult {
 }
 
 impl CritterWizard {
+    /// Starting on the preset `key` names (a campaign's default).
+    pub fn with_preset(engine: &Engine, key: &str) -> Self {
+        CritterWizard { preset: crate::wizard::preset_index(engine, key), ..CritterWizard::new() }
+    }
+
     pub fn new() -> Self {
         CritterWizard {
             preset: 0,

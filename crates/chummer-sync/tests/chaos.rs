@@ -207,7 +207,7 @@ impl World {
     }
 
     fn join(&mut self, p: usize) {
-        let m = self.players[p].replica.join_message(&format!("P{p}"), None);
+        let m = self.players[p].replica.join_message(engine(), &format!("P{p}"), None);
         let reply = self.request(p, m);
         self.deliver_msg(p, reply);
     }

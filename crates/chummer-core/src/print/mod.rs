@@ -85,7 +85,7 @@ pub fn print_character(ch: &Character, engine: &Engine, lang: &Language, opts: P
     let store = engine.store_for_character(ch);
     let sheet = crate::calc::compute(ch, &rules, Some(&store), Some(&engine.catalog));
     let lib = engine.settings();
-    let settings = lib.resolve(&ch.field("settings"));
+    let settings = lib.resolve_for(ch);
     let weapon_rules = settings.map(WeaponRules::from_settings).unwrap_or_default();
     let ignore_rules = ch.flag("ignorerules");
     let vehicle_rules = settings.map(|s| VehicleRules::from_settings(s, ignore_rules)).unwrap_or(VehicleRules { ignore_rules, ..VehicleRules::default() });

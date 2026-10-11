@@ -114,7 +114,7 @@ fn what(cmd: &Command, b: &Character, a: &Character, engine: &Engine) -> String 
                 None => format!("Changed metatype to {mt}"),
             }
         }
-        SwitchSettings { key } => format!("Switched settings to {}", engine.settings().find(key).map_or_else(|| key.clone(), |s| s.name())),
+        SwitchSettings { key } => format!("Switched settings to {}", engine.settings().find_in(key, a.settings_scope.as_deref()).map_or_else(|| key.clone(), |s| s.name())),
         SetAttributeBase { attribute, value } => format!("Set {attribute} points to {value}"),
         SetAttributeKarma { attribute, value } => format!("Set {attribute} karma to {value}"),
         SetSkillBase { skill, value } | SetKnowledgeBase { skill, value } => format!("Set {} points to {value}", skill_name(b, engine, skill)),

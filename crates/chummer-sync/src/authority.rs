@@ -28,15 +28,22 @@
 //! follows the campaign's [`RollSettings`]: the GM sees every roll, a
 //! player sees the GM's open rolls and (when the GM allows it) the other
 //! players'. Players keep their own rolls themselves.
+//!
+//! Settings presets ([`Authority::set_presets`]): each member's membership
+//! carries the presets its characters use, as the GM has them, so they
+//! resolve the same at the player's. The membership is sent again when
+//! those change (a preset saved, a character switched to another).
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::Path;
+use std::sync::Arc;
 
 use chummer_core::campaign::RollSettings;
 use chummer_core::character::Character;
 use chummer_core::command::{self, Command, Envelope, Rejected};
 use chummer_core::dice::{RollRecord, Rng};
 use chummer_core::engine::Engine;
+use chummer_core::settings::SettingsLibrary;
 use std::collections::BTreeSet;
 
 use chummer_net::campaign::DenyReason;
@@ -49,8 +56,8 @@ use crate::feed;
 use crate::invites::{Claim, Invite, InviteOp};
 use crate::mail::Inbox;
 use crate::msg::{
-    Accepted, Ack, CharacterId, CharacterInfo, ClaimProof, Entry, FeedEntry, Hash, Have, MemberInfo, Membership, Op, OpId, Push, PushBody, RejectedOp, ResyncRequest,
-    RollId, RollReport, ServerMessage, SubmitBatch, TableRoll,
+    Accepted, Ack, CharacterId, CharacterInfo, ClaimProof, Entry, FeedEntry, Hash, Have, MemberInfo, Membership, Op, OpId, PresetHash, Push, PushBody, RejectedOp,
+    ResyncRequest, RollId, RollReport, ServerMessage, SharedPreset, SubmitBatch, TableRoll,
 };
 use crate::persist::{self, PersistError};
 
@@ -92,11 +99,14 @@ pub struct Member {
     pub invite: Option<InviteId>,
     /// Unix seconds: the last time this member connected or mailed.
     pub last_seen: Option<u64>,
+    /// The built-in settings presets the member's app has (from its last
+    /// join): those with the GM's content are sent without their XML.
+    pub builtins: Vec<PresetHash>,
 }
 
 impl Member {
     pub fn new(role: Role, name: impl Into<String>) -> Member {
-        Member { role, name: name.into(), invite: None, last_seen: None }
+        Member { role, name: name.into(), invite: None, last_seen: None, builtins: Vec::new() }
     }
 }
 
@@ -339,6 +349,12 @@ pub struct Authority {
     /// has been told.
     membership_rev: u64,
     membership_sent: BTreeMap<EndpointId, u64>,
+    /// The GM's settings presets ([`Authority::set_presets`]) and each one
+    /// as members are sent it, by key. Not saved: the host sets them.
+    presets: Option<Arc<SettingsLibrary>>,
+    preset_docs: BTreeMap<String, SharedPreset>,
+    /// The presets each member's last membership carried.
+    presets_sent: BTreeMap<EndpointId, Vec<PresetHash>>,
     feed: VecDeque<FeedEntry>,
     /// Chunks of mailed messages being put together.
     pub inbox: Inbox,
@@ -393,6 +409,9 @@ impl Authority {
             delivered: BTreeMap::new(),
             membership_rev: 0,
             membership_sent: BTreeMap::new(),
+            presets: None,
+            preset_docs: BTreeMap::new(),
+            presets_sent: BTreeMap::new(),
             feed: VecDeque::new(),
             inbox: Inbox::default(),
             mail_out: Vec::new(),
@@ -488,6 +507,7 @@ impl Authority {
         self.retired.insert(*peer);
         self.delivered.retain(|(p, _), _| p != peer);
         self.membership_sent.remove(peer);
+        self.presets_sent.remove(peer);
         self.roll_cursor.remove(peer);
         self.mail_out.retain(|(p, _)| p != peer);
         self.membership_rev += 1;
@@ -647,7 +667,7 @@ impl Authority {
         i.claimed = Some(Claim { node: peer, at: now });
         let (role, label, previous, assign) = (i.role, i.label.clone(), i.previous.take(), i.assign.take());
         self.retired.remove(&peer);
-        self.members.insert(peer, Member { role, name: label.clone(), invite: Some(id), last_seen: Some(now) });
+        self.members.insert(peer, Member { role, name: label.clone(), invite: Some(id), last_seen: Some(now), builtins: Vec::new() });
         self.membership_rev += 1;
         if let Some(old) = previous {
             let theirs: Vec<CharacterId> = self.chars.iter().filter(|(_, c)| c.owner == Some(old)).map(|(id, _)| id.clone()).collect();
@@ -786,7 +806,58 @@ impl Authority {
             .map(|(id, c)| CharacterInfo { id: id.clone(), name: c.name.clone(), owner: c.owner, version: c.version })
             .collect();
         let label = self.invite_of(peer).map(|i| i.label.clone()).unwrap_or_default();
-        Some(Membership { campaign_name: self.name.clone(), you: *peer, role, label, gm_keys: self.gm_keys.clone(), members: self.member_infos(), characters })
+        let builtins = self.members.get(peer).map(|m| m.builtins.as_slice()).unwrap_or_default();
+        let presets = self
+            .wanted_presets(peer)
+            .into_iter()
+            .map(|d| {
+                let same = builtins.iter().any(|b| b.key == d.key && b.hash == d.hash);
+                SharedPreset { xml: if same { None } else { d.xml.clone() }, ..d.clone() }
+            })
+            .collect();
+        Some(Membership { campaign: self.campaign, campaign_name: self.name.clone(), you: *peer, role, label, gm_keys: self.gm_keys.clone(), members: self.member_infos(), characters, presets })
+    }
+
+    // ----- settings presets -----
+
+    /// The GM's settings presets (the library the GM's characters resolve
+    /// against). Members whose characters use one that changed are sent a
+    /// new membership.
+    pub fn set_presets(&mut self, lib: Arc<SettingsLibrary>) {
+        self.preset_docs = lib.presets.iter().map(|p| (p.key(), SharedPreset { key: p.key(), name: p.name(), hash: p.content_hash(), xml: Some(p.raw.to_xml_string()) })).collect();
+        self.presets = Some(lib);
+    }
+
+    /// The built-in presets `peer`'s app has (its join says).
+    pub fn note_builtins(&mut self, peer: &EndpointId, builtins: Vec<PresetHash>) {
+        if let Some(m) = self.members.get_mut(peer) {
+            m.builtins = builtins;
+        }
+    }
+
+    /// The GM's presets that `peer`'s characters use, by key.
+    fn wanted_presets(&self, peer: &EndpointId) -> Vec<&SharedPreset> {
+        let Some(lib) = &self.presets else { return Vec::new() };
+        let mut out: Vec<&SharedPreset> = Vec::new();
+        for id in self.visible(peer) {
+            let Some(p) = lib.find(&self.chars[&id].ch.field("settings")) else { continue };
+            if let Some(d) = self.preset_docs.get(&p.key()) {
+                if !out.iter().any(|o| o.key == d.key) {
+                    out.push(d);
+                }
+            }
+        }
+        out.sort_by(|a, b| a.key.cmp(&b.key));
+        out
+    }
+
+    fn wanted_hashes(&self, peer: &EndpointId) -> Vec<PresetHash> {
+        self.wanted_presets(peer).into_iter().map(|d| PresetHash { key: d.key.clone(), hash: d.hash }).collect()
+    }
+
+    /// The presets `peer`'s membership carries now (key and hash).
+    pub fn presets_for(&self, peer: &EndpointId) -> Vec<PresetHash> {
+        self.wanted_hashes(peer)
     }
 
     fn sees(&self, peer: &EndpointId, role: Role, c: &CharState) -> bool {
@@ -1264,7 +1335,7 @@ impl Authority {
             }
         }
         let membership = self.membership(&peer).ok_or("not a member of this campaign")?;
-        self.membership_sent.insert(peer, self.membership_rev);
+        self.mark_membership_sent(peer);
         let mut pushes = Vec::new();
         for id in self.visible(&peer) {
             let c = self.chars.get_mut(&id).expect("visible");
@@ -1317,13 +1388,16 @@ impl Authority {
         *e = (*e).max(version);
     }
 
-    /// Whether `peer` has not been told the latest membership.
+    /// Whether `peer` has not been told the latest membership (or the
+    /// presets its characters use changed).
     pub fn membership_stale(&self, peer: &EndpointId) -> bool {
-        self.membership_sent.get(peer).is_none_or(|v| *v < self.membership_rev)
+        self.membership_sent.get(peer).is_none_or(|v| *v < self.membership_rev) || self.presets_sent.get(peer).map_or(&[][..], Vec::as_slice) != self.wanted_hashes(peer).as_slice()
     }
 
     pub fn mark_membership_sent(&mut self, peer: EndpointId) {
         self.membership_sent.insert(peer, self.membership_rev);
+        let sent = self.wanted_hashes(&peer);
+        self.presets_sent.insert(peer, sent);
     }
 
     /// Everything `peer` has not been sent yet: the membership when it
@@ -1370,7 +1444,10 @@ impl Authority {
     /// delivered.
     pub fn mark_sent(&mut self, peer: EndpointId, msg: &ServerMessage) {
         match msg {
-            ServerMessage::Membership(_) | ServerMessage::Joined { .. } => self.mark_membership_sent(peer),
+            ServerMessage::Membership(m) | ServerMessage::Joined { membership: m, .. } => {
+                self.membership_sent.insert(peer, self.membership_rev);
+                self.presets_sent.insert(peer, m.presets.iter().map(|p| PresetHash { key: p.key.clone(), hash: p.hash }).collect());
+            }
             ServerMessage::Push(p) => self.mark_delivered(peer, &p.character, p.version),
             ServerMessage::Ack(a) => self.mark_delivered(peer, &a.character, a.update.version),
             ServerMessage::Rolls(rolls) => {
@@ -1513,6 +1590,7 @@ impl Authority {
             delivered: self.delivered.iter().map(|((p, c), v)| (*p, c.clone(), *v)).collect(),
             membership_rev: self.membership_rev,
             membership_sent: self.membership_sent.iter().map(|(k, v)| (*k, *v)).collect(),
+            presets_sent: self.presets_sent.iter().map(|(k, v)| (*k, v.clone())).collect(),
             feed: self.feed.iter().cloned().collect(),
             inbox: self.inbox.clone(),
             mail_out: self.mail_out.clone(),
@@ -1572,6 +1650,9 @@ impl Authority {
             delivered: f.delivered.into_iter().map(|(p, c, v)| ((p, c), v)).collect(),
             membership_rev: f.membership_rev,
             membership_sent: f.membership_sent.into_iter().collect(),
+            presets: None,
+            preset_docs: BTreeMap::new(),
+            presets_sent: f.presets_sent.into_iter().collect(),
             feed: f.feed.into(),
             inbox: f.inbox,
             mail_out: f.mail_out,
@@ -1606,8 +1687,10 @@ pub(crate) fn describe_intent(env: &Envelope) -> String {
 const MAGIC: &[u8; 4] = b"CRSA";
 /// 2: the log window's base state is stored (for reverts).
 /// 3: per-player invites with member keys, retired nodes, the campaign
-/// key generation. 4: the roll log.
-const FORMAT: u16 = 4;
+/// key generation. 4: the roll log. 5: settings presets (what each
+/// member was sent, the members' built-ins; the membership in queued
+/// mail carries presets).
+const FORMAT: u16 = 5;
 
 /// The authority file: everything above, characters as snapshots.
 #[derive(Serialize, Deserialize)]
@@ -1627,6 +1710,7 @@ struct AuthorityFile {
     delivered: Vec<(EndpointId, CharacterId, u64)>,
     membership_rev: u64,
     membership_sent: Vec<(EndpointId, u64)>,
+    presets_sent: Vec<(EndpointId, Vec<PresetHash>)>,
     feed: Vec<FeedEntry>,
     inbox: Inbox,
     mail_out: Vec<(EndpointId, ServerMessage)>,

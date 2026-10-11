@@ -95,10 +95,9 @@ pub fn banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Languag
     if crate::theme::current(ui.ctx()).workspace_layout() {
         return ws_banner(ui, ch, engine, lang, show_row);
     }
-    let key = ch.field("settings");
     let lib = engine.settings();
     let mut picked = None;
-    if let Some(missing) = lib.missing_preset(&key) {
+    if let Some(missing) = lib.missing_for(ch) {
         let fallback = lib.fallback().map(CharacterSettings::name).unwrap_or_default();
         egui::Frame::group(ui.style()).stroke(egui::Stroke::new(1.0_f32, crate::theme::warn(ui))).show(ui, |ui| {
             ui.colored_label(crate::theme::warn(ui), RichText::new(lang.tr("Cannot Find Settings File")).strong());
@@ -115,12 +114,39 @@ pub fn banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Languag
     } else if show_row {
         ui.horizontal(|ui| {
             ui.label(lang.tr("Settings File:"));
-            ui.strong(lib.find(&key).or_else(|| lib.fallback()).map(CharacterSettings::name).unwrap_or_default());
-            picked = picker(ui, ch, engine, lang, lib.find(&key));
+            ui.strong(lib.resolve_for(ch).map(|p| preset_label(p, lang)).unwrap_or_default());
+            picked = picker(ui, ch, engine, lang, lib.find_for(ch));
         });
         ui.add_space(4.0);
     }
+    if let Some(text) = missing_custom_data(ch, engine, lang) {
+        ui.colored_label(crate::theme::warn(ui), text);
+        ui.add_space(4.0);
+    }
     picked
+}
+
+/// A preset's name, marked when a campaign shared it.
+pub fn preset_label(p: &CharacterSettings, lang: &Language) -> String {
+    match &p.campaign {
+        Some(c) => lang.tr_fmt("{0} (from campaign {1})", &[&p.name(), &c.campaign]),
+        None if p.is_user() => lang.tr_fmt("{0} (yours)", &[&p.name()]),
+        None => p.name(),
+    }
+}
+
+/// "Custom data not installed: …" when the character's preset enables
+/// custom data folders this app does not have (a GM's preset, a file
+/// from another machine).
+pub fn missing_custom_data(ch: &Character, engine: &Engine, lang: &Language) -> Option<String> {
+    let lib = engine.settings();
+    let p = lib.find_for(ch)?;
+    let missing = engine.missing_custom_data(p);
+    if missing.is_empty() {
+        return None;
+    }
+    let hint = if p.campaign.is_some() { lang.tr("Ask your GM for these custom data folders; until then their content is missing here.") } else { lang.tr("Its content is missing here until the folders are installed.") };
+    Some(format!("{} {hint}", lang.tr_fmt("Custom data this settings file uses is not installed: {0}.", &[&missing.join(", ")])))
 }
 
 /// [`banner`] in the Workspace style: a card with a warning border and
@@ -128,10 +154,9 @@ pub fn banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Languag
 fn ws_banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language, show_row: bool) -> Option<String> {
     use crate::workspace::{icons, widgets};
     let ws = crate::theme::ws(ui);
-    let key = ch.field("settings");
     let lib = engine.settings();
     let mut picked = None;
-    if let Some(missing) = lib.missing_preset(&key) {
+    if let Some(missing) = lib.missing_for(ch) {
         let fallback = lib.fallback().map(CharacterSettings::name).unwrap_or_default();
         widgets::card_frame(&ws).stroke(egui::Stroke::new(1.0_f32, ws.warning)).inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -162,28 +187,47 @@ fn ws_banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.label(icons::icon(icons::SLIDERS_HORIZONTAL, 14.0, ws.muted));
             ui.label(RichText::new(lang.tr("Settings File:")).size(12.0).color(ws.muted));
-            ui.label(RichText::new(lib.find(&key).or_else(|| lib.fallback()).map(CharacterSettings::name).unwrap_or_default()).font(widgets::bold(12.5)).color(ws.text));
-            picked = picker(ui, ch, engine, lang, lib.find(&key));
+            ui.label(RichText::new(lib.resolve_for(ch).map(|p| preset_label(p, lang)).unwrap_or_default()).font(widgets::bold(12.5)).color(ws.text));
+            picked = picker(ui, ch, engine, lang, lib.find_for(ch));
+        });
+        ui.add_space(6.0);
+    }
+    if let Some(text) = missing_custom_data(ch, engine, lang) {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.label(icons::icon(icons::WARNING, 14.0, ws.warning));
+            ui.add(egui::Label::new(RichText::new(text).size(12.0).color(ws.warning)).wrap());
         });
         ui.add_space(6.0);
     }
     picked
 }
 
-/// "Change Settings File": every installed preset. In creation mode the
-/// presets with another build method are disabled, since switching build
-/// methods is not ported (see `settings::switch_character`).
+/// "Change Settings File": every installed preset; for a campaign's
+/// character, the presets the campaign shared and the built-ins (the GM's
+/// app must know the preset too). In creation mode the presets with
+/// another build method are disabled, since switching build methods is not
+/// ported (see `settings::switch_character`).
 fn picker(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language, current: Option<&CharacterSettings>) -> Option<String> {
     let mut picked = None;
     let bm = match ch.field("buildmethod") {
         b if b.is_empty() => "Priority".to_owned(),
         b => b,
     };
+    let lib = engine.settings();
+    let presets: Vec<&CharacterSettings> = match ch.settings_scope.as_deref() {
+        Some(scope) => {
+            let shared: Vec<&CharacterSettings> = lib.campaign_presets(scope).collect();
+            let builtins = lib.presets.iter().filter(|p| p.is_builtin() && !shared.iter().any(|s| s.key() == p.key()));
+            shared.iter().copied().chain(builtins).collect()
+        }
+        None => lib.presets.iter().collect(),
+    };
     crate::combo::Combo::from_id_salt("change_settings_file").selected_text(lang.tr("Change Settings File")).width(220.0).show_ui(ui, |ui| {
-        for p in &engine.settings().presets {
+        for p in presets {
             let same = current.is_some_and(|c| c.key() == p.key());
             let allowed = ch.created || p.build_method() == bm;
-            let label = if p.file.is_some() { lang.tr_fmt("{0} (yours)", &[&p.name()]) } else { p.name() };
+            let label = preset_label(p, lang);
             let r = ui.add_enabled(allowed, egui::Button::selectable(same, label));
             let r = if allowed {
                 r

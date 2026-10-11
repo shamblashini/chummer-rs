@@ -109,7 +109,7 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
             flag(super::canonical(ch) != before)
         }
         SwitchSettings { key } => {
-            let preset = engine.settings().find(key).cloned().ok_or_else(|| Rejected::new(format!("no settings preset {key}")))?;
+            let preset = engine.settings().find_in(key, ch.settings_scope.as_deref()).cloned().ok_or_else(|| Rejected::new(format!("no settings preset {key}")))?;
             crate::settings::switch_character(ch, &preset).map_err(Rejected::new)?;
             changed()
         }
@@ -168,7 +168,7 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
             changed()
         }
         FinishCreation => {
-            let settings = engine.settings().resolve(&ch.field("settings")).cloned().ok_or_else(|| Rejected::new("the character's settings preset is missing"))?;
+            let settings = engine.settings().resolve_for(ch).cloned().ok_or_else(|| Rejected::new("the character's settings preset is missing"))?;
             let rules = engine.rules_for(ch);
             let sheet = crate::calc::compute(ch, &rules, Some(store), Some(&engine.catalog));
             let budget = chargen::budget_with(ch, &sheet, &rules, &settings, Some(store));
@@ -288,7 +288,7 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
         AddCustomDrug { name, grade, components } => add_custom_drug(ch, store, name, grade, components),
         ApplyKit { kit } => {
             let kit = crate::xml::parse(kit).map_err(reject)?;
-            let settings = engine.settings().resolve(&ch.field("settings")).cloned();
+            let settings = engine.settings().resolve_for(ch).cloned();
             let report = crate::gm::packs::apply(ch, store, settings.as_ref(), &kit);
             let message = (!report.skipped.is_empty()).then(|| report.skipped.join("\n"));
             Ok(Done::Changed { message, count: Some(report.added.len()) })
@@ -494,6 +494,7 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
                 return Ok(Done::Unchanged);
             }
             state.file = ch.file.clone();
+            state.settings_scope = ch.settings_scope.clone();
             *ch = state;
             changed()
         }
@@ -639,7 +640,7 @@ fn set_power_rating(ch: &mut Character, engine: &Engine, store: &DataStore, guid
     if r == p.get_i32("rating").unwrap_or(1) {
         return Ok(Done::Unchanged);
     }
-    let settings = engine.settings().resolve(&ch.field("settings")).cloned();
+    let settings = engine.settings().resolve_for(ch).cloned();
     let sheet = engine.sheet(ch);
     let second = settings.as_ref().is_some_and(|s| s.flag("mysadeptsecondmagattribute"));
     let mag = account::adept_mag(ch, &sheet, second);

@@ -246,7 +246,7 @@ async fn a_member_that_stops_reading_does_not_stall_the_others() -> Result<()> {
     // A joins with a raw client and never reads its pushes.
     let a_ep = endpoint(&relay, a_key, vec![]).await?;
     let (a_client, _a_pushes) = CampaignClient::join(&a_ep, dial_addr(gm_ep.id(), None), link.campaign, None).await?;
-    a_client.submit(msg::encode(&ClientMessage::Join { name: "Hung".into(), have: Vec::new(), claim: None })).await?;
+    a_client.submit(msg::encode(&ClientMessage::Join { name: "Hung".into(), have: Vec::new(), claim: None, builtins: Vec::new() })).await?;
     // B is a normal player.
     let b_ep = endpoint(&relay, b_key.clone(), vec![]).await?;
     let b = PlayerSession::new(b_ep.clone(), b_key, engine.clone(), PlayerConfig::new("Fine", link))?;

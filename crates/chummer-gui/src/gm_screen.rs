@@ -177,6 +177,8 @@ pub struct GmScreen {
     damage: DamageForm,
     kit: Option<KitForm>,
     critter: Option<crate::gm_ui::CritterWizard>,
+    /// New character for the campaign (Add → New character).
+    wizard: Option<crate::wizard::Wizard>,
     improvements: crate::improvement_ui::ImprovementsPanel,
     /// Member the improvement dialog is for.
     improvement_for: Option<MemberId>,
@@ -248,6 +250,7 @@ impl GmScreen {
             damage: Default::default(),
             kit: None,
             critter: None,
+            wizard: None,
             improvements: Default::default(),
             improvement_for: None,
             ws_dialogs: Default::default(),
@@ -1629,6 +1632,16 @@ impl GmScreen {
     // ----- windows -----
 
     fn windows(&mut self, ctx: &egui::Context, engine: &Arc<Engine>, lang: &Language, views: &mut [CharacterView], status: &mut Status) {
+        if let Some(w) = self.wizard.as_mut() {
+            match w.show(ctx, engine, lang) {
+                crate::wizard::WizardResult::Open => {}
+                crate::wizard::WizardResult::Cancel => self.wizard = None,
+                crate::wizard::WizardResult::Created(ch) => {
+                    self.add_numbered(MemberKind::Player, *ch, engine, views, status);
+                    self.wizard = None;
+                }
+            }
+        }
         if let Some(w) = self.critter.as_mut() {
             match w.show(ctx, engine, lang) {
                 crate::gm_ui::CritterResult::Open => {}
@@ -1644,7 +1657,7 @@ impl GmScreen {
             match k.window(ctx, engine, lang) {
                 None => {}
                 Some(None) => self.kit = None,
-                Some(Some(req)) => match campaign::kit_npc(engine, &req.metatype, &req.kit_xml, &req.name) {
+                Some(Some(req)) => match campaign::kit_npc(engine, &req.metatype, &req.kit_xml, &req.name, &self.campaign.default_settings) {
                     Ok(ch) => {
                         let mut m = Member::embedded(MemberKind::Npc, &ch);
                         if req.count > 1 {
@@ -1673,7 +1686,7 @@ impl GmScreen {
             let GmScreen { live, improvements, .. } = self;
             if let Some(doc) = doc_mut(live, views, id) {
                 let store = engine.store_for_character(doc);
-                let settings = engine.settings().resolve(&doc.field("settings")).cloned();
+                let settings = engine.settings().resolve_for(doc).cloned();
                 improvements.window(ctx, doc, &store, settings.as_ref(), lang);
             } else {
                 self.improvement_for = None;

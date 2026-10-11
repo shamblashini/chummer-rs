@@ -18,7 +18,7 @@ const KARMA_TECHNIQUE: i32 = 5;
 const KARMA_MYSTIC_ADEPT_PP: i32 = 5;
 
 fn settings_karma(engine: &Engine, ch: &Character, key: &str, default: i32) -> i32 {
-    engine.settings().resolve(&ch.field("settings")).map_or(default, |s| s.karma(key, default))
+    engine.settings().resolve_for(ch).map_or(default, |s| s.karma(key, default))
 }
 
 /// Add a spell with its options and pay for it (`tsAddSpell`): rituals and
@@ -64,14 +64,14 @@ pub fn learn_technique(ch: &mut Character, engine: &Engine, store: &DataStore, a
 
 /// Karma to bind a focus gear item (`Focus.BindingKarmaCost`).
 pub fn focus_karma_cost(engine: &Engine, ch: &Character, gear: &crate::xml::Element) -> i32 {
-    let fallback = crate::settings::CharacterSettings { raw: crate::xml::Element::new("settings"), file: None };
-    account::focus_binding_karma(ch, engine.settings().resolve(&ch.field("settings")).unwrap_or(&fallback), gear)
+    let fallback = crate::settings::CharacterSettings { raw: crate::xml::Element::new("settings"), file: None, campaign: None };
+    account::focus_binding_karma(ch, engine.settings().resolve_for(ch).unwrap_or(&fallback), gear)
 }
 
 /// Whether the preset gives mystic adepts a second MAG attribute
 /// (`MysAdeptSecondMAGAttribute`) and the character is one.
 pub(super) fn uses_second_mag(engine: &Engine, ch: &Character) -> bool {
-    ch.is_adept() && ch.is_magician() && engine.settings().resolve(&ch.field("settings")).is_some_and(|s| s.flag("mysadeptsecondmagattribute"))
+    ch.is_adept() && ch.is_magician() && engine.settings().resolve_for(ch).is_some_and(|s| s.flag("mysadeptsecondmagattribute"))
 }
 
 /// The MAG totals a magic limit is checked against: MAG, plus MAGAdept for

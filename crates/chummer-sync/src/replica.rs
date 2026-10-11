@@ -23,6 +23,12 @@
 //! ([`Replica::table_rolls`]) with the rolls of others the authority
 //! sends ([`ServerMessage::Rolls`]).
 //!
+//! Settings presets: the membership carries those the characters use, as
+//! the GM has them. The replica puts them into the engine as the
+//! campaign's ([`Engine::set_campaign_presets`], scope
+//! [`Replica::presets_scope`]) and marks its characters with that scope, so
+//! they resolve as at the GM's and never against the player's own presets.
+//!
 //! Persistence ([`Replica::save`]): the confirmed state as a snapshot, its
 //! version and hash, the outbox, refused commands not yet dismissed, the
 //! feed, the rolls and the partial mail, so offline work survives a
@@ -30,17 +36,19 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
+use std::sync::Arc;
 
 use chummer_core::character::Character;
 use chummer_core::command::{self, Command, Envelope, Rejected, Report};
 use chummer_core::dice::{RollRecord, Rng};
 use chummer_core::engine::Engine;
+use chummer_core::settings::{CampaignSource, CharacterSettings};
 use chummer_net::EndpointId;
 use serde::{Deserialize, Serialize};
 
 use crate::feed;
 use crate::mail::Inbox;
-use crate::msg::{Ack, CharacterId, ClientMessage, Entry, FeedEntry, Hash, Have, Membership, Op, OpId, Push, PushBody, ResyncRequest, RollId, RollReport, ServerMessage, SubmitBatch, TableRoll};
+use crate::msg::{Ack, CharacterId, ClientMessage, Entry, FeedEntry, Hash, Have, Membership, Op, OpId, PresetHash, Push, PushBody, ResyncRequest, RollId, RollReport, ServerMessage, SubmitBatch, TableRoll};
 
 /// Rolls kept in the table's roll log.
 pub const ROLL_LOG: usize = crate::authority::ROLL_LOG;
@@ -97,6 +105,8 @@ pub enum Event {
     Error(String),
     /// The GM's app refused to let us join (by mail).
     Denied(chummer_net::campaign::DenyReason),
+    /// The campaign's settings presets changed (in the engine too).
+    Presets,
     /// Rolls were answered or arrived ([`Replica::table_rolls`]).
     Rolls,
 }
@@ -406,10 +416,36 @@ impl Replica {
 
     // ----- what to send -----
 
-    /// The first message on a live connection.
-    pub fn join_message(&self, name: &str, claim: Option<crate::msg::ClaimProof>) -> ClientMessage {
+    /// The first message on a live connection. It names the engine's
+    /// built-in presets, so the GM's app sends only those that differ.
+    pub fn join_message(&self, engine: &Engine, name: &str, claim: Option<crate::msg::ClaimProof>) -> ClientMessage {
         let have = self.copies.iter().map(|(id, c)| Have { character: id.clone(), version: c.version, hash: c.hash }).collect();
-        ClientMessage::Join { name: name.to_owned(), have, claim }
+        let builtins = engine.settings().presets.iter().filter(|p| p.is_builtin()).map(|p| PresetHash { key: p.key(), hash: p.content_hash() }).collect();
+        ClientMessage::Join { name: name.to_owned(), have, claim, builtins }
+    }
+
+    // ----- settings presets -----
+
+    /// The scope of this campaign's shared presets in the engine (and of
+    /// our characters' `settings_scope`): the campaign and our node id,
+    /// once joined.
+    pub fn presets_scope(&self) -> Option<String> {
+        self.membership.as_ref().map(presets_scope)
+    }
+
+    /// Puts the membership's presets into the engine as this campaign's
+    /// (in place of those it had). Returns whether they changed.
+    pub fn install_presets(&self, engine: &Engine) -> bool {
+        self.membership.as_ref().is_some_and(|m| install_presets(m, engine))
+    }
+
+    /// Takes this campaign's presets out of the engine and the membership
+    /// (the player left, or the GM's app refused us).
+    pub fn forget_presets(&mut self, engine: &Engine) -> bool {
+        if let Some(m) = &mut self.membership {
+            m.presets.clear();
+        }
+        self.presets_scope().is_some_and(|s| engine.remove_campaign_presets(&s))
     }
 
     /// Why the GM's app refused us (cleared when a join works).
@@ -478,6 +514,10 @@ impl Replica {
             ServerMessage::Joined { membership, pushes } => {
                 self.denied = None;
                 let mut ev = self.set_membership(membership);
+                // Before the pushes: their commands need the presets.
+                if self.install_presets(engine) {
+                    ev.push(Event::Presets);
+                }
                 for p in pushes {
                     ev.extend(self.apply_push(engine, p));
                 }
@@ -485,11 +525,21 @@ impl Replica {
             }
             ServerMessage::Ack(a) => self.apply_ack(engine, a),
             ServerMessage::Push(p) => self.apply_push(engine, p),
-            ServerMessage::Membership(m) => self.set_membership(m),
+            ServerMessage::Membership(m) => {
+                let mut ev = self.set_membership(m);
+                if self.install_presets(engine) {
+                    ev.push(Event::Presets);
+                }
+                ev
+            }
             ServerMessage::Error(e) => vec![Event::Error(e)],
             ServerMessage::Denied(d) => {
                 self.denied = Some(d.clone());
-                vec![Event::Denied(d)]
+                let mut ev = vec![Event::Denied(d)];
+                if self.forget_presets(engine) {
+                    ev.push(Event::Presets);
+                }
+                ev
             }
             ServerMessage::RollsTaken(ids) => self.rolls_taken(&ids),
             ServerMessage::Rolls(rolls) => {
@@ -528,6 +578,7 @@ impl Replica {
         let mut ev = Vec::new();
         let id = push.character.clone();
         let members = self.members().to_vec();
+        let scope = self.presets_scope();
         if let (PushBody::Entries(_), Some(c)) = (&push.body, self.copies.get_mut(&id)) {
             if !c.needs_resync && push.from_version > c.version {
                 c.early.push(push);
@@ -541,10 +592,11 @@ impl Replica {
                 if !accept {
                     return ev;
                 }
-                let ch = match command::restore(&bytes) {
+                let mut ch = match command::restore(&bytes) {
                     Ok(ch) => ch,
                     Err(e) => return vec![Event::Error(format!("could not read the snapshot of {id}: {e}"))],
                 };
+                ch.settings_scope = scope;
                 let (outbox, early) = self.copies.remove(&id).map(|c| (c.outbox, c.early)).unwrap_or_default();
                 let hash = command::state_hash(&ch);
                 let needs_resync = hash != push.hash;
@@ -708,9 +760,15 @@ impl Replica {
     /// states, which needs the engine.
     pub fn from_bytes(engine: &Engine, bytes: &[u8]) -> Result<Replica, PersistError> {
         let f: ReplicaFile = persist::from_bytes(MAGIC, "campaign replica", FORMAT, bytes)?;
+        let scope = f.membership.as_ref().map(presets_scope);
+        // Before the outbox is applied again: its commands need them.
+        if let Some(m) = &f.membership {
+            install_presets(m, engine);
+        }
         let mut copies = BTreeMap::new();
         for s in f.characters {
-            let ch = command::restore(&s.snapshot)?;
+            let mut ch = command::restore(&s.snapshot)?;
+            ch.settings_scope = scope.clone();
             let mut c = Copy { name: s.name, current: ch.clone(), confirmed: ch, version: s.version, hash: s.hash, outbox: s.outbox, needs_resync: s.needs_resync, snapshot: std::sync::OnceLock::from(s.snapshot), early: Vec::new() };
             rebuild(engine, &mut c);
             copies.insert(s.id, c);
@@ -748,6 +806,33 @@ impl Replica {
     }
 }
 
+/// The engine scope of a membership's presets ([`Replica::presets_scope`]).
+fn presets_scope(m: &Membership) -> String {
+    format!("{}/{}", m.campaign, m.you)
+}
+
+/// [`Replica::install_presets`].
+fn install_presets(m: &Membership, engine: &Engine) -> bool {
+    let scope = presets_scope(m);
+    let presets = m
+        .presets
+        .iter()
+        .filter_map(|p| {
+            // Without XML: a built-in we have with the GM's content.
+            let xml = p.xml.as_deref()?;
+            let raw = match chummer_core::xml::parse(xml) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("the GM's settings preset {} could not be read: {e}", p.key);
+                    return None;
+                }
+            };
+            Some(CharacterSettings { raw, file: None, campaign: Some(Arc::new(CampaignSource { scope: scope.clone(), campaign: m.campaign_name.clone(), key: p.key.clone(), hash: p.hash })) })
+        })
+        .collect();
+    engine.set_campaign_presets(&scope, presets)
+}
+
 /// `current` = `confirmed` with the outbox applied again. Commands that no
 /// longer apply locally stay queued (the authority decides); they are just
 /// not shown.
@@ -762,7 +847,8 @@ fn rebuild(engine: &Engine, c: &mut Copy) {
 const MAGIC: &[u8; 4] = b"CRSR";
 /// 2: member keys (the membership's label and GM keys, refusals).
 /// 3: dice rolls (the roll outbox and the table's rolls).
-const FORMAT: u16 = 3;
+/// 4: settings presets (the membership's campaign id and presets).
+const FORMAT: u16 = 4;
 
 #[derive(Serialize, Deserialize)]
 struct ReplicaFile {

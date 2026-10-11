@@ -222,8 +222,9 @@ Implemented (local part):
 
 Work-order steps 5 and 7 and the messages for step 6.
 
-- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`, 4
-  since dice rolls (`ClientMessage::Rolls`, `ServerMessage::RollsTaken`
+- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`, 5
+  since settings presets (the membership's campaign id and presets,
+  `Join`'s built-ins; see "Settings presets" below); 4 since dice rolls (`ClientMessage::Rolls`, `ServerMessage::RollsTaken`
   and `Rolls`, see "Dice rolls" below); 3 since the item commands changed (`MoveItem`, `Purchase::location`); 2
   since member keys: `Join` carries an optional `ClaimProof`, the
   membership names the invite's label and the GM's campaign keys, and
@@ -373,6 +374,67 @@ log.
 - Formats: authority file 4 (the roll log, the ids taken, the cursors,
   the settings), replica file 3 (the roll outbox and the table's rolls).
 
+### Settings presets (implemented)
+
+A character names its settings preset (house rules) by key: the GM's
+file name for the GM's own presets, the GUID for built-ins. The campaign
+carries the presets, so a player never has to import the GM's file.
+
+- **What is sent.** Each member's `Membership` has `presets`: a
+  `SharedPreset { key, name, hash, xml }` for every preset the characters
+  that member sees use, as the GM's app has it (the GM's characters are
+  never looked at for a player). `hash` is BLAKE3 of the preset's XML
+  (`CharacterSettings::content_hash`). `Join` names the player's built-in
+  presets (`builtins`: key and hash); a built-in the player has with the
+  same hash goes without its XML. Everything else carries its XML (a few
+  KiB; the mailbox cuts any message into blobs under the relay's limit,
+  so a preset needs no special handling).
+- **GM side.** The host hands the authority the GM's library
+  (`Authority::set_presets`) when it starts and whenever
+  `Engine::settings_rev` moved (checked before every request, live sweep
+  and mailbox round; `AuthorityHost::settings_changed` also sweeps the
+  connected members at once). The authority remembers the presets each
+  member's last membership carried (`presets_sent`, saved); a membership
+  is stale when that differs from what the member's characters use now, so
+  a saved preset and a character switched to another preset both reach
+  the member like any membership change, live or by mail. The GUI calls
+  `settings_changed` when the engine's presets change; `chummer-authority`
+  reloads the presets when a file in the settings folder changes.
+- **Player side.** The replica puts the membership's presets into the
+  engine (`Engine::set_campaign_presets`) under its scope
+  (`<campaign id>/<own node id>`), before it applies any push, and marks
+  each of its characters with that scope (`Character::settings_scope`,
+  not saved and not hashed). Campaign presets live apart from the user's
+  (`SettingsLibrary::campaign`) and are never written to the settings
+  folder. `SettingsLibrary::find_in(key, scope)` looks in that campaign's
+  presets, then the built-ins, never in the player's own files: a player
+  preset of the same file name is neither replaced nor used for campaign
+  characters, and campaign presets are never used for other characters.
+  The membership is saved in the replica, so the presets come back at the
+  next start (installed before the outbox is applied again).
+- **Leaving.** Leaving a campaign (`PlayerSession::forget_presets`), the
+  GM refusing the member (`Denied`), or the member no longer seeing the
+  characters that used a preset takes the presets out of the engine.
+- **UI.** A campaign character finds its preset, so there is no "Cannot
+  Find Settings File"; the Settings File row says "(from campaign
+  <name>)". Change Settings File offers that campaign's presets and the
+  built-ins (the GM's app runs `SwitchSettings` against its own library,
+  which has both). The Character Settings window lists them under "From
+  campaign <name> (read-only)"; Save is off and Duplicate makes the
+  player's own copy.
+- **Custom data** folders a preset enables are not sent. Where a preset
+  enables custom data this app does not have, the character's settings
+  row and the Character Settings window name the missing folders (for a
+  campaign's preset: ask the GM for them); their content is simply not
+  loaded meanwhile.
+- **New characters.** The campaign file's `default_settings` (Add →
+  "Settings file for new characters" on the GM screen) is where the GM
+  screen's New character and New Critter wizards start, and what PACKS
+  NPCs use when it is a karma build. Players do not make campaign
+  characters; the GM gives them characters, and their presets follow.
+- Formats: authority file 5 (`presets_sent`, members' built-ins), replica
+  file 4 (the membership's presets).
+
 ### The hosted campaign (implemented: `chummer_sync::hosted`)
 
 The glue the GUI and `chummer-authority` share between a GM's
@@ -469,7 +531,8 @@ and shown by the GUI's GM screen (`gm_screen.rs`, `campaign_ui.rs`).
 
 ### Model
 
-- `Campaign { id, name, created, gm_notes, members, encounters, log }`.
+- `Campaign { id, name, created, gm_notes, members, encounters, log,
+  roll_settings, rolls, default_settings }`.
   `id` is a `CampaignId`: 128 bits as 32 lower-case hex digits, the
   same text form as `chummer_net::invite::CampaignId`, so the two convert
   with `to_string()` / `parse()` (core does not depend on chummer-net).

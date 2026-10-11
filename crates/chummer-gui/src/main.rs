@@ -112,6 +112,9 @@ struct App {
     initiative: initiative::Tracker,
     settings_editor: settings_ui::SettingsEditor,
     wizard: Option<wizard::Wizard>,
+    /// The engine's settings presets as last seen ([`Engine::settings_rev`]):
+    /// open characters resolve theirs again when it moves.
+    settings_rev: u64,
     critter: Option<gm_ui::CritterWizard>,
     /// The open campaign, shown as the GM Screen tab.
     gm: Option<gm_screen::GmScreen>,
@@ -172,6 +175,7 @@ impl App {
             initiative: Default::default(),
             settings_editor: settings_ui::SettingsEditor::new(),
             wizard: None,
+            settings_rev: 0,
             critter: None,
             gm: None,
             pdfs: SourcebookLibrary::load(),
@@ -1014,6 +1018,7 @@ impl App {
     /// One frame of either layout.
     fn frame(&mut self, ctx: &egui::Context) {
         self.poll_io();
+        self.follow_settings();
         let gm_dirty = self.gm.as_ref().is_some_and(|g| g.is_dirty(&self.views));
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && (gm_dirty || self.views.iter().any(|v| v.ch().dirty)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);

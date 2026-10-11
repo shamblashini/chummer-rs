@@ -142,7 +142,7 @@ fn base_and_limit(doc: &Element, table: &str, item: &str, base: &str) -> (i32, i
 /// Free grid subscriptions need Hard Targets or the free grids option.
 fn free_grids_enabled(ch: &Character, store: &DataStore) -> bool {
     let Ok(lib) = crate::settings::SettingsLibrary::load(store, crate::settings::user_settings_dir().as_deref()) else { return false };
-    lib.resolve(&ch.doc.get("settings")).is_some_and(|s| s.flag("allowfreegrids") || s.books().iter().any(|b| b == "HT"))
+    lib.resolve_for(ch).is_some_and(|s| s.flag("allowfreegrids") || s.books().iter().any(|b| b == "HT"))
 }
 
 /// `Lifestyle.Create` (via `SetBaseLifestyle`) + the dialog's choices +

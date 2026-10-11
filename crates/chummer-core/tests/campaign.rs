@@ -256,8 +256,16 @@ fn npc_from_a_kit() {
     let Ok(engine) = Engine::load() else { return };
     let doc = chummer_core::gm::packs::load(&engine.store, None);
     let kit = chummer_core::gm::packs::find_kit(&doc, "Intro Runner Pack", "Core Packs").unwrap();
-    let ch = campaign::kit_npc(&engine, "Human", &kit.to_xml_string(), "Street Sam").unwrap();
+    let ch = campaign::kit_npc(&engine, "Human", &kit.to_xml_string(), "Street Sam", "").unwrap();
     assert_eq!(ch.display_name(), "Street Sam");
     assert!(!ch.created);
     assert!(!ch.items("gears", "gear").is_empty() || !ch.items("weapons", "weapon").is_empty());
+    // The campaign's settings file for new characters, when it is a karma build.
+    let karma: Vec<_> = chummer_core::chargen::creation_presets(&engine).into_iter().filter(|p| p.build_method() == "Karma").collect();
+    let last = karma.last().unwrap().key();
+    let ch = campaign::kit_npc(&engine, "Human", &kit.to_xml_string(), "Street Sam", &last).unwrap();
+    assert_eq!(ch.field("settings"), last);
+    let priority = chummer_core::chargen::creation_presets(&engine).into_iter().find(|p| p.build_method() == "Priority").unwrap().key();
+    let ch = campaign::kit_npc(&engine, "Human", &kit.to_xml_string(), "Street Sam", &priority).unwrap();
+    assert_eq!(ch.field("settings"), karma[0].key(), "not a karma build: the first karma preset");
 }

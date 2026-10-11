@@ -133,7 +133,7 @@ pub fn group_karma_cost(engine: &Engine, ch: &Character, join: bool) -> i32 {
         return 0;
     }
     let lib = engine.settings();
-    let s = lib.resolve(&ch.field("settings"));
+    let s = lib.resolve_for(ch);
     match (join, s) {
         (true, Some(s)) => s.karma("karmajoingroup", KARMA_JOIN_GROUP),
         (true, None) => KARMA_JOIN_GROUP,

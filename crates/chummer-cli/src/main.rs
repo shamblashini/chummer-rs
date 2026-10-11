@@ -331,7 +331,7 @@ fn info(engine: &Engine, path: &Path) -> Result<()> {
         "{} · {} · settings: {}",
         if ch.created { "Career mode" } else { "Creation mode" },
         ch.field("buildmethod"),
-        engine.settings().resolve(&ch.field("settings")).map(|p| p.name()).unwrap_or_default()
+        engine.settings().resolve_for(&ch).map(|p| p.name()).unwrap_or_default()
     );
     if let Some(missing) = engine.settings().missing_preset(&ch.field("settings")) {
         let fallback = engine.settings().fallback().map(|p| p.name()).unwrap_or_default();
