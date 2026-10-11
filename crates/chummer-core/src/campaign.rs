@@ -391,6 +391,10 @@ pub struct Campaign {
     /// The last [`ROLLS_KEPT`] dice rolls at the table, the GM's and (online)
     /// the players', newest first.
     pub rolls: Vec<LoggedRoll>,
+    /// The settings preset (its key) that characters made for the campaign
+    /// start with; empty for none. Online, the preset reaches the players
+    /// with their characters.
+    pub default_settings: String,
 }
 
 /// Rolls a campaign file keeps.
@@ -779,9 +783,13 @@ pub fn named_copy(engine: &Engine, ch: &Character, name: &str) -> Character {
 
 /// A new NPC: a karma-build character of `metatype` with a PACKS kit
 /// (given as its XML) applied, as `Add PACKS Kit` would on a new
-/// character. Stays in creation mode, so the GM can adjust it.
-pub fn kit_npc(engine: &Engine, metatype: &str, kit_xml: &str, name: &str) -> Result<Character, String> {
-    let preset = crate::chargen::creation_presets(engine).into_iter().find(|p| p.build_method() == "Karma").ok_or("no Karma build settings preset")?.key();
+/// character. Stays in creation mode, so the GM can adjust it. It uses
+/// `preferred` (the campaign's [`Campaign::default_settings`]) when that is
+/// a karma-build preset.
+pub fn kit_npc(engine: &Engine, metatype: &str, kit_xml: &str, name: &str, preferred: &str) -> Result<Character, String> {
+    let karma = crate::chargen::creation_presets(engine).into_iter().filter(|p| p.build_method() == "Karma").collect::<Vec<_>>();
+    let wanted = engine.settings().find(preferred).map(|p| p.key());
+    let preset = karma.iter().find(|p| Some(p.key()) == wanted).or_else(|| karma.first()).ok_or("no Karma build settings preset")?.key();
     let spec = crate::chargen::NewCharacter {
         settings_id: preset,
         metatype: metatype.to_owned(),

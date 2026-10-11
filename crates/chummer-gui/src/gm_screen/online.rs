@@ -423,6 +423,15 @@ impl GmScreen {
     }
 
     /// The campaign closes: stop serving it.
+    /// The settings presets changed (reloaded, or a campaign's arrived):
+    /// members recompute, and the players get the GM's changed presets.
+    pub fn settings_changed(&mut self) {
+        self.resync();
+        if let Some(o) = &self.online {
+            o.hosted.host.settings_changed();
+        }
+    }
+
     pub fn close_online(&mut self, net: &mut Online) {
         if let Some(p) = &self.path {
             // Going online still: its authority is dropped when it lands

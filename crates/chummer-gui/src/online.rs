@@ -191,9 +191,11 @@ impl Online {
     }
 
     /// Forgets a campaign; its local copy file stays. The GM's key no
-    /// longer puts mail into our mailbox.
+    /// longer puts mail into our mailbox, and the settings presets the
+    /// campaign shared are gone.
     pub fn leave(&mut self, i: usize) {
         let c = self.joined.remove(i);
+        c.session.forget_presets();
         let s = c.session.clone();
         self.rt.spawn(async move {
             let _ = tokio::time::timeout(Duration::from_secs(10), s.unregister()).await;

@@ -2779,3 +2779,123 @@ fn print_window_resizes_and_its_list_is_tall() {
         h.reset();
     }
 }
+
+/// A player's campaign character whose settings file the GM shared: no
+/// "Cannot Find Settings File" (but a note about the custom data it lacks),
+/// and in the Character Settings window the preset is listed as the
+/// campaign's and is read-only, while the player's own preset of the same
+/// file name stays theirs. Duplicating it makes an editable copy.
+#[test]
+fn campaign_preset_resolves_and_is_read_only() {
+    use chummer_core::settings::{self, CampaignSource, CharacterSettings};
+    for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark] {
+        let mut h = Harness::new(kind);
+        let engine = h.app.engine.clone();
+        let tag = unique_preset("campaign");
+        let key = format!("{}.xml", settings::file_stem_for(&tag));
+        let standard = engine.settings().find(settings::STANDARD_ID).unwrap().clone();
+        // The player's own preset under the GM's file name.
+        let dir = engine.settings_dir().unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut mine = standard.raw.clone();
+        mine.set_child_text("name", format!("{tag} mine"));
+        std::fs::write(dir.join(&key), settings::export_string(&mine)).unwrap();
+        let own_before = std::fs::read(dir.join(&key)).unwrap();
+        engine.reload_settings().unwrap();
+        // The GM's, as a campaign shared it, with custom data this app lacks.
+        let mut gm = standard.raw.clone();
+        gm.set_child_text("name", "Seattle House");
+        gm.child_or_insert("karmacost").set_child_text("karmaattribute", "7");
+        let mut entry = chummer_core::xml::Element::new("customdatadirectoryname");
+        entry.set_child_text("directoryname", "GM Secret Data");
+        entry.set_child_text("order", "0");
+        entry.set_child_text("enabled", "True");
+        gm.child_or_insert("customdatadirectorynames").push(entry);
+        let scope = format!("ui-test/{tag}");
+        let hash = CharacterSettings { raw: gm.clone(), file: None, campaign: None }.content_hash();
+        let shared = CharacterSettings { raw: gm, file: None, campaign: Some(std::sync::Arc::new(CampaignSource { scope: scope.clone(), campaign: "Seattle Nights".into(), key: key.clone(), hash })) };
+        assert!(engine.set_campaign_presets(&scope, vec![shared.clone()]));
+
+        let mut ch = chummer_core::character::Character::load(&fixture("Munin_Career.chum5")).unwrap();
+        ch.set_field("settings", &key);
+        let files_before = std::fs::read_dir(&dir).unwrap().count();
+        // Outside the campaign the key names the player's own file; a key
+        // nobody has shows the warning (the control).
+        let mut nowhere = ch.clone();
+        nowhere.set_field("settings", "Nobody Has This.xml");
+        h.app.views.push(crate::view::CharacterView::new(nowhere, &engine));
+        h.app.active = h.app.views.len() - 1;
+        h.app.home = None;
+        h.frames(3);
+        assert!(h.find_text("Cannot Find Settings File").is_some(), "{kind:?}: the control shows the warning: {:?}", h.on_screen());
+        h.app.views.pop();
+        h.app.active = 0;
+
+        ch.settings_scope = Some(scope.clone());
+        assert_eq!(engine.settings().find_for(&ch).and_then(|p| p.campaign.as_ref()).map(|c| c.campaign.as_str()), Some("Seattle Nights"));
+        h.app.views.push(crate::view::CharacterView::new(ch, &engine));
+        h.app.active = h.app.views.len() - 1;
+        h.frames(3);
+        assert!(h.find_text("Cannot Find Settings File").is_none(), "{kind:?}: no warning: {:?}", h.on_screen());
+        assert!(h.find_where(|t| t.contains("Custom data this settings file uses is not installed: GM Secret Data")).is_some(), "{kind:?}: the missing custom data is named: {:?}", h.on_screen());
+
+        // The Character Settings window.
+        h.app.settings_editor.current = Some(crate::settings_ui::ui_key(&shared));
+        h.app.show_settings = true;
+        h.frames(4);
+        // (The Workspace draws list captions in capitals.)
+        assert!(h.find_where(|t| t.trim().eq_ignore_ascii_case("From campaign Seattle Nights (read-only)")).is_some(), "{kind:?}: listed as the campaign's: {:?}", h.on_screen());
+        assert!(h.find_where(|t| t.contains("from campaign Seattle Nights, read-only")).is_some(), "{kind:?}: {:?}", h.on_screen());
+        assert!(h.find_where(|t| t.contains("Custom data not installed here: GM Secret Data")).is_some(), "{kind:?}: {:?}", h.on_screen());
+        assert!(h.find_where(|t| t.trim().eq_ignore_ascii_case("Your presets")).is_some(), "{kind:?}: {:?}", h.on_screen());
+        h.click_text("Options");
+        h.frames(1);
+        h.click_text("Allow initiation in creation");
+        h.frames(1);
+        assert!(!h.app.settings_editor.dirty, "{kind:?}: read-only");
+        // Duplicate makes the player's own copy.
+        h.click_text("Duplicate to edit…");
+        h.frames(1);
+        let copy = format!("{tag} copy");
+        h.app.settings_editor.dup_name = Some(copy.clone());
+        h.frames(1);
+        h.click_text("Create copy");
+        h.frames(2);
+        let lib = engine.settings();
+        let made = lib.presets.iter().find(|p| p.name() == copy).expect("the copy");
+        assert!(made.is_user());
+        assert_eq!(made.karma("karmaattribute", 5), 7, "the campaign's rules");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), files_before + 1);
+        assert_eq!(std::fs::read(dir.join(&key)).unwrap(), own_before, "the player's own file is untouched");
+        assert_eq!(lib.find(&key).unwrap().name(), format!("{tag} mine"));
+        assert_eq!(lib.campaign_presets(&scope).count(), 1);
+
+        // Leaving the campaign: the preset is gone, the warning is back.
+        assert!(engine.remove_campaign_presets(&scope));
+        h.app.show_settings = false;
+        h.frames(3);
+        assert!(h.find_text("Cannot Find Settings File").is_some(), "{kind:?}: {:?}", h.on_screen());
+        let _ = std::fs::remove_file(made.file.as_ref().unwrap());
+        let _ = std::fs::remove_file(dir.join(&key));
+        engine.reload_settings().unwrap();
+        h.reset();
+    }
+}
+
+/// A campaign's settings file for new characters: the GM screen's
+/// New character and New Critter wizards start on it.
+#[test]
+fn campaign_default_preset_starts_the_wizards() {
+    let h = Harness::new(ThemeKind::WorkspaceDark);
+    let engine = &h.app.engine;
+    let presets = chummer_core::chargen::creation_presets(engine);
+    let (i, p) = presets.iter().enumerate().find(|(_, p)| p.name() != presets[0].name()).expect("two presets");
+    assert_eq!(crate::wizard::preset_index(engine, &p.key()), i);
+    // By name too (what older files hold), and the first for none.
+    assert_eq!(crate::wizard::preset_index(engine, &p.name()), i);
+    assert_eq!(crate::wizard::preset_index(engine, ""), 0);
+    let mut c = chummer_core::campaign::Campaign::default();
+    c.default_settings = p.key();
+    let back: chummer_core::campaign::Campaign = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+    assert_eq!(back.default_settings, p.key(), "kept in the campaign file");
+}

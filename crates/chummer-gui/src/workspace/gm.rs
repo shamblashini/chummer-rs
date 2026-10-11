@@ -181,7 +181,7 @@ impl GmScreen {
                     self.new_invite(env.net);
                 }
                 if widgets::icon_button(ui, icons::PAW_PRINT, 24.0).on_hover_text(lang.tr("New Critter…")).clicked() {
-                    self.critter = Some(crate::gm_ui::CritterWizard::new());
+                    self.critter = Some(crate::gm_ui::CritterWizard::with_preset(env.engine, &self.campaign.default_settings));
                 }
             });
         });
@@ -294,14 +294,19 @@ impl GmScreen {
             ui.close();
             crate::campaign_ui::pick_characters(ui.ctx(), true);
         }
+        if ui.button(lang.tr("New character…")).on_hover_text(lang.tr("Make a character for the campaign, with its settings file for new characters")).clicked() {
+            ui.close();
+            self.wizard = Some(crate::wizard::Wizard::with_preset(engine, &self.campaign.default_settings));
+        }
         if ui.button(lang.tr("New Critter…")).clicked() {
             ui.close();
-            self.critter = Some(crate::gm_ui::CritterWizard::new());
+            self.critter = Some(crate::gm_ui::CritterWizard::with_preset(engine, &self.campaign.default_settings));
         }
         if ui.button(lang.tr("NPC from PACKS Kit…")).clicked() {
             ui.close();
             self.kit = Some(crate::campaign_ui::KitForm::new(engine));
         }
+        ui.menu_button(lang.tr("Settings file for new characters"), |ui| self.default_settings_menu(ui, engine, lang));
         let open: Vec<usize> = (0..views.len()).filter(|&i| views[i].campaign_member.is_none()).collect();
         if !open.is_empty() {
             ui.separator();
@@ -312,6 +317,25 @@ impl GmScreen {
                     self.adopt(&mut views[i]);
                 }
             }
+        }
+    }
+
+    /// The campaign's settings preset for new characters (the wizards
+    /// start on it; online, it reaches the players with their characters).
+    fn default_settings_menu(&mut self, ui: &mut egui::Ui, engine: &Arc<Engine>, lang: &Language) {
+        let mut pick = |ui: &mut egui::Ui, key: String, label: String| {
+            let on = self.campaign.default_settings == key;
+            if ui.add(egui::Button::selectable(on, label)).clicked() {
+                ui.close();
+                if !on {
+                    self.campaign.default_settings = key;
+                    self.dirty = true;
+                }
+            }
+        };
+        pick(ui, String::new(), lang.tr("None (the wizard's first)"));
+        for p in chummer_core::chargen::creation_presets(engine) {
+            pick(ui, p.key(), crate::ruleset_ui::preset_label(&p, lang));
         }
     }
 

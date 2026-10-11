@@ -3,8 +3,8 @@
 //! settings file in the user settings directory. Presets can be exported
 //! as standalone Chummer settings files and imported from them.
 //!
-//! The window lists the presets on the left (yours, then the read-only
-//! built-ins) and shows the selected one's pages on the right; Save,
+//! The window lists the presets on the left (yours, those online campaigns
+//! shared, then the built-ins; the last two read-only) and shows the selected one's pages on the right; Save,
 //! Duplicate, Export and Import sit in a footer that stays visible. A
 //! written preset is usable at once: the app reloads the presets
 //! ([`crate::App::reload_settings`]).
@@ -111,7 +111,7 @@ enum Answer {
 }
 
 pub struct SettingsEditor {
-    /// Key of the preset shown ([`CharacterSettings::key`]).
+    /// The preset shown ([`ui_key`]).
     pub(crate) current: Option<String>,
     /// Working copy of the shown user preset.
     draft: Option<Element>,
@@ -341,15 +341,15 @@ impl SettingsEditor {
         }
         // The shown preset; the first when it is gone (or none yet).
         let key = match self.current.as_deref().and_then(|k| by_key(&lib, k)) {
-            Some(p) => p.key(),
+            Some(p) => ui_key(p),
             None => {
-                let k = lib.presets[0].key();
+                let k = ui_key(&lib.presets[0]);
                 self.show(Some(k.clone()));
                 k
             }
         };
         let preset = by_key(&lib, &key).expect("shown preset").clone();
-        let editable = preset.file.is_some();
+        let editable = preset.is_user();
         if editable && self.draft.is_none() {
             self.draft = Some(preset.raw.clone());
             self.dirty = false;
@@ -374,7 +374,7 @@ impl SettingsEditor {
                 }
             });
         egui::CentralPanel::default().frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 10, ..Default::default() })).show_inside(ui, |ui| {
-            self.header(ui, &preset, editable, ws, lang);
+            self.header(ui, &preset, editable, ws, engine, lang);
             if let Some(p) = page_tabs(ui, self.page, lang) {
                 self.page = p;
             }
@@ -392,28 +392,44 @@ impl SettingsEditor {
         reload
     }
 
-    /// The presets, built-ins first. Returns the key of one clicked.
+    /// The presets: yours, each campaign's, the built-ins. Returns the
+    /// [`ui_key`] of one clicked.
     fn preset_list(&self, ui: &mut egui::Ui, lib: &settings::SettingsLibrary, current: &str, lang: &Language) -> Option<String> {
         let mut picked = None;
+        // The campaigns that shared presets, by scope, in order.
+        let mut campaigns: Vec<(String, String)> = Vec::new();
+        for c in lib.campaign.iter().filter_map(|p| p.campaign.as_ref()) {
+            if !campaigns.iter().any(|(s, _)| *s == c.scope) {
+                campaigns.push((c.scope.clone(), c.campaign.clone()));
+            }
+        }
+        let mut groups: Vec<(String, Vec<&CharacterSettings>, Option<String>)> = vec![(lang.tr("Your presets"), lib.presets.iter().filter(|p| p.is_user()).collect(), Some(lang.tr("None yet: duplicate a preset to make your own.")))];
+        for (scope, name) in &campaigns {
+            groups.push((lang.tr_fmt("From campaign {0} (read-only)", &[name]), lib.campaign_presets(scope).collect(), None));
+        }
+        groups.push((lang.tr("Built-in (read-only)"), lib.presets.iter().filter(|p| p.is_builtin()).collect(), None));
         egui::ScrollArea::vertical().id_salt("settings_preset_list").auto_shrink([false, false]).show(ui, |ui| {
-            for (title, mine) in [(lang.tr("Your presets"), true), (lang.tr("Built-in (read-only)"), false)] {
+            for (title, presets, empty) in groups {
                 crate::workspace::dialog::caption(ui, &title);
-                let mut any = false;
-                for p in lib.presets.iter().filter(|p| p.file.is_some() == mine) {
-                    any = true;
-                    let selected = p.key() == current;
+                for p in &presets {
+                    let k = ui_key(p);
+                    let selected = k == current;
                     let mut name = p.name();
                     if selected && self.dirty {
                         name = format!("{name} *");
                     }
                     let r = crate::workspace::dialog::list_row(ui, selected, &name, &build_method_label(&p.build_method(), lang), false);
-                    let r = r.on_hover_text(p.file.as_deref().map_or_else(|| lang.tr("Built-in preset"), |f| f.display().to_string()));
-                    if r.clicked() && !selected {
-                        picked = Some(p.key());
+                    let hover = match (&p.campaign, &p.file) {
+                        (Some(c), _) => lang.tr_fmt("Shared by the GM of {0}. Read-only: duplicate it to make your own.", &[&c.campaign]),
+                        (None, Some(f)) => f.display().to_string(),
+                        (None, None) => lang.tr("Built-in preset"),
+                    };
+                    if r.on_hover_text(hover).clicked() && !selected {
+                        picked = Some(k);
                     }
                 }
-                if !any {
-                    crate::workspace::dialog::note(ui, lang.tr("None yet: duplicate a preset to make your own."));
+                if let Some(e) = empty.filter(|_| presets.is_empty()) {
+                    crate::workspace::dialog::note(ui, e);
                 }
                 ui.add_space(8.0);
             }
@@ -423,7 +439,7 @@ impl SettingsEditor {
 
     /// Which preset is shown, whether it can be changed, and whether it has
     /// unsaved changes.
-    fn header(&mut self, ui: &mut egui::Ui, preset: &CharacterSettings, editable: bool, ws: bool, lang: &Language) {
+    fn header(&mut self, ui: &mut egui::Ui, preset: &CharacterSettings, editable: bool, ws: bool, engine: &Engine, lang: &Language) {
         let name = self.draft.as_ref().map_or_else(|| preset.name(), |d| d.get("name"));
         let (text, muted, warn) = if ws {
             let p = crate::theme::ws(ui);
@@ -440,8 +456,14 @@ impl SettingsEditor {
             if editable {
                 ui.label(RichText::new(lang.tr("your preset")).color(muted));
             } else {
-                ui.label(RichText::new(format!("{} {}", crate::workspace::icons::LOCK_SIMPLE, lang.tr("built-in, read-only"))).color(muted))
-                    .on_hover_text(lang.tr("Built-in presets cannot be changed. Duplicate this one to make your own house rules."));
+                let (what, why) = match &preset.campaign {
+                    Some(c) => (
+                        lang.tr_fmt("from campaign {0}, read-only", &[&c.campaign]),
+                        lang.tr("The campaign's GM shared this preset; the campaign's characters use it. The GM's changes arrive with the campaign. Duplicate it to make your own house rules."),
+                    ),
+                    None => (lang.tr("built-in, read-only"), lang.tr("Built-in presets cannot be changed. Duplicate this one to make your own house rules.")),
+                };
+                ui.label(RichText::new(format!("{} {what}", crate::workspace::icons::LOCK_SIMPLE)).color(muted)).on_hover_text(why);
                 if crate::workspace::dialog::button(ui, &lang.tr("Duplicate to edit…"), true).on_hover_text(lang.tr("Copy this preset as a new preset of your own and edit the copy")).clicked() {
                     self.dup_name = Some(lang.tr_fmt("{0} (house rules)", &[&preset.name()]));
                 }
@@ -450,6 +472,11 @@ impl SettingsEditor {
                 ui.label(RichText::new(format!("{} {}", crate::workspace::icons::PENCIL_SIMPLE, lang.tr("Unsaved changes"))).color(warn).strong());
             }
         });
+        let missing = engine.missing_custom_data(preset);
+        if !missing.is_empty() {
+            let hint = if preset.campaign.is_some() { lang.tr("Ask your GM for these custom data folders.") } else { String::new() };
+            ui.label(RichText::new(format!("{} {} {hint}", crate::workspace::icons::WARNING, lang.tr_fmt("Custom data not installed here: {0}.", &[&missing.join(", ")]))).color(warn));
+        }
         ui.add_space(4.0);
     }
 
@@ -486,11 +513,17 @@ impl SettingsEditor {
                 self.dup_name = Some(name);
             }
         }
-        let editable = preset.file.is_some();
+        let editable = preset.is_user();
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let save = ui.add_enabled_ui(editable && self.dirty, |ui| crate::workspace::dialog::button(ui, &lang.tr("Save house rules"), true)).inner;
-            let save = if editable { save.on_disabled_hover_text(lang.tr("No changes to save")) } else { save.on_disabled_hover_text(lang.tr("Built-in presets are read-only: duplicate this one to edit it")) };
+            let save = if editable {
+                save.on_disabled_hover_text(lang.tr("No changes to save"))
+            } else if preset.campaign.is_some() {
+                save.on_disabled_hover_text(lang.tr("A campaign's presets are read-only: duplicate this one to edit it"))
+            } else {
+                save.on_disabled_hover_text(lang.tr("Built-in presets are read-only: duplicate this one to edit it"))
+            };
             if save.clicked() {
                 reload |= self.save(engine);
             }
@@ -502,7 +535,7 @@ impl SettingsEditor {
                 self.dup_name = Some(lang.tr_fmt("{0} (copy)", &[&preset.name()]));
             }
             if crate::workspace::dialog::button(ui, &lang.tr("Export…"), false).on_hover_text(lang.tr("Save this preset as a settings file to share, e.g. with your players. Chummer5a reads it too.")).clicked() {
-                let file = if preset.file.is_some() { preset.key() } else { format!("{}.xml", settings::file_stem_for(&preset.name())) };
+                let file = if !preset.is_builtin() && preset.key().to_ascii_lowercase().ends_with(".xml") { preset.key() } else { format!("{}.xml", settings::file_stem_for(&preset.name())) };
                 // The dialog and the write on their own thread.
                 let preset = preset.clone();
                 crate::bg::spawn(ui.ctx(), format!("{}settings-export", crate::app_io::STATUS), lang.tr("Exporting…"), move || {
@@ -532,9 +565,19 @@ impl SettingsEditor {
     }
 }
 
-/// The preset whose key is `key`.
+/// How the window names a preset: its key, or for a campaign's shared
+/// preset the campaign scope and its key (a user file may have the same
+/// key).
+pub(crate) fn ui_key(p: &CharacterSettings) -> String {
+    match &p.campaign {
+        Some(c) => format!("campaign:{}:{}", c.scope, c.key),
+        None => p.key(),
+    }
+}
+
+/// The preset whose [`ui_key`] is `key`.
 fn by_key<'a>(lib: &'a settings::SettingsLibrary, key: &str) -> Option<&'a CharacterSettings> {
-    lib.presets.iter().find(|p| p.key() == key)
+    lib.presets.iter().chain(&lib.campaign).find(|p| ui_key(p) == key)
 }
 
 /// The row of page tabs. Returns the page clicked.
@@ -850,11 +893,23 @@ impl crate::App {
             self.status = Some((format!("Could not read the settings presets: {e}"), true));
             return;
         }
+        self.follow_settings();
+    }
+
+    /// When the presets changed (a reload, a campaign's shared presets
+    /// arriving or going): open characters and the GM screen resolve
+    /// theirs again, and a hosted campaign sends the GM's changed presets.
+    pub(crate) fn follow_settings(&mut self) {
+        let rev = self.engine.settings_rev();
+        if rev == self.settings_rev {
+            return;
+        }
+        self.settings_rev = rev;
         for v in &mut self.views {
             v.refresh_settings(&self.engine);
         }
         if let Some(gm) = self.gm.as_mut() {
-            gm.resync();
+            gm.settings_changed();
         }
     }
 }
