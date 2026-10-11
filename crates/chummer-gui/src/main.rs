@@ -6,6 +6,7 @@ mod app_io;
 mod backups;
 mod bg;
 mod browser;
+mod clipboard_keys;
 mod campaign_ui;
 mod career_ui;
 mod combo;
@@ -147,6 +148,7 @@ impl App {
         }
         theme::apply(&cc.egui_ctx, &theme::Theme::of(appearance.kind()));
         bg::set_context(&cc.egui_ctx);
+        cc.egui_ctx.add_plugin(clipboard_keys::ClipboardKeys::default());
         let lang_dir = data::resource_dir("lang").unwrap_or_default();
         let storage = cc.storage;
         let code = storage.and_then(|s| s.get_string(LANG_KEY)).unwrap_or_else(|| "en-us".into());
