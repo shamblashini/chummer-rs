@@ -430,10 +430,18 @@ impl GmScreen {
         crate::bg::dialog(ctx, SAVE_DIALOG, move || rfd::FileDialog::new().add_filter("chummer-rs campaign", &[campaign::EXTENSION]).set_file_name(name).save_file());
     }
 
-
+    /// Recompute every member's sheet at the next frame.
+    pub fn resync(&mut self) {
+        for l in self.live.values_mut() {
+            l.seen = None;
+        }
+    }
 
     /// Recompute sheets and take new log entries into the feed for
     /// members whose character changed.
+    ///
+    /// [`GmScreen::resync`] makes the next call recompute every member,
+    /// e.g. after the settings presets were reloaded.
     fn sync(&mut self, engine: &Engine, views: &[CharacterView]) {
         let GmScreen { live, campaign, rolls, .. } = self;
         for (id, l) in live.iter_mut() {
@@ -1592,7 +1600,7 @@ impl GmScreen {
             let GmScreen { live, improvements, .. } = self;
             if let Some(doc) = doc_mut(live, views, id) {
                 let store = engine.store_for_character(doc);
-                let settings = engine.settings.resolve(&doc.field("settings")).cloned();
+                let settings = engine.settings().resolve(&doc.field("settings")).cloned();
                 improvements.window(ctx, doc, &store, settings.as_ref(), lang);
             } else {
                 self.improvement_for = None;

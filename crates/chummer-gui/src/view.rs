@@ -268,7 +268,7 @@ impl CharacterView {
         let store = engine.store_for_character(&doc);
         let sheet = calc::compute(&doc, &rules, Some(&store), Some(&engine.catalog));
         let settings_key = doc.field("settings");
-        let settings = engine.settings.resolve(&settings_key).cloned();
+        let settings = engine.settings().resolve(&settings_key).cloned();
         let mut v = CharacterView {
             settings_key,
             seen_revision: doc.revision(),
@@ -439,7 +439,7 @@ impl CharacterView {
         self.settings_key = self.doc.field("settings");
         self.rules = engine.rules_for(&self.doc);
         self.store = engine.store_for_character(&self.doc);
-        self.settings = engine.settings.resolve(&self.settings_key).cloned();
+        self.settings = engine.settings().resolve(&self.settings_key).cloned();
         self.recompute(engine);
     }
 

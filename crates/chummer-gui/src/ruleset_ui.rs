@@ -28,7 +28,7 @@ impl ImportFlow {
     fn picked(&mut self, engine: &Engine) -> Option<Result<Imported, String>> {
         let src = crate::bg::take::<Option<std::path::PathBuf>>(IMPORT_DIALOG)??;
         let Some(dir) = settings::user_settings_dir() else { return Some(Err("no settings directory".into())) };
-        let plan = match engine.settings.plan_import(&src, &dir) {
+        let plan = match engine.settings().plan_import(&src, &dir) {
             Ok(p) => p,
             Err(e) => return Some(Err(e)),
         };
@@ -71,7 +71,7 @@ impl ImportFlow {
 }
 
 fn install(plan: &ImportPlan, engine: &Engine, dir: &std::path::Path, mode: &ImportMode) -> Result<Imported, String> {
-    settings::import(plan, &engine.settings, dir, mode)
+    settings::import(plan, &engine.settings(), dir, mode)
 }
 
 const IMPORT_REQUEST: &str = "ruleset_import_request";
@@ -96,7 +96,7 @@ pub fn banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Languag
         return ws_banner(ui, ch, engine, lang, show_row);
     }
     let key = ch.field("settings");
-    let lib = &engine.settings;
+    let lib = engine.settings();
     let mut picked = None;
     if let Some(missing) = lib.missing_preset(&key) {
         let fallback = lib.fallback().map(CharacterSettings::name).unwrap_or_default();
@@ -129,7 +129,7 @@ fn ws_banner(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language
     use crate::workspace::{icons, widgets};
     let ws = crate::theme::ws(ui);
     let key = ch.field("settings");
-    let lib = &engine.settings;
+    let lib = engine.settings();
     let mut picked = None;
     if let Some(missing) = lib.missing_preset(&key) {
         let fallback = lib.fallback().map(CharacterSettings::name).unwrap_or_default();
@@ -180,7 +180,7 @@ fn picker(ui: &mut egui::Ui, ch: &Character, engine: &Engine, lang: &Language, c
         b => b,
     };
     crate::combo::Combo::from_id_salt("change_settings_file").selected_text(lang.tr("Change Settings File")).width(220.0).show_ui(ui, |ui| {
-        for p in &engine.settings.presets {
+        for p in &engine.settings().presets {
             let same = current.is_some_and(|c| c.key() == p.key());
             let allowed = ch.created || p.build_method() == bm;
             let label = if p.file.is_some() { lang.tr_fmt("{0} (yours)", &[&p.name()]) } else { p.name() };

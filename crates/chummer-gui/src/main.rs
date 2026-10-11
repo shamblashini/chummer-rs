@@ -1148,16 +1148,7 @@ impl App {
         });
         self.show_settings = open;
         if reload {
-            if let Some(engine) = Arc::get_mut(&mut self.engine) {
-                if let Ok(lib) = chummer_core::settings::SettingsLibrary::load(&engine.store, chummer_core::settings::user_settings_dir().as_deref()) {
-                    engine.settings = lib;
-                }
-            } else {
-                self.status = Some(("Could not reload the settings library; restart chummer-rs to use the new settings".into(), true));
-            }
-            for v in &mut self.views {
-                v.refresh_settings(&self.engine);
-            }
+            self.reload_settings();
         }
         let mut open = self.show_about;
         egui::Window::new(format!("{} chummer-rs", self.lang.tr("About"))).id(egui::Id::new("about")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {

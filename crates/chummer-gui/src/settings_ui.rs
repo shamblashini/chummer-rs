@@ -101,7 +101,8 @@ impl SettingsEditor {
     /// Returns true when a preset was saved (the library must be reloaded).
     pub fn ui(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language) -> bool {
         let mut saved = false;
-        let presets = &engine.settings.presets;
+        let lib = engine.settings();
+        let presets = &lib.presets;
         if presets.is_empty() {
             ui.label(lang.tr("No settings found."));
             return false;
@@ -396,4 +397,21 @@ fn custom_data_ui(ui: &mut egui::Ui, el: &mut Element, engine: &Engine, lang: &L
         list.push(e);
     }
     true
+}
+
+impl crate::App {
+    /// Read the settings presets again after one was added, imported or
+    /// saved, and let open characters and the GM screen use them.
+    pub(crate) fn reload_settings(&mut self) {
+        if let Err(e) = self.engine.reload_settings() {
+            self.status = Some((format!("Could not read the settings presets: {e}"), true));
+            return;
+        }
+        for v in &mut self.views {
+            v.refresh_settings(&self.engine);
+        }
+        if let Some(gm) = self.gm.as_mut() {
+            gm.resync();
+        }
+    }
 }

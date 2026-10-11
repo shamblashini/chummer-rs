@@ -438,7 +438,7 @@ impl App {
         widgets::card_frame(&ws).inner_margin(Margin::symmetric(10, 4)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
-            for s in &self.engine.settings.presets {
+            for s in &self.engine.settings().presets {
                 ui.horizontal(|ui| {
                     ui.set_min_height(28.0);
                     ui.spacing_mut().item_spacing.x = 8.0;
