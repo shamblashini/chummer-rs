@@ -404,7 +404,7 @@ impl SettingsEditor {
                     let selected = p.key() == current;
                     let mut name = p.name();
                     if selected && self.dirty {
-                        name = format!("{name} ●");
+                        name = format!("{name} *");
                     }
                     let r = crate::workspace::dialog::list_row(ui, selected, &name, &build_method_label(&p.build_method(), lang), false);
                     let r = r.on_hover_text(p.file.as_deref().map_or_else(|| lang.tr("Built-in preset"), |f| f.display().to_string()));
@@ -433,27 +433,23 @@ impl SettingsEditor {
         };
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(lang.tr("Editing")).color(muted));
-            ui.label(RichText::new(&name).font(crate::workspace::widgets::bold(16.0)).color(text));
+            let r = ui.label(RichText::new(&name).font(crate::workspace::widgets::bold(16.0)).color(text));
+            if let Some(f) = &preset.file {
+                r.on_hover_text(f.display().to_string());
+            }
             if editable {
                 ui.label(RichText::new(lang.tr("your preset")).color(muted));
             } else {
-                ui.label(RichText::new(format!("{} {}", crate::workspace::icons::LOCK_SIMPLE, lang.tr("built-in, read-only"))).color(muted));
-            }
-            if self.dirty {
-                ui.label(RichText::new(format!("● {}", lang.tr("Unsaved changes"))).color(warn).strong());
-            }
-        });
-        if let Some(f) = &preset.file {
-            crate::workspace::dialog::note(ui, f.display().to_string());
-        }
-        if !editable {
-            ui.horizontal_wrapped(|ui| {
-                crate::workspace::dialog::note(ui, lang.tr("Built-in presets cannot be changed. Duplicate this one to make your own house rules."));
-                if crate::workspace::dialog::button(ui, &lang.tr("Duplicate to edit…"), true).clicked() {
+                ui.label(RichText::new(format!("{} {}", crate::workspace::icons::LOCK_SIMPLE, lang.tr("built-in, read-only"))).color(muted))
+                    .on_hover_text(lang.tr("Built-in presets cannot be changed. Duplicate this one to make your own house rules."));
+                if crate::workspace::dialog::button(ui, &lang.tr("Duplicate to edit…"), true).on_hover_text(lang.tr("Copy this preset as a new preset of your own and edit the copy")).clicked() {
                     self.dup_name = Some(lang.tr_fmt("{0} (house rules)", &[&preset.name()]));
                 }
-            });
-        }
+            }
+            if self.dirty {
+                ui.label(RichText::new(format!("{} {}", crate::workspace::icons::PENCIL_SIMPLE, lang.tr("Unsaved changes"))).color(warn).strong());
+            }
+        });
         ui.add_space(4.0);
     }
 
@@ -544,12 +540,26 @@ fn by_key<'a>(lib: &'a settings::SettingsLibrary, key: &str) -> Option<&'a Chara
 /// The row of page tabs. Returns the page clicked.
 fn page_tabs(ui: &mut egui::Ui, page: Page, lang: &Language) -> Option<Page> {
     let labels: Vec<String> = Page::ALL.iter().map(|p| lang.tr(p.label())).collect();
-    if crate::workspace::dialog::ws(ui.ctx()) {
-        let items: Vec<(&str, &str)> = labels.iter().map(|l| (l.as_str(), "")).collect();
-        let at = Page::ALL.iter().position(|p| *p == page).unwrap_or(0);
-        return crate::workspace::widgets::segmented(ui, &items, at, 26.0).map(|i| Page::ALL[i]);
-    }
     let mut picked = None;
+    if crate::workspace::dialog::ws(ui.ctx()) {
+        let font = egui::FontId::proportional(12.5);
+        let need: f32 = labels.iter().map(|l| ui.painter().layout_no_wrap(l.clone(), font.clone(), egui::Color32::PLACEHOLDER).size().x + 15.0).sum();
+        if need + 4.0 <= ui.available_width() {
+            let items: Vec<(&str, &str)> = labels.iter().map(|l| (l.as_str(), "")).collect();
+            let at = Page::ALL.iter().position(|p| *p == page).unwrap_or(0);
+            return crate::workspace::widgets::segmented(ui, &items, at, 26.0).map(|i| Page::ALL[i]);
+        }
+        // Too narrow for the segmented switch: buttons that wrap.
+        ui.horizontal_wrapped(|ui| {
+            for (p, l) in Page::ALL.iter().zip(&labels) {
+                let look = if *p == page { crate::workspace::widgets::Look::Primary } else { crate::workspace::widgets::Look::Ghost };
+                if crate::workspace::widgets::button(ui, None, l, look, 24.0).clicked() {
+                    picked = Some(*p);
+                }
+            }
+        });
+        return picked;
+    }
     ui.horizontal_wrapped(|ui| {
         for (p, l) in Page::ALL.iter().zip(&labels) {
             if ui.selectable_label(*p == page, l).clicked() {
@@ -700,11 +710,8 @@ fn books_ui(ui: &mut egui::Ui, el: &mut Element, editable: bool, filter: &mut St
             if crate::workspace::dialog::button(ui, &lang.tr("All"), false).on_hover_text(lang.tr("Enable every book")).clicked() {
                 set = books.iter().map(|b| b.code.clone()).collect();
             }
-            if crate::workspace::dialog::button(ui, &lang.tr("None"), false).on_hover_text(lang.tr("Only the core rulebook")).clicked() {
+            if crate::workspace::dialog::button(ui, &lang.tr("None"), false).on_hover_text(lang.tr("Only the core rulebook, which is always enabled")).clicked() {
                 set = books.iter().filter(|b| b.permanent).map(|b| b.code.clone()).collect();
-            }
-            if crate::workspace::dialog::button(ui, &lang.tr("Core only"), false).on_hover_text(lang.tr("The core rulebook and nothing else")).clicked() {
-                set = books.iter().filter(|b| b.permanent || b.code == "SR5").map(|b| b.code.clone()).collect();
             }
         });
         crate::workspace::dialog::note(ui, lang.tr_fmt("{0} of {1} enabled", &[&on, &books.len()]));

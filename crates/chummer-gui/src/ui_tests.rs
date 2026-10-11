@@ -2625,6 +2625,13 @@ fn settings_window_fits_and_presets_apply_at_once() {
         h.frames(2);
         assert!(!h.app.settings_editor.dirty);
         assert_eq!(h.app.engine.settings().find(&key).unwrap().flag(flag), !before, "{kind:?}: the saved edit applies at once");
+        // The app window made very small (a 1000 x 650 pixel window at a
+        // scale of 1.8): the window shrinks with it and Save stays visible.
+        h.size = Vec2::new(560.0, 360.0);
+        h.frames(4);
+        let tiny = Rect::from_min_size(Pos2::ZERO, h.size);
+        assert!(inside(window_rect(&h, "character_settings_editor"), tiny), "{kind:?}: fits {tiny:?}");
+        assert!(h.find_text("Save house rules").is_some_and(|r| inside(r, tiny)), "{kind:?}: Save is on screen at {tiny:?}: {:?}", h.on_screen());
         h.reset();
     }
 }
@@ -2713,8 +2720,8 @@ fn settings_book_search_filters() {
 /// screen and work, and Escape skips it.
 #[test]
 fn setup_buttons_reachable_in_a_short_window() {
-    // 450 points: a 1064 pixel tall window at a scale of 2.4.
-    for (kind, size) in [(ThemeKind::WorkspaceDark, Vec2::new(1000.0, 450.0)), (ThemeKind::Classic, Vec2::new(1000.0, 600.0)), (ThemeKind::WorkspaceLight, MIN)] {
+    // 560 x 360 points: a 1000 x 650 pixel window at a scale of 1.8.
+    for (kind, size) in [(ThemeKind::WorkspaceDark, Vec2::new(560.0, 360.0)), (ThemeKind::Classic, Vec2::new(1000.0, 600.0)), (ThemeKind::WorkspaceLight, MIN)] {
         let mut h = Harness::new(kind);
         h.size = size;
         let screen = Rect::from_min_size(Pos2::ZERO, size);
