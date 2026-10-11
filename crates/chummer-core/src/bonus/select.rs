@@ -256,7 +256,26 @@ pub fn choice_for(ch: &Character, store: &DataStore, node: &Element, src: &Bonus
         "selectparagon" => mk("Choose a paragon".into(), names_of(store, "paragons.xml", "mentors", "mentor")),
         "selectrestricted" => mk(format!("Name the restricted item for {}", src.name), Vec::new()),
         "selectweapon" => mk(format!("Choose a weapon for {}", src.name), names_of(store, "weapons.xml", "weapons", "weapon")),
-        "selectarmor" => mk(format!("Choose armor for {}", src.name), names_of(store, "armor.xml", "armors", "armor")),
+        // `selectarmor`: armors that can be custom fit (a Custom Fit (Stack)
+        // piece adds its armor over the one chosen), those starting with
+        // the node's text when it has one.
+        "selectarmor" => {
+            let prefix = node.text();
+            let opts = store
+                .doc("armor.xml")
+                .map(|d| {
+                    let mut v: Vec<String> = data::records(&d, "armors", "armor")
+                        .into_iter()
+                        .filter(|r| r.el().child("mods").is_some_and(|m| m.children_named("name").any(|n| n.text() == "Custom Fit")))
+                        .map(|r| r.name())
+                        .filter(|n| prefix.trim().is_empty() || n.starts_with(prefix.trim()))
+                        .collect();
+                    v.sort();
+                    v
+                })
+                .unwrap_or_default();
+            mk(format!("Choose the armor {} is fitted to", src.name), opts)
+        }
         "weaponskillaccuracy" => {
             let sel = node.child("selectskill")?;
             mk(format!("Choose a skill for {}", src.name), skill_options(ch, store, sel))

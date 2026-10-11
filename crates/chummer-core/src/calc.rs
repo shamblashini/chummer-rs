@@ -34,6 +34,10 @@ pub fn div_away_from_zero(a: i32, b: i32) -> i32 {
 #[derive(Debug, Clone)]
 pub struct Rules {
     pub unclamp_attribute_minimum: bool,
+    /// `UncappedArmorAccessoryBonuses`: stacking armor is not capped at STR.
+    pub uncapped_armor_accessory_bonuses: bool,
+    /// `ArmorDegradation`: an armor's damage lowers its value.
+    pub armor_degradation: bool,
     pub essence_decimals: u32,
     pub dont_round_essence: bool,
     pub min_initiative_dice: i32,
@@ -79,6 +83,8 @@ impl Default for Rules {
     fn default() -> Self {
         Rules {
             unclamp_attribute_minimum: false,
+            uncapped_armor_accessory_bonuses: false,
+            armor_degradation: false,
             essence_decimals: 2,
             dont_round_essence: false,
             min_initiative_dice: 1,
@@ -124,6 +130,9 @@ impl Rules {
         let d = Rules::default();
         Rules {
             unclamp_attribute_minimum: s.flag("unclampattributeminimum"),
+            uncapped_armor_accessory_bonuses: s.flag("uncappedarmoraccessorybonuses"),
+            // Chummer's spelling of the setting.
+            armor_degradation: s.flag("armordegredation"),
             essence_decimals: s.essence_decimals(),
             dont_round_essence: s.flag("donotroundessenceinternally"),
             min_initiative_dice: s.int("mininitiativedice", d.min_initiative_dice),
@@ -788,7 +797,7 @@ pub fn compute(ch: &Character, rules: &Rules, store: Option<&DataStore>, catalog
     let contact_points = standard_round(expr::evaluate_num(&expr::substitute_attributes(&rules.contact_points_expression, &src)).unwrap_or(0.0))
         + imps.val_int("ContactPoints", None);
 
-    let armor = standard_round(armor_rating(ch, at("STR")));
+    let armor = standard_round(armor_rating(ch, at("STR"), rules));
     let mut s = Sheet { attributes, ..Default::default() };
 
     s.essence = essence;
@@ -841,18 +850,40 @@ pub fn compute(ch: &Character, rules: &Rules, store: Option<&DataStore>, catalog
     s
 }
 
-/// Simplified `GetArmorRatingWithImprovement`: the best equipped armor plus
-/// "+N" accessories (capped at STR), plus general Armor improvements.
-fn armor_rating(ch: &Character, strength: i32) -> f64 {
+/// One equipped armor as `GetArmorRatingWithImprovement` sees it.
+struct WornArmor {
+    name: String,
+    /// `ArmorValue` starts with + or -: an accessory that stacks.
+    plus: bool,
+    /// `ArmorOverrideValue` starts with + or -: what it adds over the
+    /// armor its Custom Fit (Stack) mod is fitted to.
+    over: bool,
+    /// The name in its equipped Custom Fit (Stack) mod.
+    fit: String,
+    /// `GetTotalArmor` and `GetTotalOverrideArmor`.
+    total: i32,
+    total_over: i32,
+    /// Its own Armor improvements and its mods'.
+    own: f64,
+}
+
+/// `GetArmorRatingWithImprovement`. The highest of the equipped armors that
+/// are not accessories, each with what stacks on it: "+N" accessories
+/// (capped at STR unless uncapped), and the "+N" of a piece whose Custom
+/// Fit (Stack) names that armor (High-Fashion Armor Clothing; otherwise
+/// such a piece is an armor of its own value). Plus Armor improvements not
+/// from worn armor. With no armor, the accessories alone.
+fn armor_rating(ch: &Character, strength: i32, rules: &Rules) -> f64 {
     let imps = &ch.improvements;
     let equipped: Vec<&Element> = ch.items("armors", "armor").into_iter().filter(|a| a.get_bool("equipped").unwrap_or(false)).collect();
+    let mod_guids = |a: &Element| -> Vec<String> {
+        a.child("armormods").map(|m| m.children_named("armormod").map(|m| m.get("guid").to_ascii_lowercase()).collect()).unwrap_or_default()
+    };
     let armor_guids: Vec<String> = equipped
         .iter()
         .flat_map(|a| {
             let mut v = vec![a.get("guid").to_ascii_lowercase()];
-            if let Some(mods) = a.child("armormods") {
-                v.extend(mods.children_named("armormod").map(|m| m.get("guid").to_ascii_lowercase()));
-            }
+            v.extend(mod_guids(a));
             v
         })
         .collect();
@@ -860,39 +891,71 @@ fn armor_rating(ch: &Character, strength: i32) -> f64 {
     if equipped.is_empty() {
         return general;
     }
-    let piece_value = |a: &Element| -> (bool, i32) {
-        let raw = a.child_text("armoroverride").filter(|s| !s.trim().is_empty() && s.trim() != "0").unwrap_or_else(|| a.get("armor"));
-        let stacking = raw.trim().starts_with('+');
-        // i64: absurd values in a file must not overflow (LB-44).
-        let mut v = i64::from(expr::trunc_int(expr::parse_plain(raw.trim().trim_start_matches('+')).unwrap_or(0.0)));
-        v -= i64::from(a.get_i32("damage").unwrap_or(0));
-        if let Some(mods) = a.child("armormods") {
-            for m in mods.children_named("armormod") {
-                if m.get_bool("equipped").unwrap_or(true) {
-                    let r = m.get_i32("rating").unwrap_or(0);
-                    v += i64::from(expr::value_to_int(&m.get("armor"), r, &expr::NoAttributes));
+    let signed = |s: &str| matches!(s.trim().chars().next(), Some('+' | '-'));
+    // i64: absurd values in a file must not overflow (LB-44).
+    let value = |s: &str| i64::from(expr::trunc_int(expr::parse_plain(s.trim().trim_start_matches('+')).unwrap_or(0.0)));
+    let worn: Vec<WornArmor> = equipped
+        .iter()
+        .map(|a| {
+            let mods: Vec<&Element> = a.child("armormods").map(|m| m.children_named("armormod").filter(|m| m.get_bool("equipped").unwrap_or(true)).collect()).unwrap_or_default();
+            let mods_armor: i64 = mods.iter().map(|m| i64::from(expr::value_to_int(&m.get("armor"), m.get_i32("rating").unwrap_or(0), &expr::NoAttributes))).sum();
+            let damage = if rules.armor_degradation { i64::from(a.get_i32("damage").unwrap_or(0)) } else { 0 };
+            let total_of = |raw: &str| expr::clamp_int((value(raw) + mods_armor - damage).max(0));
+            let armor = a.get("armor");
+            let over = a.child_text("armoroverride").filter(|s| !s.trim().is_empty() && s.trim() != "0").unwrap_or_default();
+            let guids = {
+                let mut g = vec![a.get("guid").to_ascii_lowercase()];
+                g.extend(mod_guids(a));
+                g
+            };
+            WornArmor {
+                name: a.get("name"),
+                plus: signed(&armor),
+                over: signed(&over),
+                fit: mods.iter().find(|m| m.get("name") == "Custom Fit (Stack)").map(|m| m.get("extra")).unwrap_or_default(),
+                total: total_of(&armor),
+                total_over: total_of(&over),
+                own: imps.of_kind("Armor").filter(|i| guids.contains(&i.source_name.to_ascii_lowercase())).map(|i| i.val).sum(),
+            }
+        })
+        .collect();
+    let cap = if rules.uncapped_armor_accessory_bonuses { i32::MAX } else { strength };
+    let mut stack = vec![0i32; worn.len()];
+    let mut naked = 0i32;
+    for (i, a) in worn.iter().enumerate() {
+        if !a.plus && !a.over {
+            continue;
+        }
+        for (j, b) in worn.iter().enumerate() {
+            if i == j || b.plus {
+                continue;
+            }
+            if a.fit.is_empty() || a.fit != b.name {
+                if a.plus {
+                    stack[j] = stack[j].saturating_add(a.total);
                 }
+            } else if a.over {
+                stack[j] = stack[j].saturating_add(a.total_over);
             }
         }
-        let own: f64 = imps
-            .of_kind("Armor")
-            .filter(|i| i.source_name.eq_ignore_ascii_case(&a.get("guid")))
-            .map(|i| i.val)
-            .sum();
-        (stacking, expr::clamp_int(v + i64::from(standard_round(own))))
-    };
-    let mut best: Option<i32> = None;
-    let mut stack = 0;
-    for a in &equipped {
-        let (stacking, v) = piece_value(a);
-        if stacking {
-            stack = expr::clamp_int(i64::from(stack) + i64::from(v));
-        } else {
-            best = Some(best.map_or(v, |b| b.max(v)));
+        if naked < cap && a.plus {
+            naked = naked.saturating_add(a.total).min(cap);
         }
     }
-    let stack = stack.min(strength);
-    f64::from(best.unwrap_or(0)) + f64::from(stack) + general
+    let mut highest: Option<i32> = None;
+    for (j, b) in worn.iter().enumerate() {
+        if b.plus {
+            continue;
+        }
+        let v = b.total.saturating_add(stack[j].min(cap)).saturating_add(standard_round(general + b.own));
+        if v > highest.unwrap_or(0) {
+            highest = Some(v);
+        }
+    }
+    match highest {
+        Some(v) => f64::from(v),
+        None => f64::from(naked) + f64::from(standard_round(general)),
+    }
 }
 
 /// Plain sum of improvement values relevant to an active skill's pool.

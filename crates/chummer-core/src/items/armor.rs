@@ -297,7 +297,25 @@ pub fn armormod_element(rec: Record<'_>, guid: &str, rating: i32, extra: &str, c
 pub fn choices(tag: &str, ch: &Character, store: &DataStore, rec: Record<'_>, p: &Purchase) -> Vec<Choice> {
     let kind = if tag == "armormod" { "ArmorMod" } else { "Armor" };
     let src = BonusSource { kind: kind.into(), guid: String::new(), name: rec.name(), rating: p.rating };
-    rec.el().child("bonus").map(|b| bonus::choices(ch, store, b, &src)).unwrap_or_default()
+    let own = rec.el().child("bonus").map(|b| bonus::choices(ch, store, b, &src)).unwrap_or_default();
+    if !own.is_empty() || tag == "armormod" {
+        return own;
+    }
+    asking_mod(ch, store, rec).map(|(_, c)| c).unwrap_or_default()
+}
+
+/// The first included mod of `armor` whose bonus asks something the data
+/// does not answer (`<name select="..">`), with its question: e.g. Custom
+/// Fit (Stack)'s armor. An armor without a question of its own asks it,
+/// and the purchase's answer goes to that mod.
+fn asking_mod(ch: &Character, store: &DataStore, armor: Record<'_>) -> Option<(String, Vec<Choice>)> {
+    let doc = store.doc("armor.xml").ok()?;
+    included_mods(armor).into_iter().filter(|inc| inc.select.is_empty()).find_map(|inc| {
+        let rec = data::find(&doc, "mods", "mod", &inc.name)?;
+        let src = BonusSource { kind: "ArmorMod".into(), guid: String::new(), name: armor.name(), rating: inc.rating };
+        let c = bonus::choices(ch, store, rec.el().child("bonus")?, &src);
+        (!c.is_empty()).then(|| (inc.name.clone(), c))
+    })
 }
 
 /// Apply a record's bonus for a new item (`ImprovementManager.CreateImprovements`);
@@ -320,10 +338,22 @@ pub fn add(tag: &str, ch: &mut Character, store: &DataStore, rec: Record<'_>, p:
     }
     let doc = store.doc("armor.xml").map_err(|e| e.to_string())?;
     let guid = new_guid();
-    let selected = apply_bonus(ch, store, rec, "Armor", &guid, p.rating, p.answer.as_deref());
-    let extra = selected.or_else(|| p.answer.clone()).unwrap_or_default();
+    // The purchase's answer is the armor's own, or else an included mod's.
+    let own_asks = rec.el().child("bonus").is_some_and(|b| {
+        let src = BonusSource { kind: "Armor".into(), guid: String::new(), name: rec.name(), rating: p.rating };
+        !bonus::choices(ch, store, b, &src).is_empty()
+    });
+    let mod_answer = (!own_asks).then(|| asking_mod(ch, store, rec).map(|(name, _)| name)).flatten();
+    let selected = apply_bonus(ch, store, rec, "Armor", &guid, p.rating, if own_asks { p.answer.as_deref() } else { None });
+    let extra = selected.or_else(|| own_asks.then(|| p.answer.clone()).flatten()).unwrap_or_default();
     let mut a = armor_element(rec, &guid, p.rating, &extra, None);
-    let mods: Vec<Element> = included_mods(rec).iter().map(|inc| add_included_mod(ch, store, &doc, rec, inc)).collect();
+    let mods: Vec<Element> = included_mods(rec)
+        .iter()
+        .map(|inc| {
+            let answer = (mod_answer.as_deref() == Some(inc.name.as_str()) && inc.select.is_empty()).then(|| p.answer.clone()).flatten();
+            add_included_mod(ch, store, &doc, rec, inc, answer.as_deref())
+        })
+        .collect();
     if let Some(c) = a.child_mut("armormods") {
         mods.into_iter().for_each(|m| c.push(m));
     }
@@ -337,12 +367,12 @@ pub fn add(tag: &str, ch: &mut Character, store: &DataStore, rec: Record<'_>, p:
 }
 
 /// One included mod of a new armor, with its bonus applied.
-fn add_included_mod(ch: &mut Character, store: &DataStore, doc: &Element, armor: Record<'_>, inc: &IncludedMod) -> Element {
+fn add_included_mod(ch: &mut Character, store: &DataStore, doc: &Element, armor: Record<'_>, inc: &IncludedMod, asked: Option<&str>) -> Element {
     let Some(rec) = data::find(doc, "mods", "mod", &inc.name) else {
         return feature_mod(armor, inc, &new_guid());
     };
     let guid = new_guid();
-    let answer = Some(inc.select.as_str()).filter(|s| !s.is_empty());
+    let answer = Some(inc.select.as_str()).filter(|s| !s.is_empty()).or(asked);
     let selected = apply_bonus(ch, store, rec, "ArmorMod", &guid, inc.rating, answer);
     let extra = selected.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| inc.select.clone());
     let mut m = armormod_element(rec, &guid, inc.rating, &extra, None);

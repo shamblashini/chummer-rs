@@ -275,3 +275,58 @@ fn add_weapon_bonus_is_free_unless_full_cost() {
     let out = bonus::apply(&ch, &engine.store, &node, &src, None);
     assert_eq!(out.added.last().unwrap().1.get("cost"), "725");
 }
+
+/// High-Fashion Armor Clothing (Run & Gun p. 58): a piece like the
+/// Argentum Coat (Armor 12, "+4") is an armor of its own value; its +4 adds
+/// only over the armor its Custom Fit (Stack) mod is fitted to, chosen when
+/// it is bought, capped at STR like other stacking armor. It used to count
+/// as a +4 accessory always: worn alone, min(4, STR) (2 at STR 2).
+#[test]
+fn custom_fit_stack_armor_counts_alone_and_over_its_fitted_armor() {
+    let engine = Engine::load().unwrap();
+    let doc = engine.store.doc("armor.xml").unwrap();
+    let mut ch = fixture("Soma (Career).chum5");
+    for a in ch.items_mut("armors").elements_mut().filter(|e| e.name == "armor") {
+        a.set_child_text("equipped", "False");
+    }
+    let strength = 2;
+    assert_eq!(engine.sheet(&ch).attributes.iter().find(|a| a.name == "STR").map(|a| a.total), Some(strength));
+
+    // Buying it asks which armor it is fitted to.
+    let coat = data::find(&doc, "armors", "armor", "Mortimer of London: Argentum Coat").unwrap();
+    let asks = items::choices("armor", &ch, &engine.store, coat, &Purchase::default());
+    assert_eq!(asks.len(), 1, "{asks:?}");
+    assert!(asks[0].options.iter().any(|o| o == "Mortimer of London: Berwick Suit"), "{:?}", asks[0].options);
+    assert!(!asks[0].options.iter().any(|o| o == "Armor Jacket"), "only armors that can be custom fit");
+
+    let p = Purchase { answer: Some("Mortimer of London: Berwick Suit".into()), ..Purchase::default() };
+    let cg = items::add("armor", &mut ch, &engine.store, coat, &p).unwrap();
+    let fit = ch.items("armors", "armor").into_iter().find(|a| a.get("guid") == cg).unwrap().child("armormods").unwrap().children_named("armormod").find(|m| m.get("name") == "Custom Fit (Stack)").unwrap().get("extra");
+    assert_eq!(fit, "Mortimer of London: Berwick Suit");
+    let set = |ch: &mut Character, guid: &str, on: bool| {
+        for a in ch.items_mut("armors").elements_mut().filter(|e| e.name == "armor") {
+            if a.get("guid") == guid {
+                a.set_child_text("equipped", if on { "True" } else { "False" });
+            }
+        }
+    };
+    set(&mut ch, &cg, true);
+    assert_eq!(engine.sheet(&ch).armor, 12, "worn alone: its own 12");
+
+    // Over another armor it is not fitted to: the higher of the two.
+    let jacket = data::find(&doc, "armors", "armor", "Armor Jacket").unwrap();
+    let jg = items::add("armor", &mut ch, &engine.store, jacket, &Purchase::default()).unwrap();
+    set(&mut ch, &jg, true);
+    assert_eq!(engine.sheet(&ch).armor, 12);
+    set(&mut ch, &jg, false);
+
+    // Over the suit it is fitted to: 9 + 4, capped at STR 2 = 11, so its
+    // own 12 is still the best; at STR 6 the suit with it is 13.
+    let suit = data::find(&doc, "armors", "armor", "Mortimer of London: Berwick Suit").unwrap();
+    let sg = items::add("armor", &mut ch, &engine.store, suit, &Purchase::default()).unwrap();
+    set(&mut ch, &sg, true);
+    assert_eq!(engine.sheet(&ch).armor, 12);
+    let mut rules = engine.rules_for(&ch);
+    rules.uncapped_armor_accessory_bonuses = true;
+    assert_eq!(chummer_core::calc::compute(&ch, &rules, Some(&engine.store), None).armor, 13, "uncapped: 9 + 4");
+}

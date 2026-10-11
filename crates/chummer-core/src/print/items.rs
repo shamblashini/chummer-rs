@@ -985,16 +985,23 @@ fn accessory(ctx: &Ctx, item: &Element, weapon: &Element) -> Element {
 // Armor
 // ---------------------------------------------------------------------------
 
-/// `Armor.GetDisplayArmorValue`: own value plus equipped mods.
+/// `Armor.DisplayArmorValue`: own value plus equipped mods, "+N" for an
+/// accessory, and "12/+4" for a piece with an armor override (High-Fashion
+/// Armor Clothing: its own value, and what it adds over its fitted armor).
 fn armor_value(item: &Element) -> String {
-    let raw = item.child_text("armoroverride").filter(|s| !s.trim().is_empty() && s.trim() != "0").unwrap_or_else(|| item.get("armor"));
-    let stacking = raw.trim().starts_with('+');
+    let raw = item.get("armor");
+    let stacking = matches!(raw.trim().chars().next(), Some('+' | '-'));
     // i64: absurd values in a file must not overflow (LB-44).
     let mut v = i64::from(expr::trunc_int(expr::parse_plain(raw.trim().trim_start_matches('+')).unwrap_or(0.0))) - i64::from(item.get_i32("damage").unwrap_or(0));
     for m in children(item, "armormods", "armormod").into_iter().filter(|m| equipped(m)) {
         v += i64::from(expr::value_to_int(&m.get("armor"), m.get_i32("rating").unwrap_or(0), &expr::NoAttributes));
     }
-    if stacking { format!("+{v}") } else { v.to_string() }
+    let v = v.max(0);
+    match item.child_text("armoroverride").filter(|s| !s.trim().is_empty() && s.trim() != "0") {
+        Some(over) => format!("{v}/{}", over.trim()),
+        None if stacking => format!("+{v}"),
+        None => v.to_string(),
+    }
 }
 
 /// `ArmorMod.TotalAvailTuple`: own plus its gear.
