@@ -388,6 +388,7 @@ Chummer 5.225.
   - Tools → Character settings duplicates and edits presets: build method, budgets, books, karma costs, options and custom data.
   - Share house rules: Export saves a preset as a Chummer settings file (Chummer5a reads it too); Import installs one, and asks before it replaces a different file of the same name.
   - A character whose settings file is not installed shows a warning with an Import button; its budgets use Standard, and its `<settings>` stays as it was until you pick another file with "Change Settings File" (Common tab).
+  - Online campaigns carry the settings files their characters use: a player's campaign characters use the GM's presets (listed in Character Settings as "From campaign <name>", read-only, with Duplicate) without importing anything, and the player's own presets of the same name stay untouched. The GM's later changes to a preset reach the players live or by mail.
 - **Tools:**
   - A data browser (the Master Index tab) that searches every item, quality and spell.
   - Searchable drop-downs: lists with more than 8 entries filter as you type (words in any order); Enter picks the first match.
@@ -1184,6 +1185,9 @@ under packet loss, partitions, kills, a full disk and hostile mail. See
     burst back together).
   - NPCs marked "Visible to players" are not shown to players yet, and
     players see only their own characters' activity.
+  - Shared settings files do not bring their custom data folders: a
+    player whose GM's preset enables custom data they lack sees which
+    folders are missing and has to get them from the GM.
   - Dice rolls (see [docs/online-design.md](docs/online-design.md),
     "Dice rolls"):
     - Not sent to the table: the Tools → Dice Roller window (not tied
