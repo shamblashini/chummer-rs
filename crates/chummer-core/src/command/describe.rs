@@ -257,5 +257,9 @@ fn what(cmd: &Command, b: &Character, a: &Character, engine: &Engine) -> String 
         SetActiveCommlink { device, on } => format!("{} {}", if *on { "Activated" } else { "Deactivated" }, item_name(b, device)),
         SetHomeNode { device, on } => format!("{} {} as home node", if *on { "Set" } else { "Unset" }, item_name(b, device)),
         Revert { what, .. } => format!("Reverted: {what}"),
+        SetChoke { weapon, choke } => match choke {
+            Some(c) => format!("Set {} choke to {}", item_name(b, weapon), c.label().to_lowercase()),
+            None => format!("Cleared {} choke", item_name(b, weapon)),
+        },
     }
 }

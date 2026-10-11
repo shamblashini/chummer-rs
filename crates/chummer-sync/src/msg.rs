@@ -36,8 +36,9 @@ use serde::{Deserialize, Serialize};
 
 /// Version of the sync messages. 2: member keys (claims by mail,
 /// refusals, the GM's campaign keys in the membership). 3: commands
-/// changed (`MoveItem`, `Purchase::location`). 4: dice rolls.
-pub const SYNC_VERSION: u8 = 4;
+/// changed (`MoveItem`, `Purchase::location`). 4: dice rolls. 5: commands
+/// changed (`SetChoke`).
+pub const SYNC_VERSION: u8 = 5;
 
 /// A BLAKE3 hash of a character's canonical form ([`chummer_core::command::state_hash`]).
 pub type Hash = [u8; 32];

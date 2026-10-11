@@ -248,3 +248,41 @@ fn ware_device_rating_comes_from_the_grade_data() {
     assert_eq!(matrix::total(&ware("Betaware", "Bioware"), "Device Rating"), 0);
     assert_eq!(matrix::total(&ware("Standard", "Bioware"), "Device Rating"), 0);
 }
+
+/// Shotgun choke (`play::choke`, `Command::SetChoke`): which weapons have
+/// one, setting and clearing it, undo, and a save and reload.
+#[test]
+fn shotgun_choke_is_set_undone_and_saved() {
+    use chummer_core::command::{Command, Session};
+    use chummer_core::play::choke::{self, Choke};
+    let store = DataStore::discover().unwrap();
+    let engine = chummer_core::engine::Engine::load().unwrap();
+    let mut ch = fixture("Barrett.chum5");
+    let wdoc = store.doc("weapons.xml").unwrap();
+    let mut add = |name: &str| items::add("weapon", &mut ch, &store, data::find(&wdoc, "weapons", "weapon", name).unwrap(), &Purchase::default()).unwrap();
+    let shotgun = add("Remington 990");
+    let sweeper = add("Remington Roomsweeper");
+    let pistol = add("Ares Predator V");
+    let has = |ch: &Character, g: &str| choke::has_choke(edit::find(ch, g).unwrap());
+    assert!(has(&ch, &shotgun) && has(&ch, &sweeper));
+    assert!(!has(&ch, &pistol));
+    let get = |ch: &Character, g: &str| choke::choke(edit::find(ch, g).unwrap());
+    assert_eq!(get(&ch, &shotgun), None, "not set: slugs");
+
+    let mut s = Session::with_seed(ch, 3);
+    s.apply(&engine, Command::SetChoke { weapon: shotgun.clone(), choke: Some(Choke::Medium) }).unwrap();
+    assert_eq!(get(s.ch(), &shotgun), Some(Choke::Medium));
+    assert_eq!(edit::find(s.ch(), &shotgun).unwrap().get("choke"), "Medium");
+    assert_eq!(get(&reload(s.ch()), &shotgun), Some(Choke::Medium), "saved in the file");
+    // A pistol has no choke: nothing changes.
+    let before = s.ch().to_xml_string();
+    let _ = s.apply(&engine, Command::SetChoke { weapon: pistol.clone(), choke: Some(Choke::Wide) });
+    assert_eq!(s.ch().to_xml_string(), before);
+    assert_eq!(edit::find(s.ch(), &pistol).unwrap().get("choke"), "");
+    assert!(s.undo().is_some());
+    assert_eq!(get(s.ch(), &shotgun), None, "undo clears it again");
+    s.apply(&engine, Command::SetChoke { weapon: sweeper.clone(), choke: Some(Choke::Wide) }).unwrap();
+    s.apply(&engine, Command::SetChoke { weapon: sweeper.clone(), choke: None }).unwrap();
+    assert_eq!(get(s.ch(), &sweeper), None);
+    assert!(!s.ch().to_xml_string().contains("<choke>"), "cleared: no element left");
+}
