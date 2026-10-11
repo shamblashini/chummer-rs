@@ -81,6 +81,9 @@ struct Shared {
     /// journal must not be set aside by a newer save that an older one
     /// then overwrites).
     saving: Mutex<()>,
+    /// The engine's [`Engine::settings_rev`] the authority's presets were
+    /// taken at.
+    presets_rev: std::sync::atomic::AtomicU64,
 }
 
 impl std::fmt::Debug for Shared {
@@ -112,6 +115,17 @@ impl Shared {
 
     fn touch(&self) {
         self.dirty.store(true, Ordering::Release);
+    }
+
+    /// Hands the authority the GM's presets again when they changed (a
+    /// preset was saved or imported). Returns whether they had.
+    fn refresh_presets(&self) -> bool {
+        let rev = self.engine.settings_rev();
+        if self.presets_rev.swap(rev, Ordering::AcqRel) == rev {
+            return false;
+        }
+        self.lock().set_presets(self.engine.settings());
+        true
     }
 
     fn seen(&self, peer: &EndpointId) {
@@ -184,12 +198,16 @@ impl Shared {
 
     /// One request from `peer` (live or mailed).
     fn handle(&self, peer: EndpointId, msg: ClientMessage) -> (ServerMessage, Vec<EndpointId>, Option<CharacterId>) {
+        self.refresh_presets();
         let mut a = self.lock();
         let (reply, notify, changed) = match msg {
-            ClientMessage::Join { name, have, .. } => match a.join(peer, &name, &have) {
-                Ok((membership, pushes)) => (ServerMessage::Joined { membership, pushes }, Vec::new(), None),
-                Err(e) => (ServerMessage::Error(e), Vec::new(), None),
-            },
+            ClientMessage::Join { name, have, builtins, .. } => {
+                a.note_builtins(&peer, builtins);
+                match a.join(peer, &name, &have) {
+                    Ok((membership, pushes)) => (ServerMessage::Joined { membership, pushes }, Vec::new(), None),
+                    Err(e) => (ServerMessage::Error(e), Vec::new(), None),
+                }
+            }
             ClientMessage::Submit(batch) => match a.submit(&self.engine, peer, batch) {
                 Ok(s) => {
                     let changed = s.ack.accepted.iter().any(|x| x.changed).then(|| s.ack.character.clone());
@@ -335,7 +353,9 @@ impl AuthorityHost {
             events,
             journal,
             saving: Mutex::new(()),
+            presets_rev: std::sync::atomic::AtomicU64::new(u64::MAX),
         });
+        shared.refresh_presets();
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<EndpointId>>();
         let host = CampaignHost::new(Handler { shared: shared.clone(), sweep: tx.clone() }, me_id);
         let me = AuthorityHost { shared: shared.clone(), host: host.clone(), sweep: tx };
@@ -396,6 +416,16 @@ impl AuthorityHost {
 
     pub fn engine(&self) -> &Arc<Engine> {
         &self.shared.engine
+    }
+
+    /// The GM's settings presets changed (saved, imported, reloaded):
+    /// members whose characters use a changed one are sent it, live now or
+    /// by the next mailbox round. (Pushes and mailbox rounds also notice on
+    /// their own.)
+    pub fn settings_changed(&self) {
+        if self.shared.refresh_presets() {
+            self.changed();
+        }
     }
 
     /// After a change made through [`AuthorityHost::authority`] (a character
@@ -604,6 +634,7 @@ impl AuthorityHost {
     pub async fn sync_mail(&self, mailbox: &MailboxClient) -> Result<MailReport, NetError> {
         let mut report = MailReport::default();
         let mut changed = Vec::new();
+        self.shared.refresh_presets();
         // Who may mail us: always sent (it is idempotent), so a relay that
         // lost its database learns it again. A relay-side failure (a full
         // disk) does not stop the round: what is waiting is still read.
@@ -631,13 +662,13 @@ impl AuthorityHost {
                     // Not a member (yet): only a join that proves an
                     // invite's key, complete in one blob.
                     match mail::single(&o.payload) {
-                        Some(MailMessage::Client(ClientMessage::Join { name, have, claim: Some(proof) })) => {
+                        Some(MailMessage::Client(ClientMessage::Join { name, have, claim: Some(proof), builtins })) => {
                             let admitted = self.shared.lock().admit_by_mail(o.sender, Some(&proof), now_secs());
                             match admitted {
                                 Ok(a) => {
                                     tracing::info!("{} claimed the invite \"{}\" by mail", o.sender.fmt_short(), a.label);
                                     let _ = self.shared.events.send(HostEvent::Membership);
-                                    Ok(Some(MailMessage::Client(ClientMessage::Join { name, have, claim: Some(proof) })))
+                                    Ok(Some(MailMessage::Client(ClientMessage::Join { name, have, claim: Some(proof), builtins })))
                                 }
                                 Err(e) => {
                                     tracing::info!("refused a mailed join from {}: {e}", o.sender.fmt_short());
@@ -774,6 +805,7 @@ struct Pusher {
 impl Pusher {
     async fn push_live(&self, host: &CampaignHost<Handler>, peers: &[EndpointId]) {
         let shared = &self.shared;
+        shared.refresh_presets();
         let online: Vec<EndpointId> = host.connected().into_iter().map(|(p, _)| p).collect();
         for peer in peers.iter().filter(|p| online.contains(p)) {
             shared.warm_peer(peer);

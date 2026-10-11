@@ -55,7 +55,7 @@ fn table() -> Table {
     auth.add_character(npc.clone(), None, munin()).unwrap();
     let (mut r1, mut r2) = (Replica::new(), Replica::new());
     for (p, r, name) in [(p1, &mut r1, "Anna"), (p2, &mut r2, "Bob")] {
-        let ClientMessage::Join { have, .. } = r.join_message(name, None) else { unreachable!() };
+        let ClientMessage::Join { have, .. } = r.join_message(engine(), name, None) else { unreachable!() };
         let (membership, pushes) = auth.join(p, name, &have).unwrap();
         r.handle(engine(), ServerMessage::Joined { membership, pushes });
         for m in auth.outgoing_for(&p) {

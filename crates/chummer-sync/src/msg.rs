@@ -24,6 +24,10 @@
 //!    names the ones the authority has, so the client stops resending
 //!    them. The authority sends members the rolls they may see as
 //!    [`ServerMessage::Rolls`], live or by mail, like pushes.
+//! 6. The membership carries the settings presets the member's characters
+//!    use ([`SharedPreset`]), so they resolve as at the GM's. `Join` names
+//!    the player's built-in presets; a built-in the player has with the
+//!    same content travels without its XML.
 
 use std::fmt;
 
@@ -36,8 +40,10 @@ use serde::{Deserialize, Serialize};
 
 /// Version of the sync messages. 2: member keys (claims by mail,
 /// refusals, the GM's campaign keys in the membership). 3: commands
-/// changed (`MoveItem`, `Purchase::location`). 4: dice rolls.
-pub const SYNC_VERSION: u8 = 4;
+/// changed (`MoveItem`, `Purchase::location`). 4: dice rolls. 5: settings
+/// presets (the membership's campaign id and presets, the built-ins in
+/// `Join`).
+pub const SYNC_VERSION: u8 = 5;
 
 /// A BLAKE3 hash of a character's canonical form ([`chummer_core::command::state_hash`]).
 pub type Hash = [u8; 32];
@@ -271,10 +277,33 @@ pub struct MemberInfo {
     pub name: String,
 }
 
+/// A settings preset (house rules) one of the member's characters uses, as
+/// the GM has it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharedPreset {
+    /// What the characters' `<settings>` holds: the GM's file name for the
+    /// GM's own presets, the GUID for built-ins.
+    pub key: String,
+    pub name: String,
+    /// [`chummer_core::settings::CharacterSettings::content_hash`].
+    pub hash: Hash,
+    /// The preset's XML; `None` for a built-in the player has with the
+    /// same content (named in their `Join`).
+    pub xml: Option<String>,
+}
+
+/// A preset by key and content hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresetHash {
+    pub key: String,
+    pub hash: Hash,
+}
+
 /// Who is in the campaign and which characters the receiving member sees:
 /// a player their own, the GM all of them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Membership {
+    pub campaign: CampaignId,
     /// The campaign's name, as the GM calls it.
     pub campaign_name: String,
     pub you: EndpointId,
@@ -287,6 +316,8 @@ pub struct Membership {
     pub gm_keys: Vec<PublicKey>,
     pub members: Vec<MemberInfo>,
     pub characters: Vec<CharacterInfo>,
+    /// The presets of the characters in `characters`, by key.
+    pub presets: Vec<SharedPreset>,
 }
 
 /// One line of the activity feed: "<author>: <text>".
@@ -321,7 +352,8 @@ pub enum ClientMessage {
     /// First message after chummer-net's welcome. `name` is shown to the
     /// GM and other members. By mail, a member who has not joined yet
     /// sends `claim`: the proof that it holds the invite's member key.
-    Join { name: String, have: Vec<Have>, claim: Option<ClaimProof> },
+    /// `builtins` are the player's built-in settings presets.
+    Join { name: String, have: Vec<Have>, claim: Option<ClaimProof>, builtins: Vec<PresetHash> },
     Submit(SubmitBatch),
     Resync(ResyncRequest),
     /// Dice rolls not answered yet (oldest first).

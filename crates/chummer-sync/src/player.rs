@@ -388,6 +388,14 @@ impl PlayerSession {
         Ok(report)
     }
 
+    /// Takes the campaign's shared settings presets out of the engine and
+    /// the local copy (the player leaves the campaign).
+    pub fn forget_presets(&self) -> bool {
+        let gone = self.replica().forget_presets(&self.inner.engine);
+        self.save_soon();
+        gone
+    }
+
     /// Takes the refused commands out of the list (the player saw them).
     pub fn dismiss_refused(&self) -> Vec<crate::replica::Refused> {
         let r = self.replica().dismiss_refused();
@@ -621,7 +629,7 @@ impl PlayerSession {
         let role = client.welcome().role;
         *self.inner.role.lock().expect("poisoned") = Some(role);
         *self.inner.label.lock().expect("poisoned") = Some(client.welcome().label.clone());
-        let join_msg = self.replica().join_message(&self.inner.cfg.name, None);
+        let join_msg = self.replica().join_message(&self.inner.engine, &self.inner.cfg.name, None);
         let reply = match request(&client, &join_msg).await {
             Ok(r) => r,
             Err(e) => {
@@ -783,7 +791,7 @@ impl PlayerSession {
         let first = self.replica().membership().is_none() && !self.inner.mailed_join.load(std::sync::atomic::Ordering::Acquire);
         let rejoin = first || stale || self.inner.joined_by_mail.lock().expect("poisoned").elapsed() >= self.inner.cfg.remail_after;
         if rejoin {
-            let join = self.replica().join_message(&self.inner.cfg.name, self.claim());
+            let join = self.replica().join_message(&self.inner.engine, &self.inner.cfg.name, self.claim());
             let mut limit = *self.inner.blob_limit.lock().expect("poisoned");
             sent += mail::send(&mb, &self.inner.secret, &signer, host, &MailMessage::Client(join), &mut limit).await?;
             *self.inner.joined_by_mail.lock().expect("poisoned") = Instant::now();
@@ -1020,7 +1028,7 @@ mod tests {
         let ch = chummer_core::character::Character::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../chummer-core/tests/fixtures/Munin_Career.chum5")).unwrap();
         auth.add_character(c.clone(), Some(p), ch).unwrap();
         let mut r = Replica::new();
-        let ClientMessage::Join { have, .. } = r.join_message("Alice", None) else { unreachable!() };
+        let ClientMessage::Join { have, .. } = r.join_message(&engine, "Alice", None) else { unreachable!() };
         let (membership, pushes) = auth.join(p, "Alice", &have).unwrap();
         r.handle(&engine, ServerMessage::Joined { membership, pushes });
         r.save(&path).unwrap();
