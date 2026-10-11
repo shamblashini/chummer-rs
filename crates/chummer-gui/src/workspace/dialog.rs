@@ -65,7 +65,15 @@ pub fn window<R>(ctx: &egui::Context, id: impl std::hash::Hash, title: &str, ope
     let id = egui::Id::new(id);
     let auto_height = size.y <= 0.0;
     let min = egui::vec2(size.x.min(320.0), if fills { 240.0 } else { 80.0 });
-    let fitted = |w: egui::Window<'static>| fit(ctx, w, if auto_height { egui::vec2(size.x, min.y) } else { size }, min, !fills && !auto_height);
+    let fitted = |w: egui::Window<'static>| {
+        if auto_height {
+            // As tall as the contents (up to the app window): only the
+            // width can be dragged; the contents scroll below.
+            fit(ctx, w, egui::vec2(size.x, f32::INFINITY), min, false).resizable([true, false])
+        } else {
+            fit(ctx, w, size, min, !fills)
+        }
+    };
     // Contents as tall as they are, up to the app window's height.
     let max_body = max_window_size(ctx).y - 30.0;
     let add = |ui: &mut Ui| {
