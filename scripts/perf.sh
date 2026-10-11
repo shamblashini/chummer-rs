@@ -52,7 +52,7 @@ fi
 WORK=$OUT/work
 rm -rf "$WORK"
 mkdir -p "$OUT" "$WORK/config" "$WORK/data" "$WORK/state"
-rm -f "$OUT/core.json" "$OUT/gui.json"
+rm -f "$OUT/core.json" "$OUT/gui.json" "$OUT/results.json"
 export XDG_CONFIG_HOME=$WORK/config XDG_DATA_HOME=$WORK/data XDG_STATE_HOME=$WORK/state
 export CHUMMER_BENCH_DIR=$WORK
 export CHUMMER_PERF_QUICK=${QUICK:-0}

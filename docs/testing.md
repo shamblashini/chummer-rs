@@ -131,7 +131,8 @@ choice). It never runs twice at the same time. It does not run on
 pushes, so the normal CI stays as fast as before.
 
 The job summary has a table: each benchmark's median, p95, budget, the
-previous median, the change in percent, the trend over the last five
+baseline (the previous median, or the one from before a slowdown that
+is still flagged), the change in percent, the trend over the last five
 successful runs (oldest first, this run in bold), and the status
 (passed, warning, slow, failed, new or skipped). Failures are listed
 above the table, notes on what a benchmark measures below it. The JSON

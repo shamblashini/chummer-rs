@@ -62,6 +62,17 @@ pub fn files_in_memory() -> bool {
     files_dir().starts_with("/dev/shm")
 }
 
+/// Removes the tmpfs folders of earlier runs whose process is gone (an
+/// aborted run does not clean up).
+fn sweep_tmpfs() {
+    for e in std::fs::read_dir("/dev/shm").into_iter().flatten().flatten() {
+        let gone = e.file_name().to_str().and_then(|n| n.strip_prefix("chummer-bench-")).and_then(|p| p.parse::<u32>().ok()).is_some_and(|pid| !Path::new(&format!("/proc/{pid}")).exists());
+        if gone {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
 fn isolate() {
     let dir = work_dir();
     for (var, sub) in [("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state"), ("XDG_CACHE_HOME", "cache")] {
@@ -137,6 +148,9 @@ fn run(args: &[String]) -> Result<()> {
     let quick = f.has("--quick") || std::env::var("CHUMMER_PERF_QUICK").is_ok_and(|v| !v.is_empty() && v != "0");
     let only: Vec<String> = f.get("only").map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty() && *s != "all").map(str::to_owned).collect()).unwrap_or_default();
     let out = PathBuf::from(f.get("out").unwrap_or("target/perf/core.json"));
+    if cfg!(target_os = "linux") {
+        sweep_tmpfs();
+    }
     let mut r = Runner::new(quick, only);
     eprintln!("chummer-bench{}: {}", if quick { " (quick)" } else { "" }, r.report.machine);
     let t = Instant::now();

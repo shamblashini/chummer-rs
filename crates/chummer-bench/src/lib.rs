@@ -438,7 +438,7 @@ pub fn markdown(c: &Checked, history: &[Report]) -> String {
         }
         out.push('\n');
     }
-    out.push_str("| Benchmark | Median | p95 | Budget | Previous | Change | Trend | |\n|---|--:|--:|--:|--:|--:|---|---|\n");
+    out.push_str("| Benchmark | Median | p95 | Budget | Baseline | Change | Trend | |\n|---|--:|--:|--:|--:|--:|---|---|\n");
     for b in &r.benches {
         if let Some(why) = &b.skipped {
             out.push_str(&format!("| `{}` | | | | | | | skipped: {why} |\n", b.name));
