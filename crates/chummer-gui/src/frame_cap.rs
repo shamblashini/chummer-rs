@@ -30,7 +30,9 @@ fn remaining(last: Option<Instant>, now: Instant) -> Duration {
 /// Called at the start of every frame: sleeps the rest of the frame
 /// budget (at most [`MIN_FRAME`]) when frames come faster than ~60/s.
 pub fn wait() {
-    if vsync() {
+    // Headless tests draw frames as fast as they can: a real window's
+    // pacing would only make them sleep (up to 16 ms per frame).
+    if cfg!(test) || vsync() {
         return;
     }
     LAST.with(|last| {
