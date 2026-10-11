@@ -81,7 +81,8 @@ fn printed_values_equal_engine_values() {
         let pc = root.child("character").unwrap();
         let sheet = engine.sheet(&ch);
         let store = engine.store_for_character(&ch);
-        let settings = engine.settings.resolve(&ch.field("settings"));
+        let lib = engine.settings();
+        let settings = lib.resolve(&ch.field("settings"));
         let wrules = settings.map(weapon::WeaponRules::from_settings).unwrap_or_default();
         let vrules = settings.map(|s| vehicle::VehicleRules::from_settings(s, ch.flag("ignorerules"))).unwrap_or_default();
 

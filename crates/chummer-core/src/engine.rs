@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use crate::calc::{self, Rules, Sheet, SkillCatalog};
 use crate::character::Character;
@@ -15,7 +15,11 @@ pub struct Engine {
     /// The game data without custom data.
     pub store: DataStore,
     pub catalog: SkillCatalog,
-    pub settings: SettingsLibrary,
+    /// The presets, replaced as a whole by [`Engine::reload_settings`]. A
+    /// snapshot ([`Engine::settings`]) stays valid while it is in use.
+    settings: RwLock<Arc<SettingsLibrary>>,
+    /// The user settings folder the presets were read from.
+    settings_dir: Option<PathBuf>,
     /// Folders scanned for custom data directories.
     custom_roots: Vec<PathBuf>,
     /// Known custom data directories, read on first use.
@@ -40,15 +44,52 @@ impl Engine {
 
     pub fn with_store(store: DataStore) -> Result<Engine, EngineError> {
         let catalog = SkillCatalog::load(&store)?;
-        let settings = SettingsLibrary::load(&store, settings::user_settings_dir().as_deref())?;
+        let settings_dir = settings::user_settings_dir();
+        let settings = SettingsLibrary::load(&store, settings_dir.as_deref())?;
         Ok(Engine {
             store,
             catalog,
-            settings,
+            settings: RwLock::new(Arc::new(settings)),
+            settings_dir,
             custom_roots: custom_data::default_roots(),
             custom_dirs: OnceLock::new(),
             stores: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Read user presets from `dir` instead of the user settings folder
+    /// (tests, portable setups).
+    pub fn with_settings_dir(self, dir: Option<PathBuf>) -> Result<Engine, DataError> {
+        let lib = SettingsLibrary::load(&self.store, dir.as_deref())?;
+        *self.settings.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(lib);
+        Ok(Engine { settings_dir: dir, ..self })
+    }
+
+    /// The settings presets as they are now. Callers keep the snapshot for
+    /// as long as they use it; a reload does not change it.
+    pub fn settings(&self) -> Arc<SettingsLibrary> {
+        self.settings.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    /// The presets to change in place (tests); a snapshot taken earlier
+    /// keeps the old ones.
+    pub fn settings_mut(&mut self) -> &mut SettingsLibrary {
+        Arc::make_mut(self.settings.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// The folder user presets are read from and saved to.
+    pub fn settings_dir(&self) -> Option<PathBuf> {
+        self.settings_dir.clone()
+    }
+
+    /// Read the presets again from the game data and the user settings
+    /// folder, after a preset was added, imported or saved. Everything
+    /// that asks [`Engine::settings`] afterwards sees the new presets;
+    /// open characters re-resolve theirs when told to.
+    pub fn reload_settings(&self) -> Result<(), DataError> {
+        let lib = SettingsLibrary::load(&self.store, self.settings_dir.as_deref())?;
+        *self.settings.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(lib);
+        Ok(())
     }
 
     /// Look for custom data directories in `roots` instead of the defaults.
@@ -85,7 +126,7 @@ impl Engine {
 
     /// Game data for a character, from its `<settings>` preset.
     pub fn store_for_character(&self, ch: &Character) -> Arc<DataStore> {
-        match self.settings.resolve(&ch.field("settings")) {
+        match self.settings().resolve(&ch.field("settings")) {
             Some(s) => self.store_for(s),
             None => self.store_for_dirs(Vec::new()),
         }
@@ -93,7 +134,7 @@ impl Engine {
 
     /// House rules for a character, from its `<settings>` preset.
     pub fn rules_for(&self, ch: &Character) -> Rules {
-        self.settings.resolve(&ch.field("settings")).map(Rules::from_settings).unwrap_or_default()
+        self.settings().resolve(&ch.field("settings")).map(Rules::from_settings).unwrap_or_default()
     }
 
     /// Computed values, using the game data as modified by the character's

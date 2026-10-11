@@ -133,7 +133,8 @@ fn intro_runner_pack() {
     assert!(preview.iter().any(|(s, lines)| *s == "Gear" && lines.iter().any(|l| l.starts_with("Fake SIN"))));
 
     let mut ch = new_runner(&engine);
-    let settings = engine.settings.resolve(STANDARD);
+    let lib = engine.settings();
+    let settings = lib.resolve(STANDARD);
     let report = packs::apply(&mut ch, &store, settings, kit);
     assert!(report.skipped.is_empty(), "{:?}", report.skipped);
     assert!(ch.items("armors", "armor").iter().any(|a| a.get("name") == "Armor Vest"));
@@ -151,7 +152,8 @@ fn every_builtin_kit_applies() {
     let base = new_runner(&engine);
     let store = engine.store_for_character(&base);
     let doc = packs::load(&store, None);
-    let settings = engine.settings.resolve(STANDARD);
+    let lib = engine.settings();
+    let settings = lib.resolve(STANDARD);
     for (name, cat) in packs::kits(&doc) {
         let mut ch = base.clone();
         let report = packs::apply(&mut ch, &store, settings, packs::find_kit(&doc, &name, &cat).unwrap());
@@ -166,7 +168,8 @@ fn kit_round_trip_through_the_packs_folder() {
     let mut source = new_runner(&engine);
     let store = engine.store_for_character(&source);
     let builtin = packs::load(&store, None);
-    let settings = engine.settings.resolve(STANDARD);
+    let lib = engine.settings();
+    let settings = lib.resolve(STANDARD);
     packs::apply(&mut source, &store, settings, packs::find_kit(&builtin, "Intro Runner Pack", "Core Packs").unwrap());
     source.attribute_mut("LOG").unwrap().base = 2;
     source.attribute_mut("CHA").unwrap().karma = 1;
@@ -207,7 +210,8 @@ fn kit_export_writes_each_quality_list_it_has() {
     let engine = Engine::load().unwrap();
     let base = new_runner(&engine);
     let store = engine.store_for_character(&base);
-    let settings = engine.settings.resolve(STANDARD);
+    let lib = engine.settings();
+    let settings = lib.resolve(STANDARD);
     let qdoc = store.doc("qualities.xml").unwrap();
     let kit_with = |quality: &str| {
         let mut ch = base.clone();
@@ -230,7 +234,8 @@ fn kit_attributes_and_skills_are_applied() {
     let engine = Engine::load().unwrap();
     let mut ch = new_runner(&engine);
     let store = engine.store_for_character(&ch);
-    let settings = engine.settings.resolve(STANDARD);
+    let lib = engine.settings();
+    let settings = lib.resolve(STANDARD);
     let kit = chummer_core::xml::parse(
         "<pack><name>T</name><category>Custom</category>\
          <attributes><bod>4</bod><agi>6</agi><rea>6</rea><str>1</str><cha>1</cha><int>3</int><log>1</log><wil>1</wil><edg>2</edg></attributes>\

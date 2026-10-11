@@ -48,7 +48,8 @@ fn add_item(engine: &Engine, ch: &mut Character, tag: &str, file: &str, containe
 fn karma_for(engine: &Engine, ch: &Character, key: &str) -> i32 {
     let rules = engine.rules_for(ch);
     let sheet = engine.sheet(ch);
-    let settings = engine.settings.resolve(&ch.field("settings")).unwrap();
+    let lib = engine.settings();
+    let settings = lib.resolve(&ch.field("settings")).unwrap();
     chargen::karma_breakdown(ch, &sheet, &rules, settings, Some(&engine.store)).into_iter().find(|(k, _)| *k == key).unwrap().1
 }
 
@@ -170,7 +171,8 @@ fn career_programs_cost_karma_and_undo_refunds() {
     let mut ch = new_ai(&engine);
     let rules = engine.rules_for(&ch);
     let sheet = engine.sheet(&ch);
-    let settings = engine.settings.resolve(STANDARD).unwrap();
+    let lib = engine.settings();
+    let settings = lib.resolve(STANDARD).unwrap();
     let b = chargen::budget(&ch, &sheet, &rules, settings);
     chargen::finalize(&mut ch, &b, settings);
     let start = ch.karma;
@@ -275,7 +277,7 @@ fn kits_add_programs() {
     let engine = Engine::load().unwrap();
     let mut ch = new_ai(&engine);
     let kit = chummer_core::xml::parse("<pack><name>Test</name><programs><program><name>Browse</name></program><program><name>No Such Program</name></program></programs></pack>").unwrap();
-    let r = chummer_core::gm::packs::apply(&mut ch, &engine.store, engine.settings.resolve(STANDARD), &kit);
+    let r = chummer_core::gm::packs::apply(&mut ch, &engine.store, engine.settings().resolve(STANDARD), &kit);
     assert!(r.added.contains(&"Program: Browse".to_owned()), "{r:?}");
     assert_eq!(r.skipped.len(), 1);
     assert_eq!(ch.items("aiprograms", "aiprogram").len(), 1);

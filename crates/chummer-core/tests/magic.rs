@@ -141,7 +141,8 @@ fn initiation_and_martial_arts() {
     let engine = Engine::load().unwrap();
     let ch = fixture("Munin_Career.chum5");
     let rules = engine.rules_for(&ch);
-    let settings = engine.settings.resolve(&ch.field("settings")).unwrap();
+    let lib = engine.settings();
+    let settings = lib.resolve(&ch.field("settings")).unwrap();
     let plain = magic::initiation::GradeOptions::default();
     assert_eq!(magic::initiation_karma(&rules, settings, 1, false, plain), 13);
     let o = magic::initiation::GradeOptions { ordeal: true, schooling: true, ..plain };

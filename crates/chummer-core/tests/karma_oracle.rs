@@ -47,7 +47,8 @@ fn run(label: &str, adjust: impl Fn(&Character, &mut CharacterSettings)) -> usiz
         if ch.created {
             continue;
         }
-        let Some(settings) = engine.settings.resolve(&ch.field("settings")) else { continue };
+        let lib = engine.settings();
+        let Some(settings) = lib.resolve(&ch.field("settings")) else { continue };
         let mut settings = settings.clone();
         adjust(&ch, &mut settings);
         let store = engine.store_for_character(&ch);

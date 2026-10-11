@@ -70,6 +70,7 @@ impl CharacterSettings {
 }
 
 /// All presets: built-ins first, then user files.
+#[derive(Debug, Clone)]
 pub struct SettingsLibrary {
     pub presets: Vec<CharacterSettings>,
 }

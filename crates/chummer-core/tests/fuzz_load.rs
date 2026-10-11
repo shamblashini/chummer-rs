@@ -260,7 +260,7 @@ fn exercise(bytes: &[u8], deep: bool) -> String {
         let _ = chummer_core::print::print_xml(&ch, eng, &lang);
         let rules = eng.rules_for(&ch);
         let store = eng.store_for_character(&ch);
-        if let Some(settings) = eng.settings.resolve(&ch.field("settings")) {
+        if let Some(settings) = eng.settings().resolve(&ch.field("settings")) {
             let b = chummer_core::chargen::budget_with(&ch, &sheet, &rules, settings, Some(&store));
             let _ = chummer_core::chargen::issues::issues(&ch, &b, &sheet, settings, Some(&store));
         }

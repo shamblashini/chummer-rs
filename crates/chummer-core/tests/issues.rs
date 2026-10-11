@@ -15,7 +15,8 @@ fn issues_of(engine: &Engine, ch: &Character) -> Vec<Issue> {
     let rules = engine.rules_for(ch);
     let store = engine.store_for_character(ch);
     let sheet = calc::compute(ch, &rules, Some(&store), Some(&engine.catalog));
-    let settings = engine.settings.resolve(&ch.field("settings")).unwrap();
+    let lib = engine.settings();
+    let settings = lib.resolve(&ch.field("settings")).unwrap();
     let b = chargen::budget_with(ch, &sheet, &rules, settings, Some(&store));
     issues::issues(ch, &b, &sheet, settings, Some(&store))
 }
@@ -82,7 +83,8 @@ fn overspent_points_are_errors() {
     // All five are at the human maximum of 6, only one may be.
     assert_eq!(find(&list, IssueKind::TooManyAttributesAtMax).unwrap().args, ["5", "1"]);
     assert!(find(&list, IssueKind::AttributePointsLeft).is_none());
-    let settings = engine.settings.resolve(STANDARD).unwrap();
+    let lib = engine.settings();
+    let settings = lib.resolve(STANDARD).unwrap();
     let rules = engine.rules_for(&ch);
     let sheet = calc::compute(&ch, &rules, Some(&engine.store), Some(&engine.catalog));
     let b = chargen::budget(&ch, &sheet, &rules, settings);
@@ -117,7 +119,7 @@ fn skill_issues_point_at_the_skill() {
 #[test]
 fn karma_build_has_no_point_pools() {
     let engine = Engine::load().unwrap();
-    let pb = engine.settings.presets.iter().find(|p| p.build_method() == "Karma").unwrap().id();
+    let pb = engine.settings().presets.iter().find(|p| p.build_method() == "Karma").unwrap().id();
     let ch = new_char(&engine, &pb, "Elf", ['A', 'B', 'C', 'D', 'E'], "Mundane");
     let list = issues_of(&engine, &ch);
     for k in [IssueKind::AttributePointsLeft, IssueKind::SkillPointsLeft, IssueKind::SpecialPointsLeft, IssueKind::SkillGroupPointsLeft] {
@@ -162,7 +164,7 @@ fn fixtures_report_without_panicking() {
     let mut creation = 0;
     for f in files {
         let ch = Character::load(&f).unwrap();
-        if engine.settings.resolve(&ch.field("settings")).is_none() {
+        if engine.settings().resolve(&ch.field("settings")).is_none() {
             continue;
         }
         let list = issues_of(&engine, &ch);

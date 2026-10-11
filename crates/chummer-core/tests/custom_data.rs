@@ -150,12 +150,14 @@ fn directories_apply_in_order_and_cache() {
 #[test]
 fn settings_presets_select_their_custom_data() {
     let engine = Engine::load().unwrap();
-    let full_house = engine.settings.presets.iter().find(|p| p.name() == "Full House").unwrap();
+    let lib = engine.settings();
+    let full_house = lib.presets.iter().find(|p| p.name() == "Full House").unwrap();
     let names: Vec<&str> = engine.enabled_custom_data(full_house).iter().map(|d| d.name.as_str()).collect();
     assert!(names.contains(&"Chrome Flesh Stealth Errata"), "{names:?}");
     assert!(!names.contains(&"German Data Changes"), "{names:?}");
 
-    let standard = engine.settings.resolve("Standard").unwrap();
+    let lib = engine.settings();
+    let standard = lib.resolve("Standard").unwrap();
     assert!(engine.enabled_custom_data(standard).is_empty());
     assert!(engine.store_for(standard).custom_data_dirs().is_empty());
 
@@ -169,7 +171,8 @@ fn settings_presets_select_their_custom_data() {
     assert!(changed);
     assert!(store.custom_data_warnings().is_empty(), "{:?}", store.custom_data_warnings());
 
-    let sum10 = engine.settings.presets.iter().find(|p| p.name() == "Sum-to-Ten Improved (German)").unwrap();
+    let lib = engine.settings();
+    let sum10 = lib.presets.iter().find(|p| p.name() == "Sum-to-Ten Improved (German)").unwrap();
     let names: Vec<String> = engine.enabled_custom_data(sum10).iter().map(|d| d.name.clone()).collect();
     assert_eq!(names, ["German Data Changes", "Sum-to-Ten Improved"]);
     assert!(custom_data::check_dependencies(&engine.enabled_custom_data(sum10)).is_empty());

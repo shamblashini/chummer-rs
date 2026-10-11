@@ -80,7 +80,7 @@ pub fn apply(ch: &mut Character, engine: &Engine, choice: &Choice) -> Result<(),
         return Err("The metatype and priorities can only be changed during creation.".into());
     }
     let store = &engine.store;
-    let settings = engine.settings.resolve(&ch.field("settings")).ok_or("The character's settings file was not found.")?.clone();
+    let settings = engine.settings().resolve(&ch.field("settings")).ok_or("The character's settings file was not found.")?.clone();
     let priority = uses_priority_tables(&settings.build_method());
     let metatypes = store.doc("metatypes.xml").map_err(|e| e.to_string())?;
     let mt = data::find(&metatypes, "metatypes", "metatype", &choice.metatype).ok_or_else(|| format!("Unknown metatype {}.", choice.metatype))?;

@@ -331,10 +331,10 @@ fn info(engine: &Engine, path: &Path) -> Result<()> {
         "{} · {} · settings: {}",
         if ch.created { "Career mode" } else { "Creation mode" },
         ch.field("buildmethod"),
-        engine.settings.resolve(&ch.field("settings")).map(|p| p.name()).unwrap_or_default()
+        engine.settings().resolve(&ch.field("settings")).map(|p| p.name()).unwrap_or_default()
     );
-    if let Some(missing) = engine.settings.missing_preset(&ch.field("settings")) {
-        let fallback = engine.settings.fallback().map(|p| p.name()).unwrap_or_default();
+    if let Some(missing) = engine.settings().missing_preset(&ch.field("settings")) {
+        let fallback = engine.settings().fallback().map(|p| p.name()).unwrap_or_default();
         println!("warning: settings file {missing:?} is not installed; costs and budgets use {fallback}");
     }
     println!();
@@ -498,7 +498,7 @@ fn search(engine: &Engine, rest: &[String]) -> Result<()> {
 
 fn settings_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
     use chummer_core::settings::{self, ImportMode};
-    let lib = &engine.settings;
+    let lib = engine.settings();
     match rest.first().map(String::as_str) {
         None | Some("list") => {
             for p in &lib.presets {
@@ -526,7 +526,7 @@ fn settings_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
             };
             let dir = settings::user_settings_dir().context("no settings directory")?;
             let plan = lib.plan_import(Path::new(file), &dir).map_err(anyhow::Error::msg)?;
-            let done = settings::import(&plan, lib, &dir, &mode).map_err(|e| anyhow::anyhow!("{e}; pass --overwrite or --keep-both"))?;
+            let done = settings::import(&plan, &lib, &dir, &mode).map_err(|e| anyhow::anyhow!("{e}; pass --overwrite or --keep-both"))?;
             println!("{} installed as {} (characters refer to it as {})", done.name, done.path.display(), done.key);
         }
         Some(other) => bail!("unknown settings command {other:?}"),
@@ -650,7 +650,8 @@ fn new_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
         rest.iter().position(|a| a == k).and_then(|i| rest.get(i + 1)).cloned().unwrap_or_else(|| default.to_owned())
     };
     let settings = opt("--settings", "Standard");
-    let preset = engine.settings.presets.iter().find(|p| p.name() == settings || p.id() == settings).context("unknown settings preset")?;
+    let lib = engine.settings();
+    let preset = lib.presets.iter().find(|p| p.name() == settings || p.id() == settings).context("unknown settings preset")?;
     let letters: Vec<char> = opt("--priorities", "DEABC").to_uppercase().chars().collect();
     if letters.len() != 5 {
         bail!("--priorities needs five letters");

@@ -9,7 +9,8 @@ const STANDARD: &str = "223a11ff-80e0-428b-89a9-6ef1c243b8b6";
 fn sheet(engine: &Engine, ch: &Character) -> (calc::Sheet, chargen::Budget) {
     let rules = engine.rules_for(ch);
     let sheet = calc::compute(ch, &rules, Some(&engine.store), Some(&engine.catalog));
-    let settings = engine.settings.resolve(&ch.field("settings")).unwrap();
+    let lib = engine.settings();
+    let settings = lib.resolve(&ch.field("settings")).unwrap();
     let b = chargen::budget(ch, &sheet, &rules, settings);
     (sheet, b)
 }
@@ -45,13 +46,13 @@ fn mundane_human_priority() {
     assert_eq!(again.skills.len(), ch.skills.len());
     assert_eq!(again.field("settings"), STANDARD);
     assert_eq!(again.field("appversion"), chargen::CHUMMER_APP_VERSION);
-    assert!(chargen::validity_problems(&ch, &s, &b, engine.settings.resolve(STANDARD).unwrap(), Some(&engine.store)).is_empty());
+    assert!(chargen::validity_problems(&ch, &s, &b, engine.settings().resolve(STANDARD).unwrap(), Some(&engine.store)).is_empty());
 }
 
 #[test]
 fn elf_magician_gets_magic_and_free_skills() {
     let engine = Engine::load().unwrap();
-    let talents = chargen::talent_options(&engine.store, engine.settings.resolve(STANDARD).unwrap(), 'A');
+    let talents = chargen::talent_options(&engine.store, engine.settings().resolve(STANDARD).unwrap(), 'A');
     let mage = talents.iter().find(|t| t.value == "Magician").unwrap();
     let options = chargen::talent_skill_options(&engine.store, mage);
     assert!(options.contains(&"Spellcasting".to_owned()));
@@ -90,7 +91,7 @@ fn elf_magician_gets_magic_and_free_skills() {
 
     // Finish creation.
     let (_, b3) = sheet(&engine, &ch);
-    let settings = engine.settings.resolve(STANDARD).unwrap().clone();
+    let settings = engine.settings().resolve(STANDARD).unwrap().clone();
     chargen::finalize(&mut ch, &b3, &settings);
     assert!(ch.created);
     assert_eq!(ch.karma, 7, "unspent karma carries over up to 7");
@@ -101,10 +102,12 @@ fn elf_magician_gets_magic_and_free_skills() {
 #[test]
 fn sum_to_ten_validation() {
     let engine = Engine::load().unwrap();
-    let s2t = engine.settings.presets.iter().find(|p| p.build_method() == "SumtoTen").unwrap();
+    let lib = engine.settings();
+    let s2t = lib.presets.iter().find(|p| p.build_method() == "SumtoTen").unwrap();
     assert!(Priorities(['A', 'A', 'C', 'E', 'E']).validate(s2t).is_ok()); // 4+4+2+0+0
     assert!(Priorities(['A', 'A', 'A', 'E', 'E']).validate(s2t).is_err());
-    let std = engine.settings.resolve(STANDARD).unwrap();
+    let lib = engine.settings();
+    let std = lib.resolve(STANDARD).unwrap();
     assert!(Priorities(['A', 'A', 'C', 'E', 'E']).validate(std).is_err());
 }
 
@@ -136,14 +139,14 @@ fn creation_rules_for_specs_gender_and_magic_skills() {
     chargen::add_specialization(&mut ch, &guid, "Revolvers");
     chargen::add_specialization(&mut ch, &guid, "Semi-Automatics");
     let (s, b) = sheet(&engine, &ch);
-    let problems = chargen::validity_problems(&ch, &s, &b, engine.settings.resolve(STANDARD).unwrap(), Some(&engine.store));
+    let problems = chargen::validity_problems(&ch, &s, &b, engine.settings().resolve(STANDARD).unwrap(), Some(&engine.store));
     assert!(problems.iter().any(|p| p.contains("Pistols has more than one specialization")), "{problems:?}");
 }
 
 #[test]
 fn karma_point_buy_build() {
     let engine = Engine::load().unwrap();
-    let pb = engine.settings.presets.iter().find(|p| p.build_method() == "Karma").unwrap().clone();
+    let pb = engine.settings().presets.iter().find(|p| p.build_method() == "Karma").unwrap().clone();
     let elf_karma = chargen::karma_metatypes(&engine.store).into_iter().find(|m| m.metatype == "Elf").unwrap().karma;
     let spec = NewCharacter {
         settings_id: pb.id(),
@@ -175,7 +178,7 @@ fn karma_point_buy_build() {
 #[test]
 fn life_modules_build() {
     let engine = Engine::load().unwrap();
-    let lm = engine.settings.presets.iter().find(|p| p.build_method() == "LifeModule").unwrap().clone();
+    let lm = engine.settings().presets.iter().find(|p| p.build_method() == "LifeModule").unwrap().clone();
     let spec = NewCharacter {
         settings_id: lm.id(),
         metatype: "Human".into(),
@@ -212,7 +215,7 @@ fn life_modules_build() {
 #[test]
 fn default_priorities_fit_every_preset() {
     let engine = chummer_core::engine::Engine::load().unwrap();
-    for p in chummer_core::chargen::creation_presets(&engine) {
+    for p in &chummer_core::chargen::creation_presets(&engine) {
         let prios = chummer_core::chargen::Priorities::default_for(p);
         if matches!(p.build_method().as_str(), "Karma" | "LifeModule") {
             continue;
@@ -237,5 +240,5 @@ fn default_priorities_fit_every_preset() {
         assert!(r.is_ok(), "{}: {:?}", p.name(), r.err());
     }
     let std = chummer_core::chargen::creation_presets(&engine).into_iter().find(|p| p.name() == "Standard").unwrap();
-    assert_eq!(chummer_core::chargen::Priorities::default_for(std).0, ['D', 'E', 'A', 'B', 'C']);
+    assert_eq!(chummer_core::chargen::Priorities::default_for(&std).0, ['D', 'E', 'A', 'B', 'C']);
 }

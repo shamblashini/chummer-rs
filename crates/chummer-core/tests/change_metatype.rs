@@ -30,7 +30,8 @@ fn new_character(metatype: &str, prios: [char; 5], talent: &str, skills: &[&str]
 fn budget(ch: &Character) -> chargen::Budget {
     let rules = engine().rules_for(ch);
     let sheet = engine().sheet(ch);
-    let settings = engine().settings.resolve(&ch.field("settings")).unwrap();
+    let lib = engine().settings();
+    let settings = lib.resolve(&ch.field("settings")).unwrap();
     chargen::budget(ch, &sheet, &rules, settings)
 }
 
@@ -161,7 +162,7 @@ fn invalid_choices_are_refused_and_change_nothing() {
 
 #[test]
 fn karma_builds_change_the_metatype_and_its_karma() {
-    let pb = engine().settings.presets.iter().find(|p| p.build_method() == "Karma").unwrap().clone();
+    let pb = engine().settings().presets.iter().find(|p| p.build_method() == "Karma").unwrap().clone();
     let spec = NewCharacter { settings_id: pb.key(), metatype: "Human".into(), metavariant: None, priorities: Priorities(['A', 'B', 'C', 'D', 'E']), talent: "Mundane".into(), talent_skills: vec![], name: "PB".into() };
     let mut ch = chargen::create(engine(), &spec).unwrap();
     let mut choice = Choice::of(&ch);

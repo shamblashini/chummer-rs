@@ -21,7 +21,8 @@ fn main() {
         let st = engine.store_for_character(&ch);
         let rules = engine.rules_for(&ch);
         let sheet = calc::compute(&ch, &rules, Some(&st), Some(&engine.catalog));
-        let Some(set) = engine.settings.resolve(&ch.field("settings")) else { continue };
+        let lib = engine.settings();
+        let Some(set) = lib.resolve(&ch.field("settings")) else { continue };
         // KARMA_FLAGS=a,b turns on settings flags (house-rule experiments).
         let mut set = set.clone();
         for flag in std::env::var("KARMA_FLAGS").unwrap_or_default().split(',').filter(|f| !f.is_empty()) {

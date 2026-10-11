@@ -327,7 +327,7 @@ pub fn karma_metatypes(store: &DataStore) -> Vec<HeritageOption> {
 /// `SelectMetatypePriority.MetatypeSelected` or `SelectMetatypeKarma`).
 pub fn create(engine: &Engine, spec: &NewCharacter) -> Result<Character, String> {
     let store = &engine.store;
-    let settings = engine.settings.resolve(&spec.settings_id).ok_or("unknown settings preset")?.clone();
+    let settings = engine.settings().resolve(&spec.settings_id).ok_or("unknown settings preset")?.clone();
     let karma_build = !crate::character::uses_priority_tables(&settings.build_method());
     if !karma_build {
         spec.priorities.validate(&settings)?;
@@ -839,14 +839,14 @@ pub fn iso_from_unix(secs: i64) -> String {
 }
 
 /// Settings presets that use priority tables (what the wizard offers).
-pub fn priority_presets(engine: &Engine) -> Vec<&CharacterSettings> {
-    engine.settings.presets.iter().filter(|p| crate::character::uses_priority_tables(&p.build_method())).collect()
+pub fn priority_presets(engine: &Engine) -> Vec<CharacterSettings> {
+    engine.settings().presets.iter().filter(|p| crate::character::uses_priority_tables(&p.build_method())).cloned().collect()
 }
 
 /// Presets the new-character wizard offers: priority tables and karma
 /// point buy and life modules.
-pub fn creation_presets(engine: &Engine) -> Vec<&CharacterSettings> {
-    engine.settings.presets.iter().filter(|p| matches!(p.build_method().as_str(), "Priority" | "SumtoTen" | "Karma" | "LifeModule")).collect()
+pub fn creation_presets(engine: &Engine) -> Vec<CharacterSettings> {
+    engine.settings().presets.iter().filter(|p| matches!(p.build_method().as_str(), "Priority" | "SumtoTen" | "Karma" | "LifeModule")).cloned().collect()
 }
 
 // ---------------------------------------------------------------------------

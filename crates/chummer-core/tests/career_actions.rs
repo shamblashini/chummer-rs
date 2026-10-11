@@ -105,7 +105,7 @@ fn burning_street_cred() {
 
 /// Turn the second-MAG house rule on for every preset.
 fn second_mag(engine: &mut Engine, on: bool) {
-    for p in &mut engine.settings.presets {
+    for p in &mut engine.settings_mut().presets {
         p.raw.set_child_text("mysadeptsecondmagattribute", if on { "True" } else { "False" });
     }
 }

@@ -239,7 +239,7 @@ pub fn need_in(parent: &Element, item: &Element, tag: &str, rating: i32) -> f64 
 /// The settings' "Enforce capacity" (`EnforceCapacity`, on unless the
 /// settings say otherwise).
 pub fn enforces_capacity(ch: &Character, engine: &crate::engine::Engine) -> bool {
-    engine.settings.resolve(&ch.field("settings")).is_none_or(|s| s.flag("enforcecapacity"))
+    engine.settings().resolve(&ch.field("settings")).is_none_or(|s| s.flag("enforcecapacity"))
 }
 
 /// Whether `cand` can go to `dest`. `enforce`: refuse what does not fit

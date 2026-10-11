@@ -187,3 +187,50 @@ fn switching_preset_keeps_build_method_in_creation() {
     assert_eq!(lib.missing_preset(&ch.field("settings")), None);
     assert!(ch.dirty);
 }
+
+/// Presets made while the app runs are usable at once: the engine reloads
+/// its library in place, while snapshots others hold stay valid.
+#[test]
+fn reload_settings_picks_up_new_and_edited_presets() {
+    let dir = temp_dir("reload");
+    let engine = chummer_core::engine::Engine::with_store(store()).unwrap().with_settings_dir(Some(dir.clone())).unwrap();
+    assert_eq!(engine.settings_dir().as_deref(), Some(dir.as_path()));
+    let before = engine.settings();
+    assert!(before.presets.iter().all(|p| p.file.is_none()), "an empty folder adds no user presets");
+
+    // Duplicate: the copy is found by its file name after the reload.
+    let standard = before.find("Standard").unwrap().clone();
+    let path = settings::duplicate(&standard, "Reload Test", &dir).unwrap();
+    assert!(engine.settings().find("Reload_Test.xml").is_none(), "not there before the reload");
+    engine.reload_settings().unwrap();
+    let copy = engine.settings().find("Reload_Test.xml").cloned().expect("the duplicate after the reload");
+    assert_eq!(copy.name(), "Reload Test");
+    assert!(chummer_core::chargen::creation_presets(&engine).iter().any(|p| p.key() == "Reload_Test.xml"), "the new-character wizard lists it");
+    // The snapshot taken before the reload still holds the old presets.
+    assert!(before.find("Reload_Test.xml").is_none());
+
+    // A character using the copy gets its rules, and the edited rules
+    // after a save and a reload.
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let f = std::fs::read_dir(fixtures).unwrap().map(|e| e.unwrap().path()).find(|p| p.extension().is_some_and(|x| x == "chum5")).unwrap();
+    let mut ch = Character::load(&f).unwrap();
+    ch.set_field("settings", "Reload_Test.xml");
+    assert_eq!(engine.rules_for(&ch).max_initiative_dice, 5);
+    let mut raw = copy.raw.clone();
+    raw.set_child_text("maxinitiativedice", "6");
+    std::fs::write(&path, settings::export_string(&raw)).unwrap();
+    engine.reload_settings().unwrap();
+    assert_eq!(engine.rules_for(&ch).max_initiative_dice, 6, "the edited preset applies without a restart");
+
+    // Import: a shared file is usable after the reload too.
+    let shared = temp_dir("reload-src").join("Shared Rules.xml");
+    let mut raw = standard.raw.clone();
+    raw.set_child_text("name", "Shared Rules");
+    std::fs::write(&shared, settings::export_string(&raw)).unwrap();
+    let lib = engine.settings();
+    let plan = lib.plan_import(&shared, &dir).unwrap();
+    let done = settings::import(&plan, &lib, &dir, &ImportMode::New).unwrap();
+    engine.reload_settings().unwrap();
+    assert_eq!(engine.settings().find(&done.key).map(|p| p.name()).as_deref(), Some("Shared Rules"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

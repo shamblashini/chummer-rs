@@ -245,6 +245,8 @@ pub struct BookInfo {
     pub name: String,
     /// (printed page, English text on that page) used to find the offset.
     pub match_text: Option<(i32, String)>,
+    /// Always enabled (`<permanent />`: the core rulebook).
+    pub permanent: bool,
 }
 
 pub fn book_list(store: &DataStore) -> Vec<BookInfo> {
@@ -257,7 +259,7 @@ pub fn book_list(store: &DataStore) -> Vec<BookInfo> {
                     .find(|x| x.get("language") == "en-us")
                     .and_then(|x| Some((x.get_i32("page")?, x.get("text"))))
             });
-            BookInfo { code: r.get("code"), name: r.name(), match_text }
+            BookInfo { code: r.get("code"), name: r.name(), match_text, permanent: r.el().child("permanent").is_some() }
         })
         .collect()
 }
@@ -595,7 +597,7 @@ mod tests {
     }
 
     fn book(code: &str, name: &str, text: Option<(i32, &str)>) -> BookInfo {
-        BookInfo { code: code.into(), name: name.into(), match_text: text.map(|(p, t)| (p, t.to_owned())) }
+        BookInfo { code: code.into(), name: name.into(), match_text: text.map(|(p, t)| (p, t.to_owned())), permanent: false }
     }
 
     #[test]

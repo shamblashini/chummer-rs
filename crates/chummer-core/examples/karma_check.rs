@@ -11,7 +11,8 @@ fn main() {
         let st = engine.store_for_character(&ch);
         let rules = engine.rules_for(&ch);
         let sheet = calc::compute(&ch, &rules, Some(&st), Some(&engine.catalog));
-        let Some(set) = engine.settings.resolve(&ch.field("settings")) else { continue };
+        let lib = engine.settings();
+        let Some(set) = lib.resolve(&ch.field("settings")) else { continue };
         let b = chargen::budget_with(&ch, &sheet, &rules, set, Some(&st));
         println!("{:<28} saved karma {:>4} buildkarma {:>4} | ours start {} spent {} left {}", f.file_name().unwrap().to_string_lossy(), ch.field("karma"), ch.field("buildkarma"), b.karma.0, b.karma.1, b.karma_left());
     }

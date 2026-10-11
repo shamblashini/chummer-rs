@@ -149,7 +149,7 @@ pub fn optional_power_slots(store: &DataStore, metatype: &str, metavariant: Opti
 
 /// Build a new critter (`mnuNewCritter_Click` + `Character.Create`).
 pub fn create(engine: &Engine, spec: &NewCritter) -> Result<Character, String> {
-    let settings = engine.settings.resolve(&spec.settings_id).ok_or("unknown settings preset")?.clone();
+    let settings = engine.settings().resolve(&spec.settings_id).ok_or("unknown settings preset")?.clone();
     let store = engine.store_for(&settings);
     create_with(&store, &settings, spec)
 }
