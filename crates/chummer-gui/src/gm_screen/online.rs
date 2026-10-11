@@ -320,7 +320,7 @@ impl GmScreen {
                     if let Some(d) = Doc::online(backend(), engine.clone()) {
                         let sheet = engine.sheet(&d);
                         self.errors.remove(&m.id);
-                        self.live.insert(m.id, Live { doc: Some(d), sheet, seen: None, cursor: Default::default() });
+                        self.live.insert(m.id, Live { doc: Some(d), sheet, seen: None, cursor: Default::default(), boosts: Vec::new() });
                     }
                 }
             }

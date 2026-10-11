@@ -84,6 +84,10 @@ enum RowDo {
     Seize,
     Blitz,
     Score(i32),
+    /// Add an initiative adjustment.
+    Adjust(chummer_core::campaign::InitAdjust),
+    /// Take adjustment `k` away.
+    Unadjust(usize),
     Remove,
     /// Start renaming it in place.
     Rename,
@@ -540,7 +544,8 @@ impl GmScreen {
                     let roll = c.member.and_then(|m| gm.rolls.iter().find(|r| r.member == Some(m)));
                     let look = RowLook { current: current == Some(i), selected: gm.combatant == Some(c.id), pass: e.pass };
                     let rename = gm.renaming.as_mut().filter(|(a, _)| *a == RenameAt::Combatant(c.id)).map(|(_, t)| t);
-                    let (d, r) = encounter_row(ui, c, kind, look, roll, rename, lang);
+                    let boosts = c.member.and_then(|m| gm.live.get(&m)).map_or(&[][..], |l| l.boosts.as_slice());
+                    let (d, r) = encounter_row(ui, c, kind, look, roll, rename, (boosts, &mut gm.adjust_form), lang);
                     if let Some(d) = d {
                         todo = Some((i, d));
                     }
@@ -570,6 +575,8 @@ impl GmScreen {
                     e.combatants[i].score = s;
                     self.dirty = true;
                 }
+                RowDo::Adjust(a) => self.adjust(i, a),
+                RowDo::Unadjust(k) => self.unadjust(i, k),
                 RowDo::Seize => self.seize(i, env.views),
                 RowDo::Blitz => self.blitz(i, env.views),
                 RowDo::Remove => self.remove_combatant(i),
@@ -1388,7 +1395,11 @@ struct RowLook {
 /// `roll`: the member's last roll, shown as a chip; `rename`: the name
 /// being edited in place. Returns what the row asks for and, when its
 /// name editor finished, whether to commit.
-fn encounter_row(ui: &mut egui::Ui, c: &chummer_core::campaign::Combatant, kind: String, look: RowLook, roll: Option<&GmRoll>, rename: Option<&mut String>, lang: &Language) -> (Option<RowDo>, Option<bool>) {
+/// `adjust`: the character's suggested initiative bonuses and the
+/// typed-in adjustment, for the row's adjust menu; the adjustments in
+/// effect show as chips under the row.
+#[allow(clippy::too_many_arguments)]
+fn encounter_row(ui: &mut egui::Ui, c: &chummer_core::campaign::Combatant, kind: String, look: RowLook, roll: Option<&GmRoll>, rename: Option<&mut String>, adjust: (&[chummer_core::campaign::boosts::Suggestion], &mut crate::init_adjust::AdjustForm), lang: &Language) -> (Option<RowDo>, Option<bool>) {
     let RowLook { current, selected, pass } = look;
     let ws = theme::ws(ui);
     let mut out = None;
@@ -1460,6 +1471,13 @@ fn encounter_row(ui: &mut egui::Ui, c: &chummer_core::campaign::Combatant, kind:
                 ui.close();
             }
         });
+        let (boosts, form) = adjust;
+        let bolt = widgets::icon_button(ui, icons::LIGHTNING, 22.0).on_hover_text(lang.tr("Add to the Initiative Score or dice"));
+        egui::Popup::menu(&bolt).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+            if let Some(a) = crate::init_adjust::menu(ui, lang, form, boosts, &c.adjust) {
+                out = Some(RowDo::Adjust(a));
+            }
+        });
         let tag = if c.acted {
             lang.tr("Acted")
         } else if c.delayed {
@@ -1490,6 +1508,15 @@ fn encounter_row(ui: &mut egui::Ui, c: &chummer_core::campaign::Combatant, kind:
             ui.add(egui::Label::new(widgets::mono(rolled, 10.5, ws.muted)).truncate());
         });
     });
+    if !c.adjust.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 2.0);
+            ui.add_space(30.0);
+            if let Some(k) = crate::init_adjust::chips(ui, lang, &c.adjust) {
+                out = Some(RowDo::Unadjust(k));
+            }
+        });
+    }
     (out, renamed)
 }
 
