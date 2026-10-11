@@ -230,15 +230,13 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
         AddItem { tag, record, purchase } => add_item(ch, engine, store, tag, record, purchase),
         RemoveItem { container, guid } => match container.as_str() {
             // Career mode: buying off a negative quality costs karma.
-            // Every level goes (`DeleteQuality(blnFullRemoval)`).
+            // Every level goes (`DeleteQuality(blnFullRemoval)`), or none:
+            // Chummer refuses when the karma for all levels is not there
+            // (a refusal restores the character).
             "qualities" if ch.created => {
                 let mut msg = None;
                 for g in quality_levels_of(ch, guid, true) {
-                    match career::remove_quality(ch, engine, &g) {
-                        Ok(m) => msg = msg.or(m),
-                        Err(e) if msg.is_none() && g.eq_ignore_ascii_case(guid) => return Err(reject(e)),
-                        Err(_) => break,
-                    }
+                    msg = msg.or(career::remove_quality(ch, engine, &g).map_err(reject)?);
                 }
                 Ok(Done::Changed { message: msg, count: None })
             }

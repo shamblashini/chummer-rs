@@ -185,6 +185,23 @@ fn career_levels_cost_karma_each() {
     let mut p = Session::new(poor);
     assert!(p.apply(&engine, Command::SetQualityLevel { guid: guid.clone(), level: 4 }).is_err());
     assert_eq!(copies(p.ch(), "Focused Concentration").len(), 3);
+    // Buying off a 3-level negative quality needs the karma for all three
+    // (-4 x 2 each): with enough for two, nothing is removed.
+    let mut ch = s.ch().clone();
+    ch.karma = 100;
+    let mut g = Session::new(ch);
+    g.apply(&engine, add("Gremlins", 3)).unwrap();
+    assert_eq!(copies(g.ch(), "Gremlins").len(), 3);
+    let gremlin = copies(g.ch(), "Gremlins")[0].get("guid");
+    let mut short = g.ch().clone();
+    short.karma = 16;
+    let mut short = Session::new(short);
+    assert!(short.apply(&engine, Command::RemoveItem { container: "qualities".into(), guid: gremlin.clone() }).is_err());
+    assert_eq!(copies(short.ch(), "Gremlins").len(), 3, "all levels or none");
+    let karma = g.ch().karma;
+    g.apply(&engine, Command::RemoveItem { container: "qualities".into(), guid: gremlin }).unwrap();
+    assert!(copies(g.ch(), "Gremlins").is_empty());
+    assert_eq!(g.ch().karma, karma - 24);
     // Lowering in career removes a level (no refund for a positive one).
     s.apply(&engine, Command::SetQualityLevel { guid, level: 1 }).unwrap();
     assert_eq!(copies(s.ch(), "Focused Concentration").len(), 1);
