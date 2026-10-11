@@ -551,7 +551,7 @@ impl CharacterView {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let any = self.play.init.round > 0 || !self.play.init.c.adjust.is_empty();
+                let any = self.play.init.round > 0;
                 if ui.add_enabled_ui(any, |ui| widgets::icon_button(ui, icons::ARROW_COUNTER_CLOCKWISE, 26.0)).inner.on_hover_text(lang.tr("Reset")).clicked() {
                     reset = true;
                 }
@@ -590,8 +590,8 @@ impl CharacterView {
         if reset {
             self.play.init.round = 0;
             self.play.init.pass = 0;
+            // As the GM's Reset: those until removed stay (× takes them).
             self.play.init.c.reset();
-            self.play.init.c.adjust.clear();
         }
         if let Some(k) = remove {
             self.play.init.c.remove_adjust(k);
