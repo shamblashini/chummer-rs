@@ -144,6 +144,9 @@ fn num_of(text: &str) -> Option<f64> {
     t.parse().ok()
 }
 
+/// "Move to …" menu entries: (location guid, label).
+type Moves = Vec<(String, String)>;
+
 /// What the row building needs from the view, borrowed once.
 struct Ctx<'a> {
     v: &'a CharacterView,
@@ -159,7 +162,7 @@ struct Ctx<'a> {
     /// The "Move to …" entries of a kind of top-level item, by element
     /// name: (location guid, label), "No location" first. The same for
     /// every row of the kind.
-    moves: std::cell::RefCell<std::collections::HashMap<String, Arc<Vec<(String, String)>>>>,
+    moves: std::cell::RefCell<std::collections::HashMap<String, Arc<Moves>>>,
 }
 
 impl CharacterView {

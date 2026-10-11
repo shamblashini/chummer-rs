@@ -69,6 +69,9 @@ fn cached(cache: &DocCache, file: &str, load: impl FnOnce() -> Result<Arc<Elemen
     Ok(d)
 }
 
+/// A built [`RecordIndex`] under its (file, container, item).
+type IndexEntry = ((String, String, String), Arc<RecordIndex>);
+
 /// The records of one list of a data document (`<container><item/>…`),
 /// indexed by id and name: [`find`] without the scan. Built from the
 /// store's document for that file, which never changes once loaded.
@@ -151,7 +154,7 @@ pub struct DataStore {
     warnings: Mutex<Vec<String>>,
     /// Record indexes of this store's documents: (file, container, item).
     /// A few dozen at most: a list, so a lookup allocates nothing.
-    indexes: Mutex<Vec<((String, String, String), Arc<RecordIndex>)>>,
+    indexes: Mutex<Vec<IndexEntry>>,
     /// The thread of [`DataStore::warm`]: `None` before it, `Some(None)`
     /// once joined.
     warm: Mutex<Option<Option<std::thread::JoinHandle<()>>>>,
@@ -235,7 +238,7 @@ impl DataStore {
     /// The records of `<container><item>` in `file` (as [`DataStore::doc`]
     /// gives it), indexed by id and name; built on first use.
     pub fn index(&self, file: &str, container: &str, item: &str) -> Result<Arc<RecordIndex>, DataError> {
-        let get = |v: &[((String, String, String), Arc<RecordIndex>)]| v.iter().find(|((f, c, i), _)| f == file && c == container && i == item).map(|(_, ix)| ix.clone());
+        let get = |v: &[IndexEntry]| v.iter().find(|((f, c, i), _)| f == file && c == container && i == item).map(|(_, ix)| ix.clone());
         if let Some(ix) = get(&self.indexes.lock().unwrap()) {
             return Ok(ix);
         }
