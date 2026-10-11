@@ -670,6 +670,16 @@ impl CharacterView {
         if weapons.is_empty() {
             ui.label(RichText::new(lang.tr("No weapons.")).size(12.0).color(ws.muted));
         }
+        // The cards' ammunition (memoized), worked out in one go with an
+        // index of the items: each weapon's otherwise searches the whole
+        // character a few times.
+        if self.doc.created {
+            chummer_core::items::edit::with_index(&self.doc, || {
+                for w in weapons.iter().filter(|w| ammo::uses_ammo(w) && !ammo::clips(w).is_empty()) {
+                    self.ammo_info(w);
+                }
+            });
+        }
         for w in &weapons {
             // Each card has its own ids (two of the same weapon look alike).
             changed |= ui.push_id(("ws_weapon", w.get("guid")), |ui| self.play_weapon(ui, lang, status, w)).inner;

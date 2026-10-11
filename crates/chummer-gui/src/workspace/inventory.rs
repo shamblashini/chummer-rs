@@ -156,6 +156,10 @@ struct Ctx<'a> {
     /// (`cyberware::cost_shares`): children are priced at the ware's
     /// grade and limb, so their own totals do not add up.
     shares: std::cell::RefCell<std::collections::HashMap<String, f64>>,
+    /// The "Move to …" entries of a kind of top-level item, by element
+    /// name: (location guid, label), "No location" first. The same for
+    /// every row of the kind.
+    moves: std::cell::RefCell<std::collections::HashMap<String, Arc<Vec<(String, String)>>>>,
 }
 
 impl CharacterView {
@@ -168,7 +172,7 @@ impl CharacterView {
             // Every row looks its item up by guid (cost, rating range,
             // included): from an index, not a search each (quadratic).
             chummer_core::items::edit::with_index(&self.doc, || {
-            let cx = Ctx { v: self, sec, cols, lang, marks: self.item_marks(lang), career: self.doc.created, shares: Default::default() };
+            let cx = Ctx { v: self, sec, cols, lang, marks: self.item_marks(lang), career: self.doc.created, shares: Default::default(), moves: Default::default() };
             let rows = if sec.container == "drugs" {
                 self.doc.items("drugs", "drug").iter().map(|d| cx.item(d, d.get("guid"), true, &[])).collect()
             } else {
@@ -458,11 +462,8 @@ impl Ctx<'_> {
         let mut moves: Vec<(String, String)> = if !guid.is_empty() && edit::has_location(ch, &guid) {
             // Not where it is now.
             let here = el.get("location");
-            std::iter::once((String::new(), lang.tr("No location")))
-                .chain(edit::locations(ch, &guid))
-                .filter(|(g, _)| !g.eq_ignore_ascii_case(&here))
-                .map(|(g, n)| (format!("move:{g}"), lang.tr_fmt("Move to {0}", &[&n])))
-                .collect()
+            let all = self.moves.borrow_mut().entry(el.name.clone()).or_insert_with(|| Arc::new(std::iter::once((String::new(), lang.tr("No location"))).chain(edit::locations(ch, &guid)).map(|(g, n)| (g, lang.tr_fmt("Move to {0}", &[&n]))).collect())).clone();
+            all.iter().filter(|(g, _)| !g.eq_ignore_ascii_case(&here)).map(|(g, label)| (format!("move:{g}"), label.clone())).collect()
         } else {
             Vec::new()
         };

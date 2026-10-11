@@ -116,6 +116,7 @@ impl RelationshipsPanel {
     pub fn ui(&mut self, ui: &mut egui::Ui, ch: &mut Doc, store: &DataStore, lang: &Language, status: &mut Status) -> bool {
         let dialogs = self.take_dialogs(ch, status);
         if self.lists.is_none() {
+            let _s = crate::trace::span("relationships lists");
             self.lists = Some(std::rc::Rc::new(Lists {
                 fields: contacts::CHOICE_LISTS.iter().map(|(f, _, _)| (*f, contacts::choices(store, f))).collect(),
                 metatypes: contacts::metatype_choices(store, "metatypes.xml"),

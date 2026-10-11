@@ -246,6 +246,40 @@ impl Tab {
     }
 }
 
+/// The game data the pages read on their first visit, parsed and indexed
+/// on another thread when a character opens (`DataStore::warm`): the
+/// item pages look every row's record up (`edit::with_record`), and
+/// Relationships lists the contact choices and every metatype and critter.
+/// Otherwise the first visit parses a file of up to 1 MB in its frame.
+const WARM_INDEXES: &[(&str, &str, &str)] = &[
+    ("gear.xml", "gears", "gear"),
+    ("cyberware.xml", "cyberwares", "cyberware"),
+    ("bioware.xml", "biowares", "bioware"),
+    ("armor.xml", "armors", "armor"),
+    ("armor.xml", "mods", "mod"),
+    ("weapons.xml", "weapons", "weapon"),
+    ("weapons.xml", "accessories", "accessory"),
+    ("vehicles.xml", "vehicles", "vehicle"),
+    ("vehicles.xml", "mods", "mod"),
+    ("lifestyles.xml", "lifestyles", "lifestyle"),
+];
+const WARM_DOCS: &[&str] = &["contacts.xml", "metatypes.xml", "critters.xml"];
+
+/// Of the stock data (`data::shared_store`, without custom data): the
+/// weapons `weapon::stats` reads (the Play page's weapon cards).
+const WARM_SHARED: &str = "weapons.xml";
+
+fn warm_data(store: &Arc<chummer_core::data::DataStore>) {
+    store.warm(WARM_DOCS, WARM_INDEXES);
+    static SHARED: std::sync::Once = std::sync::Once::new();
+    SHARED.call_once(|| {
+        let job = || {
+            let _ = chummer_core::data::shared_store().map(|s| s.doc(WARM_SHARED));
+        };
+        let _ = std::thread::Builder::new().name("warm stock data".into()).spawn(job);
+    });
+}
+
 impl CharacterView {
     pub fn set_tab(&mut self, tab: Tab) {
         self.tab = tab;
@@ -260,6 +294,15 @@ impl CharacterView {
         self.packs.open(mode);
     }
 
+    /// Waits until the game data the pages read is loaded ([`WARM_DOCS`]),
+    /// as it is a moment after a character opens.
+    #[cfg(test)]
+    pub(crate) fn wait_warm(&self) {
+        self.store.wait_warm();
+        // Waits for the parse when it runs (`DataStore::doc`).
+        let _ = chummer_core::data::shared_store().map(|s| s.doc(WARM_SHARED));
+    }
+
     pub fn new(ch: Character, engine: &Arc<Engine>) -> Self {
         CharacterView::from_doc(Doc::new(ch, engine.clone()), engine)
     }
@@ -269,6 +312,7 @@ impl CharacterView {
     pub fn from_doc(doc: Doc, engine: &Arc<Engine>) -> Self {
         let rules = engine.rules_for(&doc);
         let store = engine.store_for_character(&doc);
+        warm_data(&store);
         let sheet = calc::compute(&doc, &rules, Some(&store), Some(&engine.catalog));
         let settings_key = doc.field("settings");
         let settings = engine.settings().resolve_for(&doc).cloned();
@@ -442,6 +486,7 @@ impl CharacterView {
         self.settings_key = self.doc.field("settings");
         self.rules = engine.rules_for(&self.doc);
         self.store = engine.store_for_character(&self.doc);
+        warm_data(&self.store);
         self.settings = engine.settings().resolve_for(&self.doc).cloned();
         self.recompute(engine);
     }
