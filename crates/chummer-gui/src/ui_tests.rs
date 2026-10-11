@@ -1859,6 +1859,71 @@ fn classic_selection_dialog_add() {
     assert_eq!(gear_count(&h), before);
 }
 
+/// Click the + of the Workspace stepper nearest `label` on its line: the
+/// first one right of it (`after`) or the last one left of it.
+fn click_stepper_plus(h: &mut Harness, label: &str, after: bool) {
+    let l = h.find_text(label).unwrap_or_else(|| panic!("no {label:?}; shown: {:?}", h.on_screen()));
+    let plus = h.texts.iter().filter(|(t, r)| t == crate::workspace::icons::PLUS && (r.center().y - l.center().y).abs() < 8.0);
+    let p = if after {
+        plus.filter(|(_, r)| r.left() > l.right()).min_by(|a, b| a.1.left().total_cmp(&b.1.left()))
+    } else {
+        plus.filter(|(_, r)| r.right() < l.left()).max_by(|a, b| a.1.right().total_cmp(&b.1.right()))
+    };
+    let p = p.map(|(_, r)| *r).unwrap_or_else(|| panic!("no stepper by {label:?}"));
+    h.click_at(p.center());
+}
+
+/// Workspace, creation: "Add Quality…" shows a Level stepper for a
+/// quality with levels (Focused Concentration, limit 6) and its karma, not
+/// for one without (Ambidextrous); Add at level 3 adds three levels, which
+/// the Qualities table shows as one row "Focused Concentration 3" whose
+/// stepper raises it to 4.
+#[test]
+fn workspace_quality_level_stepper() {
+    let mut h = Harness::new(ThemeKind::WorkspaceDark);
+    let i = h.open(&fixture("Harmony.chum5"));
+    h.app.views[i].ws_go(Section::Page(Tab::Common));
+    // Tall enough for the Qualities table below the attributes.
+    h.size = Vec2::new(1600.0, 2600.0);
+    h.frames(2);
+    let fc = |h: &Harness| h.app.views[i].doc().items("qualities", "quality").iter().filter(|q| q.get("name") == "Focused Concentration").count();
+    assert_eq!(fc(&h), 0);
+    // A mystic adept without the second-MAG house rule: one Magic row.
+    assert!(h.find_text("MAG").is_some() && h.find_text("MAGAdept").is_none(), "shown: {:?}", h.on_screen());
+    let level = h.app.lang.tr("Level");
+    let pick = |h: &mut Harness, name: &str| {
+        h.click_text(&h.app.lang.tr("Search"));
+        h.type_text(name);
+        h.frames(2);
+        h.click_text(name);
+        h.frames(2);
+    };
+    h.click_text(&h.app.lang.tr("Add Quality…"));
+    h.frames(2);
+    pick(&mut h, "Ambidextrous");
+    assert!(h.find_text(&level).is_none(), "no Level for a quality without levels; shown: {:?}", h.on_screen());
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    h.click_text(&h.app.lang.tr("Add Quality…"));
+    h.frames(2);
+    pick(&mut h, "Focused Concentration");
+    assert!(h.find_text(&level).is_some(), "a Level stepper; shown: {:?}", h.on_screen());
+    assert!(h.find_text(&h.app.lang.tr_fmt("{0} karma", &[&4])).is_some(), "level 1 costs 4 karma; shown: {:?}", h.on_screen());
+    click_stepper_plus(&mut h, &level, true);
+    click_stepper_plus(&mut h, &level, true);
+    h.frames(1);
+    assert!(h.find_text(&h.app.lang.tr_fmt("{0} karma", &[&12])).is_some(), "level 3 costs 12 karma; shown: {:?}", h.on_screen());
+    h.click_text(&h.app.lang.tr("Add"));
+    h.frames(3);
+    assert_eq!(fc(&h), 3, "three levels ({:?})", h.app.status);
+    // One row, with the level after the name.
+    assert_eq!(h.count("Focused Concentration 3"), 1, "shown: {:?}", h.on_screen());
+    click_stepper_plus(&mut h, "Focused Concentration 3", false);
+    h.frames(3);
+    assert_eq!(fc(&h), 4, "the row's stepper raised it ({:?})", h.app.status);
+    assert!(h.find_text("Focused Concentration 4").is_some(), "shown: {:?}", h.on_screen());
+}
+
 /// Classic: clicking each tab of the tab strip shows it.
 #[test]
 fn classic_tab_strip_clicks() {

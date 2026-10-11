@@ -85,6 +85,9 @@ pub struct SelectDialog {
     nuyen_left: Option<f64>,
     /// The parent was preset by [`SelectDialog::with_parent`]: no picker.
     parent_locked: bool,
+    /// Karma per point of a quality's karma (`KarmaQuality`) and whether
+    /// career purchases cost double (not `DontDoubleQualityPurchases`).
+    quality_karma: (i32, bool),
 }
 
 impl SelectDialog {
@@ -105,7 +108,14 @@ impl SelectDialog {
             max_avail,
             nuyen_left,
             parent_locked: false,
+            quality_karma: (1, true),
         })
+    }
+
+    /// The settings' quality karma rules, for the Level's karma preview.
+    pub fn with_quality_karma(mut self, karma_quality: i32, double_in_career: bool) -> Self {
+        self.quality_karma = (karma_quality, double_in_career);
+        self
     }
 
     /// Preset where the new item goes (an item editor's "Add …" command).
@@ -239,6 +249,9 @@ impl SelectDialog {
                 });
             });
             dialog::buttons(ui, |ui| {
+                if let Some(i) = self.selected.filter(|_| self.kind.tag == "quality") {
+                    self.quality_level(ui, ch, lang, recs[i]);
+                }
                 let needs_parent = parent_of(self.kind.tag).is_some() && self.purchase.parent.is_none();
                 let can = !needs_parent && self.selected.is_some_and(|i| rows.iter().any(|(j, _, w)| *j == i && w.is_empty()));
                 let add = ui.add_enabled_ui(can, |ui| dialog::button(ui, &lang.tr("Add"), true)).inner;
@@ -328,6 +341,32 @@ impl SelectDialog {
                 ui.end_row();
             }
         });
+    }
+
+    /// The Level of a quality with levels (`SelectQuality.nudRating`):
+    /// the level to reach, from one above the levels already taken to the
+    /// limit, with the karma of the levels it adds.
+    fn quality_level(&mut self, ui: &mut egui::Ui, ch: &Character, lang: &Language, r: Record<'_>) {
+        let Some(limit) = chummer_core::items::quality::level_limit(r.el(), ch.created) else {
+            self.purchase.rating = 0;
+            return;
+        };
+        let taken = chummer_core::items::quality::taken(ch, r);
+        let min = (taken + 1).min(limit);
+        self.purchase.rating = self.purchase.rating.clamp(min, limit);
+        ui.label(lang.tr("Level"));
+        if dialog::ws(ui.ctx()) {
+            crate::workspace::widgets::stepper(ui, ("quality_level", r.id()), &mut self.purchase.rating, min, limit, &lang.tr("Lower level"), &lang.tr("Raise level"));
+        } else {
+            ui.add(egui::DragValue::new(&mut self.purchase.rating).range(min..=limit));
+        }
+        let (karma_quality, double) = self.quality_karma;
+        let doubled = ch.created && double && r.el().get("doublecareer") != "False";
+        let per = r.el().get_i32("karma").unwrap_or(0) * karma_quality * if doubled { 2 } else { 1 };
+        let karma = per * (self.purchase.rating - taken).max(0);
+        let text = lang.tr_fmt("{0} karma", &[&karma]);
+        let tip = if taken > 0 { lang.tr_fmt("Already taken: level {0}. {1} karma per level.", &[&taken, &per]) } else { lang.tr_fmt("{0} karma per level.", &[&per]) };
+        ui.label(text).on_hover_text(tip);
     }
 
     fn confirm(&mut self, index: usize, rec: &Element, choices_for: &dyn Fn(&Element, &Purchase) -> Vec<Choice>) -> Outcome {
