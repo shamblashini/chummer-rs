@@ -218,6 +218,13 @@ fn doc_ref<'a>(live: &'a BTreeMap<MemberId, Live>, views: &'a [CharacterView], i
 }
 
 impl GmScreen {
+    /// A member's character as the GM screen holds it (not one open in a
+    /// tab).
+    #[cfg(test)]
+    pub(crate) fn test_doc_mut(&mut self, id: MemberId) -> Option<&mut Doc> {
+        self.live.get_mut(&id).and_then(|l| l.doc.as_mut())
+    }
+
     fn with(campaign: Campaign, path: Option<PathBuf>) -> GmScreen {
         GmScreen {
             campaign,
@@ -1510,12 +1517,26 @@ impl GmScreen {
                 ui.label(RichText::new(lang.tr("Weapons")).strong());
                 for w in &weapons {
                     let st = chummer_core::items::weapon::stats(doc, &sheet, w);
+                    let set = chummer_core::play::choke::choke(w);
+                    let note = set.map(|c| crate::play_ui::choke_note(lang, c, None));
                     ui.horizontal(|ui| {
                         if campaign_ui::pool_roll(ui, lang, &w.get("name"), st.dice_pool) {
-                            roll = Some((w.get("name"), st.dice_pool));
+                            // The choke's note goes with the roll.
+                            roll = Some((note.as_ref().map_or_else(|| w.get("name"), |n| format!("{} · {n}", w.get("name"))), st.dice_pool));
                         }
                         ui.weak(format!("{} AP {}", st.damage, st.ap));
+                        if chummer_core::play::choke::has_choke(w) {
+                            let ranges = crate::play_ui::choke_ranges(&st);
+                            for (i, c) in chummer_core::play::choke::Choke::ALL.into_iter().enumerate() {
+                                if ui.selectable_label(set == Some(c), crate::play_ui::choke_code(c)).on_hover_text(crate::play_ui::choke_tip(lang, c, Some(&ranges))).clicked() {
+                                    doc.run(Command::SetChoke { weapon: w.get("guid"), choke: crate::play_ui::choke_click(set, i) }, status);
+                                }
+                            }
+                        }
                     });
+                    if let Some(n) = &note {
+                        ui.label(RichText::new(n).small().weak());
+                    }
                 }
             }
             // The result, next to the pools it came from.
