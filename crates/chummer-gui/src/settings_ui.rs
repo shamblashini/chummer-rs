@@ -2,6 +2,12 @@
 //! build method, budgets, books, karma costs and options, and save it as a
 //! settings file in the user settings directory. Presets can be exported
 //! as standalone Chummer settings files and imported from them.
+//!
+//! The window lists the presets on the left (yours, then the read-only
+//! built-ins) and shows the selected one's pages on the right; Save,
+//! Duplicate, Export and Import sit in a footer that stays visible. A
+//! written preset is usable at once: the app reloads the presets
+//! ([`crate::App::reload_settings`]).
 
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
@@ -59,89 +65,447 @@ pub(crate) const LABELS: &[(&str, &str)] = &[
     ("autobackstory", "Auto backstory"),
 ];
 
+/// The parts of a preset, one page each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Page {
+    General,
+    Options,
+    KarmaCosts,
+    Books,
+    CustomData,
+}
+
+impl Page {
+    const ALL: [Page; 5] = [Page::General, Page::Options, Page::KarmaCosts, Page::Books, Page::CustomData];
+
+    fn label(self) -> &'static str {
+        match self {
+            Page::General => "General",
+            Page::Options => "Options",
+            Page::KarmaCosts => "Karma Costs",
+            Page::Books => "Books",
+            Page::CustomData => "Custom data",
+        }
+    }
+}
+
+/// What waits for the answer to "save your changes first?".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Then {
+    /// Show another preset (its key).
+    Select(String),
+    /// Copy the shown preset under this name and show the copy.
+    Duplicate(String),
+    /// Pick a settings file to import.
+    Import,
+    /// Close the window.
+    Close,
+}
+
+/// The answer to the unsaved-changes prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answer {
+    Save,
+    Discard,
+    Cancel,
+}
+
 pub struct SettingsEditor {
-    selected: usize,
-    /// Working copy of a user preset being edited.
+    /// Key of the preset shown ([`CharacterSettings::key`]).
+    pub(crate) current: Option<String>,
+    /// Working copy of the shown user preset.
     draft: Option<Element>,
-    new_name: String,
-    message: Option<String>,
+    /// The draft differs from the saved preset.
+    pub(crate) dirty: bool,
+    pub(crate) page: Page,
+    /// The name field of the Duplicate prompt while it is open.
+    pub(crate) dup_name: Option<String>,
+    /// The last result: (text, is an error).
+    message: Option<(String, bool)>,
     import: crate::ruleset_ui::ImportFlow,
-    /// Key of a preset to select once the reloaded library has it.
-    select_key: Option<String>,
+    /// Waits for the unsaved-changes prompt.
+    pub(crate) pending: Option<Then>,
+    /// The window is to close (after the prompt).
+    close: bool,
+    /// The prompt was shown last frame.
+    asked: bool,
+    pub(crate) book_filter: String,
+    option_filter: String,
+}
+
+impl Default for SettingsEditor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SettingsEditor {
     pub fn new() -> Self {
-        SettingsEditor { selected: 0, draft: None, new_name: String::new(), message: None, import: Default::default(), select_key: None }
+        SettingsEditor {
+            current: None,
+            draft: None,
+            dirty: false,
+            page: Page::General,
+            dup_name: None,
+            message: None,
+            import: Default::default(),
+            pending: None,
+            close: false,
+            asked: false,
+            book_filter: String::new(),
+            option_filter: String::new(),
+        }
     }
 
     /// Start importing a settings file (from a character's missing-preset
-    /// warning). Returns true when the library must be reloaded.
-    /// Start an import (the file dialog; the window's `ui` finishes it).
+    /// warning): the file dialog, once unsaved edits are dealt with.
     pub fn start_import(&mut self, ctx: &egui::Context) {
-        self.import.start(ctx);
+        self.run(Then::Import, ctx, None);
+    }
+
+    /// The Character Settings window. `open` is the window's visibility; closing
+    /// it with unsaved edits asks first. Returns true when presets were
+    /// written and must be reloaded.
+    pub fn window(&mut self, ctx: &egui::Context, engine: &Engine, lang: &Language, open: &mut bool) -> bool {
+        if !*open {
+            return false;
+        }
+        let mut reload = false;
+        let was_open = *open;
+        crate::workspace::dialog::window(ctx, "character_settings_editor", &lang.tr("Character Settings"), open, egui::vec2(940.0, 680.0), true, |ui| {
+            reload |= self.ui(ui, engine, lang);
+        });
+        if was_open && !*open && self.dirty {
+            // Closed with unsaved edits: ask first.
+            *open = true;
+            self.pending = Some(Then::Close);
+        }
+        reload |= self.prompt(ctx, engine, lang);
+        if std::mem::take(&mut self.close) {
+            *open = false;
+        }
+        reload
+    }
+
+    /// The unsaved-changes prompt while an action waits for it.
+    fn prompt(&mut self, ctx: &egui::Context, engine: &Engine, lang: &Language) -> bool {
+        let Some(then) = self.pending.clone() else { return false };
+        if !self.dirty {
+            self.pending = None;
+            return self.run(then, ctx, Some(engine));
+        }
+        let lib = engine.settings();
+        let name = self.draft.as_ref().map(|d| d.get("name")).or_else(|| self.current.as_deref().and_then(|k| by_key(&lib, k)).map(CharacterSettings::name)).unwrap_or_default();
+        let mut answer = None;
+        crate::workspace::dialog::modal(ctx, "settings_unsaved", 400.0, |ui| {
+            crate::workspace::dialog::heading(ui, &lang.tr("Unsaved Changes"));
+            ui.add_space(4.0);
+            ui.label(lang.tr_fmt("Save your changes to {0} first?", &[&name]));
+            crate::workspace::dialog::buttons(ui, |ui| {
+                if crate::workspace::dialog::button(ui, &lang.tr("Save"), true).clicked() {
+                    answer = Some(Answer::Save);
+                }
+                if crate::workspace::dialog::button(ui, &lang.tr("Don't save"), false).clicked() {
+                    answer = Some(Answer::Discard);
+                }
+                if crate::workspace::dialog::button(ui, &lang.tr("Cancel"), false).clicked() {
+                    answer = Some(Answer::Cancel);
+                }
+            });
+        });
+        // Escape cancels, unless it is the press that closed the window.
+        if self.asked && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            answer = Some(Answer::Cancel);
+        }
+        self.asked = true;
+        let Some(answer) = answer else { return false };
+        self.pending = None;
+        self.asked = false;
+        let mut reload = false;
+        match answer {
+            Answer::Cancel => return false,
+            Answer::Save => {
+                reload = self.save(engine);
+                if self.dirty {
+                    // Not saved: stay.
+                    return reload;
+                }
+            }
+            Answer::Discard => self.revert(),
+        }
+        reload | self.run(then, ctx, Some(engine))
+    }
+
+    /// Do `then` now, or ask first when there are unsaved edits.
+    fn run(&mut self, then: Then, ctx: &egui::Context, engine: Option<&Engine>) -> bool {
+        if self.dirty {
+            self.pending = Some(then);
+            return false;
+        }
+        match then {
+            Then::Select(key) => {
+                self.show(Some(key));
+                false
+            }
+            Then::Import => {
+                self.import.start(ctx);
+                false
+            }
+            Then::Close => {
+                self.close = true;
+                false
+            }
+            Then::Duplicate(name) => engine.is_some_and(|e| self.duplicate(e, &name)),
+        }
+    }
+
+    /// Show the preset `key`, dropping the old draft.
+    fn show(&mut self, key: Option<String>) {
+        self.current = key;
+        self.draft = None;
+        self.dirty = false;
+        self.dup_name = None;
+    }
+
+    fn revert(&mut self) {
+        self.draft = None;
+        self.dirty = false;
+    }
+
+    /// Copy the shown preset as `name` and show the copy (once reloaded).
+    fn duplicate(&mut self, engine: &Engine, name: &str) -> bool {
+        let lib = engine.settings();
+        let Some(preset) = self.current.as_deref().and_then(|k| by_key(&lib, k)) else { return false };
+        let res = engine.settings_dir().ok_or_else(|| "no settings directory".to_owned()).and_then(|d| settings::duplicate(preset, name.trim(), &d));
+        match res {
+            Ok(path) => {
+                let key = path.file_name().map(|f| f.to_string_lossy().into_owned());
+                self.message = Some((format!("Created {}", path.display()), false));
+                self.show(key);
+                true
+            }
+            Err(e) => {
+                self.message = Some((e, true));
+                false
+            }
+        }
+    }
+
+    /// Write the draft to its file and reload the presets, so what runs
+    /// next (a duplicate after "Save") sees it. Returns true when written.
+    fn save(&mut self, engine: &Engine) -> bool {
+        let lib = engine.settings();
+        let Some(preset) = self.current.as_deref().and_then(|k| by_key(&lib, k)) else { return false };
+        let (Some(path), Some(d)) = (preset.file.clone(), self.draft.clone()) else { return false };
+        match std::fs::write(&path, settings::export_string(&d)) {
+            Ok(()) => {
+                self.message = Some((format!("Saved {}", path.display()), false));
+                // The reloaded preset becomes the new draft.
+                self.revert();
+                if let Err(e) = engine.reload_settings() {
+                    self.message = Some((format!("Saved {}, but could not read the presets again: {e}", path.display()), true));
+                }
+                true
+            }
+            Err(e) => {
+                self.message = Some((format!("Could not save: {e}"), true));
+                false
+            }
+        }
     }
 
     fn finish_import(&mut self, done: Option<Result<settings::Imported, String>>, lang: &Language) -> bool {
         match done {
             Some(Ok(i)) => {
-                self.message = Some(lang.tr_fmt("Imported {0} as {1}", &[&i.name, &i.path.display()]));
-                self.select_key = Some(i.key);
-                self.draft = None;
+                self.message = Some((lang.tr_fmt("Imported {0} as {1}", &[&i.name, &i.path.display()]), false));
+                self.show(Some(i.key));
                 true
             }
             Some(Err(e)) => {
-                self.message = Some(e);
+                self.message = Some((e, true));
                 false
             }
             None => false,
         }
     }
 
-    /// Returns true when a preset was saved (the library must be reloaded).
+    /// The window's contents: the preset list on the left, the shown
+    /// preset's pages on the right, the actions in a footer that stays
+    /// visible. Returns true when presets were written.
     pub fn ui(&mut self, ui: &mut egui::Ui, engine: &Engine, lang: &Language) -> bool {
-        let mut saved = false;
+        let mut reload = false;
         let lib = engine.settings();
-        let presets = &lib.presets;
-        if presets.is_empty() {
+        if lib.presets.is_empty() {
             ui.label(lang.tr("No settings found."));
             return false;
         }
-        if let Some(i) = self.select_key.as_ref().and_then(|k| presets.iter().position(|p| p.key() == *k)) {
-            self.selected = i;
-            self.select_key = None;
+        // The shown preset; the first when it is gone (or none yet).
+        let key = match self.current.as_deref().and_then(|k| by_key(&lib, k)) {
+            Some(p) => p.key(),
+            None => {
+                let k = lib.presets[0].key();
+                self.show(Some(k.clone()));
+                k
+            }
+        };
+        let preset = by_key(&lib, &key).expect("shown preset").clone();
+        let editable = preset.file.is_some();
+        if editable && self.draft.is_none() {
+            self.draft = Some(preset.raw.clone());
+            self.dirty = false;
         }
-        self.selected = self.selected.min(presets.len() - 1);
-        ui.horizontal(|ui| {
-            ui.label(lang.tr("Preset"));
-            crate::combo::Combo::from_id_salt("preset_pick").selected_text(label_of(&presets[self.selected], lang)).width(320.0).show_ui(ui, |ui| {
-                for (i, p) in presets.iter().enumerate() {
-                    if crate::combo::selectable_label(ui, self.selected == i, label_of(p, lang)).clicked() {
-                        self.selected = i;
-                        self.draft = None;
-                    }
+        let ws = crate::workspace::dialog::ws(ui.ctx());
+
+        // Footer: always visible.
+        let footer_id = egui::Id::new("settings_footer");
+        egui::TopBottomPanel::bottom(footer_id).frame(egui::Frame::NONE).show_separator_line(false).show_inside(ui, |ui| {
+            crate::workspace::dialog::rule(ui);
+            reload |= self.footer(ui, engine, &preset, lang);
+        });
+        // The preset list.
+        egui::SidePanel::left("settings_presets")
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin { right: 8, ..Default::default() }))
+            .resizable(true)
+            .default_width(220.0)
+            .width_range(150.0..=360.0)
+            .show_inside(ui, |ui| {
+                if let Some(k) = self.preset_list(ui, &lib, &key, lang) {
+                    self.run(Then::Select(k), ui.ctx(), Some(engine));
                 }
             });
+        egui::CentralPanel::default().frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 10, ..Default::default() })).show_inside(ui, |ui| {
+            self.header(ui, &preset, editable, ws, lang);
+            if let Some(p) = page_tabs(ui, self.page, lang) {
+                self.page = p;
+            }
+            ui.add_space(4.0);
+            let mut el = if editable { self.draft.clone().unwrap_or_else(|| preset.raw.clone()) } else { preset.raw.clone() };
+            let mut changed = false;
+            egui::ScrollArea::vertical().id_salt(("settings_page", self.page as u8)).auto_shrink([false, false]).show(ui, |ui| {
+                changed = self.page_ui(ui, &mut el, editable, engine, lang);
+            });
+            if editable && changed {
+                self.dirty = el.to_xml_string() != preset.raw.to_xml_string();
+                self.draft = Some(el);
+            }
         });
-        let preset = &presets[self.selected];
-        let editable = preset.file.is_some();
-        if self.draft.is_none() && editable {
-            self.draft = Some(preset.raw.clone());
-        }
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.new_name).hint_text(lang.tr("Name for a copy")).desired_width(220.0));
-            if ui.add_enabled(!self.new_name.trim().is_empty(), egui::Button::new(lang.tr("Duplicate"))).clicked() {
-                match settings::user_settings_dir().ok_or_else(|| "no settings directory".to_owned()).and_then(|d| settings::duplicate(preset, self.new_name.trim(), &d)) {
-                    Ok(path) => {
-                        self.message = Some(format!("Saved {}", path.display()));
-                        self.new_name.clear();
-                        saved = true;
+        reload
+    }
+
+    /// The presets, built-ins first. Returns the key of one clicked.
+    fn preset_list(&self, ui: &mut egui::Ui, lib: &settings::SettingsLibrary, current: &str, lang: &Language) -> Option<String> {
+        let mut picked = None;
+        egui::ScrollArea::vertical().id_salt("settings_preset_list").auto_shrink([false, false]).show(ui, |ui| {
+            for (title, mine) in [(lang.tr("Your presets"), true), (lang.tr("Built-in (read-only)"), false)] {
+                crate::workspace::dialog::caption(ui, &title);
+                let mut any = false;
+                for p in lib.presets.iter().filter(|p| p.file.is_some() == mine) {
+                    any = true;
+                    let selected = p.key() == current;
+                    let mut name = p.name();
+                    if selected && self.dirty {
+                        name = format!("{name} ●");
                     }
-                    Err(e) => self.message = Some(e),
+                    let r = crate::workspace::dialog::list_row(ui, selected, &name, &build_method_label(&p.build_method(), lang), false);
+                    let r = r.on_hover_text(p.file.as_deref().map_or_else(|| lang.tr("Built-in preset"), |f| f.display().to_string()));
+                    if r.clicked() && !selected {
+                        picked = Some(p.key());
+                    }
                 }
+                if !any {
+                    crate::workspace::dialog::note(ui, lang.tr("None yet: duplicate a preset to make your own."));
+                }
+                ui.add_space(8.0);
+            }
+        });
+        picked
+    }
+
+    /// Which preset is shown, whether it can be changed, and whether it has
+    /// unsaved changes.
+    fn header(&mut self, ui: &mut egui::Ui, preset: &CharacterSettings, editable: bool, ws: bool, lang: &Language) {
+        let name = self.draft.as_ref().map_or_else(|| preset.name(), |d| d.get("name"));
+        let (text, muted, warn) = if ws {
+            let p = crate::theme::ws(ui);
+            (p.text, p.muted, p.warning)
+        } else {
+            (ui.visuals().strong_text_color(), ui.visuals().weak_text_color(), ui.visuals().warn_fg_color)
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(lang.tr("Editing")).color(muted));
+            ui.label(RichText::new(&name).font(crate::workspace::widgets::bold(16.0)).color(text));
+            if editable {
+                ui.label(RichText::new(lang.tr("your preset")).color(muted));
+            } else {
+                ui.label(RichText::new(format!("{} {}", crate::workspace::icons::LOCK_SIMPLE, lang.tr("built-in, read-only"))).color(muted));
+            }
+            if self.dirty {
+                ui.label(RichText::new(format!("● {}", lang.tr("Unsaved changes"))).color(warn).strong());
+            }
+        });
+        if let Some(f) = &preset.file {
+            crate::workspace::dialog::note(ui, f.display().to_string());
+        }
+        if !editable {
+            ui.horizontal_wrapped(|ui| {
+                crate::workspace::dialog::note(ui, lang.tr("Built-in presets cannot be changed. Duplicate this one to make your own house rules."));
+                if crate::workspace::dialog::button(ui, &lang.tr("Duplicate to edit…"), true).clicked() {
+                    self.dup_name = Some(lang.tr_fmt("{0} (house rules)", &[&preset.name()]));
+                }
+            });
+        }
+        ui.add_space(4.0);
+    }
+
+    /// The action buttons and messages. Returns true when presets were
+    /// written.
+    fn footer(&mut self, ui: &mut egui::Ui, engine: &Engine, preset: &CharacterSettings, lang: &Language) -> bool {
+        let mut reload = false;
+        let done = self.import.ui(ui, engine, lang);
+        reload |= self.finish_import(done, lang);
+        if let Some((m, err)) = &self.message {
+            if *err {
+                crate::workspace::dialog::warning(ui, m);
+            } else {
+                crate::workspace::dialog::note(ui, m);
+            }
+        }
+        if let Some(mut name) = self.dup_name.take() {
+            let mut keep = true;
+            ui.horizontal_wrapped(|ui| {
+                crate::workspace::dialog::label(ui, &lang.tr("Name of the copy"));
+                let r = crate::workspace::dialog::text_input(ui, &mut name, "", 240.0);
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let ok = !name.trim().is_empty();
+                let create = ui.add_enabled_ui(ok, |ui| crate::workspace::dialog::button(ui, &lang.tr("Create copy"), true)).inner.clicked();
+                if ok && (create || enter) {
+                    keep = false;
+                    reload |= self.run(Then::Duplicate(name.trim().to_owned()), ui.ctx(), Some(engine));
+                }
+                if crate::workspace::dialog::button(ui, &lang.tr("Cancel"), false).clicked() {
+                    keep = false;
+                }
+            });
+            if keep {
+                self.dup_name = Some(name);
+            }
+        }
+        let editable = preset.file.is_some();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let save = ui.add_enabled_ui(editable && self.dirty, |ui| crate::workspace::dialog::button(ui, &lang.tr("Save house rules"), true)).inner;
+            let save = if editable { save.on_disabled_hover_text(lang.tr("No changes to save")) } else { save.on_disabled_hover_text(lang.tr("Built-in presets are read-only: duplicate this one to edit it")) };
+            if save.clicked() {
+                reload |= self.save(engine);
+            }
+            if ui.add_enabled_ui(self.dirty, |ui| crate::workspace::dialog::button(ui, &lang.tr("Revert"), false)).inner.on_hover_text(lang.tr("Drop the unsaved changes")).clicked() {
+                self.revert();
             }
             ui.separator();
-            if ui.button(lang.tr("Export")).on_hover_text(lang.tr("Save this preset as a settings file to share, e.g. with your players. Chummer5a reads it too.")).clicked() {
+            if crate::workspace::dialog::button(ui, &lang.tr("Duplicate…"), false).on_hover_text(lang.tr("Copy this preset as a new preset of your own")).clicked() {
+                self.dup_name = Some(lang.tr_fmt("{0} (copy)", &[&preset.name()]));
+            }
+            if crate::workspace::dialog::button(ui, &lang.tr("Export…"), false).on_hover_text(lang.tr("Save this preset as a settings file to share, e.g. with your players. Chummer5a reads it too.")).clicked() {
                 let file = if preset.file.is_some() { preset.key() } else { format!("{}.xml", settings::file_stem_for(&preset.name())) };
                 // The dialog and the write on their own thread.
                 let preset = preset.clone();
@@ -153,155 +517,227 @@ impl SettingsEditor {
                     })
                 });
             }
-            if ui.button(lang.tr("Import settings file…")).on_hover_text(lang.tr("Install a settings file someone shared, e.g. your GM's house rules.")).clicked() {
-                self.import.start(ui.ctx());
+            if crate::workspace::dialog::button(ui, &lang.tr("Import settings file…"), false).on_hover_text(lang.tr("Install a settings file someone shared, e.g. your GM's house rules.")).clicked() {
+                reload |= self.run(Then::Import, ui.ctx(), Some(engine));
             }
         });
-        let done = self.import.ui(ui, engine, lang);
-        saved |= self.finish_import(done, lang);
-        if !editable {
-            ui.weak(lang.tr("Built-in presets cannot be changed. Duplicate one to make your own house rules."));
-        }
-        if let Some(m) = &self.message {
-            ui.label(m);
-        }
-        ui.separator();
+        reload
+    }
 
-        let mut el = if editable { self.draft.clone().unwrap_or_else(|| preset.raw.clone()) } else { preset.raw.clone() };
-        let mut dirty = false;
-        egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-            ui.add_enabled_ui(editable, |ui| {
-                ui.heading(lang.tr("General"));
-                egui::Grid::new("set_general").num_columns(2).striped(true).show(ui, |ui| {
-                    ui.label(lang.tr("Name"));
-                    let mut name = el.get("name");
-                    if ui.text_edit_singleline(&mut name).changed() {
-                        el.set_child_text("name", name);
-                        dirty = true;
-                    }
-                    ui.end_row();
-                    ui.label(lang.tr("Build Method"));
-                    let mut bm = el.get("buildmethod");
-                    crate::combo::Combo::from_id_salt("set_bm").selected_text(build_method_label(&bm, lang)).show_ui(ui, |ui| {
-                        for m in ["Priority", "SumtoTen", "Karma", "LifeModule"] {
-                            if crate::combo::selectable_value(ui, &mut bm, m.to_owned(), build_method_label(m, lang)).changed() {
-                                dirty = true;
-                            }
-                        }
-                    });
-                    el.set_child_text("buildmethod", bm);
-                    ui.end_row();
-                    ui.label(lang.tr("Priority Table"));
-                    let mut pt = el.get("prioritytable");
-                    if ui.text_edit_singleline(&mut pt).changed() {
-                        el.set_child_text("prioritytable", pt);
-                        dirty = true;
-                    }
-                    ui.end_row();
-                    for c in el.clone().elements() {
-                        let t = c.text();
-                        if c.elements().next().is_none() && t.trim().parse::<i64>().is_ok() {
-                            ui.label(label(&c.name, lang));
-                            let mut v: i64 = t.trim().parse().unwrap_or(0);
-                            if ui.add(egui::DragValue::new(&mut v)).changed() {
-                                el.set_child_text(&c.name, v.to_string());
-                                dirty = true;
-                            }
-                            ui.end_row();
-                        }
-                    }
-                });
-                ui.add_space(8.0);
-                egui::CollapsingHeader::new(RichText::new(lang.tr("Options")).strong()).id_salt("set_options").default_open(true).show(ui, |ui| {
-                    egui::Grid::new("set_bools").num_columns(2).show(ui, |ui| {
-                        let bools: Vec<Element> = el.elements().filter(|c| matches!(c.text().trim(), "True" | "False")).cloned().collect();
-                        for (i, c) in bools.iter().enumerate() {
-                            let mut b = c.text().trim() == "True";
-                            if ui.checkbox(&mut b, label(&c.name, lang)).changed() {
-                                el.set_child_text(&c.name, if b { "True" } else { "False" });
-                                dirty = true;
-                            }
-                            if i % 2 == 1 {
-                                ui.end_row();
-                            }
-                        }
-                    });
-                });
-                egui::CollapsingHeader::new(RichText::new(lang.tr("Karma Costs")).strong()).id_salt("set_karma_costs").show(ui, |ui| {
-                    egui::Grid::new("set_karma").num_columns(4).show(ui, |ui| {
-                        let costs: Vec<Element> = el.child("karmacost").map(|k| k.elements().cloned().collect()).unwrap_or_default();
-                        for (i, c) in costs.iter().enumerate() {
-                            ui.label(c.name.trim_start_matches("karma"));
-                            let mut v: i64 = c.text().trim().parse().unwrap_or(0);
-                            if ui.add(egui::DragValue::new(&mut v)).changed() {
-                                el.child_or_insert("karmacost").set_child_text(&c.name, v.to_string());
-                                dirty = true;
-                            }
-                            if i % 2 == 1 {
-                                ui.end_row();
-                            }
-                        }
-                    });
-                });
-                egui::CollapsingHeader::new(RichText::new(lang.tr("Custom data (optional rules)")).strong()).id_salt("set_custom_data").show(ui, |ui| {
-                    dirty |= custom_data_ui(ui, &mut el, engine, lang);
-                });
-                egui::CollapsingHeader::new(RichText::new(lang.tr("Books")).strong()).id_salt("set_books").show(ui, |ui| {
-                    let enabled: Vec<String> = el.child("books").map(|b| b.children_named("book").map(Element::text).collect()).unwrap_or_default();
-                    let mut set = enabled.clone();
-                    egui::Grid::new("set_books").num_columns(3).show(ui, |ui| {
-                        for (i, b) in sources::book_list(&engine.store).iter().enumerate() {
-                            let mut on = set.contains(&b.code);
-                            if ui.checkbox(&mut on, format!("{} ({})", b.name, b.code)).changed() {
-                                if on {
-                                    set.push(b.code.clone());
-                                } else {
-                                    set.retain(|x| *x != b.code);
-                                }
-                            }
-                            if i % 3 == 2 {
-                                ui.end_row();
-                            }
-                        }
-                    });
-                    if set != enabled {
-                        let books = el.child_or_insert("books");
-                        books.children.clear();
-                        for b in set {
-                            books.push(Element::with_text("book", b));
-                        }
-                        dirty = true;
-                    }
-                });
-            });
-        });
-        if editable {
-            if dirty {
-                self.draft = Some(el);
-            }
-            ui.separator();
-            if ui.button(RichText::new(lang.tr("Save house rules")).strong()).clicked() {
-                if let (Some(path), Some(d)) = (preset.file.clone(), self.draft.clone()) {
-                    match std::fs::write(&path, settings::export_string(&d)) {
-                        Ok(()) => {
-                            self.message = Some(format!("Saved {}", path.display()));
-                            saved = true;
-                        }
-                        Err(e) => self.message = Some(format!("Could not save: {e}")),
-                    }
-                }
-            }
+    /// The shown page. Returns true when `el` changed.
+    fn page_ui(&mut self, ui: &mut egui::Ui, el: &mut Element, editable: bool, engine: &Engine, lang: &Language) -> bool {
+        match self.page {
+            Page::General => ui.add_enabled_ui(editable, |ui| general_ui(ui, el, engine, lang)).inner,
+            Page::Options => options_ui(ui, el, editable, &mut self.option_filter, lang),
+            Page::KarmaCosts => ui.add_enabled_ui(editable, |ui| karma_costs_ui(ui, el, lang)).inner,
+            Page::Books => books_ui(ui, el, editable, &mut self.book_filter, &sources::book_list(&engine.store), lang),
+            Page::CustomData => ui.add_enabled_ui(editable, |ui| custom_data_ui(ui, el, engine, lang)).inner,
         }
-        saved
     }
 }
 
-fn label_of(p: &CharacterSettings, lang: &Language) -> String {
-    if p.file.is_some() {
-        lang.tr_fmt("{0} (yours)", &[&p.name()])
-    } else {
-        p.name()
+/// The preset whose key is `key`.
+fn by_key<'a>(lib: &'a settings::SettingsLibrary, key: &str) -> Option<&'a CharacterSettings> {
+    lib.presets.iter().find(|p| p.key() == key)
+}
+
+/// The row of page tabs. Returns the page clicked.
+fn page_tabs(ui: &mut egui::Ui, page: Page, lang: &Language) -> Option<Page> {
+    let labels: Vec<String> = Page::ALL.iter().map(|p| lang.tr(p.label())).collect();
+    if crate::workspace::dialog::ws(ui.ctx()) {
+        let items: Vec<(&str, &str)> = labels.iter().map(|l| (l.as_str(), "")).collect();
+        let at = Page::ALL.iter().position(|p| *p == page).unwrap_or(0);
+        return crate::workspace::widgets::segmented(ui, &items, at, 26.0).map(|i| Page::ALL[i]);
     }
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        for (p, l) in Page::ALL.iter().zip(&labels) {
+            if ui.selectable_label(*p == page, l).clicked() {
+                picked = Some(*p);
+            }
+        }
+    });
+    ui.separator();
+    picked
+}
+
+/// Name, build method, priority table and the numeric values.
+fn general_ui(ui: &mut egui::Ui, el: &mut Element, engine: &Engine, lang: &Language) -> bool {
+    let mut dirty = false;
+    egui::Grid::new("set_general").num_columns(2).striped(true).show(ui, |ui| {
+        ui.label(lang.tr("Name"));
+        let mut name = el.get("name");
+        if ui.text_edit_singleline(&mut name).changed() {
+            el.set_child_text("name", name);
+            dirty = true;
+        }
+        ui.end_row();
+        ui.label(lang.tr("Build Method"));
+        let mut bm = el.get("buildmethod");
+        crate::combo::Combo::from_id_salt("set_bm").selected_text(build_method_label(&bm, lang)).show_ui(ui, |ui| {
+            for m in ["Priority", "SumtoTen", "Karma", "LifeModule"] {
+                if crate::combo::selectable_value(ui, &mut bm, m.to_owned(), build_method_label(m, lang)).changed() {
+                    dirty = true;
+                }
+            }
+        });
+        if dirty {
+            el.set_child_text("buildmethod", bm);
+        }
+        ui.end_row();
+        ui.label(lang.tr("Priority Table"));
+        let mut pt = el.get("prioritytable");
+        let mut tables = priority_tables(engine);
+        if !pt.is_empty() && !tables.contains(&pt) {
+            tables.push(pt.clone());
+        }
+        crate::combo::Combo::from_id_salt("set_pt").selected_text(pt.clone()).show_ui(ui, |ui| {
+            for t in &tables {
+                if crate::combo::selectable_value(ui, &mut pt, t.clone(), t).changed() {
+                    el.set_child_text("prioritytable", pt.clone());
+                    dirty = true;
+                }
+            }
+        });
+        ui.end_row();
+        for c in el.clone().elements() {
+            let t = c.text();
+            if c.elements().next().is_none() && t.trim().parse::<i64>().is_ok() {
+                ui.label(label(&c.name, lang));
+                let mut v: i64 = t.trim().parse().unwrap_or(0);
+                if ui.add(egui::DragValue::new(&mut v)).changed() {
+                    el.set_child_text(&c.name, v.to_string());
+                    dirty = true;
+                }
+                ui.end_row();
+            }
+        }
+    });
+    dirty
+}
+
+/// The priority tables `priorities.xml` names.
+fn priority_tables(engine: &Engine) -> Vec<String> {
+    let Ok(doc) = engine.store.doc("priorities.xml") else { return Vec::new() };
+    doc.child("prioritytables").map(|t| t.children_named("prioritytable").map(Element::text).collect()).unwrap_or_default()
+}
+
+/// The yes/no options, two columns, with a filter.
+fn options_ui(ui: &mut egui::Ui, el: &mut Element, editable: bool, filter: &mut String, lang: &Language) -> bool {
+    let mut dirty = false;
+    crate::workspace::dialog::search(ui, filter, &lang.tr("Filter options"), 260.0);
+    ui.add_space(4.0);
+    let needle = filter.trim().to_lowercase();
+    let bools: Vec<(Element, String)> =
+        el.elements().filter(|c| matches!(c.text().trim(), "True" | "False")).map(|c| (c.clone(), label(&c.name, lang))).filter(|(_, l)| crate::combo::matches(&l.to_lowercase(), &needle)).collect();
+    ui.add_enabled_ui(editable, |ui| {
+        egui::Grid::new("set_bools").num_columns(2).show(ui, |ui| {
+            for (i, (c, l)) in bools.iter().enumerate() {
+                let mut b = c.text().trim() == "True";
+                if crate::workspace::dialog::check(ui, &mut b, l).changed() {
+                    el.set_child_text(&c.name, if b { "True" } else { "False" });
+                    dirty = true;
+                }
+                if i % 2 == 1 {
+                    ui.end_row();
+                }
+            }
+        });
+    });
+    if bools.is_empty() {
+        crate::workspace::dialog::note(ui, lang.tr("No options match."));
+    }
+    dirty
+}
+
+fn karma_costs_ui(ui: &mut egui::Ui, el: &mut Element, lang: &Language) -> bool {
+    let mut dirty = false;
+    egui::Grid::new("set_karma").num_columns(4).striped(true).show(ui, |ui| {
+        let costs: Vec<Element> = el.child("karmacost").map(|k| k.elements().cloned().collect()).unwrap_or_default();
+        for (i, c) in costs.iter().enumerate() {
+            let l = label(&c.name, lang);
+            ui.label(if l == c.name { c.name.trim_start_matches("karma").to_owned() } else { l });
+            let mut v: i64 = c.text().trim().parse().unwrap_or(0);
+            if ui.add(egui::DragValue::new(&mut v)).changed() {
+                el.child_or_insert("karmacost").set_child_text(&c.name, v.to_string());
+                dirty = true;
+            }
+            if i % 2 == 1 {
+                ui.end_row();
+            }
+        }
+    });
+    dirty
+}
+
+/// The books whose code or name contain every word of `query` (any case).
+pub(crate) fn filter_books<'a>(books: &'a [sources::BookInfo], query: &str) -> Vec<&'a sources::BookInfo> {
+    let needle = query.trim().to_lowercase();
+    books.iter().filter(|b| crate::combo::matches(&format!("{} {}", b.code, b.name).to_lowercase(), &needle)).collect()
+}
+
+/// The preset's enabled book codes.
+fn enabled_books(el: &Element) -> Vec<String> {
+    el.child("books").map(|b| b.children_named("book").map(Element::text).collect()).unwrap_or_default()
+}
+
+fn set_books(el: &mut Element, codes: Vec<String>) {
+    let books = el.child_or_insert("books");
+    books.children.clear();
+    for b in codes {
+        books.push(Element::with_text("book", b));
+    }
+}
+
+/// The sourcebooks with a search and All / None / Core only.
+fn books_ui(ui: &mut egui::Ui, el: &mut Element, editable: bool, filter: &mut String, books: &[sources::BookInfo], lang: &Language) -> bool {
+    let enabled = enabled_books(el);
+    let mut set = enabled.clone();
+    let on = books.iter().filter(|b| b.permanent || set.contains(&b.code)).count();
+    ui.horizontal_wrapped(|ui| {
+        crate::workspace::dialog::search(ui, filter, &lang.tr("Search books (code or name)"), 260.0);
+        ui.add_enabled_ui(editable, |ui| {
+            if crate::workspace::dialog::button(ui, &lang.tr("All"), false).on_hover_text(lang.tr("Enable every book")).clicked() {
+                set = books.iter().map(|b| b.code.clone()).collect();
+            }
+            if crate::workspace::dialog::button(ui, &lang.tr("None"), false).on_hover_text(lang.tr("Only the core rulebook")).clicked() {
+                set = books.iter().filter(|b| b.permanent).map(|b| b.code.clone()).collect();
+            }
+            if crate::workspace::dialog::button(ui, &lang.tr("Core only"), false).on_hover_text(lang.tr("The core rulebook and nothing else")).clicked() {
+                set = books.iter().filter(|b| b.permanent || b.code == "SR5").map(|b| b.code.clone()).collect();
+            }
+        });
+        crate::workspace::dialog::note(ui, lang.tr_fmt("{0} of {1} enabled", &[&on, &books.len()]));
+    });
+    ui.add_space(4.0);
+    let shown = filter_books(books, filter);
+    ui.add_enabled_ui(editable, |ui| {
+        egui::Grid::new("set_books").num_columns(2).striped(true).show(ui, |ui| {
+            for b in &shown {
+                let mut checked = b.permanent || set.contains(&b.code);
+                let r = ui.add_enabled_ui(!b.permanent, |ui| crate::workspace::dialog::check(ui, &mut checked, &b.code)).inner;
+                if b.permanent {
+                    r.on_disabled_hover_text(lang.tr("The core rulebook is always enabled"));
+                } else if r.changed() {
+                    if checked {
+                        set.push(b.code.clone());
+                    } else {
+                        set.retain(|x| *x != b.code);
+                    }
+                }
+                ui.label(&b.name);
+                ui.end_row();
+            }
+        });
+    });
+    if shown.is_empty() {
+        crate::workspace::dialog::note(ui, lang.tr("No books match."));
+    }
+    if set != enabled {
+        set_books(el, set);
+        return true;
+    }
+    false
 }
 
 fn label(tag: &str, lang: &Language) -> String {
@@ -323,8 +759,6 @@ fn capitalize(s: &str) -> String {
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
 
-/// Toggle custom data directories for a preset. Writes Chummer's
-/// `<customdatadirectorynames>` layout (directoryname, order, enabled).
 /// Display name of a `<buildmethod>` value.
 fn build_method_label(m: &str, lang: &Language) -> String {
     match m {
@@ -355,6 +789,8 @@ fn user_folder_row(ui: &mut egui::Ui, lang: &Language) {
     ui.add_space(4.0);
 }
 
+/// Toggle custom data directories for a preset. Writes Chummer's
+/// `<customdatadirectorynames>` layout (directoryname, order, enabled).
 fn custom_data_ui(ui: &mut egui::Ui, el: &mut Element, engine: &Engine, lang: &Language) -> bool {
     use chummer_core::custom_data;
     let dirs = engine.custom_data_directories();

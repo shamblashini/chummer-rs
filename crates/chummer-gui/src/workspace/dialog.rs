@@ -16,15 +16,68 @@ pub fn ws(ctx: &egui::Context) -> bool {
     theme::current(ctx).workspace_layout()
 }
 
+/// Room a tool window keeps from the app window's edges.
+const SCREEN_MARGIN: f32 = 16.0;
+
+/// Room a window's frame and title bar take around its contents.
+const WINDOW_CHROME: Vec2 = Vec2::new(32.0, 64.0);
+
+/// The largest contents a tool window may have: the app window less a
+/// margin and the window's own frame and title bar.
+pub fn max_window_size(ctx: &egui::Context) -> Vec2 {
+    (ctx.content_rect().size() - Vec2::splat(SCREEN_MARGIN * 2.0) - WINDOW_CHROME).max(egui::vec2(240.0, 160.0))
+}
+
+/// Make a tool window resizable and fit it to the app window: it opens at
+/// `default` (smaller when the app window is small), cannot be made
+/// smaller than `min` nor larger than the app window. With `scroll` its
+/// contents scroll when they do not fit; without, the contents arrange
+/// their own scrolling (see [`with_footer`]).
+pub fn fit<'a>(ctx: &egui::Context, w: egui::Window<'a>, default: Vec2, min: Vec2, scroll: bool) -> egui::Window<'a> {
+    let max = max_window_size(ctx);
+    let min = min.min(max);
+    let default = default.max(min).min(max);
+    w.resizable(true).default_size(default).min_size(min).max_size(max).constrain(true).vscroll(scroll)
+}
+
+/// A window's body that scrolls above a `footer` that stays put (its
+/// action buttons are always visible). Fills the window; use it in a
+/// window [`fit`] without `scroll`.
+pub fn with_footer<R>(ui: &mut Ui, id: impl std::hash::Hash, footer: impl FnOnce(&mut Ui), body: impl FnOnce(&mut Ui) -> R) -> R {
+    let id = egui::Id::new(id);
+    egui::TopBottomPanel::bottom(id.with("footer")).frame(egui::Frame::NONE).show_separator_line(false).show_inside(ui, |ui| {
+        rule(ui);
+        footer(ui);
+    });
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show_inside(ui, |ui| egui::ScrollArea::vertical().id_salt(id.with("body")).auto_shrink([false, false]).show(ui, body).inner)
+        .inner
+}
+
 /// A dialog window `title`. `open` becomes false when it is closed with
 /// its close button (and, in the Workspace, Escape). `size` is the
-/// default size; `resizable` dialogs can be resized.
-pub fn window<R>(ctx: &egui::Context, id: impl std::hash::Hash, title: &str, open: &mut bool, size: Vec2, resizable: bool, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
+/// default size; a height of 0 makes the dialog as tall as its contents
+/// (it scrolls when they are taller than the app window). Every dialog
+/// can be resized and fits the app window ([`fit`]); `fills` dialogs lay
+/// out and scroll their contents themselves, the others scroll as a whole.
+pub fn window<R>(ctx: &egui::Context, id: impl std::hash::Hash, title: &str, open: &mut bool, size: Vec2, fills: bool, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
     let id = egui::Id::new(id);
+    let auto_height = size.y <= 0.0;
+    let min = egui::vec2(size.x.min(320.0), if fills { 240.0 } else { 80.0 });
+    let fitted = |w: egui::Window<'static>| fit(ctx, w, if auto_height { egui::vec2(size.x, min.y) } else { size }, min, !fills && !auto_height);
+    // Contents as tall as they are, up to the app window's height.
+    let max_body = max_window_size(ctx).y - 30.0;
+    let add = |ui: &mut Ui| {
+        if auto_height {
+            egui::ScrollArea::vertical().id_salt("dialog_body").max_height(max_body).auto_shrink([false, true]).show(ui, add).inner
+        } else {
+            add(ui)
+        }
+    };
     if !ws(ctx) {
-        let mut w = egui::Window::new(title).id(id).open(open).collapsible(false).resizable(resizable);
-        w = if resizable { w.default_size(size) } else { w.default_width(size.x) };
-        return w.show(ctx, add).and_then(|r| r.inner);
+        let w = fitted(egui::Window::new(title.to_owned()).id(id).collapsible(false));
+        return w.open(open).show(ctx, add).and_then(|r| r.inner);
     }
     let pal = theme::current(ctx).ws;
     let frame = egui::Frame::new()
@@ -34,8 +87,7 @@ pub fn window<R>(ctx: &egui::Context, id: impl std::hash::Hash, title: &str, ope
         .inner_margin(egui::Margin::same(14))
         .shadow(egui::epaint::Shadow { offset: [0, 6], blur: 24, spread: 0, color: Color32::from_black_alpha(90) });
     let mut close = false;
-    let mut w = egui::Window::new(title).id(id).title_bar(false).frame(frame).collapsible(false).resizable(resizable);
-    w = if resizable { w.default_size(size) } else { w.default_width(size.x) };
+    let w = fitted(egui::Window::new(title.to_owned()).id(id).title_bar(false).frame(frame).collapsible(false));
     let r = w.show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new(title).font(widgets::bold(15.0)).color(pal.text));

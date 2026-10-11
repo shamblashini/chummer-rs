@@ -2557,3 +2557,180 @@ fn closing_member_tabs_and_the_campaign_keeps_the_front_one() {
     assert_eq!(h.app.views[h.app.active].ws_id(), munin, "closing the campaign");
     h.frames(1);
 }
+
+// ----- the Character Settings window -----
+
+/// The window's rectangle (from egui's memory of its area).
+fn window_rect(h: &Harness, id: &str) -> Rect {
+    h.ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap_or_else(|| panic!("no window {id}"))
+}
+
+/// Whether `inner` lies within `outer` (a point of slack for rounding).
+fn inside(inner: Rect, outer: Rect) -> bool {
+    outer.expand(1.0).contains_rect(inner)
+}
+
+/// A preset name no other test uses (they share the settings folder).
+fn unique_preset(tag: &str) -> String {
+    format!("UI {tag} {}", chummer_core::items::new_guid().get(..8).unwrap_or("x"))
+}
+
+/// In a small app window the Settings window fits, its footer with Save
+/// is on screen, and a duplicate, an edit and a save are usable at once:
+/// no restart.
+#[test]
+fn settings_window_fits_and_presets_apply_at_once() {
+    for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark] {
+        let mut h = Harness::new(kind);
+        h.size = Vec2::new(900.0, 600.0);
+        let screen = Rect::from_min_size(Pos2::ZERO, h.size);
+        h.app.show_settings = true;
+        h.frames(4);
+        let win = window_rect(&h, "character_settings_editor");
+        assert!(inside(win, screen), "{kind:?}: the window {win:?} fits the app window {screen:?}");
+        let save = h.find_text("Save house rules").expect("Save house rules is drawn");
+        assert!(inside(save, win) && inside(save, screen), "{kind:?}: Save {save:?} is visible in {win:?}");
+        // Built-in presets are read-only, with a way to make a copy.
+        assert!(h.find_text("Duplicate to edit…").is_some(), "{kind:?}: {:?}", h.on_screen());
+
+        // Duplicate: the copy is shown at once and is usable everywhere.
+        let name = unique_preset("dup");
+        h.click_text("Duplicate to edit…");
+        h.frames(1);
+        h.app.settings_editor.dup_name = Some(name.clone());
+        h.frames(1);
+        h.click_text("Create copy");
+        h.frames(2);
+        let key = h.app.settings_editor.current.clone().expect("a preset is shown");
+        let lib = h.app.engine.settings();
+        let copy = lib.find(&key).expect("the duplicate is in the library without a restart");
+        assert_eq!(copy.name(), name);
+        assert!(copy.file.is_some());
+        assert!(chummer_core::chargen::creation_presets(&h.app.engine).iter().any(|p| p.key() == key), "the wizard lists the copy");
+        assert!(h.find_where(|t| t.contains("Could not") || t.contains("restart")).is_none(), "{kind:?}: no reload error: {:?}", h.on_screen());
+        assert!(h.find_text(&name).is_some(), "{kind:?}: the copy is shown");
+
+        // Edit an option: marked unsaved; Save writes and reloads it.
+        let flag = "allowinitiationincreatemode";
+        let before = copy.flag(flag);
+        h.click_text("Options");
+        h.frames(1);
+        h.click_text("Allow initiation in creation");
+        h.frames(1);
+        assert!(h.app.settings_editor.dirty, "{kind:?}: the edit is unsaved");
+        assert!(h.find_where(|t| t.contains("Unsaved changes")).is_some(), "{kind:?}: {:?}", h.on_screen());
+        let save = h.find_text("Save house rules").unwrap();
+        assert!(inside(save, screen));
+        h.click_at(save.center());
+        h.frames(2);
+        assert!(!h.app.settings_editor.dirty);
+        assert_eq!(h.app.engine.settings().find(&key).unwrap().flag(flag), !before, "{kind:?}: the saved edit applies at once");
+        h.reset();
+    }
+}
+
+/// Switching presets or closing the window with unsaved edits asks first.
+#[test]
+fn settings_unsaved_changes_prompt() {
+    let mut h = Harness::new(ThemeKind::WorkspaceLight);
+    h.size = Vec2::new(1000.0, 650.0);
+    let name = unique_preset("prompt");
+    let dir = h.app.engine.settings_dir().unwrap();
+    let standard = h.app.engine.settings().find("Standard").unwrap().clone();
+    let path = chummer_core::settings::duplicate(&standard, &name, &dir).unwrap();
+    h.app.engine.reload_settings().unwrap();
+    let key = path.file_name().unwrap().to_string_lossy().into_owned();
+    h.app.settings_editor.current = Some(key.clone());
+    h.app.show_settings = true;
+    h.frames(3);
+    h.click_text("Options");
+    h.frames(1);
+    h.click_text("Allow initiation in creation");
+    h.frames(1);
+    assert!(h.app.settings_editor.dirty);
+
+    // Another preset: the prompt; Cancel stays.
+    h.click_text("Street Level");
+    h.frames(2);
+    assert!(h.find_text("Unsaved Changes").is_some(), "the prompt is shown: {:?}", h.on_screen());
+    h.click_text("Cancel");
+    h.frames(2);
+    assert_eq!(h.app.settings_editor.current.as_deref(), Some(key.as_str()));
+    assert!(h.app.settings_editor.dirty, "Cancel keeps the edit");
+    // Don't save: drops the edit and switches.
+    h.click_text("Street Level");
+    h.frames(2);
+    h.click_text("Don't save");
+    h.frames(2);
+    assert_ne!(h.app.settings_editor.current.as_deref(), Some(key.as_str()));
+    assert!(!h.app.settings_editor.dirty);
+    assert_eq!(h.app.engine.settings().find(&key).unwrap().flag("allowinitiationincreatemode"), standard.flag("allowinitiationincreatemode"), "nothing was written");
+
+    // Closing with an unsaved edit asks too; Save writes it.
+    h.app.settings_editor.current = Some(key.clone());
+    h.frames(2);
+    h.click_text("Allow initiation in creation");
+    h.frames(1);
+    assert!(h.app.settings_editor.dirty);
+    h.key(Key::Escape, Modifiers::NONE);
+    h.frames(2);
+    assert!(h.app.show_settings, "the window stays open while asking");
+    assert!(h.find_text("Unsaved Changes").is_some(), "{:?}", h.on_screen());
+    h.click_text("Save");
+    h.frames(3);
+    assert!(!h.app.show_settings, "closed after saving");
+    assert_ne!(h.app.engine.settings().find(&key).unwrap().flag("allowinitiationincreatemode"), standard.flag("allowinitiationincreatemode"), "saved");
+}
+
+/// The Books page filters by code or name and counts the enabled books.
+#[test]
+fn settings_book_search_filters() {
+    let books = chummer_core::sources::book_list(&chummer_core::data::DataStore::discover().unwrap());
+    let codes = |q: &str| crate::settings_ui::filter_books(&books, q).iter().map(|b| b.code.clone()).collect::<Vec<_>>();
+    assert_eq!(codes("").len(), books.len());
+    assert!(codes("grimoire").iter().any(|c| c == "SG"), "{:?}", codes("grimoire"));
+    assert!(codes("SG").contains(&"SG".to_owned()));
+    assert!(!codes("grimoire").contains(&"SR5".to_owned()));
+    assert!(codes("street grim").iter().all(|c| c.starts_with("SG")), "{:?}", codes("street grim"));
+    assert!(codes("no such book").is_empty());
+
+    let mut h = Harness::new(ThemeKind::Graphite);
+    h.size = Vec2::new(1000.0, 650.0);
+    h.app.show_settings = true;
+    h.app.settings_editor.current = Some(chummer_core::settings::STANDARD_ID.into());
+    h.frames(2);
+    h.click_text("Books");
+    h.frames(2);
+    assert!(h.find_where(|t| t.ends_with(&format!("of {} enabled", books.len()))).is_some(), "{:?}", h.on_screen());
+    assert!(h.find_text("Run and Gun").is_some());
+    h.app.settings_editor.book_filter = "grimoire".into();
+    h.frames(2);
+    assert!(h.find_text("Street Grimoire").is_some(), "{:?}", h.on_screen());
+    assert!(h.find_text("Run and Gun").is_none(), "filtered out");
+}
+
+/// The first-start setup in a short app window: its buttons stay on
+/// screen and work, and Escape skips it.
+#[test]
+fn setup_buttons_reachable_in_a_short_window() {
+    // 450 points: a 1064 pixel tall window at a scale of 2.4.
+    for (kind, size) in [(ThemeKind::WorkspaceDark, Vec2::new(1000.0, 450.0)), (ThemeKind::Classic, Vec2::new(1000.0, 600.0)), (ThemeKind::WorkspaceLight, MIN)] {
+        let mut h = Harness::new(kind);
+        h.size = size;
+        let screen = Rect::from_min_size(Pos2::ZERO, size);
+        h.app.open_setup();
+        h.frames(3);
+        for label in ["Next", "Skip setup"] {
+            let r = h.find_text(label).unwrap_or_else(|| panic!("{kind:?}: no {label}: {:?}", h.on_screen()));
+            assert!(inside(r, screen), "{kind:?} {size:?}: {label} at {r:?} is on screen");
+        }
+        h.click_text("Next");
+        h.frames(2);
+        assert_eq!(h.app.ux.setup.as_ref().map(|s| s.step.index()), Some(1), "{kind:?}: Next goes on");
+        let back = h.find_text("Back").expect("Back");
+        assert!(inside(back, screen));
+        h.key(Key::Escape, Modifiers::NONE);
+        h.frames(2);
+        assert!(h.app.ux.setup.is_none(), "{kind:?}: Escape skips the setup");
+    }
+}

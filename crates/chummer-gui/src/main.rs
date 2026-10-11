@@ -1143,9 +1143,7 @@ impl App {
             open = true;
             self.settings_editor.start_import(ctx);
         }
-        egui::Window::new(self.lang.tr("Character Settings")).id(egui::Id::new("character_settings")).open(&mut open).default_size([820.0, 680.0]).show(ctx, |ui| {
-            reload |= self.settings_editor.ui(ui, &self.engine, &self.lang);
-        });
+        reload |= self.settings_editor.window(ctx, &self.engine, &self.lang, &mut open);
         self.show_settings = open;
         if reload {
             self.reload_settings();
