@@ -111,6 +111,11 @@ impl Choke {
         }
     }
 
+    /// "Narrow", "Medium", "Wide": the selector's labels.
+    pub fn short_label(self) -> &'static str {
+        self.key()
+    }
+
     /// The effect at each band, short to extreme.
     pub fn effects(self) -> &'static [Effect; 4] {
         match self {

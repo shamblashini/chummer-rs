@@ -704,7 +704,7 @@ impl CharacterView {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.label(RichText::new(lang.tr("Choke")).size(11.5).color(ws.muted)).on_hover_text(lang.tr("Click the setting again to clear it (slugs)."));
-            let names: Vec<String> = choke::Choke::ALL.iter().map(|c| lang.tr(c.label().trim_end_matches(" spread"))).collect();
+            let names: Vec<String> = choke::Choke::ALL.iter().map(|c| lang.tr(c.short_label())).collect();
             let tips: Vec<String> = choke::Choke::ALL.iter().map(|c| crate::play_ui::choke_tip(lang, *c, Some(&ranges))).collect();
             let items: Vec<(&str, &str)> = names.iter().zip(&tips).map(|(n, t)| (n.as_str(), t.as_str())).collect();
             let at = set.map_or(usize::MAX, |c| c as usize);
@@ -714,16 +714,19 @@ impl CharacterView {
                 let cmd = Command::SetChoke { weapon: guid.clone(), choke: crate::play_ui::choke_click(set, i) };
                 changed |= self.doc.run(cmd, status).is_some_and(|r| r.changed);
             }
-            if set.is_some_and(choke::Choke::by_range) {
-                ui.add_space(4.0);
+        });
+        // Its own row: a card is too narrow for both.
+        if set.is_some_and(choke::Choke::by_range) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
                 ui.label(RichText::new(lang.tr("Range")).size(11.5).color(ws.muted));
                 let tips: Vec<String> = choke::Band::ALL.iter().map(|b| if ranges[*b as usize].is_empty() { lang.tr(b.label()) } else { format!("{}: {} m", lang.tr(b.label()), ranges[*b as usize]) }).collect();
                 let items: Vec<(&str, &str)> = choke::Band::ALL.iter().zip(&tips).map(|(b, t)| (&b.label()[..1], t.as_str())).collect();
                 if let Some(i) = ui.push_id("choke_band", |ui| widgets::segmented(ui, &items, band as usize, 22.0)).inner {
                     self.play.bands.insert(guid.clone(), choke::Band::ALL[i]);
                 }
-            }
-        });
+            });
+        }
         if let Some(c) = set {
             ui.label(RichText::new(crate::play_ui::choke_note(lang, c, Some(band))).size(11.0).color(ws.muted));
         }

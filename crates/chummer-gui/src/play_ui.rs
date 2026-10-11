@@ -134,10 +134,10 @@ fn choke_ui(ui: &mut egui::Ui, ch: &mut Doc, lang: &Language, w: &Element) -> bo
     let current = choke::choke(w);
     let mut changed = false;
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(lang.tr("Choke")).strong()).on_hover_text(lang.tr("Click the setting again to clear it (slugs)."));
         for (i, c) in Choke::ALL.into_iter().enumerate() {
-            if ui.selectable_label(current == Some(c), lang.tr(c.label())).on_hover_text(choke_tip(lang, c, None)).clicked() {
+            if ui.selectable_label(current == Some(c), lang.tr(c.short_label())).on_hover_text(choke_tip(lang, c, None)).clicked() {
                 changed |= ch.set(Command::SetChoke { weapon: w.get("guid"), choke: choke_click(current, i) });
             }
         }
