@@ -196,7 +196,7 @@ fn memory(r: &mut Runner) -> Result<()> {
     }
     let dir = fixture(HEAVY).parent().context("fixtures")?.to_owned();
     let mut all: Vec<(u64, String)> = std::fs::read_dir(&dir)?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "chum5")).map(|p| (std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0), p.to_string_lossy().into_owned())).collect();
-    all.sort_by(|a, b| b.0.cmp(&a.0));
+    all.sort_by_key(|a| std::cmp::Reverse(a.0));
     let paths: Vec<&str> = std::iter::once("memory").chain(all.iter().take(10).map(|(_, p)| p.as_str())).collect();
     let t = Instant::now();
     let v = child(&paths)?;

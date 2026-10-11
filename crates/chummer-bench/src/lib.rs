@@ -338,7 +338,11 @@ pub fn check(parts: Vec<Report>, budgets: &Budgets, history: &[Report]) -> Check
             report.benches.push(r);
         }
     }
-    let previous = history.iter().max_by_key(|h| h.created);
+    // Newest first: each benchmark is compared with the newest run that
+    // has it (a run of a subset leaves the others to older runs).
+    let mut newest: Vec<&Report> = history.iter().collect();
+    newest.sort_by_key(|h| std::cmp::Reverse(h.created));
+    let previous = newest.first().copied();
     let (mut failures, mut warnings) = (Vec::new(), Vec::new());
     for r in &mut report.benches {
         if r.skipped.is_some() {
@@ -346,7 +350,7 @@ pub fn check(parts: Vec<Report>, budgets: &Budgets, history: &[Report]) -> Check
             continue;
         }
         r.budget = budgets.budget(&r.name);
-        let prev = previous.and_then(|p| p.get(&r.name)).filter(|p| p.skipped.is_none() && p.unit == r.unit && p.median > 0.0);
+        let prev = newest.iter().find_map(|p| p.get(&r.name).filter(|p| p.skipped.is_none() && p.unit == r.unit && p.median > 0.0));
         let mut status = "ok";
         let mut reason = String::new();
         if let Some(p) = prev {
@@ -528,12 +532,15 @@ mod tests {
         assert_eq!(c.report.benches[0].status, "slow");
         assert!(c.failures.is_empty());
         let prev = c.report.clone();
-        let c = check(vec![rep(3, &[("a", 158.0, "")])], &b, &[prev.clone()]);
+        let c = check(vec![rep(3, &[("a", 158.0, "")])], &b, std::slice::from_ref(&prev));
         assert_eq!(c.report.benches[0].status, "fail");
         assert_eq!(c.report.benches[0].baseline, Some(100.0));
         // A one-off spike: back to normal clears it.
         let c = check(vec![rep(3, &[("a", 101.0, "")])], &b, &[prev]);
         assert_eq!(c.report.benches[0].status, "ok");
+        // A newer run of a subset leaves the others to the older run.
+        let c = check(vec![rep(3, &[("a", 100.0, "")])], &b, &[rep(1, &[("a", 99.0, "ok")]), rep(2, &[("b", 5.0, "ok")])]);
+        assert_eq!(c.report.benches[0].baseline, Some(99.0));
         // Over budget fails at once.
         let c = check(vec![rep(1, &[("a", 1001.0, "")])], &b, &[]);
         assert_eq!(c.failures.len(), 1);
