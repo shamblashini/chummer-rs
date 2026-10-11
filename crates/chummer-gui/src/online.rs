@@ -305,7 +305,7 @@ impl Online {
         if let Some((mut link, mut name)) = self.join.take() {
             let mut open = true;
             let mut keep = true;
-            egui::Window::new(lang.tr("Join Campaign")).id(egui::Id::new("join_campaign")).open(&mut open).collapsible(false).default_width(560.0).show(ctx, |ui| {
+            crate::workspace::dialog::fit(ctx, egui::Window::new(lang.tr("Join Campaign")).id(egui::Id::new("join_campaign")).open(&mut open).collapsible(false), egui::vec2(560.0, 300.0), egui::vec2(360.0, 180.0), true).show(ctx, |ui| {
                 ui.label(lang.tr("Paste the invite link your GM sent you:"));
                 ui.add(egui::TextEdit::singleline(&mut link).hint_text("chummer-rs://join/…").desired_width(f32::INFINITY));
                 let parsed = link.trim().parse::<InviteLink>();
@@ -343,7 +343,7 @@ impl Online {
                 self.load_form();
             }
             let mut open = true;
-            egui::Window::new(lang.tr("Online Settings")).id(egui::Id::new("online_settings")).open(&mut open).default_width(620.0).show(ctx, |ui| self.settings_ui(ui, lang));
+            crate::workspace::dialog::fit(ctx, egui::Window::new(lang.tr("Online Settings")).id(egui::Id::new("online_settings")).open(&mut open), egui::vec2(620.0, 560.0), egui::vec2(380.0, 240.0), true).show(ctx, |ui| self.settings_ui(ui, lang));
             if !open {
                 self.show_settings = false;
                 self.form = SettingsForm::default();

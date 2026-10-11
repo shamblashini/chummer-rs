@@ -83,7 +83,7 @@ impl KitForm {
         if !cats.contains(&self.category) {
             self.category = cats.first().cloned().unwrap_or_default();
         }
-        egui::Window::new(lang.tr("Select a PACKS Kit")).id(egui::Id::new("gm_kit_npc")).open(&mut open).default_size([620.0, 480.0]).collapsible(false).show(ctx, |ui| {
+        crate::workspace::dialog::fit(ctx, egui::Window::new(lang.tr("Select a PACKS Kit")).id(egui::Id::new("gm_kit_npc")).open(&mut open).collapsible(false), egui::vec2(620.0, 480.0), egui::vec2(400.0, 280.0), false).show(ctx, |ui| {
             egui::Grid::new("gm_kit_top").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
                 ui.label(lang.tr("Category"));
                 crate::combo::Combo::from_id_salt("gm_kit_cat").selected_text(self.category.clone()).width(240.0).show_ui(ui, |ui| {

@@ -884,7 +884,7 @@ impl Updater {
             }
         };
         let mut open = true;
-        egui::Window::new(format!("What's new in chummer-rs {}", release.version)).id(egui::Id::new("update_notes")).open(&mut open).default_size([560.0, 420.0]).show(ctx, |ui| {
+        crate::workspace::dialog::fit(ctx, egui::Window::new(format!("What's new in chummer-rs {}", release.version)).id(egui::Id::new("update_notes")).open(&mut open), egui::vec2(560.0, 420.0), egui::vec2(360.0, 220.0), false).show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                 if release.notes.trim().is_empty() {
                     ui.label("No release notes.");

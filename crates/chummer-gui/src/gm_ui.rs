@@ -72,7 +72,7 @@ impl CritterWizard {
         let options = critter::critter_options(&store, &settings.books());
         let mut result = CritterResult::Open;
         let mut open = true;
-        egui::Window::new(lang.tr("New Critter")).id(egui::Id::new("new_critter")).open(&mut open).default_size([760.0, 600.0]).collapsible(false).show(ctx, |ui| {
+        crate::workspace::dialog::fit(ctx, egui::Window::new(lang.tr("New Critter")).id(egui::Id::new("new_critter")).open(&mut open).collapsible(false), egui::vec2(760.0, 600.0), egui::vec2(480.0, 320.0), false).show(ctx, |ui| {
             egui::Grid::new("critter_top").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                 ui.label(lang.tr("Name"));
                 ui.text_edit_singleline(&mut self.name);
@@ -253,7 +253,7 @@ impl PacksWindow {
         let mut changed = false;
         let mut open = true;
         let title = if mode == PacksMode::Add { lang.tr("Select a PACKS Kit") } else { lang.tr("Create PACKS Kit") };
-        egui::Window::new(title).id(egui::Id::new("packs_kit")).open(&mut open).default_size([760.0, 520.0]).collapsible(false).show(ctx, |ui| {
+        crate::workspace::dialog::fit(ctx, egui::Window::new(title).id(egui::Id::new("packs_kit")).open(&mut open).collapsible(false), egui::vec2(760.0, 520.0), egui::vec2(480.0, 300.0), false).show(ctx, |ui| {
             if ch.created {
                 ui.colored_label(crate::theme::warn(ui), lang.tr("PACKS kits can only be used while the character is in Create Mode."));
                 return;

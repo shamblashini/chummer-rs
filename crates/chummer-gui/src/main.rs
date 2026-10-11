@@ -835,13 +835,17 @@ impl App {
             return;
         };
         let formats: Vec<String> = chummer_core::export::BUILT_IN.iter().map(|s| s.to_string()).chain(chummer_core::export::stylesheets().into_iter().map(|(n, _)| n)).collect();
-        crate::combo::Combo::from_id_salt("export_fmt").selected_text(self.export_format.clone()).show_ui(ui, |ui| {
-            for f in &formats {
-                crate::combo::selectable_value(ui, &mut self.export_format, f.clone(), f);
-            }
+        let mut go = false;
+        // The button stays visible below the scrolling options.
+        workspace::dialog::with_footer(ui, "export_character", |ui| go = workspace::dialog::button(ui, &self.lang.tr("Export…"), true).clicked(), |ui| {
+            crate::combo::Combo::from_id_salt("export_fmt").selected_text(self.export_format.clone()).show_ui(ui, |ui| {
+                for f in &formats {
+                    crate::combo::selectable_value(ui, &mut self.export_format, f.clone(), f);
+                }
+            });
+            ui.weak(self.lang.tr("XML and JSON contain the full print data; stylesheets produce their own format."));
         });
-        ui.weak(self.lang.tr("XML and JSON contain the full print data; stylesheets produce their own format."));
-        if ui.button(self.lang.tr("Export…")).clicked() {
+        if go {
             let ext = match self.export_format.as_str() {
                 "JSON" => "json",
                 "XML" => "xml",
@@ -868,20 +872,24 @@ impl App {
         };
         let sheets = chummer_core::print::available_sheets(&self.lang.code);
         let mut open_sheets = false;
-        ui.horizontal(|ui| {
-            ui.label(self.lang.tr("Character Sheet:"));
-            crate::combo::Combo::from_id_salt("sheet").selected_text(self.print_sheet.clone()).width(320.0).show_ui(ui, |ui| {
-                for (name, _) in &sheets {
-                    crate::combo::selectable_value(ui, &mut self.print_sheet, name.clone(), name);
+        let mut go = false;
+        // The button stays visible below the scrolling options.
+        workspace::dialog::with_footer(ui, "character_sheet", |ui| go = workspace::dialog::button(ui, &self.lang.tr("Open sheet"), true).clicked(), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(self.lang.tr("Character Sheet:"));
+                crate::combo::Combo::from_id_salt("sheet").selected_text(self.print_sheet.clone()).width(320.0).show_ui(ui, |ui| {
+                    for (name, _) in &sheets {
+                        crate::combo::selectable_value(ui, &mut self.print_sheet, name.clone(), name);
+                    }
+                });
+                if crate::prefs::open_button(ui, &self.lang, "Open folder").on_hover_text(self.lang.tr("Your own character sheets (*.xsl) go here; one with a bundled sheet's file name replaces it")).clicked() {
+                    open_sheets = true;
                 }
             });
-            if crate::prefs::open_button(ui, &self.lang, "Open folder").on_hover_text(self.lang.tr("Your own character sheets (*.xsl) go here; one with a bundled sheet's file name replaces it")).clicked() {
-                open_sheets = true;
-            }
+            ui.checkbox(&mut self.print_notes, self.lang.tr("Include notes"));
+            ui.weak(self.lang.tr("The sheet opens in your browser; use its Print command for paper or PDF."));
         });
-        ui.checkbox(&mut self.print_notes, self.lang.tr("Include notes"));
-        ui.weak(self.lang.tr("The sheet opens in your browser; use its Print command for paper or PDF."));
-        if ui.button(RichText::new(self.lang.tr("Open sheet")).strong()).clicked() {
+        if go {
             let Some((_, path)) = sheets.iter().find(|(n, _)| *n == self.print_sheet).or(sheets.first()) else {
                 self.status = Some(("No character sheets found".into(), true));
                 return;
@@ -1101,7 +1109,7 @@ impl App {
         if !self.ws_out(dice) {
             let mut open = self.show_dice;
             let mut pop = false;
-            egui::Window::new(self.lang.tr("Dice Roller")).id(egui::Id::new("dice_roller")).open(&mut open).default_width(360.0).show(ctx, |ui| {
+            crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Dice Roller")).id(egui::Id::new("dice_roller")).open(&mut open), egui::vec2(380.0, 480.0), egui::vec2(300.0, 200.0), true).show(ctx, |ui| {
                 pop = self.ws_pop_button(ui);
                 self.dice.ui(ui, &self.lang)
             });
@@ -1109,7 +1117,7 @@ impl App {
             self.ws_pop(ctx, dice, pop);
         }
         let mut open = self.show_sources;
-        egui::Window::new(self.lang.tr("Sourcebooks")).id(egui::Id::new("sourcebooks")).open(&mut open).default_size([820.0, 620.0]).show(ctx, |ui| {
+        crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Sourcebooks")).id(egui::Id::new("sourcebooks")).open(&mut open), egui::vec2(820.0, 620.0), egui::vec2(480.0, 300.0), false).show(ctx, |ui| {
             let _s = trace::span("sourcebooks window");
             if self.sources_window.ui(ui, &mut self.pdfs, &self.lang) {
                 if let Err(e) = self.pdfs.save() {
@@ -1119,18 +1127,18 @@ impl App {
         });
         self.show_sources = open;
         let mut open = self.show_export;
-        egui::Window::new(self.lang.tr("Export Character")).id(egui::Id::new("export_character")).open(&mut open).default_width(420.0).show(ctx, |ui| self.export_ui(ui));
+        crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Export Character")).id(egui::Id::new("export_character")).open(&mut open), egui::vec2(460.0, 220.0), egui::vec2(340.0, 160.0), false).show(ctx, |ui| self.export_ui(ui));
         self.show_export = open;
         self.format_question(ctx);
         let mut open = self.show_print;
-        egui::Window::new(self.lang.tr("Character Sheet")).id(egui::Id::new("character_sheet")).open(&mut open).default_width(460.0).show(ctx, |ui| self.print_ui(ui));
+        crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Character Sheet")).id(egui::Id::new("character_sheet")).open(&mut open), egui::vec2(560.0, 240.0), egui::vec2(380.0, 170.0), false).show(ctx, |ui| self.print_ui(ui));
         self.show_print = open;
         let initiative = workspace::PanelId::Initiative;
         if !self.ws_out(initiative) {
             let mut open = self.show_initiative;
             let mut pop = false;
             let chars = self.initiative_characters();
-            egui::Window::new(self.lang.tr("Initiative tracker")).id(egui::Id::new("initiative_tracker")).open(&mut open).default_width(480.0).show(ctx, |ui| {
+            crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Initiative tracker")).id(egui::Id::new("initiative_tracker")).open(&mut open), egui::vec2(480.0, 420.0), egui::vec2(320.0, 200.0), true).show(ctx, |ui| {
                 pop = self.ws_pop_button(ui);
                 self.initiative.ui(ui, &self.lang, &chars)
             });

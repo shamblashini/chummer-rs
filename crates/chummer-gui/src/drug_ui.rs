@@ -47,7 +47,7 @@ impl DrugBuilder {
         let mut changed = false;
         let mut open = true;
         let mut add = false;
-        egui::Window::new(lang.tr("Build custom drug")).id(egui::Id::new("drug_builder")).open(&mut open).default_size([860.0, 560.0]).collapsible(false).show(ctx, |ui| {
+        crate::workspace::dialog::fit(ctx, egui::Window::new(lang.tr("Build custom drug")).id(egui::Id::new("drug_builder")).open(&mut open).collapsible(false), egui::vec2(860.0, 560.0), egui::vec2(520.0, 320.0), false).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(lang.tr("Name"));
                 ui.add(egui::TextEdit::singleline(&mut self.name).hint_text(lang.tr("Custom drug")).desired_width(220.0));

@@ -193,7 +193,7 @@ impl App {
         let mut pick: Option<(PathBuf, PathBuf)> = None;
         let current = self.current().and_then(|i| self.views[i].path());
         let now = SystemTime::now();
-        egui::Window::new(self.lang.tr("Restore backup")).id(egui::Id::new("restore_backup")).open(&mut open).default_size([560.0, 420.0]).show(ctx, |ui| {
+        crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Restore backup")).id(egui::Id::new("restore_backup")).open(&mut open), egui::vec2(560.0, 420.0), egui::vec2(380.0, 240.0), false).show(ctx, |ui| {
             ui.weak(self.lang.tr("Earlier versions kept when you saved over a file. Opening one gives a modified copy; save it to replace the file."));
             ui.add_space(6.0);
             let Some(files) = &self.ux.restore.files else {

@@ -91,7 +91,7 @@ impl App {
         }
         let mut open = true;
         let mut out = (None, false);
-        egui::Window::new(self.lang.tr("Preferences")).id(egui::Id::new("preferences")).open(&mut open).collapsible(false).default_width(640.0).show(ctx, |ui| {
+        crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Preferences")).id(egui::Id::new("preferences")).open(&mut open).collapsible(false), egui::vec2(640.0, 600.0), egui::vec2(400.0, 260.0), true).show(ctx, |ui| {
             out = prefs::prefs_ui(ui, &mut self.ux.prefs, &self.lang);
         });
         self.ux.show_prefs = open;

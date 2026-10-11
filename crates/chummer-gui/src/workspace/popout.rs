@@ -503,7 +503,7 @@ pub fn window(ctx: &egui::Context, key: PopKey, title: &str, at: Option<egui::Po
         };
         if class == egui::ViewportClass::Embedded {
             let mut open = true;
-            egui::Window::new(title).id(egui::Id::new(("popout window", key))).open(&mut open).default_size([420.0, 520.0]).show(vctx, |ui| draw(ui));
+            crate::workspace::dialog::fit(vctx, egui::Window::new(title).id(egui::Id::new(("popout window", key))).open(&mut open), egui::vec2(420.0, 520.0), egui::vec2(260.0, 200.0), false).show(vctx, |ui| draw(ui));
             Shown { docked: dock || !open, geometry: None }
         } else {
             let ws = theme::current(vctx).ws;

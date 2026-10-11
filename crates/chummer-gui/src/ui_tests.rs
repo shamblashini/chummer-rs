@@ -2734,3 +2734,41 @@ fn setup_buttons_reachable_in_a_short_window() {
         assert!(h.app.ux.setup.is_none(), "{kind:?}: Escape skips the setup");
     }
 }
+
+/// The print window can be made larger, keeps its button on screen when
+/// small, and its sheet list is not squeezed into the window's height.
+#[test]
+fn print_window_resizes_and_its_list_is_tall() {
+    for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark] {
+        let mut h = Harness::new(kind);
+        h.size = Vec2::new(1000.0, 650.0);
+        let screen = Rect::from_min_size(Pos2::ZERO, h.size);
+        h.open(&fixture("Munin_Career.chum5"));
+        h.app.show_print = true;
+        h.frames(4);
+        let before = window_rect(&h, "character_sheet");
+        assert!(inside(before, screen), "{kind:?}: {before:?}");
+        let open = h.find_text("Open sheet").expect("Open sheet");
+        assert!(inside(open, before), "{kind:?}: the button is in the window");
+        // Drag the bottom right corner.
+        drag(&mut h, before.max - Vec2::splat(3.0), before.max + Vec2::new(160.0, 140.0));
+        let after = window_rect(&h, "character_sheet");
+        assert!(after.width() > before.width() + 100.0 && after.height() > before.height() + 100.0, "{kind:?}: resized from {before:?} to {after:?}");
+        assert!(inside(h.find_text("Open sheet").unwrap(), after));
+
+        // The sheet list, opened: taller than the window.
+        let sheet = h.app.print_sheet.clone();
+        h.click_text(&sheet);
+        h.frames(4);
+        let names: Vec<String> = chummer_core::print::available_sheets(&h.app.lang.code).into_iter().map(|(n, _)| n).collect();
+        let rows: Vec<Rect> = names.iter().filter_map(|n| h.find_text(n)).collect();
+        let top = rows.iter().map(|r| r.top()).fold(f32::INFINITY, f32::min);
+        let bottom = rows.iter().map(|r| r.bottom()).fold(f32::NEG_INFINITY, f32::max);
+        assert!(rows.len() >= 8, "{kind:?}: the list is open: {:?}", h.on_screen());
+        // Taller than the window as it opened and than egui's 200 points.
+        assert!(bottom - top > before.height().max(250.0), "{kind:?}: the list ({} rows, {top}..{bottom}) is taller than the window {before:?}", rows.len());
+        assert!(bottom <= screen.bottom() + 1.0 && top >= screen.top() - 1.0, "{kind:?}: and stays on screen");
+        h.key(Key::Escape, Modifiers::NONE);
+        h.reset();
+    }
+}
