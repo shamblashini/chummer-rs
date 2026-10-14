@@ -243,3 +243,93 @@ fn disabled_specialization_effects_take_the_bonus_away() {
     assert_eq!(v.spec_bonus, 0);
     assert_eq!(pool(&engine, &ch, "Ares Predator V"), (with_spec - 4, None));
 }
+
+fn knowledge(ch: &Character, name: &str) -> String {
+    ch.knowledge_skills.iter().find(|k| k.name == name).unwrap_or_else(|| panic!("no knowledge skill {name}")).guid.clone()
+}
+
+fn knowledge_specs(ch: &Character, guid: &str) -> Vec<String> {
+    ch.knowledge_skills.iter().find(|k| k.guid == guid).unwrap().specs.iter().map(|x| x.name.clone()).collect()
+}
+
+#[test]
+fn knowledge_specs_in_creation_cost_a_knowledge_point() {
+    let engine = Engine::load().unwrap();
+    let mut ch = load("Munin");
+    let english = knowledge(&ch, "English");
+    let settings = engine.settings().resolve_for(&ch).unwrap().clone();
+    let kp = |ch: &Character| {
+        let sheet = engine.sheet(ch);
+        let b = chummer_core::chargen::budget(ch, &sheet, &engine.rules_for(ch), &settings);
+        (b.knowledge_points.1, b.skill_points.1)
+    };
+    let before = kp(&ch);
+    // `KnowledgeSkill.CurrentSpCost`: one point per specialization, from
+    // the knowledge points (they overflow into skill points).
+    run(&mut ch, &engine, Command::SetSpecialization { skill: english.clone(), name: s("Shakespearean") }).unwrap();
+    assert_eq!(knowledge_specs(&ch, &english), ["Shakespearean"]);
+    let after = kp(&ch);
+    assert_eq!(after.0 + after.1, before.0 + before.1 + 1, "one point: {before:?} -> {after:?}");
+    let v = engine.sheet(&ch).knowledge_skills.into_iter().find(|x| x.guid == english).unwrap();
+    assert_eq!(v.spec_bonus, 2);
+    // Replace, clear, refuse a duplicate through Add.
+    run(&mut ch, &engine, Command::SetSpecialization { skill: english.clone(), name: s("Read/Write") }).unwrap();
+    assert_eq!(knowledge_specs(&ch, &english), ["Read/Write"]);
+    assert!(run(&mut ch, &engine, Command::AddSpecialization { skill: english.clone(), name: s("read/write") }).is_err());
+    run(&mut ch, &engine, Command::SetSpecialization { skill: english.clone(), name: String::new() }).unwrap();
+    assert!(knowledge_specs(&ch, &english).is_empty());
+    assert_eq!(kp(&ch), before);
+    // Rating 0 and native languages cannot have one (`CanHaveSpecs`).
+    let german = knowledge(&ch, "German");
+    let e = run(&mut ch, &engine, Command::SetSpecialization { skill: german, name: s("Bavarian") }).unwrap_err();
+    assert!(e.reason.contains("needs a rating"), "{}", e.reason);
+    run(&mut ch, &engine, Command::AddKnowledgeSkill { name: s("Japanese"), kind: s("Language"), native: true }).unwrap();
+    let japanese = knowledge(&ch, "Japanese");
+    let e = run(&mut ch, &engine, Command::SetSpecialization { skill: japanese, name: s("Kansai") }).unwrap_err();
+    assert!(e.reason.contains("native"), "{}", e.reason);
+}
+
+#[test]
+fn knowledge_specs_in_career_cost_karma_knowledge_specialization() {
+    let engine = Engine::load().unwrap();
+    let mut ch = load("Munin_Career");
+    career::karma_gained(&mut ch, &CareerRules::default(), &ManualExpense { amount: 30.0, reason: s("Run"), ..Default::default() }).unwrap();
+    let zoology = knowledge(&ch, "Zoology");
+    let rules = engine.rules_for(&ch);
+    assert_eq!(career::specialization_karma_cost(&engine, &ch, &zoology), Some(rules.karma_knowledge_specialization));
+    let karma = ch.karma;
+    run(&mut ch, &engine, Command::BuySpecialization { skill: zoology.clone(), name: s("Paracritters of the Salish") }).unwrap();
+    assert_eq!(ch.karma, karma - rules.karma_knowledge_specialization);
+    assert_eq!(knowledge_specs(&ch, &zoology), ["Paracritters of the Salish"]);
+    assert!(run(&mut ch, &engine, Command::BuySpecialization { skill: zoology.clone(), name: s(" ") }).is_err());
+    let entry = career::entries(&ch).into_iter().find(|e| e.reason == "Learned Specialization Zoology (Paracritters of the Salish)").expect("ledger entry");
+    run(&mut ch, &engine, Command::UndoExpense { entry: entry.guid }).unwrap();
+    assert_eq!(ch.karma, karma);
+    assert!(knowledge_specs(&ch, &zoology).is_empty());
+}
+
+#[test]
+fn knowledge_suggestions_and_round_trip() {
+    let engine = Engine::load().unwrap();
+    let mut ch = load("Munin");
+    let english = knowledge(&ch, "English");
+    let names: Vec<String> = skills::spec_suggestions(&engine, &ch, &english).into_iter().map(|x| x.name).collect();
+    assert!(["Read/Write", "Speak", "Street", "Cityspeak"].iter().all(|n| names.iter().any(|x| x == n)), "English's data specs: {names:?}");
+    assert!(names.iter().all(|n| !n.starts_with('[')), "no [Dialect]/[Lingo]");
+    run(&mut ch, &engine, Command::SetSpecialization { skill: english.clone(), name: s("Speak") }).unwrap();
+    assert!(!skills::spec_suggestions(&engine, &ch, &english).iter().any(|x| x.name == "Speak"));
+    // A custom-named knowledge skill: free text, no data list.
+    run(&mut ch, &engine, Command::AddKnowledgeSkill { name: s("Seattle Go Clubs"), kind: s("Interest"), native: false }).unwrap();
+    let clubs = knowledge(&ch, "Seattle Go Clubs");
+    assert!(skills::spec_suggestions(&engine, &ch, &clubs).is_empty());
+    run(&mut ch, &engine, Command::SetKnowledgeBase { skill: clubs.clone(), value: 2 }).unwrap();
+    run(&mut ch, &engine, Command::SetSpecialization { skill: clubs.clone(), name: s("Tournaments") }).unwrap();
+    let xml = ch.to_xml_string();
+    let back = Character::from_str(&xml).unwrap();
+    assert_eq!(knowledge_specs(&back, &english), ["Speak"]);
+    assert_eq!(knowledge_specs(&back, &clubs), ["Tournaments"]);
+    assert_eq!(back.to_xml_string(), xml);
+    let saved = back.knowledge_skills.iter().find(|k| k.guid == clubs).unwrap().specs[0].clone();
+    let want = format!("<spec><guid>{}</guid><name>Tournaments</name><free>False</free><expertise>False</expertise></spec>", saved.guid);
+    assert!(xml.split_whitespace().collect::<String>().contains(&want), "{want}");
+}

@@ -964,43 +964,51 @@ pub fn add_contact(ch: &mut Character, name: &str, role: &str, connection: i32, 
     ch.items_mut("contacts").push(c);
 }
 
-/// Add a specialization to an active skill. Any text: the data's
-/// `<specs>` are only suggestions. Refused when empty or a duplicate.
+/// The specializations of the active or knowledge skill `guid`.
+fn specs_mut<'a>(ch: &'a mut Character, guid: &str) -> Result<&'a mut Vec<crate::skills::Specialization>, String> {
+    if let Some(s) = ch.skills.iter_mut().find(|s| s.guid.eq_ignore_ascii_case(guid)) {
+        return Ok(&mut s.specs);
+    }
+    ch.knowledge_skills.iter_mut().find(|k| k.guid.eq_ignore_ascii_case(guid)).map(|k| &mut k.specs).ok_or_else(|| format!("no skill {guid}"))
+}
+
+/// Add a specialization to an active or knowledge skill. Any text: the
+/// data's `<specs>` are only suggestions. Refused when empty or a duplicate.
 pub fn add_specialization(ch: &mut Character, skill_guid: &str, spec: &str) -> Result<(), String> {
-    let s = ch.skills.iter_mut().find(|s| s.guid.eq_ignore_ascii_case(skill_guid)).ok_or_else(|| format!("no skill {skill_guid}"))?;
-    let name = crate::skills::new_spec_name(&s.specs, spec)?;
-    s.specs.push(crate::skills::Specialization { guid: new_guid(), name, free: false, expertise: false });
+    let specs = specs_mut(ch, skill_guid)?;
+    let name = crate::skills::new_spec_name(specs, spec)?;
+    specs.push(crate::skills::Specialization { guid: new_guid(), name, free: false, expertise: false });
     ch.dirty = true;
     Ok(())
 }
 
 /// `Skill.TopMostDisplaySpecialization`'s setter, Chummer's creation-mode
-/// specialization box: the skill has one player-chosen specialization.
-/// Text replaces it (the first non-free one; any others go too), empty text
-/// removes it. Free specializations from improvements stay. Returns
-/// whether anything changed.
+/// specialization box (active and knowledge skills): the skill has one
+/// player-chosen specialization. Text replaces it (the first non-free one;
+/// any others go too), empty text removes it. Free specializations from
+/// improvements stay. Returns whether anything changed.
 pub fn set_specialization(ch: &mut Character, skill_guid: &str, spec: &str) -> Result<bool, String> {
-    let s = ch.skills.iter_mut().find(|s| s.guid.eq_ignore_ascii_case(skill_guid)).ok_or_else(|| format!("no skill {skill_guid}"))?;
-    let before = s.specs.clone();
+    let s = specs_mut(ch, skill_guid)?;
+    let before = s.clone();
     if spec.trim().is_empty() {
-        s.specs.retain(|x| x.free);
+        s.retain(|x| x.free);
     } else {
-        let free: Vec<_> = s.specs.iter().filter(|x| x.free).cloned().collect();
+        let free: Vec<_> = s.iter().filter(|x| x.free).cloned().collect();
         let name = crate::skills::new_spec_name(&free, spec)?;
-        match s.specs.iter().position(|x| !x.free) {
-            Some(i) if s.specs[i].name == name => {}
-            Some(i) => s.specs[i] = crate::skills::Specialization { guid: new_guid(), name, free: false, expertise: false },
-            None => s.specs.insert(0, crate::skills::Specialization { guid: new_guid(), name, free: false, expertise: false }),
+        match s.iter().position(|x| !x.free) {
+            Some(i) if s[i].name == name => {}
+            Some(i) => s[i] = crate::skills::Specialization { guid: new_guid(), name, free: false, expertise: false },
+            None => s.insert(0, crate::skills::Specialization { guid: new_guid(), name, free: false, expertise: false }),
         }
-        let first = s.specs.iter().position(|x| !x.free);
+        let first = s.iter().position(|x| !x.free);
         let mut i = 0;
-        s.specs.retain(|x| {
+        s.retain(|x| {
             let keep = x.free || Some(i) == first;
             i += 1;
             keep
         });
     }
-    let changed = s.specs != before;
+    let changed = *s != before;
     ch.dirty |= changed;
     Ok(changed)
 }

@@ -72,22 +72,22 @@ fn skill_mut<'a>(ch: &'a mut Character, guid: &str) -> Result<&'a mut crate::ski
     ch.skills.iter_mut().find(|s| s.guid.eq_ignore_ascii_case(guid)).ok_or_else(|| Rejected::new(format!("no skill {guid}")))
 }
 
-/// `Skill.CanHaveSpecs`: not exotic, and a rating to specialize.
+/// `Skill.CanHaveSpecs`: not exotic, and a rating to specialize
+/// (`KnowledgeSkill.CanHaveSpecs`: also not a native language).
 fn can_specialize(ch: &Character, engine: &Engine, guid: &str) -> Result<(), Rejected> {
-    let suid = &skill_ref(ch, guid)?.suid;
     let sheet = engine.sheet(ch);
-    let v = sheet.skills.iter().find(|s| s.guid.eq_ignore_ascii_case(guid)).ok_or_else(|| Rejected::new(format!("no skill {guid}")))?;
-    if engine.catalog.get(suid).is_some_and(|d| d.exotic) {
+    let v = sheet.skills.iter().chain(&sheet.knowledge_skills).find(|s| s.guid.eq_ignore_ascii_case(guid)).ok_or_else(|| Rejected::new(format!("no skill {guid}")))?;
+    let exotic = ch.skills.iter().find(|s| s.guid.eq_ignore_ascii_case(guid)).is_some_and(|s| engine.catalog.get(&s.suid).is_some_and(|d| d.exotic));
+    if exotic {
         return Err(Rejected::new(format!("{} takes its weapon as its specific, not a specialization", v.name)));
+    }
+    if v.native {
+        return Err(Rejected::new(format!("{} is a native language: it has no specialization", v.name)));
     }
     if v.total_base <= 0 {
         return Err(Rejected::new(format!("{} needs a rating before it can have a specialization", v.name)));
     }
     Ok(())
-}
-
-fn skill_ref<'a>(ch: &'a Character, guid: &str) -> Result<&'a crate::skills::Skill, Rejected> {
-    ch.skills.iter().find(|s| s.guid.eq_ignore_ascii_case(guid)).ok_or_else(|| Rejected::new(format!("no skill {guid}")))
 }
 
 fn knowledge_mut<'a>(ch: &'a mut Character, guid: &str) -> Result<&'a mut crate::skills::KnowledgeSkill, Rejected> {

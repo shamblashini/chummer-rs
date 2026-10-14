@@ -214,6 +214,9 @@ pub struct SpecSuggestion {
 /// character's own weapons for the skill first (docs/deviations.md).
 /// Specializations the skill has already are left out.
 pub fn spec_suggestions(engine: &crate::engine::Engine, ch: &crate::character::Character, skill_guid: &str) -> Vec<SpecSuggestion> {
+    if let Some(k) = ch.knowledge_skills.iter().find(|s| s.guid.eq_ignore_ascii_case(skill_guid)) {
+        return knowledge_suggestions(engine, ch, k);
+    }
     let Some(skill) = ch.skills.iter().find(|s| s.guid.eq_ignore_ascii_case(skill_guid)) else { return Vec::new() };
     let Some(def) = engine.catalog.get(&skill.suid) else { return Vec::new() };
     let mut out: Vec<SpecSuggestion> = Vec::new();
@@ -261,6 +264,26 @@ pub fn spec_suggestions(engine: &crate::engine::Engine, ch: &crate::character::C
         list.sort();
         for w in list {
             push(w, SpecSource::Weapon);
+        }
+    }
+    out
+}
+
+/// A knowledge skill's suggestions (`SelectSpec` in "Knowledge" mode and
+/// `CGLSpecializations`): the `<specs>` of its skills.xml record (by id,
+/// else by name; a custom-named skill has none), without `[...]`
+/// placeholders, then names offered by improvements.
+fn knowledge_suggestions(engine: &crate::engine::Engine, ch: &crate::character::Character, k: &KnowledgeSkill) -> Vec<SpecSuggestion> {
+    let def = engine.catalog.get(&k.suid).filter(|d| d.name == k.name).or_else(|| engine.catalog.knowledge.iter().find(|d| d.name == k.name));
+    let taken = |n: &str| k.specs.iter().any(|s| s.name.trim().eq_ignore_ascii_case(n));
+    let mut data: Vec<String> = def.map(|d| d.specs.iter().filter(|s| !s.starts_with('[')).cloned().collect()).unwrap_or_default();
+    data.sort();
+    let mut granted: Vec<String> = ch.improvements.of_kind("SkillSpecializationOption").filter(|i| i.improved_name == k.name).map(|i| i.unique_name.clone()).collect();
+    granted.sort();
+    let mut out: Vec<SpecSuggestion> = Vec::new();
+    for (name, source) in data.into_iter().map(|n| (n, SpecSource::Data)).chain(granted.into_iter().map(|n| (n, SpecSource::Granted))) {
+        if !name.trim().is_empty() && !taken(&name) && !out.iter().any(|o| o.name == name) {
+            out.push(SpecSuggestion { name, source });
         }
     }
     out

@@ -1150,7 +1150,14 @@ fn knowledge_values(ch: &Character, sheet: &Sheet, k: &KnowledgeSkill, rules: &R
         karma,
         rating: total,
         pool,
-        spec_bonus: if k.specs.is_empty() || total == 0 { 0 } else { 2 },
+        // `GetSpecializationBonus`: the best one (an expertise adds 3).
+        spec_bonus: if k.specs.is_empty() || total == 0 || k.native_language {
+            0
+        } else if k.specs.iter().any(|s| s.expertise) {
+            3
+        } else {
+            2
+        },
         specs: k.specs.iter().map(|s| s.name.clone()).collect(),
         default: false,
         knowledge: true,
