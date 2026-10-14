@@ -1161,10 +1161,8 @@ impl CharacterView {
                                 ui.strong(skill_pool_text(s));
                             }
                             ui.horizontal(|ui| {
-                                // Creation shows the player's specialization in its box.
-                                let others: Vec<String> = if career { s.specs.clone() } else { self.doc.knowledge_skills.iter().find(|k| k.guid == s.guid).map(|k| k.specs.iter().filter(|p| p.free).map(|p| p.name.clone()).collect()).unwrap_or_default() };
-                                if !others.is_empty() {
-                                    ui.label(format!("{} (+{})", others.join(", "), s.spec_bonus));
+                                if let Some(c) = self.spec_line(ui, lang, s) {
+                                    changed |= self.doc.run(c, status).is_some_and(|r| r.changed);
                                 }
                                 match self.spec_box(ui, engine, lang, s, 160.0) {
                                     Some(workspace::build::skills::SpecEdit::Set(c)) => changed |= self.doc.run(c, status).is_some_and(|r| r.changed),
@@ -1273,11 +1271,8 @@ impl CharacterView {
                                         }
                                     }
                                 }
-                                // Creation shows the player's specialization in
-                                // its box; the label lists the others.
-                                let others: Vec<String> = if career { s.specs.clone() } else { self.doc.skills.iter().find(|k| k.guid == s.guid).map(|k| k.specs.iter().filter(|p| p.free).map(|p| p.name.clone()).collect()).unwrap_or_default() };
-                                if !others.is_empty() {
-                                    ui.label(format!("{} (+{})", others.join(", "), s.spec_bonus));
+                                if let Some(c) = self.spec_line(ui, lang, s) {
+                                    changed |= self.doc.run(c, status).is_some_and(|r| r.changed);
                                 }
                                 match self.spec_box(ui, engine, lang, s, 160.0) {
                                     Some(workspace::build::skills::SpecEdit::Set(c)) => changed |= self.doc.run(c, status).is_some_and(|r| r.changed),

@@ -161,16 +161,8 @@ impl CharacterView {
                         if let Some(src) = SourceRef::new(&s.source, &s.page) {
                             r.on_hover_text(format!("{src} · {}", s.group));
                         }
-                        // Creation shows the player's specialization in its
-                        // box; here the others (free ones, career buys).
-                        let shown = if career_mode {
-                            s.specs.clone()
-                        } else {
-                            let specs = self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| &x.specs).or_else(|| self.doc.knowledge_skills.iter().find(|x| x.guid == s.guid).map(|x| &x.specs));
-                            specs.map(|v| v.iter().filter(|p| p.free).map(|p| p.name.clone()).collect()).unwrap_or_default()
-                        };
-                        if !shown.is_empty() {
-                            ui.add(egui::Label::new(RichText::new(format!("{} +{}", shown.join(", "), s.spec_bonus)).size(11.0).color(ws.muted)).truncate());
+                        if let Some(c) = self.spec_line(ui, lang, s) {
+                            edits.push(Edit::Run(c));
                         }
                     });
                     widgets::cell(ui, next(), ROW, |ui| {
@@ -297,18 +289,23 @@ impl CharacterView {
             return None;
         }
         let career_mode = self.doc.created;
-        let current = if career_mode { String::new() } else { specs.iter().find(|x| !x.free).map(|x| x.name.clone()).unwrap_or_default() };
+        // Creation: one specialization of the player's own per skill (SR5
+        // p. 129, as Chummer's creation box); it shows on the skill's line
+        // with a remove button, and the box adds one when there is none.
+        let own = if career_mode { None } else { specs.iter().find(|x| !x.free).map(|x| x.name.clone()) };
         let cost = if career_mode { self.career_costs(engine).specialization(&self.doc, &s.guid) } else { None };
-        let can = s.total_base > 0 && (!career_mode || cost.is_some_and(|c| self.doc.karma >= c));
+        let can = s.total_base > 0 && own.is_none() && (!career_mode || cost.is_some_and(|c| self.doc.karma >= c));
         let hint = match cost {
             Some(c) => lang.tr_fmt("Add a specialization ({0} karma)", &[&c]),
             None => lang.tr("Add a specialization"),
         };
         let id = egui::Id::new(("spec_box", &s.guid));
-        let mut text: String = ui.data(|d| d.get_temp(id)).unwrap_or_else(|| current.clone());
+        let mut text: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
         let presets = if can { self.spec_presets(engine, lang, &s.guid) } else { Default::default() };
         let (r, pick) = ui.add_enabled_ui(can, |ui| widgets::preset_input_pick(ui, ("spec", &s.guid), &mut text, &presets, &hint, width)).inner;
-        let r = if s.total_base <= 0 {
+        let r = if let Some(own) = &own {
+            r.on_disabled_hover_text(lang.tr_fmt("One specialization per skill at character creation (SR5 p. 129). Remove {0} to choose another; more can be bought in career mode.", &[own]))
+        } else if s.total_base <= 0 {
             r.on_disabled_hover_text(lang.tr_fmt("{0} needs a rating before it can have a specialization", &[&s.name]))
         } else if career_mode && cost.is_some_and(|c| self.doc.karma < c) {
             r.on_disabled_hover_text(lang.tr("Not enough karma"))
@@ -324,11 +321,30 @@ impl CharacterView {
             ui.data_mut(|d| d.remove::<String>(id));
         }
         let name = commit?.trim().to_owned();
-        if career_mode {
-            (!name.is_empty()).then(|| SpecEdit::Buy(CareerAction::Specialize(s.guid.clone(), name)))
-        } else {
-            (name != current).then(|| SpecEdit::Set(Command::SetSpecialization { skill: s.guid.clone(), name }))
+        if name.is_empty() {
+            return None;
         }
+        if career_mode {
+            Some(SpecEdit::Buy(CareerAction::Specialize(s.guid.clone(), name)))
+        } else {
+            Some(SpecEdit::Set(Command::SetSpecialization { skill: s.guid.clone(), name }))
+        }
+    }
+
+    /// A skill's specializations on its line, with the bonus. In creation,
+    /// the player's own (not one from an improvement) has a remove button;
+    /// the command it gives is returned.
+    pub(in crate::view) fn spec_line(&self, ui: &mut egui::Ui, lang: &Language, s: &SkillValues) -> Option<Command> {
+        let ws = theme::ws(ui);
+        let specs = self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| &x.specs).or_else(|| self.doc.knowledge_skills.iter().find(|x| x.guid == s.guid).map(|x| &x.specs))?;
+        if specs.is_empty() {
+            return None;
+        }
+        let names: Vec<String> = specs.iter().map(|p| p.name.clone()).collect();
+        ui.add(egui::Label::new(RichText::new(format!("{} +{}", names.join(", "), s.spec_bonus)).size(11.0).color(ws.muted)).truncate());
+        let own = specs.iter().find(|p| !p.free).filter(|_| !self.doc.created)?;
+        let tip = lang.tr_fmt("Remove the specialization {0}", &[&own.name]);
+        widgets::icon_button(ui, icons::X, 18.0).on_hover_text(tip).clicked().then(|| Command::SetSpecialization { skill: s.guid.clone(), name: String::new() })
     }
 
     /// Skill groups: points and karma in creation, "+1 · cost" in career.

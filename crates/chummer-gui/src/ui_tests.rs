@@ -3238,27 +3238,29 @@ fn creation_custom_spec(kind: ThemeKind) {
     assert_eq!(skill_specs(&h, i, &guid), ["Kicks"], "{:?}", h.app.status);
     let (pool, spec) = specialized_pool(&h).unwrap_or_else(|| panic!("pool (pool+2) shown: {:?}", h.on_screen()));
     assert_eq!(spec, pool + 2);
-    assert!(h.find_text("Kicks").is_some(), "the box shows it");
-    // Retyped from a suggestion: replaces it (one creation specialization).
-    h.click_text("Kicks");
-    h.key(Key::A, Modifiers::COMMAND);
+    assert!(h.find_text("Kicks +2").is_some(), "the skill's line shows it: {:?}", h.on_screen());
+    // One specialization per skill at creation (SR5 p. 129): the box adds
+    // no second one while Kicks is there.
+    type_spec(&mut h, &hint, "Blocking");
+    assert_eq!(skill_specs(&h, i, &guid), ["Kicks"], "still one");
+    // The line's × removes it; then the box takes another, also from the list.
+    h.click_text(crate::workspace::icons::X);
+    h.frames(2);
+    assert!(skill_specs(&h, i, &guid).is_empty(), "removed: {:?}", h.app.status);
+    h.click_where(&hint, |t| t.starts_with(&hint));
     h.type_text("Block");
     h.frames(2);
     h.click_text("Blocking");
     h.frames(2);
     assert_eq!(skill_specs(&h, i, &guid), ["Blocking"], "picked from the list");
+    assert!(h.find_text("Blocking +2").is_some());
     // Undo goes back through both.
     h.key(Key::Z, Modifiers::COMMAND);
     h.frames(2);
-    assert_eq!(skill_specs(&h, i, &guid), ["Kicks"]);
-    // Emptying the box removes it.
-    h.click_text("Kicks");
-    h.key(Key::A, Modifiers::COMMAND);
-    h.key(Key::Backspace, Modifiers::NONE);
-    h.key(Key::Enter, Modifiers::NONE);
-    h.frames(2);
     assert!(skill_specs(&h, i, &guid).is_empty());
-    assert!(specialized_pool(&h).is_none());
+    h.key(Key::Z, Modifiers::COMMAND);
+    h.frames(2);
+    assert_eq!(skill_specs(&h, i, &guid), ["Kicks"]);
 }
 
 #[test]
@@ -3285,6 +3287,11 @@ fn career_custom_spec(kind: ThemeKind) {
     type_spec(&mut h, &hint, "ares predator v");
     assert_eq!(skill_specs(&h, i, &guid), ["Ares Predator V"]);
     assert_eq!(h.app.views[i].ch().karma, 13);
+    // Career mode buys more than one (SR5 p. 129); the line lists them all.
+    type_spec(&mut h, &hint, "Revolvers");
+    assert_eq!(skill_specs(&h, i, &guid), ["Ares Predator V", "Revolvers"], "{:?}", h.app.status);
+    assert_eq!(h.app.views[i].ch().karma, 6, "7 karma each");
+    assert!(h.find_where(|t| t.starts_with("Ares Predator V, Revolvers")).is_some(), "{:?}", h.on_screen());
 }
 
 #[test]
@@ -3321,7 +3328,7 @@ fn knowledge_spec(kind: ThemeKind, fixture_name: &str, career: bool) {
     if career {
         assert_eq!(h.app.views[i].ch().karma, 13, "KarmaKnowledgeSpecialization 7");
     } else {
-        assert!(h.find_text("Paracritters").is_some(), "the box shows it");
+        assert!(h.find_text("Paracritters +2").is_some(), "the skill's line shows it: {:?}", h.on_screen());
         h.key(Key::Z, Modifiers::COMMAND);
         h.frames(2);
         assert!(specs(&h).is_empty(), "undo");
