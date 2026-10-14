@@ -124,6 +124,8 @@ fn what(cmd: &Command, b: &Character, a: &Character, engine: &Engine) -> String 
         AddKnowledgeSkill { name, .. } => format!("Added knowledge skill {name}"),
         RemoveKnowledgeSkill { skill } => format!("Removed knowledge skill {}", skill_name(b, engine, skill)),
         AddSpecialization { skill, name } | BuySpecialization { skill, name } => format!("Added specialization {name} to {}", skill_name(b, engine, skill)),
+        SetSpecialization { skill, name } if name.trim().is_empty() => format!("Removed the specialization of {}", skill_name(b, engine, skill)),
+        SetSpecialization { skill, name } => format!("Set the specialization of {} to {name}", skill_name(b, engine, skill)),
         SetTradition { name } => format!("Chose the {name} tradition"),
         AddLifeModule { .. } => "Added a life module".into(),
         FinishCreation => "Finished creation".into(),

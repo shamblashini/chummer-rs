@@ -837,6 +837,8 @@ pub struct WeaponStats {
     pub reach: i32,
     /// The active skill used (`Weapon.Skill`).
     pub skill: String,
+    /// The skill's specialization that adds to `dice_pool`, if one does.
+    pub spec: Option<String>,
     /// `GetRangeStrings`; empty for melee weapons.
     pub ranges: Ranges,
 }
@@ -896,6 +898,25 @@ fn is_exotic(skill: &str) -> bool {
     skill.starts_with("Exotic Melee Weapon") || skill.starts_with("Exotic Ranged Weapon")
 }
 
+/// `Weapon.Skill` of a weapon element: the key of the active skill it
+/// uses (`DictionaryKey`, e.g. "Pistols", "Exotic Melee Weapon (Whip)").
+pub fn weapon_skill(w: &Element) -> String {
+    let mut cat = w.get("category");
+    if cat == "Special Weapons" && !w.get("range").is_empty() {
+        cat = w.get("range");
+    }
+    // `UseSkillSpec` falls back to the weapon name.
+    let spec = Some(w.get("useskillspec")).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| w.get("name"));
+    let useskill = w.get("useskill");
+    if useskill.is_empty() {
+        return skill_key_for_category(&cat, &spec);
+    }
+    if is_exotic(&useskill) && !useskill.contains('(') {
+        return format!("{useskill} ({spec})");
+    }
+    useskill
+}
+
 impl<'a> W<'a> {
     fn get(&self, k: &str) -> String {
         self.w.get(k)
@@ -911,20 +932,7 @@ impl<'a> W<'a> {
 
     /// `Weapon.Skill`: the skill key (`DictionaryKey`).
     fn skill(&self) -> String {
-        let mut cat = self.get("category");
-        if cat == "Special Weapons" && !self.get("range").is_empty() {
-            cat = self.get("range");
-        }
-        // `UseSkillSpec` falls back to the weapon name.
-        let spec = Some(self.get("useskillspec")).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| self.get("name"));
-        let useskill = self.get("useskill");
-        if useskill.is_empty() {
-            return skill_key_for_category(&cat, &spec);
-        }
-        if is_exotic(&useskill) && !useskill.contains('(') {
-            return format!("{useskill} ({spec})");
-        }
-        useskill
+        weapon_skill(self.w)
     }
 
     fn is_throwing(&self) -> bool {
@@ -1433,7 +1441,7 @@ fn dice_pool(c: &W<'_>) -> i32 {
         // extra dice (SR5 p. 173: Accuracy is the limit of the attack test),
         // so they go to their own stats.
         modifier += c.imps().val("WeaponSpecificDice", Some(&c.get("guid")));
-        pool += spec_bonus(c, sk);
+        pool += matching_spec(c, sk).map_or(0, |(_, bonus)| bonus);
     }
     let mut extra = String::new();
     if let Some(b) = c.wireless_bonus() {
@@ -1474,14 +1482,32 @@ fn dice_pool(c: &W<'_>) -> i32 {
     pool + expr::standard_round(modifier + extra)
 }
 
-/// Specialization bonus: the weapon's name, category, or its data
-/// `spec`/`spec2` (`objSkill.GetSpecialization(..)`).
-fn spec_bonus(c: &W<'_>, skill: &calc::SkillValues) -> i32 {
-    if skill.specs.is_empty() || is_exotic(&skill.name) {
-        return 0;
+/// The specialization that applies to this weapon and its bonus.
+/// `Weapon.GetDicePool` asks `objSkill.GetSpecialization(..)` for the
+/// weapon's name, then its category, then its data `spec` and `spec2`:
+/// the first specialization whose name is exactly that text (case
+/// counts; translated names are the same text in English). Any custom
+/// specialization works the same way: "Ares Predator V" on Pistols
+/// applies to that pistol, "Knucks" on Unarmed Combat to the Knucks.
+/// The bonus is that specialization's own `SpecializationBonus`: 3 for
+/// an expertise, otherwise 2 (none at rating 0: `CanHaveSpecs`).
+fn matching_spec(c: &W<'_>, skill: &calc::SkillValues) -> Option<(String, i32)> {
+    if skill.specs.is_empty() || skill.spec_bonus == 0 || is_exotic(&skill.name) {
+        return None;
     }
-    let candidates = [c.get("name"), c.get("category"), c.get("spec"), c.get("spec2")];
-    if candidates.iter().any(|n| !n.is_empty() && skill.specs.iter().any(|s| s == n)) { skill.spec_bonus } else { 0 }
+    let specs = &c.ch.skills.iter().find(|s| s.guid == skill.guid)?.specs;
+    [c.get("name"), c.get("category"), c.get("spec"), c.get("spec2")]
+        .iter()
+        .filter(|n| !n.is_empty())
+        .find_map(|n| specs.iter().find(|s| s.name == *n))
+        .map(|s| (s.name.clone(), if s.expertise { 3 } else { 2 }))
+}
+
+/// `matching_spec` for a character's own weapon (`FiringMode.Skill`).
+fn pool_spec(c: &W<'_>) -> Option<String> {
+    let key = c.skill();
+    let skill = c.sheet.skills.iter().find(|s| s.name == key)?;
+    matching_spec(c, skill).map(|(name, _)| name)
 }
 
 // --- Reach ------------------------------------------------------------------
@@ -1601,7 +1627,7 @@ pub fn stats_with(ch: &Character, sheet: &Sheet, store: Option<&DataStore>, weap
     } else {
         store.and_then(|s| s.doc("ranges.xml").ok()).map(|d| ranges(&c, &d)).unwrap_or_default()
     };
-    WeaponStats { damage: damage(&c), ap: ap(&c), accuracy: accuracy(&c), rc: rc(&c), dice_pool: dice_pool(&c), reach: reach(&c), skill: c.skill(), ranges }
+    WeaponStats { damage: damage(&c), ap: ap(&c), accuracy: accuracy(&c), rc: rc(&c), dice_pool: dice_pool(&c), reach: reach(&c), skill: c.skill(), spec: pool_spec(&c), ranges }
 }
 
 #[cfg(test)]

@@ -421,7 +421,9 @@ pub fn specialization_karma_cost(engine: &Engine, ch: &Character, skill_guid: &s
 }
 
 fn spec_cost(ch: &Character, cr: &CareerRules, s: &SkillInfo<'_>) -> Option<i32> {
-    if s.tbr <= 0 || s.v.native {
+    // `CanHaveSpecs`: an exotic skill has its weapon as its specific.
+    let exotic = !s.v.knowledge && (s.v.name.starts_with("Exotic Melee Weapon") || s.v.name.starts_with("Exotic Ranged Weapon"));
+    if s.tbr <= 0 || s.v.native || exotic {
         return None;
     }
     let price = if s.v.knowledge { cr.rules.karma_knowledge_specialization } else { cr.rules.karma_specialization };
@@ -444,9 +446,13 @@ pub fn buy_specialization(ch: &mut Character, engine: &Engine, skill_guid: &str,
     let sheet = sheet(engine, ch, &cr);
     let s = skill_info(ch, &cr, &sheet, skill_guid).ok_or_else(|| CareerError::NotFound(format!("skill {skill_guid}")))?;
     let cost = spec_cost(ch, &cr, &s).ok_or_else(|| CareerError::Refused(format!("{} cannot have a specialization", s.v.name)))?;
+    // Any text: the data's `<specs>` are suggestions (`SelectSpec`'s
+    // "Custom" entry). Empty and duplicate names are refused.
+    let held = ch.skills.iter().find(|x| x.guid.eq_ignore_ascii_case(skill_guid)).map(|x| &x.specs).or_else(|| ch.knowledge_skills.iter().find(|x| x.guid.eq_ignore_ascii_case(skill_guid)).map(|x| &x.specs));
+    let spec = crate::skills::new_spec_name(held.map_or(&[][..], Vec::as_slice), spec).map_err(CareerError::Refused)?;
     require_karma(ch, cost)?;
     let reason = format!("Learned Specialization {} ({spec})", s.v.name);
-    let sp = Specialization { guid: items::new_guid(), name: spec.to_owned(), free: false, expertise: false };
+    let sp = Specialization { guid: items::new_guid(), name: spec.clone(), free: false, expertise: false };
     let spec_guid = sp.guid.clone();
     if let Some(sk) = ch.skills.iter_mut().find(|x| x.guid.eq_ignore_ascii_case(skill_guid)) {
         sk.specs.push(sp);

@@ -96,6 +96,9 @@ pub enum Command {
     AddKnowledgeSkill { name: String, kind: String, native: bool },
     RemoveKnowledgeSkill { skill: String },
     AddSpecialization { skill: String, name: String },
+    /// Chummer's creation-mode specialization box: replace the skill's
+    /// player-chosen specialization with `name`, or remove it when empty.
+    SetSpecialization { skill: String, name: String },
     SetTradition { name: String },
     AddLifeModule { module: String, version: Option<String> },
     /// Leave creation for career mode.
@@ -328,6 +331,7 @@ impl Command {
             AddKnowledgeSkill { name: s("Seattle Gangs"), kind: s("Street"), native: false },
             RemoveKnowledgeSkill { skill: g.clone() },
             AddSpecialization { skill: g.clone(), name: s("Semi-Automatics") },
+            SetSpecialization { skill: g.clone(), name: s("Kicks") },
             SetTradition { name: s("Hermetic") },
             AddLifeModule { module: g.clone(), version: Some(g.clone()) },
             FinishCreation,

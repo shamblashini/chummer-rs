@@ -42,8 +42,9 @@ use serde::{Deserialize, Serialize};
 /// refusals, the GM's campaign keys in the membership). 3: commands
 /// changed (`MoveItem`, `Purchase::location`). 4: dice rolls. 5: commands
 /// changed (`SetChoke`, `SetQualityLevel`) and settings presets (the
-/// membership's campaign id and presets, the built-ins in `Join`).
-pub const SYNC_VERSION: u8 = 5;
+/// membership's campaign id and presets, the built-ins in `Join`). 6:
+/// commands changed (`SetSpecialization`).
+pub const SYNC_VERSION: u8 = 6;
 
 /// A BLAKE3 hash of a character's canonical form ([`chummer_core::command::state_hash`]).
 pub type Hash = [u8; 32];

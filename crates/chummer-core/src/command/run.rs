@@ -72,6 +72,24 @@ fn skill_mut<'a>(ch: &'a mut Character, guid: &str) -> Result<&'a mut crate::ski
     ch.skills.iter_mut().find(|s| s.guid.eq_ignore_ascii_case(guid)).ok_or_else(|| Rejected::new(format!("no skill {guid}")))
 }
 
+/// `Skill.CanHaveSpecs`: not exotic, and a rating to specialize.
+fn can_specialize(ch: &Character, engine: &Engine, guid: &str) -> Result<(), Rejected> {
+    let suid = &skill_ref(ch, guid)?.suid;
+    let sheet = engine.sheet(ch);
+    let v = sheet.skills.iter().find(|s| s.guid.eq_ignore_ascii_case(guid)).ok_or_else(|| Rejected::new(format!("no skill {guid}")))?;
+    if engine.catalog.get(suid).is_some_and(|d| d.exotic) {
+        return Err(Rejected::new(format!("{} takes its weapon as its specific, not a specialization", v.name)));
+    }
+    if v.total_base <= 0 {
+        return Err(Rejected::new(format!("{} needs a rating before it can have a specialization", v.name)));
+    }
+    Ok(())
+}
+
+fn skill_ref<'a>(ch: &'a Character, guid: &str) -> Result<&'a crate::skills::Skill, Rejected> {
+    ch.skills.iter().find(|s| s.guid.eq_ignore_ascii_case(guid)).ok_or_else(|| Rejected::new(format!("no skill {guid}")))
+}
+
 fn knowledge_mut<'a>(ch: &'a mut Character, guid: &str) -> Result<&'a mut crate::skills::KnowledgeSkill, Rejected> {
     ch.knowledge_skills.iter_mut().find(|s| s.guid.eq_ignore_ascii_case(guid)).ok_or_else(|| Rejected::new(format!("no knowledge skill {guid}")))
 }
@@ -156,8 +174,18 @@ pub(super) fn run(ch: &mut Character, engine: &Engine, cmd: &Command) -> R {
             changed()
         }
         AddSpecialization { skill, name } => {
-            chargen::add_specialization(ch, skill, name);
+            can_specialize(ch, engine, skill)?;
+            chargen::add_specialization(ch, skill, name).map_err(Rejected::new)?;
             changed()
+        }
+        SetSpecialization { skill, name } => {
+            if ch.created {
+                return Err(Rejected::new("in career mode a specialization is bought with karma"));
+            }
+            if !name.trim().is_empty() {
+                can_specialize(ch, engine, skill)?;
+            }
+            flag(chargen::set_specialization(ch, skill, name).map_err(Rejected::new)?)
         }
         SetTradition { name } => {
             chargen::set_tradition(ch, store, name).map_err(Rejected::new)?;

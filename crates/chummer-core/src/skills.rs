@@ -24,14 +24,25 @@ impl Specialization {
         let mut e = Element::new("spec");
         e.push(Element::with_text("guid", self.guid.clone()));
         e.push(Element::with_text("name", self.name.clone()));
-        if self.free {
-            e.push(Element::with_text("free", "True"));
-        }
-        if self.expertise {
-            e.push(Element::with_text("expertise", "True"));
-        }
+        // `SkillSpecialization.Save` writes both flags, True or False.
+        e.push(Element::with_text("free", bool_str(self.free)));
+        e.push(Element::with_text("expertise", bool_str(self.expertise)));
         e
     }
+}
+
+/// The name a new player-chosen specialization gets: any text, trimmed.
+/// Refused when empty or when `specs` already has it (ignoring case).
+/// Chummer refuses only the empty name; see docs/deviations.md.
+pub fn new_spec_name(specs: &[Specialization], name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("a specialization needs a name".into());
+    }
+    if specs.iter().any(|s| s.name.trim().eq_ignore_ascii_case(name)) {
+        return Err(format!("the skill already has the specialization {name}"));
+    }
+    Ok(name.to_owned())
 }
 
 fn read_specs(e: &Element) -> Vec<Specialization> {
@@ -165,4 +176,82 @@ impl SkillGroup {
     pub fn rating(&self) -> i32 {
         self.base + self.karma
     }
+}
+
+/// Where a suggested specialization comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecSource {
+    /// The skill's `<specs>` in skills.xml.
+    Data,
+    /// `[Martial Art]` in the data: one of the character's martial arts.
+    MartialArt,
+    /// A weapon the character has that uses the skill.
+    OwnWeapon,
+    /// A weapon from weapons.xml (`SelectSpec`'s list for combat skills).
+    Weapon,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecSuggestion {
+    pub name: String,
+    pub source: SpecSource,
+}
+
+/// Suggestions for a new specialization of an active skill. Any text is
+/// still allowed; these fill the list under the box.
+///
+/// Chummer offers the data's `<specs>` and, for "Combat Active" skills
+/// in its career dialog (`SelectSpec`), the weapons.xml weapons whose
+/// category is the skill's name or whose `spec`/`spec2` is one of the
+/// data's specs, from enabled books. chummer-rs also expands
+/// `[Martial Art]` to the character's martial arts, leaves out the other
+/// `[...]` placeholders (they are hints, not names), and puts the
+/// character's own weapons for the skill first (docs/deviations.md).
+/// Specializations the skill has already are left out.
+pub fn spec_suggestions(engine: &crate::engine::Engine, ch: &crate::character::Character, skill_guid: &str) -> Vec<SpecSuggestion> {
+    let Some(skill) = ch.skills.iter().find(|s| s.guid.eq_ignore_ascii_case(skill_guid)) else { return Vec::new() };
+    let Some(def) = engine.catalog.get(&skill.suid) else { return Vec::new() };
+    let mut out: Vec<SpecSuggestion> = Vec::new();
+    let mut push = |name: String, source: SpecSource| {
+        let taken = |n: &str| skill.specs.iter().any(|s| s.name.trim().eq_ignore_ascii_case(n));
+        if !name.trim().is_empty() && !taken(&name) && !out.iter().any(|o| o.name == name) {
+            out.push(SpecSuggestion { name, source });
+        }
+    };
+    let mut data: Vec<&String> = def.specs.iter().filter(|s| !s.starts_with('[')).collect();
+    data.sort();
+    for s in data {
+        push(s.clone(), SpecSource::Data);
+    }
+    if def.specs.iter().any(|s| s == "[Martial Art]") {
+        let mut arts: Vec<String> = ch.items("martialarts", "martialart").iter().map(|m| m.get("name")).collect();
+        arts.sort();
+        for a in arts {
+            push(a, SpecSource::MartialArt);
+        }
+    }
+    if def.category != "Combat Active" {
+        return out;
+    }
+    let mut own: Vec<String> = ch.items("weapons", "weapon").iter().filter(|w| crate::items::weapon::weapon_skill(w) == def.name).map(|w| w.get("name")).collect();
+    own.sort();
+    for w in own {
+        push(w, SpecSource::OwnWeapon);
+    }
+    let store = engine.store_for_character(ch);
+    let books = engine.settings().resolve_for(ch).map(crate::settings::CharacterSettings::books).unwrap_or_default();
+    if let Ok(doc) = store.doc("weapons.xml") {
+        let in_specs = |v: String| !v.is_empty() && def.specs.contains(&v);
+        let mut list: Vec<String> = crate::data::records(&doc, "weapons", "weapon")
+            .into_iter()
+            .filter(|r| !r.hidden() && (books.is_empty() || books.contains(&r.source())))
+            .filter(|r| r.category() == def.name || in_specs(r.get("spec")) || in_specs(r.get("spec2")))
+            .map(|r| r.name())
+            .collect();
+        list.sort();
+        for w in list {
+            push(w, SpecSource::Weapon);
+        }
+    }
+    out
 }

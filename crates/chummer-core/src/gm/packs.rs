@@ -368,8 +368,9 @@ fn skills(ch: &mut Character, a: &mut Applier<'_>, rules: &crate::calc::Rules, n
         if let Some(sk) = ch.skills.iter_mut().find(|x| x.guid == guid) {
             sk.base = base;
             sk.karma = karma;
-            if !spec.is_empty() && !sk.specs.iter().any(|x| x.name == spec) {
-                crate::chargen::add_specialization(ch, &guid, &spec);
+            if !spec.is_empty() {
+                // A specialization the skill has already is refused: fine.
+                let _ = crate::chargen::add_specialization(ch, &guid, &spec);
             }
         }
         a.report.added.push(format!("Skill: {name} {}", fixed + points));
