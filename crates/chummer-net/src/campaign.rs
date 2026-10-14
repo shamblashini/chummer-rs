@@ -48,12 +48,13 @@ pub const CAMPAIGN_ALPN: &[u8] = b"chummer-rs/campaign/2";
 /// refused here, with a "who must update" message, instead of failing on
 /// every message after the handshake. Bump both together. 2: up to
 /// 0.6.0 (sync format 5). 5: the app's version in [`Hello`] and
-/// [`DenyReason::VersionGap`] (sync format 5).
+/// [`DenyReason::VersionGap`] (sync format 5). 6: specialization
+/// commands (sync format 6).
 ///
 /// The handshake itself (the ALPN, [`Hello`]'s first fields, the
 /// challenge, [`DenyReason::Version`]) stays as it is, so every app, old or
 /// new, can still read the refusal.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// The first [`PROTOCOL_VERSION`] whose clients send their app version
 /// and read [`DenyReason::VersionGap`].
