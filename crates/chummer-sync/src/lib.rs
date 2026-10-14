@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn protocol_version_follows_the_sync_format() {
         assert_eq!(chummer_net::campaign::PROTOCOL_VERSION, crate::msg::SYNC_VERSION as u32);
-        assert!(chummer_net::campaign::FIRST_WITH_APP_VERSION <= chummer_net::campaign::PROTOCOL_VERSION);
+        const { assert!(chummer_net::campaign::FIRST_WITH_APP_VERSION <= chummer_net::campaign::PROTOCOL_VERSION) };
     }
 
     /// The version notice is readable whatever the sync version, and is

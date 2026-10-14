@@ -825,7 +825,7 @@ impl AuthorityHost {
             }
         }
         // Members whose mail was of another version learn ours (apps
-        // from 0.7.0 on read it whatever their version).
+        // after 0.6.0 read it whatever their version).
         let replies = std::mem::take(&mut self.shared.notices.lock().unwrap_or_else(|e| e.into_inner()).reply);
         for peer in replies {
             let signer = self.signer_for(&peer);

@@ -438,7 +438,7 @@ pub fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, DecodeErr
 /// The first byte of a [`VersionNotice`]. Never a [`SYNC_VERSION`].
 pub const NOTICE_BYTE: u8 = 0;
 
-/// "My app speaks this version": the one message every app from 0.7.0 on
+/// "My app speaks this version": the one message every app after 0.6.0
 /// reads, whatever its own [`SYNC_VERSION`]. One byte
 /// ([`NOTICE_BYTE`]), then JSON (unknown fields are ignored, missing ones
 /// empty, so later apps can add to it). The GM mails it to a member whose
