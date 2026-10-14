@@ -238,7 +238,7 @@ impl CharacterView {
             }
             let Some(c) = self.career_costs(engine).specialization(&self.doc, &s.guid) else { continue };
             let suid = self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| x.suid.clone()).unwrap_or_default();
-            for o in engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default().into_iter().filter(|o| !s.specs.contains(o)) {
+            for o in engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default().into_iter().filter(|o| !o.starts_with('[') && !s.specs.contains(o)) {
                 push(icons::PLUS_CIRCLE, lang.tr_fmt("Add specialization: {0} ({1})", &[&s.name, &o]), lang.tr("Skill"), format!("{} ({o}) +{}", s.name, s.spec_bonus.max(2)), c, Raise::Specialize(s.guid.clone(), o));
             }
         }
