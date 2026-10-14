@@ -1080,7 +1080,9 @@ fn skill_values(ch: &Character, sheet: &Sheet, sk: &Skill, cat: &SkillCatalog, r
     } else {
         0
     };
-    let spec_bonus = if def.exotic || sk.specs.is_empty() || total_base_rating == 0 {
+    // `GetSpecializationBonus`; Loss of Confidence's
+    // `DisableSpecializationEffects` takes it away.
+    let spec_bonus = if def.exotic || sk.specs.is_empty() || total_base_rating == 0 || ch.improvements.has_named("DisableSpecializationEffects", &key) {
         0
     } else if sk.specs.iter().any(|s| s.expertise) {
         3

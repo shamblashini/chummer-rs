@@ -1239,6 +1239,13 @@ pub fn preset_matches<'a>(presets: &'a [(String, String)], text: &str, filter: b
 /// Workspace style or as a Classic field, after the active layout. With no
 /// presets it is a plain text field of the same look.
 pub fn preset_input(ui: &mut Ui, id: impl std::hash::Hash, text: &mut String, presets: &[(String, String)], hint: &str, width: f32) -> Response {
+    preset_input_pick(ui, id, text, presets, hint, width).0
+}
+
+/// [`preset_input`], also saying which preset was picked this frame (by a
+/// click or by Enter on a highlighted entry), for fields that act on a
+/// pick at once.
+pub fn preset_input_pick(ui: &mut Ui, id: impl std::hash::Hash, text: &mut String, presets: &[(String, String)], hint: &str, width: f32) -> (Response, Option<String>) {
     let th = theme::current(ui.ctx());
     let ws = th.ws;
     let wsl = th.workspace_layout();
@@ -1355,15 +1362,15 @@ pub fn preset_input(ui: &mut Ui, id: impl std::hash::Hash, text: &mut String, pr
             state.open = false;
         }
     }
-    if let Some(v) = pick {
-        if *text != v {
-            *text = v;
+    if let Some(v) = &pick {
+        if text != v {
+            text.clone_from(v);
             edit.mark_changed();
         }
         state = PresetState::default();
     }
     ui.data_mut(|d| d.insert_temp(id, state));
-    edit
+    (edit, pick)
 }
 
 #[cfg(test)]

@@ -3147,3 +3147,117 @@ fn campaign_default_preset_starts_the_wizards() {
 
 // GUI frame times for the performance suite (ignored here).
 mod perf;
+
+// ----- free-text specializations -----
+
+/// The guid of character `i`'s active skill `name`.
+fn skill_guid(h: &Harness, i: usize, name: &str) -> String {
+    let id = h.app.engine.catalog.active.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("no skill {name}")).id.clone();
+    h.app.views[i].ch().skills.iter().find(|s| s.suid.eq_ignore_ascii_case(&id)).unwrap().guid.clone()
+}
+
+fn skill_specs(h: &Harness, i: usize, guid: &str) -> Vec<String> {
+    h.app.views[i].ch().skills.iter().find(|s| s.guid == guid).unwrap().specs.iter().map(|s| s.name.clone()).collect()
+}
+
+/// The specialized pool drawn on screen: "7 (9)".
+fn specialized_pool(h: &Harness) -> Option<(i32, i32)> {
+    h.texts.iter().find_map(|(t, _)| {
+        let (a, b) = t.trim().split_once(" (")?;
+        Some((a.parse().ok()?, b.strip_suffix(')')?.parse().ok()?))
+    })
+}
+
+/// Skills page with the list filtered to `skill`, which gets rating 3.
+fn skills_page_for(kind: ThemeKind, fixture_name: &str, skill: &str) -> (Harness, usize, String) {
+    let mut h = Harness::new(kind);
+    let i = h.open(&fixture(fixture_name));
+    let guid = skill_guid(&h, i, skill);
+    if !h.app.views[i].ch().created {
+        assert!(h.app.views[i].doc_mut().set(chummer_core::command::Command::SetSkillBase { skill: guid.clone(), value: 3 }));
+    }
+    h.app.views[i].ws_go(Section::Page(Tab::Skills));
+    h.size = WIDE;
+    h.frames(2);
+    h.click_text(&h.app.lang.tr("Filter skills"));
+    h.type_text(skill);
+    h.frames(2);
+    (h, i, guid)
+}
+
+/// Type a specialization into the skill's box and press Enter.
+fn type_spec(h: &mut Harness, hint: &str, text: &str) {
+    h.click_where(hint, |t| t.starts_with(hint));
+    h.type_text(text);
+    h.frames(1);
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+}
+
+fn creation_custom_spec(kind: ThemeKind) {
+    let (mut h, i, guid) = skills_page_for(kind, "Munin.chum5", "Unarmed Combat");
+    assert!(specialized_pool(&h).is_none(), "no specialization yet: {:?}", h.on_screen());
+    let hint = h.app.lang.tr("Add a specialization");
+    // Not one of the data's specializations: any text.
+    type_spec(&mut h, &hint, "Kicks");
+    assert_eq!(skill_specs(&h, i, &guid), ["Kicks"], "{:?}", h.app.status);
+    let (pool, spec) = specialized_pool(&h).unwrap_or_else(|| panic!("pool (pool+2) shown: {:?}", h.on_screen()));
+    assert_eq!(spec, pool + 2);
+    assert!(h.find_text("Kicks").is_some(), "the box shows it");
+    // Retyped from a suggestion: replaces it (one creation specialization).
+    h.click_text("Kicks");
+    h.key(Key::A, Modifiers::COMMAND);
+    h.type_text("Block");
+    h.frames(2);
+    h.click_text("Blocking");
+    h.frames(2);
+    assert_eq!(skill_specs(&h, i, &guid), ["Blocking"], "picked from the list");
+    // Undo goes back through both.
+    h.key(Key::Z, Modifiers::COMMAND);
+    h.frames(2);
+    assert_eq!(skill_specs(&h, i, &guid), ["Kicks"]);
+    // Emptying the box removes it.
+    h.click_text("Kicks");
+    h.key(Key::A, Modifiers::COMMAND);
+    h.key(Key::Backspace, Modifiers::NONE);
+    h.key(Key::Enter, Modifiers::NONE);
+    h.frames(2);
+    assert!(skill_specs(&h, i, &guid).is_empty());
+    assert!(specialized_pool(&h).is_none());
+}
+
+#[test]
+fn workspace_custom_specialization_in_creation() {
+    creation_custom_spec(ThemeKind::WorkspaceLight);
+}
+
+#[test]
+fn classic_custom_specialization_in_creation() {
+    creation_custom_spec(ThemeKind::Graphite);
+}
+
+fn career_custom_spec(kind: ThemeKind) {
+    let (mut h, i, guid) = skills_page_for(kind, "Munin_Career.chum5", "Pistols");
+    h.app.views[i].doc_mut().apply(chummer_core::command::Command::SetKarma { value: 20 }).unwrap();
+    h.frames(2);
+    let hint = h.app.lang.tr_fmt("Add a specialization ({0} karma)", &[&7]);
+    type_spec(&mut h, &hint, "Ares Predator V");
+    assert_eq!(skill_specs(&h, i, &guid), ["Ares Predator V"], "{:?}", h.app.status);
+    assert_eq!(h.app.views[i].ch().karma, 13, "7 karma");
+    let (pool, spec) = specialized_pool(&h).unwrap_or_else(|| panic!("pool (pool+2) shown: {:?}", h.on_screen()));
+    assert_eq!(spec, pool + 2);
+    // The box is empty again; the same name is refused and costs nothing.
+    type_spec(&mut h, &hint, "ares predator v");
+    assert_eq!(skill_specs(&h, i, &guid), ["Ares Predator V"]);
+    assert_eq!(h.app.views[i].ch().karma, 13);
+}
+
+#[test]
+fn workspace_custom_specialization_in_career() {
+    career_custom_spec(ThemeKind::WorkspaceDark);
+}
+
+#[test]
+fn classic_custom_specialization_in_career() {
+    career_custom_spec(ThemeKind::Classic);
+}

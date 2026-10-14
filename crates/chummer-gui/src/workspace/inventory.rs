@@ -367,7 +367,13 @@ impl Ctx<'_> {
                     Cell::num(a.clone(), num_of(&a)).tone(if top { Tone::Normal } else { Tone::Muted })
                 }
                 "pool" => match &weapon {
-                    Some(s) => Cell::num(s.dice_pool.to_string(), Some(s.dice_pool as f64)).tone(Tone::Accent),
+                    Some(s) => {
+                        let cell = Cell::num(if s.spec.is_some() { format!("{}*", s.dice_pool) } else { s.dice_pool.to_string() }, Some(s.dice_pool as f64)).tone(Tone::Accent);
+                        match &s.spec {
+                            Some(spec) => cell.tip(lang.tr_fmt("With the specialization {0}", &[spec])),
+                            None => cell,
+                        }
+                    }
                     None => Cell::default(),
                 },
                 "dv" => weapon.as_ref().map_or_else(Cell::default, |s| Cell::num(s.damage.clone(), num_of(&s.damage))),

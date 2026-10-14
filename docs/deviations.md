@@ -48,6 +48,7 @@ Each table has these columns:
 | Career essence loss can lower an attribute's karma levels below 0. | Karma levels stop at 0. (LB-33) | Negative purchased levels have no meaning. | yes (karma levels) |
 | Removing a quality with several levels books one karma entry for all of them (cost × levels). | One entry per level, each with its own undo. | Same karma; each level can be undone on its own. | yes (expense log) |
 | Reload with a top-up that needs more rounds than the stack has: the loaded quantity becomes `Quantity − selected.Quantity`, so rounds disappear. A stack can stay at quantity 0. | The stacks merge, as Chummer's own comment says. A stack that reaches 0 is removed. (LB-20) | Book-keeping. | yes (ammo quantities) |
+| Career: Add Specialization (`SelectSpec`) lists the data's `<specs>`, then for combat skills the weapons.xml weapons whose category is the skill or whose `spec`/`spec2` is one of those specs; "Custom" allows any text. The same name can be bought twice; placeholders such as `[Martial Art]` are offered as text. | One box on the skill's row takes any text, Enter or a pick buys it. Its list: the data's `<specs>` without the `[...]` placeholders, names offered by improvements (as Chummer's creation list), `[Martial Art]` expanded to the character's martial arts, the character's own weapons that use the skill, then Chummer's weapons.xml list. A name the skill already has (ignoring case) or an empty one is refused, in creation too. | A placeholder is a hint, not a name; the character's own weapons are the useful entries; a duplicate costs karma for nothing. Weapon pools still match a specialization exactly as Chummer does (weapon name, category, `spec`, `spec2`; case counts). | no |
 
 ## Creation
 
@@ -58,6 +59,7 @@ Each table has these columns:
 | Change Priorities after a new metatype with the same talent leaves MAG/RES/DEP at the metatype's minimum. | The talent's limits are applied again. (LB-46) | SR5 p. 65. | yes (attribute limits) |
 | Change Priorities / Change Metatype can also switch build methods (karma-bought attributes become points, priority-only qualities go). | The same build method only (the dialog offers its own choices); critter metatypes' powers, natural weapons and skills are not re-created. | chummer-rs switches settings only within one build method. | no |
 | A technomancer without a stream is an error. | It is a warning and does not block Finish. | chummer-rs has no stream picker yet, so it must not block finishing. | no |
+| Creation: the specialization box (`cboSpec`) takes what is typed after one second; its list has the data's `<specs>` (with placeholders such as `[Martial Art]` as literal entries) and names offered by improvements (`SkillSpecializationOption`, e.g. each martial art for Unarmed Combat). | The box takes the text on Enter or on a pick from the list, and Enter on an empty box removes the specialization. The list is the one career uses (below). | One commit per change: no half-typed specialization in the undo history or online. | no |
 
 ## Items & costs
 

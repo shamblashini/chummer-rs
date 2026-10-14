@@ -637,7 +637,12 @@ impl CharacterView {
             .collect();
         for w in self.doc.items("weapons", "weapon").into_iter().take(4) {
             let st = self.weapon_stats(w, false);
-            out.push((super::display_name(&sections::WEAPONS, w, lang), st.dice_pool, st.dice_pool.to_string()));
+            let name = super::display_name(&sections::WEAPONS, w, lang);
+            let label = match &st.spec {
+                Some(spec) => format!("{name} · {spec}"),
+                None => name,
+            };
+            out.push((label, st.dice_pool, st.dice_pool.to_string()));
         }
         out
     }
@@ -724,7 +729,11 @@ impl CharacterView {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let look = if selected { Look::Primary } else { Look::Secondary };
                     let label = format!("{} {}", lang.tr("Roll"), st.dice_pool);
-                    if widgets::button(ui, Some(icons::DICE_FIVE), &label, look, 24.0).on_hover_text(lang.tr_fmt("Limit {0}", &[&accuracy])).clicked() {
+                    let mut tip = lang.tr_fmt("Limit {0}", &[&accuracy]);
+                    if let Some(spec) = &st.spec {
+                        tip = format!("{tip}\n{}", lang.tr_fmt("With the specialization {0}", &[spec]));
+                    }
+                    if widgets::button(ui, Some(icons::DICE_FIVE), &label, look, 24.0).on_hover_text(tip).clicked() {
                         let mut what = if st.skill.is_empty() { name.clone() } else { format!("{} · {name}", lang.data_name("skills.xml", "", &st.skill)) };
                         // The choke's note goes with the roll to the GM.
                         if let Some(n) = &note {
@@ -737,6 +746,9 @@ impl CharacterView {
             });
             let ap = if st.ap.is_empty() { "-".to_owned() } else { st.ap.clone() };
             let mut parts = vec![damage, format!("{} {ap}", lang.tr("AP")), format!("{} {}", lang.tr("Acc"), accuracy)];
+            if let Some(spec) = &st.spec {
+                parts.push(format!("{} {spec}", lang.tr("Specialization")));
+            }
             if melee {
                 parts.push(format!("{} {}", lang.tr("Reach"), st.reach));
             } else {

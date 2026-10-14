@@ -8,6 +8,7 @@ use chummer_core::calc::SkillValues;
 use chummer_core::command::Command;
 use chummer_core::engine::Engine;
 use chummer_core::lang::Language;
+use chummer_core::skills::SpecSource;
 use chummer_core::sources::{SourceRef, SourcebookLibrary};
 use chummer_core::career;
 use eframe::egui::{self, RichText};
@@ -19,9 +20,19 @@ use crate::view::{CareerAction, CharacterView};
 use crate::workspace::icons;
 use crate::workspace::widgets::{self, Look};
 
+/// What a specialization box asked for.
+pub(in crate::view) enum SpecEdit {
+    /// Creation: `SetSpecialization`.
+    Set(Command),
+    /// Career: buy it for karma.
+    Buy(CareerAction),
+}
+
 /// What a row asked for while the table was drawn.
 enum Edit {
     Set(Command),
+    /// A command whose refusal is shown (free text can be refused).
+    Run(Command),
     Action(CareerAction),
     Select(Selected),
     Roll(i32),
@@ -29,6 +40,8 @@ enum Edit {
 }
 
 const ROW: f32 = 32.0;
+/// Width of the specialization column.
+const SPEC_W: f32 = 170.0;
 
 impl CharacterView {
     #[allow(clippy::too_many_arguments)]
@@ -96,6 +109,7 @@ impl CharacterView {
         for e in edits {
             match e {
                 Edit::Set(c) => changed |= self.doc.set(c),
+                Edit::Run(c) => changed |= self.doc.run(c, status).is_some_and(|r| r.changed),
                 Edit::Action(a) => self.action = Some(a),
                 Edit::Select(s) => self.ws_select(s),
                 Edit::Roll(p) => *roll = Some(p.max(1) as u32),
@@ -114,10 +128,13 @@ impl CharacterView {
         let karma = self.doc.karma;
         let first = if knowledge { lang.tr("Knowledge skill") } else { lang.tr("Active skill") };
         let second = if knowledge { lang.tr("Type") } else { lang.tr("Attr") };
+        // Active skills end in their specialization box, knowledge skills
+        // in a remove button.
+        let (last, last_w) = if knowledge { (String::new(), 24.0) } else { (lang.tr("Specialization"), SPEC_W) };
         let (captions, spec): (Vec<String>, Vec<f32>) = if career_mode {
-            (vec![first, second, lang.tr("Rating"), String::new(), lang.tr("Pool"), lang.tr("Advance"), String::new()], vec![0.0, if knowledge { 76.0 } else { 44.0 }, 44.0, 96.0, 56.0, 118.0, 24.0])
+            (vec![first, second, lang.tr("Rating"), String::new(), lang.tr("Pool"), lang.tr("Advance"), last], vec![0.0, if knowledge { 76.0 } else { 44.0 }, 44.0, 96.0, 64.0, 118.0, last_w])
         } else {
-            (vec![first, second, lang.tr("Points"), lang.tr("Karma"), lang.tr("Rating"), String::new(), lang.tr("Pool"), String::new()], vec![0.0, if knowledge { 76.0 } else { 44.0 }, 84.0, 84.0, 44.0, 96.0, 50.0, 24.0])
+            (vec![first, second, lang.tr("Points"), lang.tr("Karma"), lang.tr("Rating"), String::new(), lang.tr("Pool"), last], vec![0.0, if knowledge { 76.0 } else { 44.0 }, 84.0, 84.0, 44.0, 96.0, 64.0, last_w])
         };
         widgets::table_frame(&ws).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -144,8 +161,11 @@ impl CharacterView {
                         if let Some(src) = SourceRef::new(&s.source, &s.page) {
                             r.on_hover_text(format!("{src} · {}", s.group));
                         }
-                        if !s.specs.is_empty() {
-                            ui.add(egui::Label::new(RichText::new(format!("{} +{}", s.specs.join(", "), s.spec_bonus)).size(11.0).color(ws.muted)).truncate());
+                        // Creation shows the player's specialization in its
+                        // box; here the others (free ones, career buys).
+                        let shown = if knowledge || career_mode { s.specs.clone() } else { self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| x.specs.iter().filter(|p| p.free).map(|p| p.name.clone()).collect()).unwrap_or_default() };
+                        if !shown.is_empty() {
+                            ui.add(egui::Label::new(RichText::new(format!("{} +{}", shown.join(", "), s.spec_bonus)).size(11.0).color(ws.muted)).truncate());
                         }
                     });
                     widgets::cell(ui, next(), ROW, |ui| {
@@ -181,7 +201,7 @@ impl CharacterView {
                         }
                     });
                     widgets::cell(ui, next(), ROW, |ui| {
-                        let shown = if s.native || (s.rating == 0 && !s.default) { "—".to_owned() } else { s.pool.to_string() };
+                        let shown = if s.native || (s.rating == 0 && !s.default) { "—".to_owned() } else { crate::view::skill_pool_text(s) };
                         let r = ui.add(egui::Label::new(widgets::mono(shown, 12.5, ws.accent)).sense(egui::Sense::click())).on_hover_text(lang.tr("Roll this pool")).on_hover_cursor(egui::CursorIcon::PointingHand);
                         if r.clicked() {
                             edits.push(Edit::Roll(s.pool));
@@ -209,8 +229,12 @@ impl CharacterView {
                             if widgets::icon_button(ui, icons::TRASH, 22.0).on_hover_text(lang.tr("Remove")).clicked() {
                                 edits.push(Edit::Set(Command::RemoveKnowledgeSkill { skill: s.guid.clone() }));
                             }
-                        } else if !s.disabled {
-                            self.spec_menu(ui, engine, lang, s, edits);
+                        } else {
+                            match self.spec_box(ui, engine, lang, s, SPEC_W - 8.0) {
+                                Some(SpecEdit::Set(c)) => edits.push(Edit::Run(c)),
+                                Some(SpecEdit::Buy(a)) => edits.push(Edit::Action(a)),
+                                None => {}
+                            }
                         }
                     });
                 });
@@ -227,31 +251,69 @@ impl CharacterView {
         });
     }
 
-    /// The + menu of an active skill: its specializations not taken yet
-    /// (career: with their karma cost).
-    fn spec_menu(&self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, s: &SkillValues, edits: &mut Vec<Edit>) {
+    /// The suggestions under a specialization box, once per revision.
+    fn spec_presets(&self, engine: &Engine, lang: &Language, skill: &str) -> std::sync::Arc<Vec<(String, String)>> {
+        self.spec_suggestions.get(self.doc.revision(), skill.to_owned(), || {
+            let list = chummer_core::skills::spec_suggestions(engine, &self.doc, skill);
+            std::sync::Arc::new(
+                list.into_iter()
+                    .map(|x| {
+                        let label = match x.source {
+                            SpecSource::MartialArt => format!("{} · {}", x.name, lang.tr("Martial Art")),
+                            SpecSource::OwnWeapon => format!("{} · {}", x.name, lang.tr("Weapon")),
+                            SpecSource::Data | SpecSource::Granted | SpecSource::Weapon => x.name.clone(),
+                        };
+                        (x.name, label)
+                    })
+                    .collect(),
+            )
+        })
+    }
+
+    /// The specialization box of an active skill, in both layouts. Any
+    /// text; the list suggests the data's specializations, the character's
+    /// martial arts and weapons. Creation: Chummer's one box, showing the
+    /// player's specialization; Enter or a pick sets it, Enter on an empty
+    /// box removes it. Career: an empty box; Enter or a pick buys the
+    /// specialization for karma. `None` when the skill cannot have one.
+    pub(in crate::view) fn spec_box(&self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, s: &SkillValues, width: f32) -> Option<SpecEdit> {
+        let skill = self.doc.skills.iter().find(|x| x.guid == s.guid)?;
+        if s.disabled || engine.catalog.get(&skill.suid).is_some_and(|d| d.exotic) {
+            return None;
+        }
         let career_mode = self.doc.created;
-        let r = widgets::icon_button(ui, icons::PLUS, 22.0).on_hover_text(lang.tr("Add a specialization"));
-        let suid = self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| x.suid.clone()).unwrap_or_default();
+        let current = if career_mode { String::new() } else { skill.specs.iter().find(|x| !x.free).map(|x| x.name.clone()).unwrap_or_default() };
         let cost = if career_mode { self.career_costs(engine).specialization(&self.doc, &s.guid) } else { None };
-        egui::Popup::menu(&r).show(|ui| {
-            let opts = engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default();
-            let opts: Vec<String> = opts.into_iter().filter(|o| !s.specs.contains(o)).collect();
-            if opts.is_empty() {
-                ui.label(lang.tr("None."));
-            }
-            for o in opts {
-                let label = match cost {
-                    Some(c) => format!("{o}  ·  {}", k(c)),
-                    None => o.clone(),
-                };
-                let ok = cost.is_none_or(|c| self.doc.karma >= c);
-                if ui.add_enabled(ok, egui::Button::new(label)).clicked() {
-                    edits.push(if career_mode { Edit::Action(CareerAction::Specialize(s.guid.clone(), o)) } else { Edit::Set(Command::AddSpecialization { skill: s.guid.clone(), name: o }) });
-                    ui.close();
-                }
-            }
-        });
+        let can = s.total_base > 0 && (!career_mode || cost.is_some_and(|c| self.doc.karma >= c));
+        let hint = match cost {
+            Some(c) => lang.tr_fmt("Add a specialization ({0} karma)", &[&c]),
+            None => lang.tr("Add a specialization"),
+        };
+        let id = egui::Id::new(("spec_box", &s.guid));
+        let mut text: String = ui.data(|d| d.get_temp(id)).unwrap_or_else(|| current.clone());
+        let presets = if can { self.spec_presets(engine, lang, &s.guid) } else { Default::default() };
+        let (r, pick) = ui.add_enabled_ui(can, |ui| widgets::preset_input_pick(ui, ("spec", &s.guid), &mut text, &presets, &hint, width)).inner;
+        let r = if s.total_base <= 0 {
+            r.on_disabled_hover_text(lang.tr_fmt("{0} needs a rating before it can have a specialization", &[&s.name]))
+        } else if career_mode && cost.is_some_and(|c| self.doc.karma < c) {
+            r.on_disabled_hover_text(lang.tr("Not enough karma"))
+        } else {
+            r
+        };
+        let entered = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let commit = pick.or_else(|| entered.then(|| text.clone()));
+        if r.has_focus() && commit.is_none() {
+            ui.data_mut(|d| d.insert_temp(id, text));
+        } else {
+            // Committed, or left without Enter: back to the saved value.
+            ui.data_mut(|d| d.remove::<String>(id));
+        }
+        let name = commit?.trim().to_owned();
+        if career_mode {
+            (!name.is_empty()).then(|| SpecEdit::Buy(CareerAction::Specialize(s.guid.clone(), name)))
+        } else {
+            (name != current).then(|| SpecEdit::Set(Command::SetSpecialization { skill: s.guid.clone(), name }))
+        }
     }
 
     /// Skill groups: points and karma in creation, "+1 · cost" in career.

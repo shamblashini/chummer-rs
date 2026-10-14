@@ -469,6 +469,8 @@ pub fn apply_node(ctx: &mut Ctx<'_>, node: &Element) -> bool {
                 i.add_to_rating = atr;
                 ctx.push(i);
             }
+            // LIKELY-BUG(LB-47): `TryGetBoolFieldQuickly` reads the data's
+            // empty `<disablespecializationeffects />` as False.
             if child_bool(node, "disablespecializationeffects") {
                 let i = ctx.imp("DisableSpecializationEffects", &skill);
                 ctx.push(i);

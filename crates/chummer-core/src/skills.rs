@@ -183,6 +183,9 @@ impl SkillGroup {
 pub enum SpecSource {
     /// The skill's `<specs>` in skills.xml.
     Data,
+    /// Offered by an improvement (`SkillSpecializationOption`): a martial
+    /// art offers its own name for Unarmed Combat.
+    Granted,
     /// `[Martial Art]` in the data: one of the character's martial arts.
     MartialArt,
     /// A weapon the character has that uses the skill.
@@ -200,11 +203,13 @@ pub struct SpecSuggestion {
 /// Suggestions for a new specialization of an active skill. Any text is
 /// still allowed; these fill the list under the box.
 ///
-/// Chummer offers the data's `<specs>` and, for "Combat Active" skills
+/// Chummer offers the data's `<specs>` and the `SkillSpecializationOption`
+/// improvements' names (`CGLSpecializations`), and, for "Combat Active" skills
 /// in its career dialog (`SelectSpec`), the weapons.xml weapons whose
 /// category is the skill's name or whose `spec`/`spec2` is one of the
 /// data's specs, from enabled books. chummer-rs also expands
-/// `[Martial Art]` to the character's martial arts, leaves out the other
+/// `[Martial Art]` to the character's martial arts (for arts without that
+/// option, e.g. custom data), leaves out the other
 /// `[...]` placeholders (they are hints, not names), and puts the
 /// character's own weapons for the skill first (docs/deviations.md).
 /// Specializations the skill has already are left out.
@@ -222,6 +227,11 @@ pub fn spec_suggestions(engine: &crate::engine::Engine, ch: &crate::character::C
     data.sort();
     for s in data {
         push(s.clone(), SpecSource::Data);
+    }
+    let mut granted: Vec<String> = ch.improvements.of_kind("SkillSpecializationOption").filter(|i| i.improved_name == def.name).map(|i| i.unique_name.clone()).collect();
+    granted.sort();
+    for g in granted {
+        push(g, SpecSource::Granted);
     }
     if def.specs.iter().any(|s| s == "[Martial Art]") {
         let mut arts: Vec<String> = ch.items("martialarts", "martialart").iter().map(|m| m.get("name")).collect();

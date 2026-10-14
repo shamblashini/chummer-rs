@@ -189,9 +189,21 @@ pub struct CharacterView {
     career_costs: crate::memo::Memo<(), Arc<career::SkillCosts>>,
     /// Weapon stats by (guid, with the character's house rules).
     weapon_stats: crate::memo::Memo<(String, bool), chummer_core::items::weapon::WeaponStats>,
+    /// Suggested specializations by skill guid, as (value, label).
+    pub(crate) spec_suggestions: crate::memo::Memo<String, Arc<Vec<(String, String)>>>,
     /// Which window the dialogs below show in (a pop-out's, when opened
     /// from it).
     ws_dialogs: crate::workspace::popout::DialogHome,
+}
+
+/// A skill's pool as Chummer's `DisplayPool` shows it: "7 (9)" when a
+/// specialization applies, the specialized pool in brackets.
+pub(crate) fn skill_pool_text(s: &chummer_core::calc::SkillValues) -> String {
+    if !s.specs.is_empty() && s.spec_bonus > 0 {
+        format!("{} ({})", s.pool, s.pool + s.spec_bonus)
+    } else {
+        s.pool.to_string()
+    }
 }
 
 /// A career-mode purchase chosen while drawing, run afterwards (it needs
@@ -363,6 +375,7 @@ impl CharacterView {
             ws_gear: Default::default(),
             career_costs: Default::default(),
             weapon_stats: Default::default(),
+            spec_suggestions: Default::default(),
             ws_dialogs: Default::default(),
         };
         v.refresh_budget();
@@ -415,6 +428,7 @@ impl CharacterView {
     pub fn doc_mut(&mut self) -> &mut Doc {
         self.career_costs.clear();
         self.weapon_stats.clear();
+        self.spec_suggestions.clear();
         self.play_memo_clear();
         &mut self.doc
     }
@@ -503,6 +517,7 @@ impl CharacterView {
         // Settings may have changed without a new revision.
         self.career_costs.clear();
         self.weapon_stats.clear();
+        self.spec_suggestions.clear();
         if self.doc.field("settings") != self.settings_key {
             // Switched (or undone back to) another preset.
             self.refresh_settings(engine);
@@ -1234,7 +1249,7 @@ impl CharacterView {
                                 changed |= self.doc.set(Command::SetSkillKarma { skill: s.guid.clone(), value: karma });
                             }
                             ui.label(s.rating.to_string());
-                            let pool = if s.rating == 0 && !s.default { "—".to_owned() } else { s.pool.to_string() };
+                            let pool = if s.rating == 0 && !s.default { "—".to_owned() } else { skill_pool_text(s) };
                             if crate::theme::pool_chip(ui, pool).on_hover_text(lang.tr("Roll this pool")).clicked() {
                                 *roll = Some(s.pool.max(1) as u32);
                             }
@@ -1246,26 +1261,17 @@ impl CharacterView {
                                         }
                                     }
                                 }
-                                if !s.specs.is_empty() {
-                                    ui.label(format!("{} (+{})", s.specs.join(", "), s.spec_bonus));
+                                // Creation shows the player's specialization in
+                                // its box; the label lists the others.
+                                let others: Vec<String> = if career { s.specs.clone() } else { self.doc.skills.iter().find(|k| k.guid == s.guid).map(|k| k.specs.iter().filter(|p| p.free).map(|p| p.name.clone()).collect()).unwrap_or_default() };
+                                if !others.is_empty() {
+                                    ui.label(format!("{} (+{})", others.join(", "), s.spec_bonus));
                                 }
-                                let guid = s.guid.clone();
-                                let suid = self.doc.skills.iter().find(|k| k.guid == s.guid).map(|k| k.suid.clone()).unwrap_or_default();
-                                ui.menu_button("+", |ui| {
-                                    let opts = engine.catalog.get(&suid).map(|d| d.specs.clone()).unwrap_or_default();
-                                    for o in opts.iter().filter(|o| !s.specs.contains(o)) {
-                                        if ui.button(o).clicked() {
-                                            if career {
-                                                self.action = Some(CareerAction::Specialize(guid.clone(), o.clone()));
-                                            } else {
-                                                changed |= self.doc.set(Command::AddSpecialization { skill: guid.clone(), name: o.clone() });
-                                            }
-                                            ui.close();
-                                        }
-                                    }
-                                })
-                                .response
-                                .on_hover_text(lang.tr("Add a specialization"));
+                                match self.spec_box(ui, engine, lang, s, 160.0) {
+                                    Some(workspace::build::skills::SpecEdit::Set(c)) => changed |= self.doc.run(c, status).is_some_and(|r| r.changed),
+                                    Some(workspace::build::skills::SpecEdit::Buy(a)) => self.action = Some(a),
+                                    None => {}
+                                }
                             });
                             ui.end_row();
                         }
@@ -1385,7 +1391,10 @@ impl CharacterView {
                 for w in weapons {
                     let st = self.weapon_stats(w, true);
                     ui.label(w.get("name"));
-                    ui.strong(st.dice_pool.to_string()).on_hover_text(&st.skill);
+                    match &st.spec {
+                        Some(spec) => ui.strong(format!("{}*", st.dice_pool)).on_hover_text(format!("{} ({spec})", st.skill)),
+                        None => ui.strong(st.dice_pool.to_string()).on_hover_text(&st.skill),
+                    };
                     ui.label(&st.damage);
                     ui.label(&st.ap);
                     ui.label(st.accuracy.to_string());

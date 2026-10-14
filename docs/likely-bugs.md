@@ -29,7 +29,9 @@ None open: every recommended fix is done (see "Already fixed").
 
 ## Ask
 
-None open.
+| Id | Area | Chummer | chummer-rs | Rules | Class | Rec. |
+|---|---|---|---|---|---|---|
+| LB-47 | Loss of Confidence: specializations | `AddImprovementCollection.selectskill` reads `<disablespecializationeffects />` with `TryGetBoolFieldQuickly`, which parses the empty element as False. So the quality's `DisableSpecializationEffects` improvement is never made: the skill keeps its specialization bonus (pool and weapons), only the −2 applies. The `<skill>` bonus handler tests for the element instead, and there it works. | Copies it (`bonus/handlers.rs` `selectskill`). The bonus itself is honoured when the improvement exists (`calc.rs` spec bonus, weapon pools). | SR5 p. 82 (Loss of Confidence); the data's tag shows the intent that the specialization does not apply. Check the book text before fixing. | (a) | ask |
 
 ## Already fixed in chummer-rs
 
@@ -108,6 +110,7 @@ Tests that pin the current behaviour change with a fix.
 | LB-33 | `essence_loss.rs` `raw_career`, `chummer-gui/src/view.rs` `recompute` | `tests/essence_loss.rs` `career_mode_essence_loss_matches_saved`, `career_mode_essence_loss_lowers_mag_and_burns_karma` |
 | LB-40 | `career/actions.rs:55` | — |
 | LB-46 | `chargen/rebuild.rs` (`apply`) | `tests/change_metatype.rs` `a_magician_keeps_the_talent_magic_after_a_new_metatype` |
+| LB-47 | `bonus/handlers.rs` (`selectskill`) | `tests/specializations.rs` `disabled_specialization_effects_take_the_bonus_away` |
 | LB-44 | `xml.rs` (`NUM_LIMIT`, `parse_int`), `expr.rs` (`standard_round`, `trunc_int`, `clamp_int`), `calc/karma_cost.rs`, `calc.rs`, `essence_loss.rs`, `command/numbers.rs` | `tests/fuzz_load.rs` `extreme_numbers_in_numeric_fields`, `extreme_numbers_are_clamped_on_load`; `tests/prop_commands.rs` `extreme_command_values_are_refused` |
 | LB-45 | `command/numbers.rs`, `command.rs` (`Envelope` decoding, `parse_log`) | `tests/prop_commands.rs` `non_finite_numbers_are_refused`, `random_command_sequences` |
 
