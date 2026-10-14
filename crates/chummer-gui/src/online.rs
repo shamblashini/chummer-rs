@@ -250,7 +250,8 @@ impl Online {
                 None => lang.tr("connecting…"),
             };
             let label = c.session.label();
-            let denied = c.session.denied();
+            // From `r`: `session.denied()` would find the replica locked (by `r`).
+            let denied = r.denied().cloned();
             let chars: Vec<(CharacterId, String)> = r.characters().map(|id| (id.clone(), r.name(id).unwrap_or_default().to_owned())).collect();
             drop(r);
             ui.horizontal_wrapped(|ui| {

@@ -693,6 +693,41 @@ fn workspace_home_and_campaign() {
     home_and_campaign(ThemeKind::WorkspaceDark);
 }
 
+/// A joined campaign whose GM's app speaks another version: the start
+/// screen says whose app is older, in both layouts, and (Workspace) not
+/// to ask for a new invite link. No network: the session's endpoint has
+/// no relay and it is never synced.
+#[test]
+fn player_sees_version_refusal() {
+    use chummer_net::campaign::DenyReason;
+    for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark] {
+        let mut h = Harness::new(kind);
+        let session = {
+            let rt = h.app.online.handle();
+            let key = chummer_net::SecretKey::generate();
+            let cfg = chummer_net::config::NetConfig { relays: Vec::new(), extra_ca_roots: Vec::new(), port: None };
+            let ep = rt.block_on(chummer_net::node::bind(key.clone(), &cfg, Vec::new())).expect("a local endpoint");
+            let link = chummer_net::invite::InviteLink { host: chummer_net::SecretKey::generate().public(), campaign: chummer_net::invite::CampaignId::random(), member: None, gm_key: None, relay: None };
+            let _g = rt.enter();
+            chummer_sync::PlayerSession::new(ep, key, h.app.engine.clone(), chummer_sync::PlayerConfig::new("Anna", link)).expect("a session")
+        };
+        let reason = DenyReason::VersionGap { client: 5, server: 6, client_app: "0.7.0".into(), server_app: "0.8.0".into() };
+        session.replica().set_denied(Some(reason));
+        h.app.online.joined.push(crate::online::JoinedCampaign { key: "versiontest".into(), session });
+        h.app.home = Some(Home::Roster);
+        h.size = WIDE;
+        h.frames(FRAMES);
+        let text = "Your chummer-rs is older than the GM's (version 0.8.0; yours is 0.7.0). Update chummer-rs.";
+        assert!(h.find_where(|t| t.contains(text)).is_some(), "{kind:?}: {:?}", h.on_screen());
+        if kind == ThemeKind::WorkspaceDark {
+            assert!(h.find_text("It connects again once you and the GM use the same version of chummer-rs.").is_some(), "{:?}", h.on_screen());
+            assert!(h.find_text("Ask your GM for a new invite link, then join with it.").is_none(), "{:?}", h.on_screen());
+        }
+        sizes(&mut h, FRAMES);
+        h.app.online.joined.pop().unwrap().session.close();
+    }
+}
+
 /// The GM's Players & invites panel, in both layouts: an online campaign
 /// (not served), a new invite with a character to give, its row, a new
 /// link, a revoke and a new campaign key, each through the panel's own
