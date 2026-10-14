@@ -97,8 +97,8 @@ fn skill_issues_point_at_the_skill() {
     let engine = Engine::load().unwrap();
     let mut ch = new_char(&engine, STANDARD, "Human", ['D', 'E', 'A', 'B', 'C'], "Mundane");
     let pistols = ch.skills.iter().find(|k| engine.catalog.get(&k.suid).is_some_and(|d| d.name == "Pistols")).unwrap().guid.clone();
-    chargen::add_specialization(&mut ch, &pistols, "Revolvers");
-    chargen::add_specialization(&mut ch, &pistols, "Semi-Automatics");
+    chargen::add_specialization(&mut ch, &pistols, "Revolvers").unwrap();
+    chargen::add_specialization(&mut ch, &pistols, "Semi-Automatics").unwrap();
     let list = issues_of(&engine, &ch);
     let spec = find(&list, IssueKind::MultipleSpecializations).unwrap();
     assert_eq!(spec.item.as_deref(), Some(pistols.as_str()));

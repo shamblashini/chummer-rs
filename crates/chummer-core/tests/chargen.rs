@@ -136,8 +136,8 @@ fn creation_rules_for_specs_gender_and_magic_skills() {
 
     // Two specializations on one skill block finishing creation.
     let guid = ch.skills.iter().find(|k| engine.catalog.get(&k.suid).is_some_and(|d| d.name == "Pistols")).unwrap().guid.clone();
-    chargen::add_specialization(&mut ch, &guid, "Revolvers");
-    chargen::add_specialization(&mut ch, &guid, "Semi-Automatics");
+    chargen::add_specialization(&mut ch, &guid, "Revolvers").unwrap();
+    chargen::add_specialization(&mut ch, &guid, "Semi-Automatics").unwrap();
     let (s, b) = sheet(&engine, &ch);
     let problems = chargen::validity_problems(&ch, &s, &b, engine.settings().resolve(STANDARD).unwrap(), Some(&engine.store));
     assert!(problems.iter().any(|p| p.contains("Pistols has more than one specialization")), "{problems:?}");
