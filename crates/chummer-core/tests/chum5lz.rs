@@ -51,7 +51,8 @@ fn save_and_load_round_trip() {
     let bytes = std::fs::read(&lz).unwrap();
     assert_eq!(&bytes[..13], &[0x5D, 0, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
     // Our encoder's stream decodes with an independent decoder.
-    assert_eq!(lzma_rs_decode(&bytes), ch.to_xml_string().as_bytes());
+    // (With the comment naming chummer-rs, see `chumrs::with_export_comment`.)
+    assert_eq!(lzma_rs_decode(&bytes), chummer_core::chumrs::with_export_comment(ch.to_xml_string()).as_bytes());
     let again = Character::load(&lz).unwrap();
     assert_eq!(again.field("alias"), "Squeezed");
     assert_eq!(again.to_xml_string(), ch.to_xml_string());

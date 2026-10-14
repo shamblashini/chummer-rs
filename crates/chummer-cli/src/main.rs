@@ -222,6 +222,9 @@ fn apply_cmd(engine: &Engine, rest: &[String]) -> Result<()> {
     if let Some(out) = out {
         session.save(engine, Path::new(out)).with_context(|| format!("writing {out}"))?;
         println!("wrote {out}");
+        if !chummer_core::chumrs::is_chumrs(Path::new(out)) {
+            eprintln!("note: {}", chummer_core::chumrs::CHUMMER_EXPORT_NOTICE);
+        }
     }
     Ok(())
 }
@@ -307,6 +310,9 @@ fn convert_cmd(rest: &[String]) -> Result<()> {
     }
     .with_context(|| format!("writing {}", output.display()))?;
     println!("{} -> {}", input.display(), output.display());
+    if !chummer_core::chumrs::is_chumrs(output) {
+        eprintln!("note: {}", chummer_core::chumrs::CHUMMER_EXPORT_NOTICE);
+    }
     Ok(())
 }
 

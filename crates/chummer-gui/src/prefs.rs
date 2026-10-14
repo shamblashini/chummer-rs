@@ -27,6 +27,9 @@ pub const CHECK_UPDATES: &str = "check_updates";
 pub const AUTOSAVE_MINUTES: &str = "autosave_minutes";
 pub const BACKUP_COUNT: &str = "backup_count";
 pub const NOTICE_SEEN: &str = "translation_notice_seen";
+/// `chummer_export_notice_seen=true`: the notice before an export to
+/// Chummer5a's format was dismissed with "Don't show this again".
+pub const EXPORT_NOTICE_SEEN: &str = "chummer_export_notice_seen";
 
 pub const DEFAULT_AUTOSAVE_MINUTES: u32 = 2;
 pub const DEFAULT_BACKUP_COUNT: usize = 5;

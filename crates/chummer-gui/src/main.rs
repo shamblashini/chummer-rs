@@ -1136,6 +1136,7 @@ impl App {
         crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Export Character")).id(egui::Id::new("export_character")).open(&mut open), egui::vec2(460.0, 220.0), egui::vec2(340.0, 160.0), false).show(ctx, |ui| self.export_ui(ui));
         self.show_export = open;
         self.format_question(ctx);
+        self.export_question(ctx);
         let mut open = self.show_print;
         crate::workspace::dialog::fit(ctx, egui::Window::new(self.lang.tr("Character Sheet")).id(egui::Id::new("character_sheet")).open(&mut open), egui::vec2(560.0, 240.0), egui::vec2(380.0, 170.0), false).show(ctx, |ui| self.print_ui(ui));
         self.show_print = open;

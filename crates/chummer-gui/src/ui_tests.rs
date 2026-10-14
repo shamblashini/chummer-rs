@@ -3392,3 +3392,24 @@ fn workspace_gm_weapon_pool_shows_the_specialization() {
 fn classic_gm_weapon_pool_shows_the_specialization() {
     gm_spec_marker(ThemeKind::Graphite);
 }
+
+/// File → Export to Chummer5a first says that the programs differ and
+/// where to report problems; Cancel closes it without exporting. (Export…
+/// would open a real file dialog, so the test stops before it.)
+#[test]
+fn export_to_chummer_shows_the_notice_first() {
+    for kind in [ThemeKind::Graphite, ThemeKind::WorkspaceDark] {
+        let mut h = Harness::new(kind);
+        let idx = h.open(&fixture("Munin.chum5"));
+        h.frames(2);
+        h.app.export_chummer(idx);
+        h.frames(2);
+        assert!(h.app.io.ask_export.is_some());
+        assert!(h.find_where(|t| t.contains("not to the Chummer5a team")).is_some(), "{:?}", h.on_screen());
+        assert!(h.find_text("Don't show this again").is_some());
+        h.click_text("Cancel");
+        h.frames(2);
+        assert!(h.app.io.ask_export.is_none());
+        assert!(h.find_where(|t| t.contains("not to the Chummer5a team")).is_none());
+    }
+}

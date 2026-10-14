@@ -67,6 +67,10 @@ pub struct Io {
     /// The first Save of a Chummer5a file: the question "save as .chumrs
     /// or keep the .chum5" is open for this view.
     pub ask_format: Option<(u64, Then)>,
+    /// File → Export to Chummer5a: the notice that the programs differ is
+    /// open for this view, and its "Don't show this again" box.
+    pub ask_export: Option<u64>,
+    pub export_dont_ask: bool,
 }
 
 const ROSTER_SCAN: &str = "roster-scan";
@@ -196,9 +200,63 @@ impl App {
         started
     }
 
-    /// File → Export to Chummer5a: a copy as .chum5 or .chum5lz; the
-    /// character keeps its file and stays as modified as it was.
+    /// File → Export to Chummer5a: first the notice that chummer-rs and
+    /// Chummer5a differ (until "Don't show this again"), then the export.
     pub(crate) fn export_chummer(&mut self, idx: usize) {
+        let Some(v) = self.views.get(idx) else { return };
+        let seen = crate::theme::load_value(crate::prefs::EXPORT_NOTICE_SEEN).is_some_and(|v| v == "true");
+        if seen {
+            self.export_chummer_now(idx);
+        } else {
+            self.io.ask_export = Some(v.ws_id());
+            self.io.export_dont_ask = false;
+        }
+    }
+
+    /// The notice before an export to Chummer5a's format. Drawn each frame
+    /// while it is open.
+    pub(crate) fn export_question(&mut self, ctx: &egui::Context) {
+        let Some(view) = self.io.ask_export else { return };
+        let Some(idx) = self.views.iter().position(|v| v.ws_id() == view) else {
+            self.io.ask_export = None;
+            return;
+        };
+        let mut choice = None;
+        egui::Window::new(self.lang.tr("Export to Chummer5a"))
+            .id(egui::Id::new("chummer_export_notice"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_max_width(460.0);
+                ui.label(self.lang.tr(chummer_core::chumrs::CHUMMER_EXPORT_NOTICE));
+                ui.add_space(4.0);
+                ui.checkbox(&mut self.io.export_dont_ask, self.lang.tr("Don't show this again"));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button(self.lang.tr("Export…")).clicked() {
+                        choice = Some(true);
+                    }
+                    if ui.button(self.lang.tr("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        choice = Some(false);
+                    }
+                });
+            });
+        let Some(go) = choice else { return };
+        self.io.ask_export = None;
+        if go {
+            if self.io.export_dont_ask {
+                if let Err(e) = crate::theme::save_value(crate::prefs::EXPORT_NOTICE_SEEN, "true") {
+                    self.status = Some((format!("Could not save the preference: {e}"), true));
+                }
+            }
+            self.export_chummer_now(idx);
+        }
+    }
+
+    /// The export itself: a copy as .chum5 or .chum5lz; the character
+    /// keeps its file and stays as modified as it was.
+    fn export_chummer_now(&mut self, idx: usize) {
         let Some(v) = self.views.get(idx) else { return };
         let stem = v.path().and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or_else(|| v.ch().display_name());
         let dir = v.path().and_then(|p| p.parent().map(Path::to_path_buf));
@@ -234,6 +292,7 @@ impl App {
             .show(ctx, |ui| {
                 ui.label(self.lang.tr_fmt("{0} is a Chummer5a file.", &[&name]));
                 ui.label(self.lang.tr("chummer-rs saves characters as .chumrs: smaller, checked for damage, and it keeps the change history. The Chummer5a file stays as it is; File → Export to Chummer5a writes one again at any time."));
+                ui.label(egui::RichText::new(self.lang.tr(chummer_core::chumrs::CHUMMER_EXPORT_NOTICE)).weak());
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     let b = ui.button(self.lang.tr("Save as .chumrs…"));

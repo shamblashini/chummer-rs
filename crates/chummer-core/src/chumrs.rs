@@ -256,13 +256,56 @@ pub fn save_any(path: &Path, ch: &Character, extras: &Extras) -> std::io::Result
     if is_chumrs(path) {
         write(path, ch, extras)
     } else {
-        crate::chum5lz::write_text(path, &ch.to_xml_string())
+        crate::chum5lz::write_text(path, &with_export_comment(ch.to_xml_string()))
+    }
+}
+
+/// What chummer-rs says wherever it writes Chummer5a's format (the export
+/// dialog, the CLI, a comment in the file): the programs differ, and
+/// problems with such a file are chummer-rs's to answer, not Chummer5a's.
+pub const CHUMMER_EXPORT_NOTICE: &str = "chummer-rs does not calculate everything exactly like Chummer5a, so this character may not look or behave the same in Chummer5a. Please report problems with this file to chummer-rs (https://github.com/shamblashini/chummer-rs/issues), not to the Chummer5a team.";
+
+/// `xml` with a comment after its declaration naming chummer-rs and
+/// [`CHUMMER_EXPORT_NOTICE`], for whoever opens the file or gets it in a
+/// bug report. Chummer5a ignores comments; the parser does not keep one
+/// before the root, so loading and saving again does not repeat it.
+pub fn with_export_comment(xml: String) -> String {
+    let comment = format!("<!-- Written by chummer-rs {}. {} -->\n", env!("CARGO_PKG_VERSION"), CHUMMER_EXPORT_NOTICE);
+    match xml.strip_prefix("<?xml").and_then(|rest| rest.find("?>").map(|i| i + "<?xml".len() + 2)) {
+        Some(end) => {
+            let (decl, body) = xml.split_at(end);
+            format!("{decl}\n{comment}{}", body.trim_start_matches('\n'))
+        }
+        None => format!("{comment}{xml}"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A .chum5 that chummer-rs writes names chummer-rs and the notice in
+    /// a comment, once, also after loading and saving it again, and still
+    /// loads.
+    #[test]
+    fn chum5_exports_carry_the_notice_once() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Munin.chum5");
+        let ch = Character::load(&fixture).unwrap();
+        let dir = std::env::temp_dir().join(format!("chummer-export-notice-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.chum5");
+        save_any(&a, &ch, &Extras::default()).unwrap();
+        let text = std::fs::read_to_string(&a).unwrap();
+        assert!(text.starts_with("<?xml"), "{}", &text[..80]);
+        assert_eq!(text.matches(CHUMMER_EXPORT_NOTICE).count(), 1);
+        assert!(text.lines().nth(1).unwrap().starts_with("<!-- Written by chummer-rs "));
+        let again = Character::load(&a).unwrap();
+        let b = dir.join("b.chum5");
+        save_any(&b, &again, &Extras::default()).unwrap();
+        assert_eq!(std::fs::read_to_string(&b).unwrap().matches(CHUMMER_EXPORT_NOTICE).count(), 1);
+        assert_eq!(again.display_name(), ch.display_name());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn base64_matches_decoder() {
