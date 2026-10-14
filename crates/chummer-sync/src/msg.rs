@@ -434,3 +434,58 @@ pub fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, DecodeErr
         Some((&v, _)) => Err(DecodeError::Version(v)),
     }
 }
+
+/// The first byte of a [`VersionNotice`]. Never a [`SYNC_VERSION`].
+pub const NOTICE_BYTE: u8 = 0;
+
+/// "My app speaks this version": the one message every app from 0.7.0 on
+/// reads, whatever its own [`SYNC_VERSION`]. One byte
+/// ([`NOTICE_BYTE`]), then JSON (unknown fields are ignored, missing ones
+/// empty, so later apps can add to it). The GM mails it to a member whose
+/// mail it cannot read (so the member learns who has to update) and
+/// answers it to a live request it cannot read. Apps up to 0.6.0 take it
+/// for an unknown sync version and drop it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VersionNotice {
+    /// The sender's app version ("0.7.0").
+    pub app_version: String,
+    /// The sender's [`SYNC_VERSION`].
+    pub sync_version: u32,
+    /// The sender's campaign protocol version.
+    pub protocol_version: u32,
+}
+
+impl VersionNotice {
+    /// This app's notice.
+    pub fn mine() -> VersionNotice {
+        VersionNotice { app_version: chummer_net::campaign::APP_VERSION.to_owned(), sync_version: SYNC_VERSION as u32, protocol_version: chummer_net::campaign::PROTOCOL_VERSION }
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = vec![NOTICE_BYTE];
+        out.extend(serde_json::to_vec(self).expect("a version notice serialises"));
+        out
+    }
+
+    /// The notice in `bytes`, if they are one.
+    pub fn decode(bytes: &[u8]) -> Option<VersionNotice> {
+        match bytes.split_first() {
+            Some((&NOTICE_BYTE, rest)) => serde_json::from_slice(rest).ok(),
+            _ => None,
+        }
+    }
+
+    /// What a player is told, this notice coming from the GM's app.
+    pub fn refusal(&self) -> DenyReason {
+        version_gap(self.sync_version, &self.app_version)
+    }
+}
+
+/// The refusal a player keeps when the GM's messages are in sync format
+/// `gm_sync` (app version `gm_app`, empty when unknown): the version
+/// texts of the handshake, from the sync format (it equals the campaign
+/// protocol version).
+pub fn version_gap(gm_sync: u32, gm_app: &str) -> DenyReason {
+    DenyReason::VersionGap { client: SYNC_VERSION as u32, server: gm_sync, client_app: chummer_net::campaign::APP_VERSION.to_owned(), server_app: gm_app.to_owned() }
+}

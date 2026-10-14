@@ -526,6 +526,17 @@ impl Authority {
         self.members.get(peer).and_then(|m| m.invite).and_then(|i| self.invites.get(&i))
     }
 
+    /// What to call `peer` (proving `key`, if any) in a notice: the
+    /// member's name, or the label of the invite its key belongs to.
+    pub fn who(&self, peer: &EndpointId, key: Option<&PublicKey>) -> Option<String> {
+        if let Some(m) = self.members.get(peer) {
+            let label = self.invite_of(peer).map(|i| i.label.clone()).unwrap_or_default();
+            return Some(if m.name.is_empty() { label } else { m.name.clone() }).filter(|n| !n.is_empty());
+        }
+        let key = key?;
+        self.invites.values().find(|i| i.key() == *key || i.superseded.contains(key)).map(|i| i.label.clone()).filter(|l| !l.is_empty())
+    }
+
     /// A new invite (link) for one player.
     pub fn create_invite(&mut self, role: Role, label: &str, assign: Option<CharacterId>, expires: Option<u64>, now: u64) -> &Invite {
         let i = Invite::new(role, label, assign, expires, now);

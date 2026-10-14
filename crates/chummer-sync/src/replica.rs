@@ -44,6 +44,7 @@ use chummer_core::dice::{RollRecord, Rng};
 use chummer_core::engine::Engine;
 use chummer_core::settings::{CampaignSource, CharacterSettings};
 use chummer_net::EndpointId;
+use chummer_net::campaign::DenyReason;
 use serde::{Deserialize, Serialize};
 
 use crate::feed;
@@ -512,7 +513,12 @@ impl Replica {
     pub fn handle(&mut self, engine: &Engine, msg: ServerMessage) -> Vec<Event> {
         match msg {
             ServerMessage::Joined { membership, pushes } => {
-                self.denied = None;
+                // A version refusal is about the live connection (or the
+                // GM's mail), which the session lifts itself: a mailed
+                // join can work while the live handshake refuses us.
+                if !self.denied.as_ref().is_some_and(DenyReason::is_version) {
+                    self.denied = None;
+                }
                 let mut ev = self.set_membership(membership);
                 // Before the pushes: their commands need the presets.
                 if self.install_presets(engine) {
@@ -748,7 +754,10 @@ impl Replica {
             refused: self.refused.clone(),
             feed: self.feed.iter().cloned().collect(),
             inbox: self.inbox.clone(),
-            denied: self.denied.clone(),
+            // Not a version refusal: it is learnt again on the next
+            // connection, and an older app (the same version as the GM's)
+            // could not read it.
+            denied: self.denied.clone().filter(|d| !d.is_version()),
             next_roll: self.next_roll,
             roll_outbox: self.roll_outbox.clone(),
             rolls: self.rolls.iter().cloned().collect(),
