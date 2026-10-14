@@ -74,6 +74,15 @@ where
     R: AsyncRead + Unpin,
     T: DeserializeOwned,
 {
+    decode(&read_frame_body(r, max).await?)
+}
+
+/// Reads one frame body of at most `max` bytes, not decoded (for messages
+/// read in more than one shape, [`crate::campaign::decode_hello`]).
+pub async fn read_frame_body<R>(r: &mut R, max: usize) -> Result<Vec<u8>, FrameError>
+where
+    R: AsyncRead + Unpin,
+{
     let mut len = [0u8; 4];
     r.read_exact(&mut len).await?;
     let len = u32::from_be_bytes(len) as usize;
@@ -82,7 +91,7 @@ where
     }
     let mut body = vec![0u8; len];
     r.read_exact(&mut body).await?;
-    decode(&body)
+    Ok(body)
 }
 
 #[cfg(test)]
