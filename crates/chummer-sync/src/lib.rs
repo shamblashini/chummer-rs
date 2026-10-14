@@ -41,16 +41,56 @@ pub mod player;
 pub mod replica;
 
 pub use authority::{Authority, LocalApplied, Member, Reverted, Submitted};
-pub use host::{AuthorityHost, HostEvent, MailReport};
+pub use host::{AuthorityHost, HostEvent, HostNotice, MailReport};
 pub use hosted::HostedCampaign;
 pub use node::Node;
 pub use msg::{CharacterId, FeedEntry};
 pub use player::{PlayerConfig, PlayerSession, SyncMode};
 pub use replica::{Event, Refused, Replica};
 
+// The live handshake compares the campaign protocol version, so it must
+// change whenever the sync format does: then an app with other sync
+// messages is refused at the handshake, with a message saying whose app
+// is older, instead of failing on every message after it. They are kept
+// equal; when you change one, change the other to the same number.
+const _: () = assert!(
+    chummer_net::campaign::PROTOCOL_VERSION == msg::SYNC_VERSION as u32,
+    "msg::SYNC_VERSION and chummer_net::campaign::PROTOCOL_VERSION differ: bump both together (to the same number)"
+);
+const _: () = assert!(msg::SYNC_VERSION != msg::NOTICE_BYTE, "sync version 0 is reserved for version notices");
+
 #[cfg(test)]
 mod tests {
     fn send_sync<T: Send + Sync>() {}
+
+    /// The handshake's protocol version follows the sync format (also
+    /// checked at compile time, above): a sync change is a handshake
+    /// change, and peers that differ are told so when they connect.
+    #[test]
+    fn protocol_version_follows_the_sync_format() {
+        assert_eq!(chummer_net::campaign::PROTOCOL_VERSION, crate::msg::SYNC_VERSION as u32);
+        const { assert!(chummer_net::campaign::FIRST_WITH_APP_VERSION <= chummer_net::campaign::PROTOCOL_VERSION) };
+    }
+
+    /// The version notice is readable whatever the sync version, and is
+    /// not a sync message.
+    #[test]
+    fn version_notice_round_trips() {
+        use crate::msg::{self, VersionNotice};
+        let n = VersionNotice::mine();
+        let bytes = n.encode();
+        assert_eq!(bytes[0], 0);
+        assert_eq!(VersionNotice::decode(&bytes), Some(n.clone()));
+        assert!(matches!(msg::decode::<msg::MailMessage>(&bytes), Err(msg::DecodeError::Version(0))));
+        assert_eq!(VersionNotice::decode(&msg::encode(&1u8)), None);
+        // A later app's notice, with a field this one does not know.
+        let mut later = vec![0u8];
+        later.extend_from_slice(br#"{"app_version":"9.0.0","sync_version":9,"protocol_version":9,"os":"x"}"#);
+        let n = VersionNotice::decode(&later).unwrap();
+        assert_eq!((n.app_version.as_str(), n.sync_version), ("9.0.0", 9));
+        let mine = chummer_net::campaign::APP_VERSION;
+        assert_eq!(n.refusal().to_string(), format!("Your chummer-rs is older than the GM's (version 9.0.0; yours is {mine}). Update chummer-rs."));
+    }
 
     #[test]
     fn shared_state_is_thread_safe() {

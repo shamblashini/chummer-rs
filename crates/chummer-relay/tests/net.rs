@@ -167,7 +167,7 @@ async fn hello_without_a_valid_proof_is_refused() -> Result<()> {
     for forged in [None, Some(SecretKey::generate())] {
         let conn = ep.connect(dial_addr(gm_ep.id(), None), CAMPAIGN_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await?;
-        write_frame(&mut send, &Hello { campaign_id: campaign, member_key: Some(member.public()), client_version: PROTOCOL_VERSION }, MAX_FRAME).await?;
+        write_frame(&mut send, &Hello { campaign_id: campaign, member_key: Some(member.public()), client_version: PROTOCOL_VERSION, app_version: String::new() }, MAX_FRAME).await?;
         let Challenge { nonce } = read_frame(&mut recv, MAX_FRAME).await?;
         let sig = forged.map(|k| k.sign(&chummer_net::campaign::hello_message(&campaign, &gm_ep.id(), &ep.id(), &nonce)));
         write_frame(&mut send, &HelloProof { sig }, MAX_FRAME).await?;

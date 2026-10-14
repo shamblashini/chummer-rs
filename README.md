@@ -416,7 +416,9 @@ Chummer 5.225.
   change is logged with its author, and the GM can revert any of them.
   A link works on the first device that uses it; the GM can revoke it
   or give the player a new one, and the relay mailbox only takes mail
-  signed by a current player's key. See [Online campaigns](#online-campaigns).
+  signed by a current player's key. Before 1.0 the GM and the players
+  must use the same version of chummer-rs; the app warns when they do
+  not. See [Online campaigns](#online-campaigns).
 
 ### Layout and themes
 
@@ -924,6 +926,14 @@ for play-by-post. Each installation's identity is its node key
 > The project's public relay is not running yet. Until it is, run your
 > own (`chummer-relay`, [docs/relay.md](docs/relay.md)) and enter it in
 > Tools → Online Settings.
+
+> Before 1.0, the GM and the players must use the same version of
+> chummer-rs online. If the versions differ, the app tells you: the
+> player sees whose app is older ("Your chummer-rs is older than the
+> GM's … Update chummer-rs." or "The GM's chummer-rs is older …"), and
+> the GM's activity feed shows who tried to join or mailed with an older
+> or newer app. An app of 0.6.0 or older says only "update chummer-rs",
+> and its GM screen shows nothing.
 
 **The GM hosts a campaign**
 

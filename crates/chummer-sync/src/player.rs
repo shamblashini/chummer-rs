@@ -30,7 +30,7 @@ use chummer_net::{Endpoint, EndpointId, NetError, PublicKey, SecretKey};
 use tokio::sync::mpsc;
 
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
-use crate::msg::{self, CharacterId, ClaimProof, ClientMessage, MailMessage, OpId, RollId, RollReport, ServerMessage};
+use crate::msg::{self, CharacterId, ClaimProof, ClientMessage, DecodeError, MailMessage, OpId, RollId, RollReport, ServerMessage, VersionNotice};
 use crate::lockwatch::{self, Guard};
 use crate::replica::{Event, Replica};
 
@@ -101,6 +101,9 @@ struct Inner {
     /// A join was mailed in this run (a first join by mail is sent once,
     /// then again after `remail_after`).
     mailed_join: std::sync::atomic::AtomicBool,
+    /// The kept version refusal came from the GM's mail (not the live
+    /// handshake): mail we can read again lifts it.
+    version_from_mail: std::sync::atomic::AtomicBool,
     /// The GM keys last registered with our relay mailbox.
     registered: tokio::sync::Mutex<Option<Vec<PublicKey>>>,
     /// The label from the last welcome.
@@ -244,6 +247,7 @@ impl PlayerSession {
                 rolls_mailed_at: Mutex::default(),
                 joined_by_mail: Mutex::new(Instant::now()),
                 mailed_join: std::sync::atomic::AtomicBool::new(false),
+                version_from_mail: std::sync::atomic::AtomicBool::new(false),
                 registered: tokio::sync::Mutex::new(None),
                 label: Mutex::new(None),
                 membership_label: Mutex::new(None),
@@ -592,6 +596,57 @@ impl PlayerSession {
         }
     }
 
+    /// Keeps `reason`, a version refusal (the GM's app speaks another
+    /// version), and tells the UI once: again only when it changes. A
+    /// refusal that names the GM's app version is not replaced by one
+    /// with only the numbers.
+    fn note_version(&self, reason: DenyReason, from_mail: bool) {
+        let mut r = self.replica();
+        let same = match (r.denied(), &reason) {
+            (Some(old), _) if *old == reason => true,
+            (Some(DenyReason::VersionGap { server, server_app, .. }), DenyReason::VersionGap { server: s, server_app: a, .. }) => server == s && a.is_empty() && !server_app.is_empty(),
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        tracing::info!("{reason}");
+        r.set_denied(Some(reason.clone()));
+        drop(r);
+        self.inner.version_from_mail.store(from_mail, std::sync::atomic::Ordering::Release);
+        self.emit(vec![Event::Denied(reason)]);
+    }
+
+    /// Lifts a kept version refusal (the GM's app and ours agree again).
+    /// With `mail_only`, only one that came from mail.
+    fn version_agrees(&self, mail_only: bool) {
+        if mail_only && !self.inner.version_from_mail.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let mut r = self.replica();
+        if r.denied().is_some_and(DenyReason::is_version) {
+            r.set_denied(None);
+            drop(r);
+            self.emit(vec![Event::Membership]);
+        }
+    }
+
+    /// Sends `msg` and reads the answer. An answer in another sync
+    /// format (or the GM's [`VersionNotice`]) is kept as a version
+    /// refusal and returned as [`NetError::Denied`].
+    async fn request(&self, client: &CampaignClient, msg: &ClientMessage) -> Result<ServerMessage, NetError> {
+        let bytes = client.submit(msg::encode(msg)).await?;
+        match msg::decode(&bytes) {
+            Ok(m) => Ok(m),
+            Err(DecodeError::Version(v)) => {
+                let reason = VersionNotice::decode(&bytes).map(|n| n.refusal()).unwrap_or_else(|| msg::version_gap(v as u32, ""));
+                self.note_version(reason.clone(), false);
+                Err(NetError::Denied(reason))
+            }
+            Err(e) => Err(NetError::Protocol(e.to_string())),
+        }
+    }
+
     /// Handles a message, saves, then tells the UI (so an event means the
     /// change is on disk).
     fn handle(&self, msg: ServerMessage) -> Vec<crate::msg::ResyncRequest> {
@@ -614,6 +669,10 @@ impl PlayerSession {
         let joined = tokio::time::timeout(self.inner.cfg.connect_timeout, join).await.map_err(|_| NetError::Connect("timed out".into()))?;
         let (client, mut pushes) = match joined {
             Ok(x) => x,
+            Err(NetError::Denied(reason)) if reason.is_version() => {
+                self.note_version(reason.clone(), false);
+                return Err(NetError::Denied(reason));
+            }
             Err(NetError::Denied(reason)) => {
                 let changed = self.replica().denied() != Some(&reason);
                 if changed {
@@ -630,7 +689,7 @@ impl PlayerSession {
         *self.inner.role.lock().expect("poisoned") = Some(role);
         *self.inner.label.lock().expect("poisoned") = Some(client.welcome().label.clone());
         let join_msg = self.replica().join_message(&self.inner.engine, &self.inner.cfg.name, None);
-        let reply = match request(&client, &join_msg).await {
+        let reply = match self.request(&client, &join_msg).await {
             Ok(r) => r,
             Err(e) => {
                 client.close();
@@ -638,6 +697,7 @@ impl PlayerSession {
             }
         };
         *self.inner.client.lock().expect("poisoned") = Some(client.clone());
+        self.version_agrees(false);
         let resync = self.handle(reply);
         self.save_logged();
 
@@ -653,6 +713,10 @@ impl PlayerSession {
                         if !resync.is_empty() {
                             let _ = me.resync_live(&conn, resync).await;
                         }
+                    }
+                    Err(DecodeError::Version(v)) => {
+                        let reason = VersionNotice::decode(&bytes).map(|n| n.refusal()).unwrap_or_else(|| msg::version_gap(v as u32, ""));
+                        me.note_version(reason, false);
                     }
                     Err(e) => tracing::debug!("bad push: {e}"),
                 }
@@ -670,7 +734,7 @@ impl PlayerSession {
 
     async fn resync_live(&self, client: &CampaignClient, reqs: Vec<crate::msg::ResyncRequest>) -> Result<(), NetError> {
         for r in reqs {
-            let reply = request(client, &ClientMessage::Resync(r)).await?;
+            let reply = self.request(client, &ClientMessage::Resync(r)).await?;
             let _ = self.handle(reply);
         }
         self.save_logged();
@@ -680,7 +744,7 @@ impl PlayerSession {
     async fn flush_live(&self, client: &CampaignClient) -> Result<(), NetError> {
         let batches = self.replica().batches();
         for b in batches {
-            let reply = request(client, &ClientMessage::Submit(b)).await?;
+            let reply = self.request(client, &ClientMessage::Submit(b)).await?;
             let resync = self.handle(reply);
             self.save_logged();
             self.resync_live(client, resync).await?;
@@ -688,7 +752,7 @@ impl PlayerSession {
         // Rolls after the edits they may have been made after.
         let rolls = self.replica().rolls_message();
         if let Some(m) = rolls {
-            let reply = request(client, &m).await?;
+            let reply = self.request(client, &m).await?;
             let _ = self.handle(reply);
         }
         Ok(())
@@ -872,10 +936,24 @@ impl PlayerSession {
                 if o.sender != host {
                     continue;
                 }
+                if let Some(notice) = VersionNotice::decode(&o.payload) {
+                    // The GM's app could not read our mail.
+                    if notice.sync_version != msg::SYNC_VERSION as u32 {
+                        self.note_version(notice.refusal(), true);
+                    }
+                    continue;
+                }
                 let m = self.replica().inbox.accept(o.sender, &o.payload);
-                if let Ok(Some(MailMessage::Server(sm))) = m {
-                    // Resync requests made here go out with the next mail.
-                    let _ = self.handle(sm);
+                match m {
+                    Ok(Some(MailMessage::Server(sm))) => {
+                        self.version_agrees(true);
+                        // Resync requests made here go out with the next mail.
+                        let _ = self.handle(sm);
+                    }
+                    // Mail of another version: dropped (acked) like any
+                    // mail we cannot read, with one notice.
+                    Err(DecodeError::Version(v)) => self.note_version(msg::version_gap(v as u32, ""), true),
+                    _ => {}
                 }
             }
             self.save().map_err(|e| NetError::Protocol(format!("could not save: {e}")))?;
@@ -920,7 +998,9 @@ impl PlayerSession {
                 }
                 return SyncMode::Online;
             }
-            Err(NetError::Denied(reason)) if reason.is_final() => {
+            // Another version: the mailbox may still work (the same sync
+            // format), or the GM's app tells us by mail that it does not.
+            Err(NetError::Denied(reason)) if reason.is_final() && !reason.is_version() => {
                 tracing::info!("the GM's app refused us: {reason}");
                 return SyncMode::Offline;
             }
@@ -929,7 +1009,7 @@ impl PlayerSession {
         if self.inner.cfg.mailbox.is_none() {
             return SyncMode::Offline;
         }
-        if self.replica().denied().is_some_and(DenyReason::is_final) {
+        if self.replica().denied().is_some_and(|d| d.is_final() && !d.is_version()) {
             // Refused by mail: only collect (a refusal may be followed by
             // nothing else); do not mail more.
             return match self.fetch_mail().await {
@@ -988,11 +1068,6 @@ fn trim_log(log: &Mutex<OutboxLog>, path: &std::path::Path, seq: u64) {
             tracing::warn!("could not empty the journal {}: {e}", path.display());
         }
     }
-}
-
-async fn request(client: &CampaignClient, msg: &ClientMessage) -> Result<ServerMessage, NetError> {
-    let bytes = client.submit(msg::encode(msg)).await?;
-    msg::decode(&bytes).map_err(|e| NetError::Protocol(e.to_string()))
 }
 
 #[cfg(test)]

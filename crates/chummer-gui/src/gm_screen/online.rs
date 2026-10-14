@@ -952,6 +952,8 @@ impl GmScreen {
                 })
                 .collect()
         };
+        // Members whose app speaks another version.
+        rows.extend(o.hosted.host.notices().into_iter().map(|n| FeedRow { at: n.at, who: String::new(), text: n.text, refused: true, note: false, revert: None }));
         rows.extend(self.campaign.log.iter().rev().take(100).filter(|i| !i.author.is_empty() || i.member.is_none()).map(|i| {
             let who = i.member.and_then(|m| self.campaign.member(m)).map(|m| m.name.as_str()).unwrap_or("");
             let text = if who.is_empty() || i.description.contains(who) { i.description.clone() } else { format!("{who} {}", i.description) };

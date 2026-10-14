@@ -40,9 +40,28 @@ use crate::NetError;
 /// ALPN of the campaign protocol.
 pub const CAMPAIGN_ALPN: &[u8] = b"chummer-rs/campaign/2";
 
-/// Version of this crate's campaign protocol messages, sent in [`Hello`]
-/// and [`Welcome`].
-pub const PROTOCOL_VERSION: u32 = 2;
+/// Version of the campaign protocol, sent in [`Hello`] and [`Welcome`].
+/// The host refuses a client with another one ([`DenyReason::Version`]).
+///
+/// It follows the sync format: chummer-sync fails to compile unless this
+/// equals its `SYNC_VERSION`, so an app whose sync messages changed is
+/// refused here, with a "who must update" message, instead of failing on
+/// every message after the handshake. Bump both together. 2: up to
+/// 0.6.0 (sync format 5). 5: the app's version in [`Hello`] and
+/// [`DenyReason::VersionGap`] (sync format 5).
+///
+/// The handshake itself (the ALPN, [`Hello`]'s first fields, the
+/// challenge, [`DenyReason::Version`]) stays as it is, so every app, old or
+/// new, can still read the refusal.
+pub const PROTOCOL_VERSION: u32 = 5;
+
+/// The first [`PROTOCOL_VERSION`] whose clients send their app version
+/// and read [`DenyReason::VersionGap`].
+pub const FIRST_WITH_APP_VERSION: u32 = 5;
+
+/// This app's version (`CARGO_PKG_VERSION`: the crates share the
+/// workspace's version).
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Largest frame on campaign streams (snapshots may be big).
 pub const MAX_CAMPAIGN_FRAME: usize = 16 * MAX_FRAME;
@@ -57,6 +76,30 @@ pub struct Hello {
     /// GM added by node id have none.
     pub member_key: Option<PublicKey>,
     pub client_version: u32,
+    /// The client's app version ("0.7.0"). Since protocol 5; empty from
+    /// older clients. Last, so an older host reads the fields before it
+    /// and ignores this one.
+    pub app_version: String,
+}
+
+/// [`Hello`] as clients up to protocol 2 (0.6.0) send it.
+#[derive(Deserialize)]
+struct LegacyHello {
+    campaign_id: CampaignId,
+    member_key: Option<PublicKey>,
+    client_version: u32,
+}
+
+/// Reads a [`Hello`] frame body from any client, old ones too (without
+/// the fields added since).
+pub fn decode_hello(body: &[u8]) -> Result<Hello, crate::frame::FrameError> {
+    match crate::frame::decode::<Hello>(body) {
+        Ok(h) => Ok(h),
+        Err(e) => match crate::frame::decode::<LegacyHello>(body) {
+            Ok(h) => Ok(Hello { campaign_id: h.campaign_id, member_key: h.member_key, client_version: h.client_version, app_version: String::new() }),
+            Err(_) => Err(e),
+        },
+    }
 }
 
 /// The host's answer to [`Hello`]: sign this.
@@ -113,10 +156,54 @@ pub enum DenyReason {
     Superseded,
     #[error("the invite key could not be proven")]
     BadProof,
-    #[error("the GM's app speaks campaign protocol {server}, this app {client}; update chummer-rs")]
+    /// Another protocol version. Sent to clients older than
+    /// [`FIRST_WITH_APP_VERSION`] (they know no other refusal for it).
+    #[error("{}", version_text(*client, *server, "", ""))]
     Version { client: u32, server: u32 },
     #[error("{0}")]
     Other(String),
+    /// Another protocol version, with both apps' versions (empty when
+    /// unknown). Sent to clients from [`FIRST_WITH_APP_VERSION`] on.
+    /// New variants go after this one: older apps read the ones before.
+    #[error("{}", version_text(*client, *server, client_app, server_app))]
+    VersionGap { client: u32, server: u32, client_app: String, server_app: String },
+}
+
+/// The version part of a message: the other app's version, or (unknown,
+/// or the same number) the protocol numbers.
+fn version_detail(mine: u32, theirs: u32, my_app: &str, their_app: &str) -> String {
+    if !their_app.is_empty() && their_app != my_app {
+        if my_app.is_empty() {
+            format!("version {their_app}")
+        } else {
+            format!("version {their_app}; yours is {my_app}")
+        }
+    } else {
+        format!("campaign protocol {theirs}; yours is {mine}")
+    }
+}
+
+/// What a player is told when the GM's app speaks protocol `server` and
+/// the player's `client`: who has to update.
+pub fn version_text(client: u32, server: u32, client_app: &str, server_app: &str) -> String {
+    let detail = version_detail(client, server, client_app, server_app);
+    match client.cmp(&server) {
+        std::cmp::Ordering::Greater => format!("The GM's chummer-rs is older ({detail}). Ask your GM to update, or use the same version."),
+        std::cmp::Ordering::Less => format!("Your chummer-rs is older than the GM's ({detail}). Update chummer-rs."),
+        std::cmp::Ordering::Equal => format!("Your chummer-rs and the GM's do not match ({detail}). Use the same version."),
+    }
+}
+
+/// What the GM is told when `who` came with protocol `client` (app
+/// `client_app`, empty when unknown) and the GM's app speaks `server`.
+/// `what` says what they tried ("tried to join", "mailed").
+pub fn gm_version_text(who: &str, what: &str, client: u32, server: u32, client_app: &str, server_app: &str) -> String {
+    let detail = version_detail(server, client, server_app, client_app);
+    match client.cmp(&server) {
+        std::cmp::Ordering::Less => format!("{who} {what} with an older chummer-rs ({detail}). They need to update chummer-rs, or use the same version as you."),
+        std::cmp::Ordering::Greater => format!("{who} {what} with a newer chummer-rs ({detail}). Update chummer-rs, or ask them to use the same version as you."),
+        std::cmp::Ordering::Equal => format!("{who} {what} with a chummer-rs that does not match yours ({detail}). Use the same version."),
+    }
 }
 
 impl DenyReason {
@@ -124,6 +211,22 @@ impl DenyReason {
     /// trying again, or mailing, does not help.
     pub fn is_final(&self) -> bool {
         !matches!(self, DenyReason::Other(_))
+    }
+
+    /// The apps speak different versions (nothing the GM does to the
+    /// invite helps; one of them has to update).
+    pub fn is_version(&self) -> bool {
+        matches!(self, DenyReason::Version { .. } | DenyReason::VersionGap { .. })
+    }
+
+    /// The refusal for a client with protocol `client` (app `client_app`)
+    /// at this host, in a form that client can read.
+    pub fn version(client: u32, client_app: &str) -> DenyReason {
+        if client >= FIRST_WITH_APP_VERSION {
+            DenyReason::VersionGap { client, server: PROTOCOL_VERSION, client_app: client_app.to_owned(), server_app: APP_VERSION.to_owned() }
+        } else {
+            DenyReason::Version { client, server: PROTOCOL_VERSION }
+        }
     }
 }
 
@@ -172,6 +275,14 @@ pub trait CampaignHandler: Send + Sync + std::fmt::Debug + 'static {
         role: Role,
         payload: Vec<u8>,
     ) -> impl Future<Output = Result<Vec<u8>, String>> + Send;
+
+    /// `peer` was refused because its app speaks another protocol version
+    /// (`hello.client_version`, `hello.app_version`). `member` is the
+    /// member key it proved, if any. For the host's UI ("Anna tried to
+    /// join with an older chummer-rs"); called on every such attempt.
+    fn wrong_version(&self, _peer: EndpointId, _hello: &Hello, _member: Option<PublicKey>) -> impl Future<Output = ()> + Send {
+        async {}
+    }
 
     /// `peer`'s connection ended.
     fn disconnected(&self, _peer: EndpointId) -> impl Future<Output = ()> + Send {
@@ -260,7 +371,7 @@ impl<H: CampaignHandler> CampaignHost<H> {
         let peer = conn.remote_id();
         let me = self.me;
         let (mut send, mut recv) = conn.accept_bi().await.map_err(NetError::connection)?;
-        let hello: Hello = read_frame(&mut recv, MAX_FRAME).await?;
+        let hello = decode_hello(&crate::frame::read_frame_body(&mut recv, MAX_FRAME).await?)?;
         let nonce: [u8; 32] = {
             use crypto_box::aead::rand_core::RngCore;
             let mut n = [0u8; 32];
@@ -269,18 +380,20 @@ impl<H: CampaignHandler> CampaignHost<H> {
         };
         write_frame(&mut send, &Challenge { nonce }, MAX_FRAME).await?;
         let proof: HelloProof = read_frame(&mut recv, MAX_FRAME).await?;
-        let verdict = if hello.client_version != PROTOCOL_VERSION {
-            Err(DenyReason::Version { client: hello.client_version, server: PROTOCOL_VERSION })
-        } else {
-            match (hello.member_key, proof.sig) {
-                (None, _) => Ok(None),
-                (Some(k), Some(sig)) if k.verify(&hello_message(&hello.campaign_id, &me, &peer, &nonce), &sig).is_ok() => Ok(Some(k)),
-                (Some(_), _) => Err(DenyReason::BadProof),
-            }
+        // The proof is the same in every protocol version so far.
+        let member = match (hello.member_key, proof.sig) {
+            (None, _) => Ok(None),
+            (Some(k), Some(sig)) if k.verify(&hello_message(&hello.campaign_id, &me, &peer, &nonce), &sig).is_ok() => Ok(Some(k)),
+            (Some(_), _) => Err(DenyReason::BadProof),
         };
-        let verdict = match verdict {
-            Ok(member) => self.handler.hello(peer, &hello, member).await,
-            Err(e) => Err(e),
+        let verdict = if hello.client_version != PROTOCOL_VERSION {
+            self.handler.wrong_version(peer, &hello, member.clone().ok().flatten()).await;
+            Err(DenyReason::version(hello.client_version, &hello.app_version))
+        } else {
+            match member {
+                Ok(member) => self.handler.hello(peer, &hello, member).await,
+                Err(e) => Err(e),
+            }
         };
         let role = match verdict {
             Ok(welcome) => {
@@ -386,7 +499,7 @@ impl CampaignClient {
             .await
             .map_err(|e| NetError::Connect(e.to_string()))?;
         let (mut send, mut recv) = conn.open_bi().await.map_err(NetError::connection)?;
-        let hello = Hello { campaign_id: campaign, member_key: member.map(SecretKey::public), client_version: PROTOCOL_VERSION };
+        let hello = Hello { campaign_id: campaign, member_key: member.map(SecretKey::public), client_version: PROTOCOL_VERSION, app_version: APP_VERSION.to_owned() };
         write_frame(&mut send, &hello, MAX_FRAME).await?;
         let Challenge { nonce } = read_frame(&mut recv, MAX_FRAME).await?;
         let sig = member.map(|m| m.sign(&hello_message(&campaign, &conn.remote_id(), &endpoint.id(), &nonce)));
@@ -460,5 +573,78 @@ impl CampaignClient {
     /// Waits until the connection has ended.
     pub async fn closed(&self) {
         self.conn.closed().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [`Hello`] and [`DenyReason`] as 0.6.0 (protocol 2) has them.
+    #[derive(Serialize, Deserialize)]
+    struct OldHello {
+        campaign_id: CampaignId,
+        member_key: Option<PublicKey>,
+        client_version: u32,
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    enum OldDenyReason {
+        NoSuchCampaign,
+        NotInvited,
+        Claimed,
+        Revoked,
+        Expired,
+        Superseded,
+        BadProof,
+        Version { client: u32, server: u32 },
+        Other(String),
+    }
+
+    #[test]
+    fn handshake_reads_across_versions() {
+        let campaign = CampaignId::random();
+        let key = SecretKey::generate().public();
+        // A new host reads an old client's hello.
+        let old = crate::frame::encode(&OldHello { campaign_id: campaign, member_key: Some(key), client_version: 2 }).unwrap();
+        let h = decode_hello(&old).unwrap();
+        assert_eq!((h.campaign_id, h.member_key, h.client_version, h.app_version.as_str()), (campaign, Some(key), 2, ""));
+        // An old host reads a new client's hello (the app version is ignored).
+        let new = crate::frame::encode(&Hello { campaign_id: campaign, member_key: None, client_version: PROTOCOL_VERSION, app_version: APP_VERSION.into() }).unwrap();
+        let h: OldHello = crate::frame::decode(&new).unwrap();
+        assert_eq!((h.campaign_id, h.member_key, h.client_version), (campaign, None, PROTOCOL_VERSION));
+        assert_eq!(decode_hello(&new).unwrap().app_version, APP_VERSION);
+        // An old client reads the refusal it is sent; a new client reads an old host's.
+        let to_old = DenyReason::version(2, "");
+        assert_eq!(to_old, DenyReason::Version { client: 2, server: PROTOCOL_VERSION });
+        let bytes = postcard::to_stdvec(&HelloReply::Denied(to_old)).unwrap();
+        #[derive(Debug, PartialEq, Deserialize)]
+        enum OldReply {
+            #[allow(dead_code)]
+            Welcome(()),
+            Denied(OldDenyReason),
+        }
+        assert_eq!(postcard::from_bytes::<OldReply>(&bytes).unwrap(), OldReply::Denied(OldDenyReason::Version { client: 2, server: PROTOCOL_VERSION }));
+        let from_old = postcard::to_stdvec(&OldDenyReason::Version { client: PROTOCOL_VERSION, server: 2 }).unwrap();
+        assert_eq!(postcard::from_bytes::<DenyReason>(&from_old).unwrap(), DenyReason::Version { client: PROTOCOL_VERSION, server: 2 });
+        // New clients get both app versions.
+        assert_eq!(DenyReason::version(PROTOCOL_VERSION + 1, "9.0.0"), DenyReason::VersionGap { client: PROTOCOL_VERSION + 1, server: PROTOCOL_VERSION, client_app: "9.0.0".into(), server_app: APP_VERSION.into() });
+    }
+
+    #[test]
+    fn version_messages_say_who_updates() {
+        // What a player sees.
+        assert_eq!(DenyReason::Version { client: 5, server: 2 }.to_string(), "The GM's chummer-rs is older (campaign protocol 2; yours is 5). Ask your GM to update, or use the same version.");
+        assert_eq!(DenyReason::Version { client: 2, server: 5 }.to_string(), "Your chummer-rs is older than the GM's (campaign protocol 5; yours is 2). Update chummer-rs.");
+        let gap = |c, s| DenyReason::VersionGap { client: c, server: s, client_app: "0.7.0".into(), server_app: "0.8.0".into() };
+        assert_eq!(gap(5, 6).to_string(), "Your chummer-rs is older than the GM's (version 0.8.0; yours is 0.7.0). Update chummer-rs.");
+        assert_eq!(gap(6, 5).to_string(), "The GM's chummer-rs is older (version 0.8.0; yours is 0.7.0). Ask your GM to update, or use the same version.");
+        // The same app version (two builds of it): the protocol numbers.
+        let same = DenyReason::VersionGap { client: 6, server: 5, client_app: "0.7.0".into(), server_app: "0.7.0".into() };
+        assert_eq!(same.to_string(), "The GM's chummer-rs is older (campaign protocol 5; yours is 6). Ask your GM to update, or use the same version.");
+        assert!(same.is_final() && same.is_version() && !DenyReason::Claimed.is_version());
+        // What the GM sees.
+        assert_eq!(gm_version_text("Anna", "tried to join", 2, 5, "", "0.7.0"), "Anna tried to join with an older chummer-rs (campaign protocol 2; yours is 5). They need to update chummer-rs, or use the same version as you.");
+        assert_eq!(gm_version_text("Anna", "tried to join", 6, 5, "0.8.0", "0.7.0"), "Anna tried to join with a newer chummer-rs (version 0.8.0; yours is 0.7.0). Update chummer-rs, or ask them to use the same version as you.");
     }
 }

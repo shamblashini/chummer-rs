@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use chummer_core::command::{Command, Rejected};
 use chummer_core::engine::Engine;
-use chummer_net::campaign::{CampaignHandler, CampaignHost, DenyReason, Hello, Welcome, PROTOCOL_VERSION};
+use chummer_net::campaign::{gm_version_text, CampaignHandler, CampaignHost, DenyReason, Hello, Welcome, APP_VERSION, PROTOCOL_VERSION};
 use chummer_net::invite::{derive_campaign_key, InviteId, InviteLink, Role};
 use chummer_net::mailbox::{MailboxClient, MailboxStatus, Registration};
 use chummer_net::{EndpointId, NetError, PublicKey, RelayUrl, SecretKey};
@@ -25,7 +25,7 @@ use crate::invites::{Invite, InviteOp};
 use crate::journal::Journal;
 use crate::lockwatch::{self, Guard};
 use crate::mail::{self, DEFAULT_BLOB_LIMIT};
-use crate::msg::{self, CharacterId, ClientMessage, MailMessage, ServerMessage, TableRoll};
+use crate::msg::{self, CharacterId, ClientMessage, DecodeError, MailMessage, ServerMessage, TableRoll, VersionNotice};
 
 /// How long one push to a connected member may take before the member is
 /// taken to be stuck.
@@ -43,6 +43,27 @@ pub enum HostEvent {
     Membership,
     /// A dice roll was logged.
     Rolled,
+    /// A new [`HostNotice`] ([`AuthorityHost::notices`]).
+    Notice,
+}
+
+/// Something the GM should know that is not a change to a character: a
+/// member whose app speaks another version. Kept while the app runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostNotice {
+    /// Unix milliseconds.
+    pub at: i64,
+    pub peer: EndpointId,
+    pub text: String,
+}
+
+/// The [`HostNotice`]s, each version gap once per peer and version.
+#[derive(Debug, Default)]
+struct Notices {
+    seen: std::collections::BTreeSet<(EndpointId, u32)>,
+    list: Vec<HostNotice>,
+    /// Peers to mail a [`VersionNotice`] to in the next round.
+    reply: Vec<EndpointId>,
 }
 
 fn now_secs() -> u64 {
@@ -84,6 +105,7 @@ struct Shared {
     /// The engine's [`Engine::settings_rev`] the authority's presets were
     /// taken at.
     presets_rev: std::sync::atomic::AtomicU64,
+    notices: Mutex<Notices>,
 }
 
 impl std::fmt::Debug for Shared {
@@ -126,6 +148,38 @@ impl Shared {
         }
         self.lock().set_presets(self.engine.settings());
         true
+    }
+
+    /// `peer` (proving `key`) came with an app of protocol or sync
+    /// version `theirs` (app `their_app`, empty when unknown): a notice for
+    /// the GM, once per peer and version. `what` is what they tried
+    /// ("tried to join"). With `reply`, they are mailed this app's
+    /// [`VersionNotice`] (once). Returns whether it was new.
+    fn version_gap(&self, peer: EndpointId, key: Option<&PublicKey>, theirs: u32, their_app: &str, what: &str, reply: bool) -> bool {
+        let who = self.lock().who(&peer, key);
+        let mut n = self.notices.lock().unwrap_or_else(|e| e.into_inner());
+        if !n.seen.insert((peer, theirs)) {
+            return false;
+        }
+        let who = who.unwrap_or_else(|| format!("A device that is not in this campaign ({})", peer.fmt_short()));
+        let text = gm_version_text(&who, what, theirs, PROTOCOL_VERSION, their_app, APP_VERSION);
+        tracing::info!("{text}");
+        n.list.push(HostNotice { at: chummer_core::campaign::now_ms(), peer, text });
+        if reply && !n.reply.contains(&peer) {
+            n.reply.push(peer);
+        }
+        drop(n);
+        let _ = self.events.send(HostEvent::Notice);
+        true
+    }
+
+    /// A message from `peer` that this app cannot read for its version
+    /// (`DecodeError::Version`, or a [`VersionNotice`] in `bytes`).
+    fn unreadable(&self, peer: EndpointId, bytes: &[u8], v: u8, what: &str, reply: bool) {
+        match VersionNotice::decode(bytes) {
+            Some(n) => self.version_gap(peer, None, n.sync_version, &n.app_version, what, false),
+            None => self.version_gap(peer, None, v as u32, "", what, reply),
+        };
     }
 
     fn seen(&self, peer: &EndpointId) {
@@ -264,8 +318,21 @@ impl CampaignHandler for Handler {
         Ok(Welcome { campaign_id: hello.campaign_id, role: admitted.role, label: admitted.label, server_version: PROTOCOL_VERSION })
     }
 
+    async fn wrong_version(&self, peer: EndpointId, hello: &Hello, member: Option<PublicKey>) {
+        self.shared.version_gap(peer, member.as_ref(), hello.client_version, &hello.app_version, "tried to join", false);
+    }
+
     async fn submit(&self, peer: EndpointId, _role: Role, payload: Vec<u8>) -> Result<Vec<u8>, String> {
-        let msg: ClientMessage = msg::decode(&payload).map_err(|e| e.to_string())?;
+        let msg: ClientMessage = match msg::decode(&payload) {
+            Ok(m) => m,
+            // Another sync format past the handshake (an app that did not
+            // bump its protocol version): say which ours is.
+            Err(DecodeError::Version(v)) => {
+                self.shared.unreadable(peer, &payload, v, "sent a change", false);
+                return Ok(VersionNotice::mine().encode());
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         self.shared.warm_for(&peer, &msg);
         let joined = matches!(msg, ClientMessage::Join { .. });
         let (reply, notify, changed) = self.shared.handle(peer, msg);
@@ -354,6 +421,7 @@ impl AuthorityHost {
             journal,
             saving: Mutex::new(()),
             presets_rev: std::sync::atomic::AtomicU64::new(u64::MAX),
+            notices: Mutex::default(),
         });
         shared.refresh_presets();
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<EndpointId>>();
@@ -394,6 +462,12 @@ impl AuthorityHost {
     /// Members connected right now.
     pub fn connected(&self) -> Vec<(EndpointId, Role)> {
         self.host.connected()
+    }
+
+    /// Notices for the GM, oldest first: members whose app speaks another
+    /// version (once per member and version while the app runs).
+    pub fn notices(&self) -> Vec<HostNotice> {
+        self.shared.notices.lock().unwrap_or_else(|e| e.into_inner()).list.clone()
     }
 
     /// Changes, for a UI.
@@ -662,7 +736,12 @@ impl AuthorityHost {
                     // Not a member (yet): only a join that proves an
                     // invite's key, complete in one blob.
                     match mail::single(&o.payload) {
-                        Some(MailMessage::Client(ClientMessage::Join { name, have, claim: Some(proof), builtins })) => {
+                        Err(DecodeError::Version(v)) => {
+                            report.dropped += 1;
+                            self.shared.unreadable(o.sender, &o.payload, v, "mailed", true);
+                            continue;
+                        }
+                        Ok(Some(MailMessage::Client(ClientMessage::Join { name, have, claim: Some(proof), builtins }))) => {
                             let admitted = self.shared.lock().admit_by_mail(o.sender, Some(&proof), now_secs());
                             match admitted {
                                 Ok(a) => {
@@ -706,6 +785,13 @@ impl AuthorityHost {
                             let _ = self.shared.events.send(HostEvent::Changed(c));
                         }
                     }
+                    // Mail of another version: dropped (acked) like any
+                    // mail we cannot read; the member's app keeps what it
+                    // mailed until it is answered, and mails it again.
+                    Err(DecodeError::Version(v)) => {
+                        report.dropped += 1;
+                        self.shared.unreadable(o.sender, &o.payload, v, "mailed", true);
+                    }
                     Ok(Some(MailMessage::Server(_))) | Err(_) => report.dropped += 1,
                     Ok(None) => {}
                 }
@@ -736,6 +822,16 @@ impl AuthorityHost {
             match mail::send(mailbox, &self.shared.secret, &signer, peer, &MailMessage::Server(ServerMessage::Denied(reason)), &mut limit).await {
                 Ok(n) => report.sent += n,
                 Err(e) => tracing::info!("could not tell {} why it was refused: {e}", peer.fmt_short()),
+            }
+        }
+        // Members whose mail was of another version learn ours (apps
+        // after 0.6.0 read it whatever their version).
+        let replies = std::mem::take(&mut self.shared.notices.lock().unwrap_or_else(|e| e.into_inner()).reply);
+        for peer in replies {
+            let signer = self.signer_for(&peer);
+            match mailbox.put_sealed(&self.shared.secret, &signer, peer, &VersionNotice::mine().encode()).await {
+                Ok(_) => report.sent += 1,
+                Err(e) => tracing::info!("could not tell {} which version this app speaks: {e}", peer.fmt_short()),
             }
         }
         let behind = self.shared.lock().members_behind();

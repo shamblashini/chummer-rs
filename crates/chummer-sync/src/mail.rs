@@ -148,10 +148,14 @@ impl Inbox {
 }
 
 /// The message in `payload` when it is complete in one chunk (mail from
-/// someone who is not a member yet: nothing of theirs is kept).
-pub fn single(payload: &[u8]) -> Option<MailMessage> {
-    let chunk: Chunk = msg::decode(payload).ok()?;
-    (chunk.total <= 1).then(|| msg::decode(&chunk.data).ok()).flatten()
+/// someone who is not a member yet: nothing of theirs is kept); `None`
+/// for a piece of a longer message.
+pub fn single(payload: &[u8]) -> Result<Option<MailMessage>, DecodeError> {
+    let chunk: Chunk = msg::decode(payload)?;
+    if chunk.total > 1 {
+        return Ok(None);
+    }
+    msg::decode(&chunk.data).map(Some)
 }
 
 /// Seals and stores `msg` for `recipient`, in as many blobs as it takes:

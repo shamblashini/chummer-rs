@@ -222,7 +222,9 @@ Implemented (local part):
 
 Work-order steps 5 and 7 and the messages for step 6.
 
-- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`, 5
+- Messages (`chummer_sync::msg`): one version byte (`SYNC_VERSION`,
+  always equal to the campaign protocol version, see "App versions"
+  below; 5
   since settings presets (the membership's campaign id and presets,
   `Join`'s built-ins; see "Settings presets" below); 4 since dice rolls (`ClientMessage::Rolls`, `ServerMessage::RollsTaken`
   and `Rolls`, see "Dice rolls" below); 3 since the item commands changed (`MoveItem`, `Purchase::location`); 2
@@ -434,6 +436,62 @@ carries the presets, so a player never has to import the GM's file.
   characters; the GM gives them characters, and their presets follow.
 - Formats: authority file 5 (`presets_sent`, members' built-ins), replica
   file 4 (the membership's presets).
+
+### App versions (implemented)
+
+Until 1.0, two versions of chummer-rs need not work together online.
+The apps must say so clearly, and say whose app is older.
+
+- The live handshake compares `chummer_net::campaign::PROTOCOL_VERSION`.
+  It is always equal to `SYNC_VERSION`: chummer-sync does not compile
+  when they differ (a `const` assertion in `lib.rs`; the test
+  `protocol_version_follows_the_sync_format` documents it). When you
+  change the sync messages, bump both to the same number. So an app
+  with other sync messages is refused at the handshake, not on every
+  message after it. Protocol 2 was 0.6.0 and earlier (sync 5);
+  protocol 5 (sync 5) adds the app version.
+- The handshake shape does not change, so every app can read the
+  refusal: the ALPN stays `chummer-rs/campaign/2`, and `Hello`'s first
+  three fields and `DenyReason::Version` stay as they were. `Hello`
+  gets `app_version` at the end (an older host ignores it; postcard
+  ignores trailing bytes). The host reads an older, shorter `Hello` too
+  (`decode_hello`).
+- A client of protocol 5 or later is refused with
+  `DenyReason::VersionGap { client, server, client_app, server_app }`;
+  an older one gets `DenyReason::Version { client, server }`. The text
+  is made where it is shown, from the numbers, so it names the older
+  app: "The GM's chummer-rs is older (version 0.6.0; yours is 0.7.0).
+  Ask your GM to update, or use the same version." or "Your chummer-rs
+  is older than the GM's (…). Update chummer-rs." Without app versions
+  (0.6.0 and older) it gives the protocol numbers. New `DenyReason`
+  variants go at the end.
+- The host's handler hears of each version refusal
+  (`CampaignHandler::wrong_version`, with the proven member key). The
+  GM's app keeps a notice ("Anna tried to join with an older
+  chummer-rs (…)") once per member and version while it runs
+  (`AuthorityHost::notices`, `HostEvent::Notice`). The GM screen shows
+  them in the activity feed.
+- Mail of another sync version cannot be read. As with other mail that
+  cannot be read, it is acked and dropped: the player's app keeps its
+  commands in the outbox until they are answered, and mails them again
+  after `remail_after`. The GM's app adds a notice ("Anna mailed with a
+  newer chummer-rs"), once per member and version, and mails back a
+  version notice, once.
+- Version notice (`msg::VersionNotice`): byte 0 (never a sync
+  version), then JSON `{app_version, sync_version, protocol_version}`.
+  Unknown fields are ignored and missing ones are empty, so every app
+  from now on can read it, whatever its sync version. The GM's app
+  mails it in reply to mail it cannot read, and answers it to a live
+  request it cannot read. 0.6.0 and older drop it (an unknown sync
+  version).
+- The player's app keeps a version refusal (`PlayerSession::denied`,
+  one `Event::Denied` when it changes) from the handshake, from GM mail
+  it cannot read, from a live push or answer it cannot read, or from a
+  notice (which names the GM's app version). It is not saved, so an
+  older app can read the replica file, and it is learnt again on the
+  next connection. It does not stop the mailbox: mail may still work
+  (0.6.0 and protocol 5 share sync 5), and it ends when a live join works,
+  or (if it came from mail) when the GM's mail can be read again.
 
 ### The hosted campaign (implemented: `chummer_sync::hosted`)
 

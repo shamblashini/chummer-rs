@@ -545,7 +545,9 @@ impl App {
                 }
                 let glyph = if denied.is_some() { icons::PROHIBIT } else { glyph };
                 widgets::icon_line(ui, glyph, &state, color, color);
-                if denied.is_some() {
+                if denied.as_ref().is_some_and(|d| d.is_version()) {
+                    ui.label(RichText::new(lang.tr("It connects again once you and the GM use the same version of chummer-rs.")).size(11.5).color(ws.muted));
+                } else if denied.is_some() {
                     ui.label(RichText::new(lang.tr("Ask your GM for a new invite link, then join with it.")).size(11.5).color(ws.muted));
                 } else if chars.is_empty() {
                     ui.label(RichText::new(lang.tr("The GM has not given you a character yet.")).size(11.5).color(ws.muted));
