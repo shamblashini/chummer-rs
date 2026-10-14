@@ -130,7 +130,7 @@ impl CharacterView {
         let second = if knowledge { lang.tr("Type") } else { lang.tr("Attr") };
         // Active skills end in their specialization box, knowledge skills
         // in a remove button.
-        let (last, last_w) = if knowledge { (String::new(), 24.0) } else { (lang.tr("Specialization"), SPEC_W) };
+        let (last, last_w) = if knowledge { (lang.tr("Specialization"), SPEC_W + 28.0) } else { (lang.tr("Specialization"), SPEC_W) };
         let (captions, spec): (Vec<String>, Vec<f32>) = if career_mode {
             (vec![first, second, lang.tr("Rating"), String::new(), lang.tr("Pool"), lang.tr("Advance"), last], vec![0.0, if knowledge { 76.0 } else { 44.0 }, 44.0, 96.0, 64.0, 118.0, last_w])
         } else {
@@ -163,7 +163,12 @@ impl CharacterView {
                         }
                         // Creation shows the player's specialization in its
                         // box; here the others (free ones, career buys).
-                        let shown = if knowledge || career_mode { s.specs.clone() } else { self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| x.specs.iter().filter(|p| p.free).map(|p| p.name.clone()).collect()).unwrap_or_default() };
+                        let shown = if career_mode {
+                            s.specs.clone()
+                        } else {
+                            let specs = self.doc.skills.iter().find(|x| x.guid == s.guid).map(|x| &x.specs).or_else(|| self.doc.knowledge_skills.iter().find(|x| x.guid == s.guid).map(|x| &x.specs));
+                            specs.map(|v| v.iter().filter(|p| p.free).map(|p| p.name.clone()).collect()).unwrap_or_default()
+                        };
                         if !shown.is_empty() {
                             ui.add(egui::Label::new(RichText::new(format!("{} +{}", shown.join(", "), s.spec_bonus)).size(11.0).color(ws.muted)).truncate());
                         }
@@ -225,15 +230,17 @@ impl CharacterView {
                         });
                     }
                     widgets::cell(ui, next(), ROW, |ui| {
+                        match self.spec_box(ui, engine, lang, s, SPEC_W - 8.0) {
+                            Some(SpecEdit::Set(c)) => edits.push(Edit::Run(c)),
+                            Some(SpecEdit::Buy(a)) => edits.push(Edit::Action(a)),
+                            None => {}
+                        }
                         if knowledge {
+                            if s.native {
+                                ui.add_space(SPEC_W - 8.0 + ui.spacing().item_spacing.x);
+                            }
                             if widgets::icon_button(ui, icons::TRASH, 22.0).on_hover_text(lang.tr("Remove")).clicked() {
                                 edits.push(Edit::Set(Command::RemoveKnowledgeSkill { skill: s.guid.clone() }));
-                            }
-                        } else {
-                            match self.spec_box(ui, engine, lang, s, SPEC_W - 8.0) {
-                                Some(SpecEdit::Set(c)) => edits.push(Edit::Run(c)),
-                                Some(SpecEdit::Buy(a)) => edits.push(Edit::Action(a)),
-                                None => {}
                             }
                         }
                     });
@@ -270,19 +277,27 @@ impl CharacterView {
         })
     }
 
-    /// The specialization box of an active skill, in both layouts. Any
+    /// The specialization box of an active or knowledge skill, in both layouts. Any
     /// text; the list suggests the data's specializations, the character's
     /// martial arts and weapons. Creation: Chummer's one box, showing the
     /// player's specialization; Enter or a pick sets it, Enter on an empty
     /// box removes it. Career: an empty box; Enter or a pick buys the
     /// specialization for karma. `None` when the skill cannot have one.
     pub(in crate::view) fn spec_box(&self, ui: &mut egui::Ui, engine: &Engine, lang: &Language, s: &SkillValues, width: f32) -> Option<SpecEdit> {
-        let skill = self.doc.skills.iter().find(|x| x.guid == s.guid)?;
-        if s.disabled || engine.catalog.get(&skill.suid).is_some_and(|d| d.exotic) {
+        let specs = if let Some(skill) = self.doc.skills.iter().find(|x| x.guid == s.guid) {
+            if engine.catalog.get(&skill.suid).is_some_and(|d| d.exotic) {
+                return None;
+            }
+            &skill.specs
+        } else {
+            &self.doc.knowledge_skills.iter().find(|x| x.guid == s.guid)?.specs
+        };
+        // A native language has no specialization (`KnowledgeSkill.CanHaveSpecs`).
+        if s.disabled || s.native {
             return None;
         }
         let career_mode = self.doc.created;
-        let current = if career_mode { String::new() } else { skill.specs.iter().find(|x| !x.free).map(|x| x.name.clone()).unwrap_or_default() };
+        let current = if career_mode { String::new() } else { specs.iter().find(|x| !x.free).map(|x| x.name.clone()).unwrap_or_default() };
         let cost = if career_mode { self.career_costs(engine).specialization(&self.doc, &s.guid) } else { None };
         let can = s.total_base > 0 && (!career_mode || cost.is_some_and(|c| self.doc.karma >= c));
         let hint = match cost {

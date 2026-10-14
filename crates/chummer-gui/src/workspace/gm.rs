@@ -967,9 +967,16 @@ impl GmScreen {
                 ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0_f32, ws.divider));
                 let mut row = ui.new_child(egui::UiBuilder::new().id_salt(("ws_gm_weapon", k)).max_rect(rect).layout(egui::Layout::right_to_left(egui::Align::Center)));
                 row.spacing_mut().item_spacing.x = 8.0;
-                if widgets::button(&mut row, Some(icons::DICE_FIVE), &format!("{} {}", lang.tr("Roll"), st.dice_pool), Look::Secondary, 22.0).clicked() {
-                    // The choke's note goes with the roll.
-                    let label = note.as_ref().map_or_else(|| name.clone(), |n| format!("{name} · {n}"));
+                let marked = if st.spec.is_some() { format!("{}*", st.dice_pool) } else { st.dice_pool.to_string() };
+                let r = widgets::button(&mut row, Some(icons::DICE_FIVE), &format!("{} {marked}", lang.tr("Roll")), Look::Secondary, 22.0);
+                let r = match &st.spec {
+                    Some(s) => r.on_hover_text(crate::campaign_ui::spec_tip(lang, s)),
+                    None => r,
+                };
+                if r.clicked() {
+                    // The specialization and the choke's note go with the roll.
+                    let base = crate::campaign_ui::weapon_roll_label(name, st.spec.as_deref());
+                    let label = note.as_ref().map_or_else(|| base.clone(), |n| format!("{base} · {n}"));
                     todo.push(CardDo::Roll(label, st.dice_pool));
                 }
                 if *has_choke {

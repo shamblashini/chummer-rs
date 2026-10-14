@@ -302,11 +302,34 @@ pub fn damage_commands(before: &Tracks, r: &DamageResult) -> Vec<Command> {
 
 /// A pool as a chip; returns whether a click asked to roll it.
 pub fn pool_roll(ui: &mut egui::Ui, lang: &Language, label: &str, pool: i32) -> bool {
+    pool_roll_spec(ui, lang, label, pool, None)
+}
+
+/// [`pool_roll`] for a weapon: a specialization that adds to the pool
+/// marks it "7*" and is named in the tooltip.
+pub fn pool_roll_spec(ui: &mut egui::Ui, lang: &Language, label: &str, pool: i32, spec: Option<&str>) -> bool {
     ui.horizontal(|ui| {
         ui.label(label);
-        crate::theme::pool_chip(ui, pool.to_string()).on_hover_text(lang.tr("Roll")).clicked()
+        match spec {
+            Some(s) => crate::theme::pool_chip(ui, format!("{pool}*")).on_hover_text(format!("{}\n{}", lang.tr("Roll"), spec_tip(lang, s))).clicked(),
+            None => crate::theme::pool_chip(ui, pool.to_string()).on_hover_text(lang.tr("Roll")).clicked(),
+        }
     })
     .inner
+}
+
+/// "With the specialization X", the tooltip of a weapon pool it adds to.
+pub fn spec_tip(lang: &Language, spec: &str) -> String {
+    lang.tr_fmt("With the specialization {0}", &[&spec])
+}
+
+/// The label of a weapon roll: the weapon, and the specialization that
+/// adds to it when that is not just the weapon's name.
+pub fn weapon_roll_label(name: &str, spec: Option<&str>) -> String {
+    match spec {
+        Some(s) if s != name => format!("{name} · {s}"),
+        _ => name.to_owned(),
+    }
 }
 
 /// The roll log line of a roll.

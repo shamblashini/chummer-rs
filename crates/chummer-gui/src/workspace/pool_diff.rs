@@ -119,7 +119,9 @@ fn pools(ch: &Character, s: &Sheet) -> Pools {
         .into_iter()
         .map(|w| {
             let st = weapon::stats(ch, s, w);
-            (w.get("guid"), w.get("name"), [st.dice_pool.to_string(), st.damage, st.ap, st.accuracy.to_string()])
+            // "7*": a specialization adds to the pool.
+            let pool = if st.spec.is_some() { format!("{}*", st.dice_pool) } else { st.dice_pool.to_string() };
+            (w.get("guid"), w.get("name"), [pool, st.damage, st.ap, st.accuracy.to_string()])
         })
         .collect();
     Pools { fixed, skills, weapons }

@@ -1122,8 +1122,8 @@ impl CharacterView {
                         }
                     });
                     let mut remove_kno: Option<String> = None;
-                    egui::Grid::new("kskills").striped(true).num_columns(7).spacing([14.0, 4.0]).show(ui, |ui| {
-                        for h in lang.tr_all(["Skill", "Type", "Base", "Karma", "Rating", "Pool", ""]) {
+                    egui::Grid::new("kskills").striped(true).num_columns(8).spacing([14.0, 4.0]).show(ui, |ui| {
+                        for h in lang.tr_all(["Skill", "Type", "Base", "Karma", "Rating", "Pool", "Specializations", ""]) {
                             ui.strong(h);
                         }
                         ui.end_row();
@@ -1158,8 +1158,20 @@ impl CharacterView {
                                         }
                                     }
                                 });
-                                ui.strong(s.pool.to_string());
+                                ui.strong(skill_pool_text(s));
                             }
+                            ui.horizontal(|ui| {
+                                // Creation shows the player's specialization in its box.
+                                let others: Vec<String> = if career { s.specs.clone() } else { self.doc.knowledge_skills.iter().find(|k| k.guid == s.guid).map(|k| k.specs.iter().filter(|p| p.free).map(|p| p.name.clone()).collect()).unwrap_or_default() };
+                                if !others.is_empty() {
+                                    ui.label(format!("{} (+{})", others.join(", "), s.spec_bonus));
+                                }
+                                match self.spec_box(ui, engine, lang, s, 160.0) {
+                                    Some(workspace::build::skills::SpecEdit::Set(c)) => changed |= self.doc.run(c, status).is_some_and(|r| r.changed),
+                                    Some(workspace::build::skills::SpecEdit::Buy(a)) => self.action = Some(a),
+                                    None => {}
+                                }
+                            });
                             if ui.small_button(crate::theme::glyph("🗑")).on_hover_text(lang.tr("Remove")).clicked() {
                                 remove_kno = Some(s.guid.clone());
                             }

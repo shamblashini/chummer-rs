@@ -3261,3 +3261,99 @@ fn workspace_custom_specialization_in_career() {
 fn classic_custom_specialization_in_career() {
     career_custom_spec(ThemeKind::Classic);
 }
+
+fn knowledge_spec(kind: ThemeKind, fixture_name: &str, career: bool) {
+    let mut h = Harness::new(kind);
+    let i = h.open(&fixture(fixture_name));
+    let guid = h.app.views[i].ch().knowledge_skills.iter().find(|k| k.name == "Zoology").unwrap().guid.clone();
+    if career {
+        h.app.views[i].doc_mut().apply(chummer_core::command::Command::SetKarma { value: 20 }).unwrap();
+    }
+    h.app.views[i].ws_go(Section::Page(Tab::Skills));
+    // Tall: the knowledge table sits below the active skills and groups.
+    h.size = Vec2::new(WIDE.x, 2400.0);
+    h.frames(2);
+    // Only Zoology: no active skill matches.
+    h.click_text(&h.app.lang.tr("Filter skills"));
+    h.type_text("Zoology");
+    h.frames(2);
+    let hint = if career { h.app.lang.tr_fmt("Add a specialization ({0} karma)", &[&7]) } else { h.app.lang.tr("Add a specialization") };
+    type_spec(&mut h, &hint, "Paracritters");
+    let specs = |h: &Harness| h.app.views[i].ch().knowledge_skills.iter().find(|k| k.guid == guid).unwrap().specs.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
+    assert_eq!(specs(&h), ["Paracritters"], "{:?}", h.app.status);
+    let (pool, spec) = specialized_pool(&h).unwrap_or_else(|| panic!("pool (pool+2) shown: {:?}", h.on_screen()));
+    assert_eq!(spec, pool + 2);
+    if career {
+        assert_eq!(h.app.views[i].ch().karma, 13, "KarmaKnowledgeSpecialization 7");
+    } else {
+        assert!(h.find_text("Paracritters").is_some(), "the box shows it");
+        h.key(Key::Z, Modifiers::COMMAND);
+        h.frames(2);
+        assert!(specs(&h).is_empty(), "undo");
+    }
+}
+
+#[test]
+fn workspace_knowledge_specialization() {
+    knowledge_spec(ThemeKind::WorkspaceLight, "Munin.chum5", false);
+    knowledge_spec(ThemeKind::WorkspaceDark, "Munin_Career.chum5", true);
+}
+
+#[test]
+fn classic_knowledge_specialization() {
+    knowledge_spec(ThemeKind::Graphite, "Munin.chum5", false);
+    knowledge_spec(ThemeKind::Classic, "Munin_Career.chum5", true);
+}
+
+/// A campaign whose only member has Unarmed Combat (Knucks) and Knucks.
+fn knucks_campaign_file() -> (PathBuf, String) {
+    use chummer_core::campaign::{Campaign, Encounter, Member, MemberKind};
+    use chummer_core::character::Character;
+    use chummer_core::command::{self, Command, Envelope, RecordRef};
+    let engine = Engine::load().unwrap();
+    let mut ch = Character::load(&fixture("Munin_Career.chum5")).unwrap();
+    let id = engine.catalog.active.iter().find(|d| d.name == "Unarmed Combat").unwrap().id.clone();
+    let guid = ch.skills.iter().find(|s| s.suid.eq_ignore_ascii_case(&id)).unwrap().guid.clone();
+    let purchase = chummer_core::items::Purchase { qty: 1.0, cost_multiplier: 1.0, free: true, ..Default::default() };
+    for cmd in [
+        Command::SetSkillBase { skill: guid.clone(), value: 3 },
+        Command::AddItem { tag: "weapon".into(), record: RecordRef { id: String::new(), name: "Knucks".into() }, purchase },
+    ] {
+        command::apply(&mut ch, &engine, &Envelope::new(cmd, 1, 3_000_000_000_000, "")).unwrap();
+    }
+    chummer_core::chargen::add_specialization(&mut ch, &guid, "Knucks").unwrap();
+    let path = scratch().join(format!("ui-knucks-{:?}.chummercampaign", std::thread::current().id()).replace(['(', ')'], ""));
+    let mut c = Campaign::new("UI test");
+    c.encounters.push(Encounter::new("Encounter 1"));
+    c.add(Member::embedded(MemberKind::Player, &ch));
+    c.save(&path).unwrap();
+    (path, ch.field("name"))
+}
+
+fn gm_spec_marker(kind: ThemeKind) {
+    let mut h = Harness::new(kind);
+    h.size = WIDE;
+    let (path, _) = knucks_campaign_file();
+    h.app.open_campaign(&path);
+    assert!(h.app.gm.is_some(), "{:?}", h.app.status);
+    h.frames(3);
+    let marked = |h: &Harness| h.texts.iter().any(|(t, _)| t.trim().trim_start_matches(&h.app.lang.tr("Roll")).trim().strip_suffix('*').is_some_and(|n| n.parse::<i32>().is_ok()));
+    if !marked(&h) {
+        // Select the member to show its card.
+        let name = h.app.gm.as_ref().unwrap().campaign.members[0].name.clone();
+        let r = h.find_text(&name).unwrap_or_else(|| panic!("member {name} on screen: {:?}", h.on_screen()));
+        h.click_at(r.center());
+        h.frames(3);
+    }
+    assert!(marked(&h), "a weapon pool marked N*: {:?}", h.on_screen());
+}
+
+#[test]
+fn workspace_gm_weapon_pool_shows_the_specialization() {
+    gm_spec_marker(ThemeKind::WorkspaceDark);
+}
+
+#[test]
+fn classic_gm_weapon_pool_shows_the_specialization() {
+    gm_spec_marker(ThemeKind::Graphite);
+}

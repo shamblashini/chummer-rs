@@ -1575,9 +1575,10 @@ impl GmScreen {
                     let set = chummer_core::play::choke::choke(w);
                     let note = set.map(|c| crate::play_ui::choke_note(lang, c, None));
                     ui.horizontal(|ui| {
-                        if campaign_ui::pool_roll(ui, lang, &w.get("name"), st.dice_pool) {
-                            // The choke's note goes with the roll.
-                            roll = Some((note.as_ref().map_or_else(|| w.get("name"), |n| format!("{} · {n}", w.get("name"))), st.dice_pool));
+                        if campaign_ui::pool_roll_spec(ui, lang, &w.get("name"), st.dice_pool, st.spec.as_deref()) {
+                            // The specialization and the choke's note go with the roll.
+                            let label = campaign_ui::weapon_roll_label(&w.get("name"), st.spec.as_deref());
+                            roll = Some((note.as_ref().map_or_else(|| label.clone(), |n| format!("{label} · {n}")), st.dice_pool));
                         }
                         ui.weak(format!("{} AP {}", st.damage, st.ap));
                         if chummer_core::play::choke::has_choke(w) {
